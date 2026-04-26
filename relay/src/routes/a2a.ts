@@ -1,9 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { bearerAuth } from '../auth/middleware.js';
 import type { Database } from '../db/client.js';
-import { agents, handoffs } from '../db/schema.js';
+import { agentCards, agents, handoffs } from '../db/schema.js';
 import { ERROR_MAP, RelayError, type ErrorSymbol } from '../errors.js';
 import type { NotificationJob, NotificationKind } from '../notifications/types.js';
 import {
@@ -240,6 +240,8 @@ async function dispatch(method: string, params: unknown, ctx: DispatchCtx): Prom
       return handleTasksUpdate(params, ctx);
     case 'tasks/cancel':
       return handleTasksCancel(params, ctx);
+    case 'agents/list':
+      return handleAgentsList(ctx);
     default:
       throw new RelayError('method_not_found', `Unknown method: ${method}`);
   }
@@ -292,7 +294,10 @@ async function handleMessageSend(params: unknown, ctx: DispatchCtx): Promise<unk
       }
     }
     return {
+      // legacy
       task_id: p.task_id,
+      // rich (lld §4.4) — MCP send_message expects `thread_id`
+      thread_id: p.task_id,
       message_id: result.messageId,
       sequence_no: result.sequenceNo,
       created_at: result.createdAt.toISOString(),
@@ -332,16 +337,64 @@ async function handleMessageSend(params: unknown, ctx: DispatchCtx): Promise<unk
   };
 }
 
+// ─── Sender enrichment helper ──────────────────────────────────────────────
+//
+// MCP tools (lld §4.2 / §4.3) and the trust model need rich sender info
+// (handle/name/role) — not bare UUIDs. We populate it via JOIN-on-demand
+// rather than eagerly to keep listHandoffs/getHandoff service-layer tests
+// simple. Both rich (`thread_id`, `sender:{...}`, `messages`) AND legacy
+// (`task_id`, `sender_id`, `history`) fields are returned for v0.1 to
+// preserve the integration tests; v0.1.1 can deprecate the legacy form.
+
+interface SenderInfo {
+  handle: string;
+  name: string;
+  role: string;
+}
+
+async function loadSenders(
+  db: Database,
+  ids: string[],
+): Promise<Map<string, SenderInfo>> {
+  const m = new Map<string, SenderInfo>();
+  const distinct = Array.from(new Set(ids));
+  if (distinct.length === 0) return m;
+  const rows = await db
+    .select({ id: agents.id, handle: agents.handle, name: agents.displayName, role: agents.role })
+    .from(agents)
+    .where(inArray(agents.id, distinct));
+  for (const r of rows) m.set(r.id, { handle: r.handle, name: r.name, role: r.role });
+  return m;
+}
+
 async function handleTasksGet(params: unknown, ctx: DispatchCtx): Promise<unknown> {
   const p = parseParams(tasksGetParams, params);
   const { handoff, messages: msgs } = await getHandoff(ctx.db, {
     taskId: p.task_id,
     callerId: ctx.agent.id,
   });
+  const senderMap = await loadSenders(ctx.db, [handoff.senderId, ...msgs.map((m) => m.author_id)]);
+  const sender = senderMap.get(handoff.senderId) ?? { handle: handoff.senderId, name: '', role: '' };
+  const enrichedMessages = msgs.map((m) => ({
+    id: m.id,
+    sequence_no: m.sequence_no,
+    author_id: m.author_id, // legacy
+    from: senderMap.get(m.author_id)?.handle ?? m.author_id,
+    body: m.body,
+    payload: m.payload,
+    created_at: m.created_at.toISOString(),
+  }));
   return {
+    // legacy (kept for existing relay integration tests + A2A-style clients)
     task_id: handoff.id,
     status: { state: handoff.status },
     sender_id: handoff.senderId,
+    history: enrichedMessages,
+    // rich (lld §4.3 — what MCP tools consume)
+    thread_id: handoff.id,
+    sender,
+    messages: enrichedMessages,
+    // common
     recipient_id: handoff.recipientId,
     summary: handoff.summary,
     intent: handoff.intent,
@@ -353,14 +406,6 @@ async function handleTasksGet(params: unknown, ctx: DispatchCtx): Promise<unknow
     completed_summary: handoff.completedSummary,
     cancelled_at: handoff.cancelledAt?.toISOString() ?? null,
     created_at: handoff.createdAt.toISOString(),
-    history: msgs.map((m) => ({
-      id: m.id,
-      author_id: m.author_id,
-      body: m.body,
-      payload: m.payload,
-      sequence_no: m.sequence_no,
-      created_at: m.created_at.toISOString(),
-    })),
   };
 }
 
@@ -375,17 +420,27 @@ async function handleTasksList(params: unknown, ctx: DispatchCtx): Promise<unkno
     since: filter.since ? new Date(filter.since) : undefined,
     limit: page.limit ?? 50,
   });
+  const senderMap = await loadSenders(ctx.db, items.map((h) => h.senderId));
   return {
-    items: items.map((h) => ({
-      task_id: h.id,
-      status: { state: h.status },
-      sender_id: h.senderId,
-      recipient_id: h.recipientId,
-      summary_preview: h.summary.slice(0, 240),
-      intent: h.intent,
-      created_at: h.createdAt.toISOString(),
-      updated_at: h.updatedAt.toISOString(),
-    })),
+    items: items.map((h) => {
+      const sender = senderMap.get(h.senderId) ?? { handle: h.senderId, name: '', role: '' };
+      return {
+        // legacy (existing relay integration tests + A2A-style clients)
+        task_id: h.id,
+        status: { state: h.status },
+        sender_id: h.senderId,
+        // rich (lld §4.2 — what MCP check_inbox consumes)
+        thread_id: h.id,
+        sender,
+        unread_messages: 0, // v0.1.1: compute from messages.created_at > caller's last accept time
+        // common
+        recipient_id: h.recipientId,
+        summary_preview: h.summary.slice(0, 240),
+        intent: h.intent,
+        created_at: h.createdAt.toISOString(),
+        updated_at: h.updatedAt.toISOString(),
+      };
+    }),
     next_cursor: null,
   };
 }
@@ -402,8 +457,15 @@ async function handleTasksUpdate(params: unknown, ctx: DispatchCtx): Promise<unk
   });
   await fireTransitionNotification(ctx, handoff, p.transition);
   return {
+    // legacy
     task_id: handoff.id,
     status: { state: handoff.status },
+    // rich (lld §4.3) — MCP accept_handoff and complete_handoff need
+    // these to confirm transition timestamps without re-fetching.
+    thread_id: handoff.id,
+    accepted_at: handoff.acceptedAt?.toISOString() ?? null,
+    completed_at: handoff.completedAt?.toISOString() ?? null,
+    cancelled_at: handoff.cancelledAt?.toISOString() ?? null,
     updated_at: handoff.updatedAt.toISOString(),
   };
 }
@@ -421,6 +483,32 @@ async function handleTasksCancel(params: unknown, ctx: DispatchCtx): Promise<unk
     task_id: handoff.id,
     status: { state: handoff.status },
     updated_at: handoff.updatedAt.toISOString(),
+  };
+}
+
+async function handleAgentsList(ctx: DispatchCtx): Promise<unknown> {
+  // JSON-RPC equivalent of REST `GET /agents` — surfaced via /a2a so MCP
+  // tools (lld §4.6) can reach the team roster through the same transport
+  // they use for handoffs. Returns active agents only.
+  const rows = await ctx.db
+    .select({
+      handle: agents.handle,
+      displayName: agents.displayName,
+      role: agents.role,
+      skills: agentCards.skills,
+      reposOwned: agentCards.reposOwned,
+    })
+    .from(agents)
+    .leftJoin(agentCards, eq(agentCards.agentId, agents.id))
+    .where(eq(agents.status, 'active'));
+  return {
+    teammates: rows.map((r) => ({
+      handle: r.handle,
+      name: r.displayName,
+      role: r.role,
+      skills: r.skills ?? [],
+      repos_owned: r.reposOwned ?? [],
+    })),
   };
 }
 

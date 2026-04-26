@@ -2,6 +2,10 @@ import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
 import { checkInboxInput, handoffStatusSchema } from "./schemas.js";
 
+// Wire shape uses rich `thread_id` + `sender:{...}` (lld §4.2). The relay
+// also returns legacy `task_id`/`status:{state}`/`sender_id` fields for
+// older A2A-style clients; we ignore those here and consume the rich
+// fields directly.
 const inboxItemSchema = z.object({
 	thread_id: z.string(),
 	sender: z.object({
@@ -10,8 +14,15 @@ const inboxItemSchema = z.object({
 		role: z.string(),
 	}),
 	summary_preview: z.string(),
-	status: handoffStatusSchema,
-	unread_messages: z.number().int().nonnegative(),
+	intent: z.string().optional(),
+	// Legacy `status` is `{state: string}` while rich shape doesn't have a
+	// flat status yet — read both.
+	status: z
+		.union([
+			handoffStatusSchema,
+			z.object({ state: handoffStatusSchema }).transform((v) => v.state),
+		]),
+	unread_messages: z.number().int().nonnegative().default(0),
 	created_at: z.string(),
 	updated_at: z.string(),
 });
@@ -26,11 +37,13 @@ export type InboxResponse = z.infer<typeof inboxResponseSchema>;
 export async function checkInbox(client: A2AClient, rawInput: unknown): Promise<InboxResponse> {
 	const input = checkInboxInput.parse(rawInput ?? {});
 	const params = {
-		role: "recipient",
-		status: input.status ?? ["pending", "accepted"],
-		since: input.since,
-		limit: input.limit ?? 50,
+		filter: {
+			role: "recipient",
+			status: input.status ?? ["pending", "accepted"],
+			since: input.since,
+		},
+		page: { limit: input.limit ?? 50, cursor: null },
 	};
-	const result = await client.request<unknown>("tasks/list", params);
-	return inboxResponseSchema.parse(result);
+	const raw = await client.request<unknown>("tasks/list", params);
+	return inboxResponseSchema.parse(raw);
 }

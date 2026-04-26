@@ -82,10 +82,13 @@ describe("checkInbox", () => {
 			"tasks/list": [{ items: [], next_cursor: null }],
 		});
 		await checkInbox(client, {});
+		// Relay's tasks/list expects {filter:{...}, page:{...}} per lld §3.1.
 		expect(calls[0]?.params).toMatchObject({
-			role: "recipient",
-			status: ["pending", "accepted"],
-			limit: 50,
+			filter: {
+				role: "recipient",
+				status: ["pending", "accepted"],
+			},
+			page: { limit: 50 },
 		});
 	});
 });

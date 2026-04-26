@@ -31,7 +31,8 @@ describe("register", () => {
 	it("posts to /admin/agents and writes config.json", async () => {
 		const httpPost = vi.fn(async () => ({
 			status: 200,
-			json: { id: "01HXY", handle: "frank@acme", api_key: "ah_test_xxx" },
+			// Relay returns `agent_id` (not `id`) per lld §3.3.
+			json: { agent_id: "01HXY", handle: "frank@acme", api_key: "ah_test_xxx" },
 		}));
 		const path = join(dir, "config.json");
 		const cfg = await register(
