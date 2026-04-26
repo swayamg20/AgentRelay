@@ -1,0 +1,44 @@
+{
+  "name": "@agentrelay/mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "AgentRelay MCP server — local stdio process exposing A2A handoff tools to Claude Code or Codex CLI.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "agentrelay-mcp": "dist/bin/agentrelay-mcp.js",
+    "agentrelay": "dist/bin/agentrelay.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node --import tsx/esm src/bin/agentrelay-mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "cac": "^6.7.14",
+    "js-yaml": "^4.1.0",
+    "pino": "^9.5.0",
+    "smol-toml": "^1.6.1",
+    "undici": "^7.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

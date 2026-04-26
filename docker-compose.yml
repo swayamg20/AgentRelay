@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentrelay-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agentrelay
+      POSTGRES_PASSWORD: agentrelay-dev
+      POSTGRES_DB: agentrelay
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U agentrelay -d agentrelay']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
