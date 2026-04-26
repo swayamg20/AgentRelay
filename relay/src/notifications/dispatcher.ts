@@ -92,8 +92,13 @@ export class NotificationDispatcher {
   }
 
   async drain(): Promise<void> {
+    // Use a real timer here — NOT this.delay, which can be mocked to a
+    // no-op (Promise.resolve()) by retry-backoff tests. With a no-op delay
+    // this loop becomes a tight microtask chain that never yields to the
+    // worker, hanging forever. setTimeout(_, 1) guarantees a macrotask
+    // yield so the worker can pull from the queue.
     while (this.queue.length > 0) {
-      await this.delay(5);
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
     }
   }
 

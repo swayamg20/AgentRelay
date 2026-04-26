@@ -3,11 +3,12 @@
 // in ./drizzle (relative to the relay package root) in order.
 import 'dotenv/config';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import { loadConfig } from '../config.js';
+import { loadDatabaseConfig } from '../config.js';
 import { createDb } from './client.js';
 
 async function main(): Promise<void> {
-  const config = loadConfig();
+  // Migrations only need the DB URL — don't force production secrets here.
+  const config = loadDatabaseConfig();
   const handle = createDb(config);
   try {
     await migrate(handle.db, { migrationsFolder: './drizzle' });

@@ -44,7 +44,10 @@ export async function tryConnect(): Promise<ConnectResult> {
 }
 
 export async function truncateAll(sql: Sql): Promise<void> {
+  // Listing all data tables explicitly is belt-and-suspenders — `agents` alone
+  // with CASCADE would clear the dependents — but explicit listing makes intent
+  // obvious and survives future schema additions that aren't FK-rooted at agents.
   await sql.unsafe(
-    'TRUNCATE TABLE messages, handoffs, agent_cards, api_keys, audit_log, agents RESTART IDENTITY CASCADE',
+    'TRUNCATE TABLE messages, handoffs, agent_cards, api_keys, audit_log, agent_blocks, agents RESTART IDENTITY CASCADE',
   );
 }

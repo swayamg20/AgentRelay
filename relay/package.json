@@ -16,6 +16,7 @@
     "dev": "node --import tsx/esm src/main.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "bash scripts/test-integration.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --import tsx/esm src/db/migrate.ts",
