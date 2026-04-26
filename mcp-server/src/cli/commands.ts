@@ -34,7 +34,8 @@ import {
 } from "./trust-mutate.js";
 
 const adminAgentResponseSchema = z.object({
-	id: z.string(),
+	// Relay's POST /admin/agents response uses `agent_id` (lld §3.3).
+	agent_id: z.string(),
 	handle: z.string(),
 	api_key: z.string(),
 });
@@ -64,7 +65,8 @@ export async function register(opts: RegisterOptions, deps: RegisterDeps = {}): 
 	const res = await post(url, {
 		handle: opts.handle,
 		email: opts.email,
-		name: opts.name,
+		// Relay's schema names this field display_name (lld §3.3 / §2.1).
+		display_name: opts.name,
 		role: opts.role,
 	}, headers);
 	if (res.status >= 400) {
@@ -75,7 +77,7 @@ export async function register(opts: RegisterOptions, deps: RegisterDeps = {}): 
 	const config: AgentRelayConfig = {
 		relay_url: stripTrailing(opts.relay),
 		agent_handle: parsed.handle,
-		agent_id: parsed.id,
+		agent_id: parsed.agent_id,
 		api_key: parsed.api_key,
 		default_session_id: null,
 	};

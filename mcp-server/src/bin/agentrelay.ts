@@ -48,7 +48,8 @@ cli
 			email: opts.email as string,
 			name: opts.name as string,
 			role: opts.role as string,
-			adminToken: opts["admin-token"] as string | undefined,
+			// cac auto-camelCases dashed flags: --admin-token → opts.adminToken
+			adminToken: opts.adminToken as string | undefined,
 		});
 		process.stdout.write(`registered ${cfg.agent_handle} (id ${cfg.agent_id})\n`);
 	});
@@ -198,10 +199,11 @@ function parseTrustSetOptions(opts: Record<string, unknown>): {
 	require_approval?: string[];
 } {
 	const out: ReturnType<typeof parseTrustSetOptions> = {};
-	if (opts["auto-read"] !== undefined) out.auto_read = parseBool(opts["auto-read"]);
-	if (opts["auto-test"] !== undefined) out.auto_test = parseBool(opts["auto-test"]);
-	if (opts["auto-write-paths"] !== undefined) out.auto_write_paths = parseList(opts["auto-write-paths"]);
-	if (opts["require-approval"] !== undefined) out.require_approval = parseList(opts["require-approval"]);
+	// cac auto-camelCases dashed flags: --auto-read → opts.autoRead, etc.
+	if (opts.autoRead !== undefined) out.auto_read = parseBool(opts.autoRead);
+	if (opts.autoTest !== undefined) out.auto_test = parseBool(opts.autoTest);
+	if (opts.autoWritePaths !== undefined) out.auto_write_paths = parseList(opts.autoWritePaths);
+	if (opts.requireApproval !== undefined) out.require_approval = parseList(opts.requireApproval);
 	return out;
 }
 
