@@ -1,10 +1,30 @@
 {
   "name": "@agentrelay/mcp",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
   "description": "AgentRelay MCP server — local stdio process exposing A2A handoff tools to Claude Code or Codex CLI.",
   "license": "MIT",
   "type": "module",
+  "author": "Swayam Gupta <swayam.gupta@travenues.com>",
+  "homepage": "https://github.com/swayamg20/AgentRelay#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swayamg20/AgentRelay.git",
+    "directory": "mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/swayamg20/AgentRelay/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "a2a",
+    "agent2agent",
+    "claude-code",
+    "codex",
+    "agentrelay",
+    "agent-to-agent",
+    "handoff"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
@@ -16,14 +36,19 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "node --import tsx/esm src/bin/agentrelay-mcp.ts"
+    "dev": "node --import tsx/esm src/bin/agentrelay-mcp.ts",
+    "prepublishOnly": "pnpm run build && pnpm run test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
