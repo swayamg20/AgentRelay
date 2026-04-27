@@ -26,6 +26,7 @@ import { relayErrorToTool } from "./errors.js";
 import { handoffToTeammate } from "./handoff.js";
 import { listTeammates } from "./list-teammates.js";
 import { sendMessage } from "./message.js";
+import { viewThread } from "./view-thread.js";
 
 export interface ToolDeps {
 	client: A2AClient;
@@ -58,6 +59,11 @@ const TOOL_DEFS = [
 	{
 		name: "list_teammates",
 		description: "Discover teammates registered on this relay. Filter by role, skill, or owned repo.",
+	},
+	{
+		name: "view_thread",
+		description:
+			"Read-only fetch of a handoff thread you're a participant in (sender or recipient). Returns the full thread with L1 provenance wrapping on any teammate-authored content. No state change. Use this when you've sent a handoff and want to see replies without the accept_handoff state transition.",
 	},
 ] as const;
 
@@ -123,6 +129,14 @@ const TOOL_INPUT_SCHEMAS = {
 			repo: { type: "string" },
 		},
 	},
+	view_thread: {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			thread_id: { type: "string" },
+		},
+		required: ["thread_id"],
+	},
 } as const;
 
 export type ToolName = keyof typeof TOOL_INPUT_SCHEMAS;
@@ -156,6 +170,13 @@ export async function dispatchTool(
 			}
 			case "list_teammates": {
 				const r = await listTeammates(deps.client, input);
+				return jsonOk(r);
+			}
+			case "view_thread": {
+				// Inject the caller's handle so view_thread knows whose
+				// messages to wrap with L1 provenance (everyone NOT the caller).
+				const augmented = { ...(input as object), caller_handle: deps.senderHandle };
+				const r = await viewThread({ client: deps.client }, augmented);
 				return jsonOk(r);
 			}
 			default:
