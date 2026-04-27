@@ -29,7 +29,7 @@ AgentRelay has two distinct surfaces:
   JSON-RPC contract. Protocol-level concerns (auth, routing, audit) are
   use-case agnostic.
 - **The first product surface (engineering-vertical).** Our reference
-  MCP server (`@agentrelay/mcp`), the artifact types we ship (file
+  MCP server (`agentrelay-mcp`), the artifact types we ship (file
   diffs, API contracts, test commands), and the launch demos all
   target software-engineering teams using Claude Code or Codex. This
   is a deliberate vertical-first / horizontal-future strategy
@@ -69,7 +69,7 @@ We get there in three releases (see `roadmap.md` for full breakdown):
 │  └────────┬─────────┘  │                          │  └────────┬─────────┘  │
 │           │ stdio MCP  │                          │           │ stdio MCP  │
 │  ┌────────▼─────────┐  │                          │  ┌────────▼─────────┐  │
-│  │ @agentrelay/mcp  │  │                          │  │ @agentrelay/mcp  │  │
+│  │ agentrelay-mcp  │  │                          │  │ agentrelay-mcp  │  │
 │  │   (local proc)   │  │                          │  │   (local proc)   │  │
 │  └────────┬─────────┘  │                          │  └────────┬─────────┘  │
 └───────────┼────────────┘                          └───────────┼────────────┘
@@ -119,7 +119,7 @@ Sub-components:
 The relay is the *only* central piece. Everything else runs on developer
 laptops.
 
-### 4.2 The MCP Server (`@agentrelay/mcp`)
+### 4.2 The MCP Server (`agentrelay-mcp`)
 
 A local stdio process that exposes a fixed set of tools to whichever CLI
 agent runs it. Same binary works for Claude Code and Codex CLI because both
@@ -311,7 +311,7 @@ Locked-in choices for v0.1. Documented here so HLD/LLD can rely on them.
 | Notifications      | Slack incoming webhooks                                         | Zero infra, every team already has Slack. Pluggable behind an interface for v0.2+.                                        |
 | Observability      | pino + OpenTelemetry traces                                     | Pino is the fastest structured logger on Node. OTel is the industry standard, vendor-neutral.                             |
 | Tests              | vitest                                                          | Fast, ESM-native, vite-aligned, drop-in for jest.                                                                          |
-| Distribution (MCP) | `npm` package `@agentrelay/mcp`                                 | `npx @agentrelay/mcp` works without install. CI publishes on tag.                                                         |
+| Distribution (MCP) | `npm` package `agentrelay-mcp`                                 | `npx agentrelay-mcp` works without install. CI publishes on tag.                                                         |
 
 ## 7. Deployment topology
 
@@ -329,7 +329,7 @@ Locked-in choices for v0.1. Documented here so HLD/LLD can rely on them.
          │ HTTPS
          │
    N developer laptops
-   (each running @agentrelay/mcp locally)
+   (each running agentrelay-mcp locally)
 ```
 
 One relay instance handles a small team (≤50 devs, ≤10k handoffs/day) on

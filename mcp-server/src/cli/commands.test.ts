@@ -148,7 +148,7 @@ describe("install", () => {
 
 	it("does not write when nothing changed", async () => {
 		const existing = JSON.stringify({
-			mcpServers: { agentrelay: { command: "npx", args: ["-y", "@agentrelay/mcp"], env: {} } },
+			mcpServers: { agentrelay: { command: "npx", args: ["-y", "agentrelay-mcp"], env: {} } },
 			permissions: {
 				allow: [
 					"Read",

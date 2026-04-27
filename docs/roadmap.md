@@ -14,7 +14,7 @@ One MCP server, two clients (Claude Code + Codex CLI), one A2A-compliant relay.
 - **Open-source launch** (MIT license, public GitHub, npm + PyPI packages).
 - **First adopters: dogfood at Travenues / ixigo internally** — the team is the
   honest-feedback loop. No paid tier, no hosted service in v1.
-- **Polish bar:** a stranger on the internet can run `npx @agentrelay/mcp` and
+- **Polish bar:** a stranger on the internet can run `npx agentrelay-mcp` and
   `docker compose up` and have a working two-laptop demo within 5 minutes.
 - **Each release ships with a launch demo video and a blog post** (90-second
   screen recording, two-terminal split-screen).
@@ -53,7 +53,7 @@ ships. Two terminals + Slack DMs in the screen recording. ~90 seconds.
 Features:
 - A2A-compliant relay (LF A2A spec, JSON-RPC over HTTPS)
 - Agent Card registry at `/.well-known/agent-card.json?id=<handle>`
-- MCP server (`@agentrelay/mcp`) on Claude Code and Codex CLI
+- MCP server (`agentrelay-mcp`) on Claude Code and Codex CLI
 - Six tools: `handoff_to_teammate`, `check_inbox`, `accept_handoff`,
   `send_message`, `complete_handoff`, `list_teammates`
 - Routing: explicit only (`to: "frank"`)

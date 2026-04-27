@@ -1,5 +1,5 @@
 /**
- * Public exports for the @agentrelay/mcp package. Consumers (the bin
+ * Public exports for the agentrelay-mcp package. Consumers (the bin
  * scripts and tests) import from here.
  */
 

@@ -1,5 +1,5 @@
 {
-  "name": "@agentrelay/mcp",
+  "name": "agentrelay-mcp",
   "version": "0.1.0",
   "description": "AgentRelay MCP server — local stdio process exposing A2A handoff tools to Claude Code or Codex CLI.",
   "license": "MIT",
@@ -39,9 +39,6 @@
     "README.md",
     "LICENSE"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

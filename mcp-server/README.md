@@ -1,4 +1,4 @@
-# @agentrelay/mcp
+# agentrelay-mcp
 
 The MCP server for [AgentRelay](https://github.com/swayamg20/AgentRelay). Runs as
 a local stdio process; exposes seven tools to Claude Code and Codex CLI for
@@ -10,7 +10,7 @@ sending and receiving structured handoffs between teammates' agents.
 
 ```bash
 # Per-developer, scoped to one project — recommended for trying it out.
-npx @agentrelay/mcp register \
+npx agentrelay-mcp register \
   --relay <your-team-relay-url> \
   --admin-token <admin-token> \
   --handle bob@acme \
@@ -18,7 +18,7 @@ npx @agentrelay/mcp register \
   --name "Bob" \
   --role backend
 
-npx @agentrelay/mcp install --client claude-code
+npx agentrelay-mcp install --client claude-code
 # or --client codex, or --client all
 ```
 

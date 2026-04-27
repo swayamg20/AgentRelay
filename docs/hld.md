@@ -167,11 +167,11 @@ later). Fires Slack webhooks. Failure to deliver does not roll back the
 inbox write — the inbox is the source of truth, notifications are
 best-effort signaling.
 
-### 3.2 MCP server (`@agentrelay/mcp`)
+### 3.2 MCP server (`agentrelay-mcp`)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│            @agentrelay/mcp (per laptop)                 │
+│            agentrelay-mcp (per laptop)                 │
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │ MCP Transport Layer (stdio, JSON-RPC)            │   │
@@ -343,7 +343,7 @@ Operational consequences for the v0.1 build:
 ```mermaid
 sequenceDiagram
     participant Bob as Bob (CLI)
-    participant MCP as @agentrelay/mcp
+    participant MCP as agentrelay-mcp
     participant Relay
 
     Bob->>MCP: agentrelay register --relay <url> --handle bob

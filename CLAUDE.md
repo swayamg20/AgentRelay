@@ -3,7 +3,7 @@
 ## What this project is
 
 AgentRelay is a cross-developer agent-to-agent communication system on the
-A2A protocol. One MCP server (`@agentrelay/mcp`), one relay, two clients
+A2A protocol. One MCP server (`agentrelay-mcp`), one relay, two clients
 (Claude Code + Codex CLI). Engineers' agents talk through the relay with
 provenance-wrapped messages; humans approve writes via Claude Code's
 permission system.

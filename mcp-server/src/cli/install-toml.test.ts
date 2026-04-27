@@ -12,11 +12,11 @@ describe("mergeCodexSettings", () => {
 		expect(report.mcpServerAdded).toBe(true);
 		expect((next.mcp_servers as Record<string, unknown>).agentrelay).toEqual({
 			command: "npx",
-			args: ["-y", "@agentrelay/mcp"],
+			args: ["-y", "agentrelay-mcp"],
 		});
 		const round = parse(tomlText) as Record<string, any>;
 		expect(round.mcp_servers.agentrelay.command).toBe("npx");
-		expect(round.mcp_servers.agentrelay.args).toEqual(["-y", "@agentrelay/mcp"]);
+		expect(round.mcp_servers.agentrelay.args).toEqual(["-y", "agentrelay-mcp"]);
 	});
 
 	it("adds every recommended permission to a fresh file", () => {
@@ -98,14 +98,14 @@ args = ["custom.js"]
 		expect(report.mcpServerOverwritten).toBe(true);
 		expect((next.mcp_servers as any).agentrelay).toEqual({
 			command: "npx",
-			args: ["-y", "@agentrelay/mcp"],
+			args: ["-y", "agentrelay-mcp"],
 		});
 	});
 
 	it("reports no-op when settings already in sync", () => {
 		const synced = `[mcp_servers.agentrelay]
 command = "npx"
-args = ["-y", "@agentrelay/mcp"]
+args = ["-y", "agentrelay-mcp"]
 
 [permissions]
 allow = ${arrToToml([...RECOMMENDED_PERMISSIONS.allow])}

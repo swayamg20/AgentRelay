@@ -34,7 +34,7 @@ export const RECOMMENDED_PERMISSIONS = {
 
 export const RECOMMENDED_MCP_ENTRY = {
 	command: "npx",
-	args: ["-y", "@agentrelay/mcp"],
+	args: ["-y", "agentrelay-mcp"],
 	env: {} as Record<string, string>,
 } as const;
 

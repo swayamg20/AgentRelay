@@ -45,7 +45,7 @@ to install.
 │   ├── auto-mode.md       (v0.2 — live pairing channel)
 │   └── ambient-agent.md   (v0.3 — headless drafting)
 ├── relay/                 ← Hono + Drizzle + Postgres relay (TS)
-├── mcp-server/            ← @agentrelay/mcp — installed per laptop (TS)
+├── mcp-server/            ← agentrelay-mcp — installed per laptop (TS)
 ├── CLAUDE.md              ← project rules for Claude Code teammates
 └── docker-compose.yml     ← local Postgres for development
 ```
@@ -76,7 +76,7 @@ Then on each developer's laptop:
 
 ```bash
 # install the MCP package
-npx @agentrelay/mcp register \
+npx agentrelay-mcp register \
   --relay http://localhost:8080 \
   --admin-token $RELAY_ADMIN_TOKEN \
   --handle bob@acme \
@@ -85,10 +85,10 @@ npx @agentrelay/mcp register \
   --role backend
 
 # wire it into Claude Code AND/OR Codex (writes settings.json + permission overlay)
-npx @agentrelay/mcp install --client all
+npx agentrelay-mcp install --client all
 
 # verify
-npx @agentrelay/mcp doctor
+npx agentrelay-mcp doctor
 ```
 
 ## What ships in v0.1

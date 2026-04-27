@@ -804,7 +804,7 @@ For Claude Code (`~/.claude/settings.json`):
   "mcpServers": {
     "agentrelay": {
       "command": "npx",
-      "args": ["-y", "@agentrelay/mcp"],
+      "args": ["-y", "agentrelay-mcp"],
       "env": {}
     }
   }
@@ -815,7 +815,7 @@ For Codex CLI (`~/.codex/config.toml`):
 ```toml
 [mcp_servers.agentrelay]
 command = "npx"
-args = ["-y", "@agentrelay/mcp"]
+args = ["-y", "agentrelay-mcp"]
 ```
 
 **(b) Writes the recommended permission overlay (Layer 2 of the trust
