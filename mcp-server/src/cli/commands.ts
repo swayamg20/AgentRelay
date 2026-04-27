@@ -217,7 +217,22 @@ export async function doctor(deps: DoctorDeps = {}): Promise<DoctorReport> {
 			const ok = await whoami(cfg.config.relay_url, cfg.config.api_key);
 			report.relayReachable = true;
 			report.apiKeyValid = ok;
-			if (!ok) report.notes.push("API key rejected by relay /whoami");
+			if (!ok) {
+				// Most common cause we hit during local dev: someone restarted the
+				// relay with a freshly-generated `RELAY_PEPPER` (e.g. via `openssl
+				// rand`), so the relay can no longer verify keys hashed with the
+				// old pepper. The key isn't "revoked" — it just hashes differently.
+				// Surface this explicitly so users don't go hunting for the wrong
+				// thing first.
+				report.notes.push(
+					"API key rejected by relay. Likely causes (in order):\n" +
+						"  1. Relay's RELAY_PEPPER changed since you registered (use a stable\n" +
+						"     env file across restarts, then re-register).\n" +
+						"  2. Your key was rotated or revoked — check the relay's api_keys table.\n" +
+						"  3. relay_url in ~/.agentrelay/config.json points at a different relay\n" +
+						"     than the one verifying you now.",
+				);
+			}
 		} catch (err) {
 			report.notes.push(`relay unreachable: ${err instanceof Error ? err.message : String(err)}`);
 		}
