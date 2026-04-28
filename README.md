@@ -118,24 +118,36 @@ you're done.
 
 ### Per-developer setup
 
+Full step-by-step (with troubleshooting) lives in
+[`docs/onboarding.md`](docs/onboarding.md). The short version:
+
 ```bash
-# Register your identity (admin token comes from your team lead)
-npx agentrelay-mcp register \
-  --relay http://localhost:8080 \
+# Register your identity (admin token comes from your team lead).
+# Note: use the `agentrelay` CLI bin, not `agentrelay-mcp` (the MCP server).
+npx -y -p agentrelay-mcp agentrelay register \
+  --relay https://your-team-relay.example.com \
   --admin-token <admin-token-from-team-lead> \
   --handle bob@acme \
   --email bob@acme.com \
   --name "Bob" \
   --role backend
 
-# Wire into Claude Code AND/OR Codex (writes settings + permission overlay)
-npx agentrelay-mcp install --client all
+# Wire AgentRelay into Claude Code (user scope = works in every directory)
+claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp
+
+# Add the recommended permission overlay (allow reads/tests, ask before writes,
+# deny git push / npm publish / curl / aws / kubectl)
+npx -y -p agentrelay-mcp agentrelay install --client all
 
 # Verify
-npx agentrelay-mcp doctor
+npx -y -p agentrelay-mcp agentrelay doctor
 ```
 
 Then in Claude Code or Codex CLI: *"Send a handoff to frank@acme telling him I refactored the /users API…"*
+
+> v0.1.x onboarding has known sharp edges (tracked in [v0.1.2](https://github.com/swayamg20/AgentRelay/milestone/1)).
+> v0.2.0 collapses the whole flow to one command: `agentrelay join <invite-url>`
+> ([#6](https://github.com/swayamg20/AgentRelay/issues/6)).
 
 ## What ships in v0.1.0
 
@@ -157,6 +169,8 @@ Then in Claude Code or Codex CLI: *"Send a handoff to frank@acme telling him I r
 │   ├── architecture.md   ← canonical reference + four-layer trust model
 │   ├── hld.md            ← state machine, sequence diagrams
 │   ├── lld.md            ← schemas, endpoints, error codes
+│   ├── onboarding.md     ← team setup walkthrough + troubleshooting
+│   ├── next-steps.md     ← living planning index, linked to GH issues
 │   ├── roadmap.md        ← phase-by-phase release plan
 │   ├── auto-mode.md      ← v0.2 design: live pairing channel
 │   └── ambient-agent.md  ← v0.3 design: headless drafting
