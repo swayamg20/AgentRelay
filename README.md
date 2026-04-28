@@ -87,28 +87,34 @@ demo video shows the L1 preamble surfacing live in both terminal sessions.
 
 ## Quick start
 
-Requires Node 20+, pnpm 9+, Docker.
+### Self-host the relay (once per team) — Docker only
 
-### Self-host the relay (once per team)
+Just Docker. No Node, no pnpm, no build step. Postgres + relay come up
+together; migrations run on boot.
 
 ```bash
 git clone https://github.com/swayamg20/AgentRelay
 cd AgentRelay
-pnpm install
-docker compose up -d                                              # Postgres on :5433
+cp .env.example .env
 
-# Stable secrets — same values across restarts so API keys keep verifying.
-export RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
-export RELAY_PEPPER=stable-dev-pepper-do-not-randomise-between-restarts
-export RELAY_ENCRYPTION_KEY=stable-dev-encryption-key
-export RELAY_ADMIN_TOKEN=stable-dev-admin-token
-export RELAY_METRICS_TOKEN=stable-dev-metrics-token
-export RELAY_PUBLIC_URL=http://localhost:8080
-export RELAY_ENV=dev RELAY_PORT=8080
+# Edit .env — at minimum, regenerate the secrets before exposing publicly:
+#   sed -i '' "s|^RELAY_PEPPER=.*|RELAY_PEPPER=$(openssl rand -hex 32)|" .env
+#   sed -i '' "s|^RELAY_ADMIN_TOKEN=.*|RELAY_ADMIN_TOKEN=$(openssl rand -hex 16)|" .env
 
-pnpm --filter relay db:migrate
-pnpm --filter relay dev                                           # http://localhost:8080
+docker compose --profile selfhost up -d                           # postgres + relay
+curl http://localhost:8080/healthz                                # → {"status":"ok"}
 ```
+
+That's the whole self-host setup. Behind the curtain:
+
+- Postgres on `:5433` (container `agentrelay-postgres`)
+- Relay on `:8080` (container `agentrelay-relay`, built from `relay/Dockerfile`)
+- Migrations applied on relay boot (idempotent)
+- Both restart `unless-stopped`
+
+To put it on a real server, point your reverse proxy (nginx / caddy /
+cloudflared) at `:8080`, set `RELAY_PUBLIC_URL` to the public URL, and
+you're done.
 
 ### Per-developer setup
 

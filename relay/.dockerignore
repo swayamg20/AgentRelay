@@ -1,0 +1,24 @@
+# Keep the build context tight — anything not needed for tsc + drizzle migrations
+# stays out of the image.
+
+node_modules
+dist
+.turbo
+
+# Tests are excluded by tsconfig already, but no point sending them either.
+src/**/*.test.ts
+
+# OS / editor noise
+.DS_Store
+.idea
+.vscode
+
+# Local env files — never bake secrets into the image. They come in via
+# docker-compose's env_file at runtime.
+.env
+.env.local
+.env.*.local
+
+# Coverage / temp
+coverage
+*.log

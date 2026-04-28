@@ -1,3 +1,18 @@
+# AgentRelay docker-compose.
+#
+# Two modes:
+#
+#   1. Dev mode (default — what contributors run):
+#        docker compose up -d
+#      Starts only Postgres on :5433. Run the relay on the host with
+#      `pnpm --filter relay dev` so source changes hot-reload.
+#
+#   2. Self-host mode (what teams running AgentRelay for real use):
+#        docker compose --profile selfhost up -d
+#      Starts Postgres AND a built relay container. The relay runs
+#      migrations on boot, exposes :8080. Self-hosters drop a `.env`
+#      file (see .env.example) and that's it.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -5,7 +20,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: agentrelay
-      POSTGRES_PASSWORD: agentrelay-dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentrelay-dev}
       POSTGRES_DB: agentrelay
     ports:
       - '5433:5432'
@@ -16,6 +31,37 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  relay:
+    profiles: [selfhost]
+    build:
+      # Build context is the repo root so the Dockerfile can copy the
+      # workspace lockfile + tsconfig.base.json.
+      context: .
+      dockerfile: relay/Dockerfile
+    container_name: agentrelay-relay
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Connect to the postgres service over the docker network.
+      RELAY_DATABASE_URL: postgres://agentrelay:${POSTGRES_PASSWORD:-agentrelay-dev}@postgres:5432/agentrelay
+      # Required secrets — set in .env or override here. .env.example has
+      # safe defaults for local; rotate before exposing publicly.
+      RELAY_PEPPER: ${RELAY_PEPPER:?RELAY_PEPPER must be set in .env (>= 32 bytes)}
+      RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:?RELAY_ENCRYPTION_KEY must be set in .env (>= 16 bytes)}
+      RELAY_ADMIN_TOKEN: ${RELAY_ADMIN_TOKEN:?RELAY_ADMIN_TOKEN must be set in .env}
+      RELAY_METRICS_TOKEN: ${RELAY_METRICS_TOKEN:?RELAY_METRICS_TOKEN must be set in .env}
+      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://localhost:8080}
+      RELAY_ENV: ${RELAY_ENV:-production}
+      RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-info}
+      RELAY_PORT: '8080'
+      RELAY_AUDIT_RETENTION_DAYS: ${RELAY_AUDIT_RETENTION_DAYS:-90}
+      RELAY_RATE_LIMIT_PER_MIN: ${RELAY_RATE_LIMIT_PER_MIN:-60}
+      RELAY_DB_POOL_SIZE: ${RELAY_DB_POOL_SIZE:-20}
+    ports:
+      - '${RELAY_PORT:-8080}:8080'
 
 volumes:
   postgres-data:

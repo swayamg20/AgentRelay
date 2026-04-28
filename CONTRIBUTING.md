@@ -18,8 +18,14 @@ Requires **Node 20+**, **pnpm 9+**, **Docker**.
 git clone https://github.com/swayamg20/AgentRelay
 cd AgentRelay
 pnpm install                          # one workspace for both packages
-docker compose up -d                  # local Postgres on :5433
+docker compose up -d                  # local Postgres on :5433 (relay runs on host)
 ```
+
+> **Note:** plain `docker compose up -d` brings up *only* Postgres — the
+> dev mode. Run the relay on your host (`pnpm --filter relay dev`) so
+> source changes hot-reload. Self-hosters use `--profile selfhost`,
+> which builds and runs the relay container too — but for contributing,
+> stay on the host-relay path.
 
 Run unit tests anytime (no DB needed):
 
