@@ -49,10 +49,13 @@ services:
       RELAY_DATABASE_URL: postgres://agentrelay:${POSTGRES_PASSWORD:-agentrelay-dev}@postgres:5432/agentrelay
       # Required secrets — set in .env or override here. .env.example has
       # safe defaults for local; rotate before exposing publicly.
-      RELAY_PEPPER: ${RELAY_PEPPER:?RELAY_PEPPER must be set in .env (>= 32 bytes)}
-      RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:?RELAY_ENCRYPTION_KEY must be set in .env (>= 16 bytes)}
-      RELAY_ADMIN_TOKEN: ${RELAY_ADMIN_TOKEN:?RELAY_ADMIN_TOKEN must be set in .env}
-      RELAY_METRICS_TOKEN: ${RELAY_METRICS_TOKEN:?RELAY_METRICS_TOKEN must be set in .env}
+      # Secrets default to empty so non-up commands (down, ps, config) work
+      # even before .env exists. The relay's own zod config validation
+      # rejects empty values at startup with a clearer error than docker's.
+      RELAY_PEPPER: ${RELAY_PEPPER:-}
+      RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:-}
+      RELAY_ADMIN_TOKEN: ${RELAY_ADMIN_TOKEN:-}
+      RELAY_METRICS_TOKEN: ${RELAY_METRICS_TOKEN:-}
       RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://localhost:8080}
       RELAY_ENV: ${RELAY_ENV:-production}
       RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-info}
