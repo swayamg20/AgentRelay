@@ -19,27 +19,35 @@ Works with [Claude Code](https://claude.com/code) and [OpenAI Codex CLI](https:/
 
 ## Why this exists
 
-Today, when Bob refactors an API, he context-dumps it into Slack. Frank reads
-the dump, copy-pastes it into his agent's prompt, and now Bob's untrusted text
-is driving Frank's tool calls — the **worst possible trust model**. The handoff
-loses fidelity, the receiver re-discovers context the sender already had, and
-the round-trip is human-bounded.
+Coding agents are getting good at solo work, but engineers don't work solo —
+they hand off. Today when Bob's agent finishes a refactor, the only way to
+get that context to Frank's agent on another laptop is for Bob to dump it
+into Slack and Frank to copy-paste it into a prompt. The handoff loses
+fidelity, the receiver re-discovers context the sender already had, and the
+round-trip is human-bounded.
 
-Adjacent tools all solve some part of agent coordination, but none solve
-**peer-to-peer agent communication between humans on different laptops**:
+**AgentRelay is a direct, structured channel between two coding agents on
+different laptops.** Bob's agent calls a tool; Frank's agent receives a
+handoff with the file diff, the open question, the test command, the
+provenance — straight from one agent to another over the open
+[A2A protocol](https://a2a-protocol.org).
 
-| Tool | Coordination scope | Cross-machine | Cross-developer | Trust model |
-|---|---|:---:|:---:|---|
-| [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) | Subagents in one developer's session | ❌ | ❌ | Implicit (single human) |
-| [OpenAI Agents SDK handoffs](https://openai.github.io/openai-agents-python/handoffs/) | Agent → agent in one runtime | ❌ | ❌ | Implicit |
-| [GitHub Copilot Coding Agent](https://github.blog/news-insights/product-news/github-copilot-coding-agent/) | Developer ↔ Copilot bot in cloud | ✅ | ❌ | Code review gate |
-| [Cursor Background Agents](https://docs.cursor.com/background-agent) | One developer's async tasks | ✅ | ❌ | Implicit |
-| [AgentMesh](https://arxiv.org/html/2507.19902v1) | Research framework, not deployable | — | — | — |
-| **AgentRelay** | **Peer-to-peer between humans on different laptops** | **✅** | **✅** | **Four explicit layers** |
+Adjacent tools each solve a slice of agent coordination, but none solve
+peer-to-peer agent communication between humans on different laptops:
 
-That last column is the load-bearing one — the rest of this README is about
-why those four layers are the only thing that makes cross-machine agent
-communication safe.
+| Tool | Coordination scope | Cross-machine | Cross-developer |
+|---|---|:---:|:---:|
+| [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) | Subagents in one developer's session | ❌ | ❌ |
+| [OpenAI Agents SDK handoffs](https://openai.github.io/openai-agents-python/handoffs/) | Agent → agent in one runtime | ❌ | ❌ |
+| [GitHub Copilot Coding Agent](https://github.blog/news-insights/product-news/github-copilot-coding-agent/) | Developer ↔ Copilot bot in cloud | ✅ | ❌ |
+| [Cursor Background Agents](https://docs.cursor.com/background-agent) | One developer's async tasks | ✅ | ❌ |
+| [AgentMesh](https://arxiv.org/html/2507.19902v1) | Research framework, not deployable | — | — |
+| **AgentRelay** | **Agent-to-agent, between humans on different laptops** | **✅** | **✅** |
+
+The two checkmarks in the bottom row are the whole product. Everything
+else in this README is about how AgentRelay actually does it — the
+protocol, the relay, the MCP tools — and how those handoffs stay safe
+when the sender is on someone else's laptop (the [trust model](#how-handoffs-stay-safe)).
 
 ## How it works
 
@@ -69,11 +77,12 @@ self-hosts via Docker. Agents send structured handoffs through the relay;
 recipients pull them with full provenance wrapping. Humans approve writes
 through Claude Code's existing permission system.
 
-## The trust model
+## How handoffs stay safe
 
 Cross-machine agent communication only works if you can stop a malicious (or
 prompt-injected) sender from running anything they want on the receiver.
-AgentRelay does that with four mandatory layers:
+AgentRelay enforces that with four mandatory layers — every handoff goes
+through all of them:
 
 | Layer | Mechanism | Where it runs |
 |---|---|---|
@@ -82,7 +91,7 @@ AgentRelay does that with four mandatory layers:
 | **L3** | Per-teammate trust. `~/.agentrelay/trust.yaml` — explicitly opt in teammates with granular `auto_write_paths`, `require_approval`. Unknown senders rejected by default. | MCP server |
 | **L4** | Audit + atomic revocation. Every state mutation logged. `agentrelay block <handle>` revokes a teammate instantly. | Relay + MCP CLI |
 
-Skip a layer, the security guarantee evaporates. v0.1.0 wires all four; the
+Skip a layer, the safety guarantee evaporates. v0.1.0 wires all four; the
 demo video shows the L1 preamble surfacing live in both terminal sessions.
 
 ## Quick start
