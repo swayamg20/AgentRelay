@@ -1,0 +1,38 @@
+# Auto-deploy the AgentRelay relay to Fly.io on version tag push.
+#
+# Trigger: pushing a SemVer tag like `v0.2.0` or `v1.0.0`. Day-to-day
+# pushes to `main` do NOT deploy — tag a release explicitly.
+#
+# Setup (one-time, post-`fly launch`):
+#   1. Run `fly auth token` locally to mint a deploy token.
+#   2. On GitHub: Settings → Secrets and variables → Actions →
+#      New repository secret → name `FLY_API_TOKEN`, paste the token.
+#   3. Push a tag: `git tag v0.2.0 && git push origin v0.2.0`.
+#
+# See docs/deploy-fly.md for the full walkthrough.
+
+name: deploy-fly
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  deploy:
+    name: Deploy relay to Fly.io
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-fly-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

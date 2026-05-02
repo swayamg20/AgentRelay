@@ -81,7 +81,33 @@ handoff thread — reusable next time someone hits the same question.
 > + a hosted relay. Self-hosted teams can use the invite flow below now.
 > Full guide with troubleshooting: [`docs/onboarding.md`](docs/onboarding.md).
 
-### Self-host the relay (once per team) — Docker only
+### Self-host the relay (once per team)
+
+Two paths — pick one. A future hosted relay (run by the project) will
+remove even this step for teams that don't want to operate their own.
+
+**Recommended: deploy to Fly.io free tier (~$0/mo).**
+The repo ships a checked-in `fly.toml` and an auto-deploy GitHub Actions
+workflow. End-to-end walkthrough — including Postgres provisioning,
+secrets, custom domain, and tag-triggered deploys — is in
+[`docs/deploy-fly.md`](docs/deploy-fly.md). The short version:
+
+```bash
+brew install flyctl && fly auth signup
+fly launch --no-deploy --copy-config
+fly postgres create --name agentrelay-pg --vm-size shared-cpu-1x --volume-size 1
+fly postgres attach agentrelay-pg
+fly secrets set RELAY_PEPPER=$(openssl rand -hex 32) \
+                RELAY_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+                RELAY_INVITE_SECRET=$(openssl rand -hex 32) \
+                RELAY_ADMIN_TOKEN=$(openssl rand -hex 16) \
+                RELAY_METRICS_TOKEN=$(openssl rand -hex 16) \
+                RELAY_PUBLIC_URL=https://<your-app>.fly.dev
+fly deploy
+curl https://<your-app>.fly.dev/healthz                       # → {"status":"ok"}
+```
+
+**Alternative: Docker on your own server.**
 
 ```bash
 git clone https://github.com/swayamg20/AgentRelay
