@@ -36,6 +36,32 @@ const adminAgentResponseSchema = z.object({
 	api_key: z.string(),
 });
 
+const inviteResponseSchema = z
+	.object({
+		url: z.string(),
+		jti: z.string(),
+		expiresAt: z.string().optional(),
+		expires_at: z.string().optional(),
+	})
+	.transform(({ url, jti, expiresAt, expires_at }, ctx) => {
+		const normalizedExpiresAt = expiresAt ?? expires_at;
+		if (!normalizedExpiresAt) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "invite response missing expiresAt",
+			});
+			return z.NEVER;
+		}
+		return { url, jti, expiresAt: normalizedExpiresAt };
+	});
+
+const inviteTokenPayloadSchema = z
+	.object({
+		jti: z.string().min(1),
+		inviter_handle: z.string().min(1),
+	})
+	.passthrough();
+
 export interface RegisterOptions {
 	relay: string;
 	adminToken?: string;
@@ -91,6 +117,132 @@ export async function register(
 	await writeSecretFile(path, `${JSON.stringify(config, null, 2)}\n`);
 	logger.info({ path }, "wrote ~/.agentrelay/config.json (mode 0600)");
 	return config;
+}
+
+export interface InviteOptions {
+	handle: string;
+	role: string;
+	expiresInSeconds: number;
+	adminToken: string;
+	relayUrl?: string;
+}
+
+export interface InviteResult {
+	url: string;
+	jti: string;
+	expiresAt: string;
+}
+
+type InviteLoadConfigResult =
+	| {
+			ok: true;
+			config: Partial<Pick<AgentRelayConfig, "relay_url" | "agent_handle">>;
+	  }
+	| {
+			ok: false;
+			reason: string;
+			path: string;
+			detail?: string;
+	  };
+
+export interface InviteDeps {
+	httpPost?: (
+		url: string,
+		body: unknown,
+		headers: Record<string, string>,
+	) => Promise<{ status: number; json: unknown }>;
+	loadConfig?: () => Promise<InviteLoadConfigResult>;
+}
+
+export async function invite(opts: InviteOptions, deps: InviteDeps = {}): Promise<InviteResult> {
+	const post = deps.httpPost ?? defaultHttpPost;
+	const load = deps.loadConfig ?? loadConfig;
+	const cfg = await load();
+	const localConfig = cfg.ok ? cfg.config : undefined;
+	const relayUrl = opts.relayUrl ?? localConfig?.relay_url;
+	if (!relayUrl) {
+		throw new Error("no relay URL — pass --relay or run agentrelay register first");
+	}
+	const inviterHandle = localConfig?.agent_handle;
+	if (!inviterHandle) {
+		throw new Error(
+			"agentrelay invite must be run from a registered machine (no agent_handle in config)",
+		);
+	}
+
+	const url = `${stripTrailing(relayUrl)}/admin/invites`;
+	const res = await post(
+		url,
+		{
+			handle: opts.handle,
+			role: opts.role,
+			inviter_handle: inviterHandle,
+			expires_in_seconds: opts.expiresInSeconds ?? 86_400,
+		},
+		{
+			"content-type": "application/json",
+			authorization: `Bearer ${opts.adminToken}`,
+		},
+	);
+	if (res.status < 200 || res.status >= 300) {
+		throw new Error(relayErrorMessage(res.status, res.json));
+	}
+	return inviteResponseSchema.parse(res.json);
+}
+
+export interface JoinDeps {
+	httpPost?: (
+		url: string,
+		body: unknown,
+		headers: Record<string, string>,
+	) => Promise<{ status: number; json: unknown }>;
+	configPath?: string;
+	trustPath?: string;
+	installFn?: (opts: InstallOptions) => Promise<InstallResult>;
+}
+
+export async function join(
+	opts: {
+		url: string;
+	},
+	deps: JoinDeps = {},
+): Promise<{ handle: string; agentId: string; relayUrl: string }> {
+	const post = deps.httpPost ?? defaultHttpPost;
+	const path = deps.configPath ?? configPath();
+	const trustFilePath = deps.trustPath ?? trustPath();
+	const runInstall = deps.installFn ?? install;
+	const { relayUrl, token } = parseInviteUrl(opts.url);
+	const payload = decodeInvitePayload(token);
+	const url = `${relayUrl}/invites/${encodeURIComponent(payload.jti)}/redeem`;
+
+	const res = await post(
+		url,
+		{ token },
+		{
+			"content-type": "application/json",
+		},
+	);
+	if (res.status < 200 || res.status >= 300) {
+		throw new Error(relayErrorMessage(res.status, res.json));
+	}
+	const parsed = adminAgentResponseSchema.parse(res.json);
+
+	const config: AgentRelayConfig = {
+		relay_url: relayUrl,
+		agent_handle: parsed.handle,
+		agent_id: parsed.agent_id,
+		api_key: parsed.api_key,
+		default_session_id: null,
+	};
+	await writeSecretFile(path, `${JSON.stringify(config, null, 2)}\n`);
+
+	const trust = await readOrFallback(trustFilePath);
+	const nextTrust = setTeammate(trust, payload.inviter_handle, {});
+	await writeSecretFile(trustFilePath, serializeTrust(nextTrust));
+
+	await runInstall({ client: "all", overwrite: false });
+
+	return { handle: parsed.handle, agentId: parsed.agent_id, relayUrl };
 }
 
 export interface InstallOptions {
@@ -661,6 +813,70 @@ async function loadConfigOrThrow(_path: string): Promise<AgentRelayConfig> {
 function shortBody(json: unknown): string {
 	const s = typeof json === "string" ? json : JSON.stringify(json);
 	return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
+function relayErrorMessage(status: number, json: unknown): string {
+	if (json && typeof json === "object" && !Array.isArray(json)) {
+		const body = json as Record<string, unknown>;
+		if (typeof body.message === "string") return body.message;
+		if (typeof body.error === "string") return body.error;
+	}
+	return `relay returned ${status}`;
+}
+
+function parseInviteUrl(value: string): { relayUrl: string; token: string } {
+	const hashIndex = value.indexOf("#");
+	if (hashIndex <= 0 || hashIndex === value.length - 1) {
+		throw new Error("invalid invite URL");
+	}
+
+	let parsed: URL;
+	try {
+		parsed = new URL(value);
+	} catch {
+		throw new Error("invalid invite URL");
+	}
+
+	const token = value.slice(hashIndex + 1);
+	parsed.hash = "";
+	stripJoinLandingPath(parsed);
+	const relayUrl = stripTrailing(parsed.toString());
+	if (!relayUrl) {
+		throw new Error("invalid invite URL");
+	}
+	return { relayUrl, token };
+}
+
+function stripJoinLandingPath(url: URL): void {
+	const normalizedPath = url.pathname.replace(/\/+$/, "");
+	if (normalizedPath === "/join" || normalizedPath.endsWith("/join")) {
+		const relayPath = normalizedPath.slice(0, -"/join".length);
+		url.pathname = relayPath.length > 0 ? relayPath : "/";
+	}
+}
+
+function decodeInvitePayload(token: string): { jti: string; inviter_handle: string } {
+	const parts = token.split(".");
+	const encodedPayload = parts[1];
+	if (parts.length !== 3 || !encodedPayload) {
+		throw new Error("malformed invite token");
+	}
+
+	try {
+		const payloadJson: unknown = JSON.parse(
+			Buffer.from(encodedPayload, "base64url").toString("utf8"),
+		);
+		const parsed = inviteTokenPayloadSchema.safeParse(payloadJson);
+		if (!parsed.success) {
+			throw new Error("invalid payload");
+		}
+		return {
+			jti: parsed.data.jti,
+			inviter_handle: parsed.data.inviter_handle,
+		};
+	} catch {
+		throw new Error("malformed invite token");
+	}
 }
 
 // ---------- defaults ----------

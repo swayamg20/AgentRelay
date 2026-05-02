@@ -32,6 +32,7 @@ export function loadDatabaseConfig(env: NodeJS.ProcessEnv = process.env): RelayD
 const envSchema = databaseSchema.extend({
 	RELAY_PEPPER: z.string().min(32, "RELAY_PEPPER must be at least 32 bytes"),
 	RELAY_ENCRYPTION_KEY: z.string().min(16, "RELAY_ENCRYPTION_KEY must be at least 16 bytes"),
+	RELAY_INVITE_SECRET: z.string().min(32, "RELAY_INVITE_SECRET must be at least 32 bytes"),
 	RELAY_ADMIN_TOKEN: z.string().min(8),
 	RELAY_METRICS_TOKEN: z.string().min(8),
 	RELAY_PUBLIC_URL: z.string().url(),
