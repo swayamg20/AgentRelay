@@ -1,7 +1,7 @@
 import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
-import { RECOMMENDED_PERMISSIONS } from "./install.js";
 import { mergeCodexSettings, renderTomlMergeReport } from "./install-toml.js";
+import { RECOMMENDED_PERMISSIONS } from "./install.js";
 
 describe("mergeCodexSettings", () => {
 	it("adds the [mcp_servers.agentrelay] block to an empty file", () => {

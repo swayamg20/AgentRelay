@@ -1,42 +1,42 @@
 {
-  "name": "relay",
-  "version": "0.0.1",
-  "private": true,
-  "description": "AgentRelay relay server — Hono HTTP service, Postgres-backed handoff state machine.",
-  "license": "MIT",
-  "type": "module",
-  "engines": {
-    "node": ">=20.0.0"
-  },
-  "main": "dist/main.js",
-  "files": ["dist"],
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
-    "dev": "node --import tsx/esm src/main.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:integration": "bash scripts/test-integration.sh",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --import tsx/esm src/db/migrate.ts",
-    "db:studio": "drizzle-kit studio",
-    "db:push": "drizzle-kit push"
-  },
-  "dependencies": {
-    "@hono/node-server": "^1.13.7",
-    "dotenv": "^16.4.7",
-    "drizzle-orm": "^0.36.4",
-    "hono": "^4.6.13",
-    "pino": "^9.5.0",
-    "postgres": "^3.4.5",
-    "zod": "^3.23.8"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "drizzle-kit": "^0.28.1",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
-  }
+	"name": "relay",
+	"version": "0.0.1",
+	"private": true,
+	"description": "AgentRelay relay server — Hono HTTP service, Postgres-backed handoff state machine.",
+	"license": "MIT",
+	"type": "module",
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"main": "dist/main.js",
+	"files": ["dist"],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"start": "node dist/main.js",
+		"dev": "node --import tsx/esm src/main.ts",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:integration": "bash scripts/test-integration.sh",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate": "node --import tsx/esm src/db/migrate.ts",
+		"db:studio": "drizzle-kit studio",
+		"db:push": "drizzle-kit push"
+	},
+	"dependencies": {
+		"@hono/node-server": "^1.13.7",
+		"dotenv": "^16.4.7",
+		"drizzle-orm": "^0.36.4",
+		"hono": "^4.6.13",
+		"pino": "^9.5.0",
+		"postgres": "^3.4.5",
+		"zod": "^3.23.8"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"drizzle-kit": "^0.28.1",
+		"tsx": "^4.19.2",
+		"typescript": "^5.7.2",
+		"vitest": "^2.1.8"
+	}
 }

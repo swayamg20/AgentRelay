@@ -61,7 +61,10 @@ export interface TomlMergeResult {
  * Parse a TOML string (or undefined for "no file") and merge in the
  * recommended Codex configuration. Pure; never touches disk.
  */
-export function mergeCodexSettings(rawToml: string | undefined, options: TomlMergeOptions): TomlMergeResult {
+export function mergeCodexSettings(
+	rawToml: string | undefined,
+	options: TomlMergeOptions,
+): TomlMergeResult {
 	const parsed = rawToml === undefined || rawToml.length === 0 ? {} : parse(rawToml);
 	const validated = tomlSettingsSchema.parse(parsed);
 	const next: CodexSettings = JSON.parse(JSON.stringify(validated));
@@ -126,7 +129,8 @@ export function mergeCodexSettings(rawToml: string | undefined, options: TomlMer
 export function renderTomlMergeReport(report: TomlMergeReport): string {
 	const lines: string[] = [];
 	if (report.mcpServerAdded) lines.push("+ mcp_servers.agentrelay (added)");
-	if (report.mcpServerOverwritten) lines.push("~ mcp_servers.agentrelay (overwritten with recommended)");
+	if (report.mcpServerOverwritten)
+		lines.push("~ mcp_servers.agentrelay (overwritten with recommended)");
 	for (const bucket of ["allow", "ask", "deny"] as const) {
 		for (const rule of report.permissionsAdded[bucket]) {
 			lines.push(`+ permissions.${bucket}: ${rule}`);

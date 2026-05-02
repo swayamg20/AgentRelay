@@ -1,3 +1,4 @@
 packages:
   - 'relay'
   - 'mcp-server'
+  - 'tests/e2e'

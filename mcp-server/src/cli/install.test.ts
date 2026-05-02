@@ -1,20 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
-	mergeClaudeSettings,
 	RECOMMENDED_MCP_ENTRY,
 	RECOMMENDED_PERMISSIONS,
+	mergeClaudeSettings,
 	renderMergeReport,
 } from "./install.js";
 
 describe("mergeClaudeSettings", () => {
 	it("adds the MCP entry to an empty file", () => {
-		const { next, report } = mergeClaudeSettings({}, { overwriteMcp: true, overwritePermissions: true });
+		const { next, report } = mergeClaudeSettings(
+			{},
+			{ overwriteMcp: true, overwritePermissions: true },
+		);
 		expect(report.mcpServerAdded).toBe(true);
 		expect(next.mcpServers?.agentrelay).toEqual(RECOMMENDED_MCP_ENTRY);
 	});
 
 	it("adds every recommended permission to a fresh file", () => {
-		const { next, report } = mergeClaudeSettings({}, { overwriteMcp: true, overwritePermissions: true });
+		const { next, report } = mergeClaudeSettings(
+			{},
+			{ overwriteMcp: true, overwritePermissions: true },
+		);
 		expect(report.permissionsAdded.allow).toEqual([...RECOMMENDED_PERMISSIONS.allow]);
 		expect(next.permissions?.deny).toEqual([...RECOMMENDED_PERMISSIONS.deny]);
 	});
@@ -27,7 +33,10 @@ describe("mergeClaudeSettings", () => {
 				deny: [],
 			},
 		};
-		const { next } = mergeClaudeSettings(current, { overwriteMcp: true, overwritePermissions: true });
+		const { next } = mergeClaudeSettings(current, {
+			overwriteMcp: true,
+			overwritePermissions: true,
+		});
 		expect(next.permissions?.allow).toContain("Bash(my-custom-tool*)");
 		expect(next.permissions?.allow).toContain("Read");
 	});

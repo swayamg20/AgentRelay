@@ -188,7 +188,11 @@ function mergeEntries(base: TeammateEntry | undefined, override: TeammateEntry):
 	return {
 		auto_read: pickBool(override.auto_read, base?.auto_read, fallback.auto_read),
 		auto_test: pickBool(override.auto_test, base?.auto_test, fallback.auto_test),
-		auto_write_paths: pickArr(override.auto_write_paths, base?.auto_write_paths, fallback.auto_write_paths),
+		auto_write_paths: pickArr(
+			override.auto_write_paths,
+			base?.auto_write_paths,
+			fallback.auto_write_paths,
+		),
 		require_approval: pickArr(
 			override.require_approval,
 			base?.require_approval,

@@ -17,11 +17,10 @@ const inboxItemSchema = z.object({
 	intent: z.string().optional(),
 	// Legacy `status` is `{state: string}` while rich shape doesn't have a
 	// flat status yet — read both.
-	status: z
-		.union([
-			handoffStatusSchema,
-			z.object({ state: handoffStatusSchema }).transform((v) => v.state),
-		]),
+	status: z.union([
+		handoffStatusSchema,
+		z.object({ state: handoffStatusSchema }).transform((v) => v.state),
+	]),
 	unread_messages: z.number().int().nonnegative().default(0),
 	created_at: z.string(),
 	updated_at: z.string(),

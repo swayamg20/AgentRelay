@@ -27,7 +27,12 @@ export type AgentRelayConfig = z.infer<typeof configSchema>;
 
 export type LoadConfigResult =
 	| { ok: true; config: AgentRelayConfig; path: string }
-	| { ok: false; reason: "missing" | "unreadable" | "malformed" | "invalid"; path: string; detail?: string };
+	| {
+			ok: false;
+			reason: "missing" | "unreadable" | "malformed" | "invalid";
+			path: string;
+			detail?: string;
+	  };
 
 export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
 	const override = env.AGENTRELAY_CONFIG_PATH;

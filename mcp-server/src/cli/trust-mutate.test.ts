@@ -11,11 +11,13 @@ import {
 } from "./trust-mutate.js";
 
 const seed = (): TrustFile =>
-	JSON.parse(JSON.stringify({
-		...FALLBACK_TRUST,
-		teammates: { "bob@acme": { auto_read: true } },
-		blocked: ["mallory@external"],
-	})) as TrustFile;
+	JSON.parse(
+		JSON.stringify({
+			...FALLBACK_TRUST,
+			teammates: { "bob@acme": { auto_read: true } },
+			blocked: ["mallory@external"],
+		}),
+	) as TrustFile;
 
 describe("trust-mutate.blockTeammate", () => {
 	it("adds and reports changed", () => {
@@ -96,7 +98,7 @@ describe("trust-mutate.serializeTrust", () => {
 		const text = serializeTrust(file);
 		const parsed = yaml.load(text, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
 		expect(parsed.version).toBe(1);
-		expect((parsed.blocked as string[])).toContain("mallory@external");
+		expect(parsed.blocked as string[]).toContain("mallory@external");
 	});
 
 	it("emits stable handle ordering", () => {

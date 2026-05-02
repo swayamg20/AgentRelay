@@ -27,7 +27,10 @@ export function trustPath(env: NodeJS.ProcessEnv = process.env): string {
  * here. For Codex it's the single `~/.codex/config.toml` that holds both
  * permission overlay and MCP server registrations.
  */
-export function clientPaths(client: SupportedClient, env: NodeJS.ProcessEnv = process.env): ClientPaths {
+export function clientPaths(
+	client: SupportedClient,
+	env: NodeJS.ProcessEnv = process.env,
+): ClientPaths {
 	const home = env.HOME ?? homedir();
 	switch (client) {
 		case "claude-code":

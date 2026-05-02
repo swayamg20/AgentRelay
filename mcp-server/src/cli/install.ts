@@ -234,7 +234,8 @@ export function mergeClaudeOverlay(
 export function renderMergeReport(report: MergeReport): string {
 	const lines: string[] = [];
 	if (report.mcpServerAdded) lines.push("+ mcpServers.agentrelay (added)");
-	if (report.mcpServerOverwritten) lines.push("~ mcpServers.agentrelay (overwritten with recommended)");
+	if (report.mcpServerOverwritten)
+		lines.push("~ mcpServers.agentrelay (overwritten with recommended)");
 	for (const bucket of ["allow", "ask", "deny"] as const) {
 		for (const rule of report.permissionsAdded[bucket]) {
 			lines.push(`+ permissions.${bucket}: ${rule}`);

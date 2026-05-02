@@ -108,7 +108,7 @@ export function createA2AClient(opts: A2AClientOptions): A2AClient {
 	const sleep = opts.sleep ?? ((ms: number) => delay(ms));
 	const uuid = opts.uuid ?? randomUUID;
 
-	const endpoint = stripTrailingSlash(opts.relayUrl) + "/a2a";
+	const endpoint = `${stripTrailingSlash(opts.relayUrl)}/a2a`;
 
 	async function request<T>(
 		method: string,
