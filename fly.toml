@@ -1,0 +1,60 @@
+# Fly.io app config for the AgentRelay relay.
+#
+# This file is checked in so `fly launch --no-deploy --copy-config` picks it
+# up unchanged. The `app` value below is a placeholder — on first launch
+# Fly will assign a unique name (or rename via `fly apps rename`).
+#
+# Secrets (RELAY_PEPPER, RELAY_ENCRYPTION_KEY, RELAY_ADMIN_TOKEN,
+# RELAY_METRICS_TOKEN, RELAY_INVITE_SECRET, RELAY_PUBLIC_URL,
+# RELAY_DATABASE_URL) are NOT in this file — set them via `fly secrets set`.
+# See docs/deploy-fly.md for the full walkthrough.
+
+app = "agentrelay-relay"
+primary_region = "iad"
+
+[build]
+  dockerfile = "relay/Dockerfile"
+
+[env]
+  RELAY_PORT = "8080"
+  RELAY_LOG_LEVEL = "info"
+  RELAY_ENV = "production"
+  RELAY_AUDIT_RETENTION_DAYS = "90"
+  RELAY_RATE_LIMIT_PER_MIN = "60"
+  RELAY_DB_POOL_SIZE = "20"
+
+[processes]
+  app = ""
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  processes = ["app"]
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "get"
+    path = "/healthz"
+    protocol = "http"
+
+[deploy]
+  strategy = "rolling"
