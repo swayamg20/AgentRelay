@@ -272,19 +272,64 @@ export async function doctor(deps: DoctorDeps = {}): Promise<DoctorReport> {
 	return report;
 }
 
+/**
+ * Remediation commands a user can copy-paste to fix a MISSING / BROKEN
+ * doctor check. Pure mapping — no I/O. Returning a non-empty string means
+ * the line should render with a `→ run: <cmd>` suffix.
+ */
+export type RemediationKind =
+	| { type: "config-missing" }
+	| { type: "mcp-missing"; client: string }
+	| { type: "overlay-missing"; client: string }
+	| { type: "trust-broken" };
+
+export function remediationFor(kind: RemediationKind): string {
+	switch (kind.type) {
+		case "config-missing":
+			return 'agentrelay register --relay <url> --admin-token <token> --handle <you>@<team> --email <you>@example.com --name "<Your Name>" --role <role>';
+		case "mcp-missing":
+			// Until #1 lands, `agentrelay install` writes to the wrong file for
+			// claude-code. Give the canonical working command for each client.
+			if (kind.client === "claude-code") {
+				return "claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp";
+			}
+			return `agentrelay install --client ${kind.client}`;
+		case "overlay-missing":
+			return `agentrelay install --client ${kind.client}`;
+		case "trust-broken":
+			return "rm ~/.agentrelay/trust.yaml && agentrelay install --client all";
+	}
+}
+
 export function formatDoctor(report: DoctorReport): string {
+	const renderLine = (label: string, ok: boolean, kind: RemediationKind, suffix = ""): string => {
+		const status = ok ? "OK" : "MISSING";
+		const hint = ok ? "" : `  → run: ${remediationFor(kind)}`;
+		return `${label}${status}${suffix}${hint}`;
+	};
+
 	const lines: string[] = [
-		`config:           ${report.configPresent ? "OK" : "MISSING"}  (${report.configPath})`,
+		renderLine(
+			"config:           ",
+			report.configPresent,
+			{ type: "config-missing" },
+			`  (${report.configPath})`,
+		),
 		`relay reachable:  ${formatTri(report.relayReachable)}`,
 		`api key valid:    ${formatTri(report.apiKeyValid)}`,
 	];
 	for (const [k, v] of Object.entries(report.mcpEntryPresent)) {
-		lines.push(`mcp[${k}]:        ${v ? "OK" : "MISSING"}`);
+		lines.push(renderLine(`mcp[${k}]:        `, v, { type: "mcp-missing", client: k }));
 	}
 	for (const [k, v] of Object.entries(report.overlayApplied)) {
-		lines.push(`overlay[${k}]:    ${v ? "OK" : "MISSING"}`);
+		lines.push(renderLine(`overlay[${k}]:    `, v, { type: "overlay-missing", client: k }));
 	}
-	lines.push(`trust.yaml:       ${report.trustParseable ? "OK" : "BROKEN"}  (${report.trustPath})`);
+	const trustLabel = `trust.yaml:       ${report.trustParseable ? "OK" : "BROKEN"}  (${report.trustPath})`;
+	lines.push(
+		report.trustParseable
+			? trustLabel
+			: `${trustLabel}  → run: ${remediationFor({ type: "trust-broken" })}`,
+	);
 	for (const note of report.notes) lines.push(`  note: ${note}`);
 	return lines.join("\n");
 }

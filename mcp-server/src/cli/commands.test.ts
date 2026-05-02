@@ -220,6 +220,59 @@ describe("doctor", () => {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("formatDoctor appends remediation hints to MISSING / BROKEN lines", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-hint-"));
+		try {
+			process.env.AGENTRELAY_CONFIG_PATH = join(dir, "missing.json");
+			process.env.AGENTRELAY_TRUST_PATH = join(dir, "missing.yaml");
+			const r = await doctor({
+				readSettings: async () => undefined,
+				clientPaths: () => ({ settingsPath: "/x/settings.json", format: "json" }),
+				whoami: async () => true,
+			});
+			const out = formatDoctor(r);
+			expect(out).toMatch(/config:\s+MISSING.*→ run: agentrelay register/);
+			expect(out).toMatch(
+				/mcp\[claude-code\]:\s+MISSING\s+→ run: claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp/,
+			);
+			expect(out).toMatch(/mcp\[codex\]:\s+MISSING\s+→ run: agentrelay install --client codex/);
+			expect(out).toMatch(
+				/overlay\[claude-code\]:\s+MISSING\s+→ run: agentrelay install --client claude-code/,
+			);
+			expect(out).toMatch(
+				/overlay\[codex\]:\s+MISSING\s+→ run: agentrelay install --client codex/,
+			);
+		} finally {
+			delete process.env.AGENTRELAY_CONFIG_PATH;
+			delete process.env.AGENTRELAY_TRUST_PATH;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("formatDoctor does not append hints to OK lines", async () => {
+		const settings = JSON.stringify({
+			mcpServers: { agentrelay: {} },
+			permissions: { allow: ["mcp__agentrelay__*"] },
+		});
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-clean-"));
+		try {
+			process.env.AGENTRELAY_CONFIG_PATH = join(dir, "missing.json");
+			process.env.AGENTRELAY_TRUST_PATH = join(dir, "missing.yaml");
+			const r = await doctor({
+				readSettings: async () => settings,
+				clientPaths: () => ({ settingsPath: "/x/settings.json", format: "json" }),
+				whoami: async () => true,
+			});
+			const out = formatDoctor(r);
+			expect(out).toMatch(/mcp\[claude-code\]:\s+OK(?!.*→ run)/);
+			expect(out).toMatch(/overlay\[claude-code\]:\s+OK(?!.*→ run)/);
+		} finally {
+			delete process.env.AGENTRELAY_CONFIG_PATH;
+			delete process.env.AGENTRELAY_TRUST_PATH;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("blockCmd / unblockCmd / trustSetCmd / trustResetCmd", () => {
