@@ -1,53 +1,133 @@
 # AgentRelay
 
-**Cross-developer agent-to-agent communication for engineering teams.**
+**Your coding agent's handoff to a teammate's coding agent — with full context, on another laptop.**
 
 [![npm version](https://img.shields.io/npm/v/agentrelay-mcp.svg)](https://www.npmjs.com/package/agentrelay-mcp)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![protocol](https://img.shields.io/badge/protocol-A2A-blueviolet.svg)](https://a2a-protocol.org)
 
-When Bob's coding agent finishes work, it can hand off context — file diffs,
-API contracts, test commands, an open question — directly to Frank's coding
-agent on another laptop. No copy-paste, no Slack threads, no lost context.
-Built on the [Linux Foundation A2A protocol](https://a2a-protocol.org).
-Works with [Claude Code](https://claude.com/code) and [OpenAI Codex CLI](https://github.com/openai/codex).
+Engineers don't ship alone — they hand off. The frontend agent waits on the
+backend agent's API contract. The on-call agent inherits a debugging trail
+from the agent that worked the issue at 3am EST. Today those handoffs go
+through Slack: prose, screenshots, copy-paste, lost fidelity. The receiving
+agent has to re-derive context the sending agent already had.
 
-> 🎬 **Demo video coming soon** — recording the bidirectional clarification
-> dance we used to verify v0.1.0 end-to-end.
+**AgentRelay is a direct, structured channel between coding agents on
+different laptops.** Bob's agent calls a tool; Frank's agent receives a
+thread with the file diff, the open question, the test command, the
+provenance — _and the journey it took to get there_. Built on the open
+[A2A protocol](https://a2a-protocol.org). Works with
+[Claude Code](https://claude.com/code) and
+[OpenAI Codex CLI](https://github.com/openai/codex).
+
+> 🎬 **Demo video coming soon** — cross-repo handoff between two laptops
+> with the L1 provenance preamble visible in both terminals.
 
 ---
 
-## Why this exists
+## When does AgentRelay actually help?
 
-Coding agents are getting good at solo work, but engineers don't work solo —
-they hand off. Today when Bob's agent finishes a refactor, the only way to
-get that context to Frank's agent on another laptop is for Bob to dump it
-into Slack and Frank to copy-paste it into a prompt. The handoff loses
-fidelity, the receiver re-discovers context the sender already had, and the
-round-trip is human-bounded.
+Four concrete moments where the alternative is "Slack and pray."
 
-**AgentRelay is a direct, structured channel between two coding agents on
-different laptops.** Bob's agent calls a tool; Frank's agent receives a
-handoff with the file diff, the open question, the test command, the
-provenance — straight from one agent to another over the open
-[A2A protocol](https://a2a-protocol.org).
+### 1. Cross-repo handoff (frontend ↔ backend)
 
-Adjacent tools each solve a slice of agent coordination, but none solve
-peer-to-peer agent communication between humans on different laptops:
+> Bob's agent just refactored `/users` in the **api** repo. He says:
+> *"Hand this off to Frank — he owns the web client."* Frank's agent, in
+> the **web** repo, gets a structured thread: the contract diff, the new
+> error codes, the test command, a starter PR for the frontend wiring —
+> all in a form his agent can act on without opening the api repo.
 
-| Tool | Coordination scope | Cross-machine | Cross-developer |
-|---|---|:---:|:---:|
-| [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) | Subagents in one developer's session | ❌ | ❌ |
-| [OpenAI Agents SDK handoffs](https://openai.github.io/openai-agents-python/handoffs/) | Agent → agent in one runtime | ❌ | ❌ |
-| [GitHub Copilot Coding Agent](https://github.blog/news-insights/product-news/github-copilot-coding-agent/) | Developer ↔ Copilot bot in cloud | ✅ | ❌ |
-| [Cursor Background Agents](https://docs.cursor.com/background-agent) | One developer's async tasks | ✅ | ❌ |
-| [AgentMesh](https://arxiv.org/html/2507.19902v1) | Research framework, not deployable | — | — |
-| **AgentRelay** | **Agent-to-agent, between humans on different laptops** | **✅** | **✅** |
+Today the API team writes a Notion doc; the FE team reads it Monday; the
+FE agent has zero context for the API repo. AgentRelay carries the structured
+contract straight across.
 
-The two checkmarks in the bottom row are the whole product. Everything
-else in this README is about how AgentRelay actually does it — the
-protocol, the relay, the MCP tools — and how those handoffs stay safe
-when the sender is on someone else's laptop (the [trust model](#how-handoffs-stay-safe)).
+### 2. Async / timezone handoff
+
+> You sign off at 6pm with a half-finished migration. You hand it off to
+> your teammate in another timezone. When they wake up, their agent boots
+> with full context: what you tried, what was blocked, what to try next.
+
+No more Monday-morning "where did I leave off?" archaeology. The thread
+already has the answer.
+
+### 3. Share the journey, not just the destination
+
+> Your agent spent two hours pinning down a flaky test — turned out to be
+> a race in the dispatcher. Today you write *"fixed in PR #42, race in
+> dispatcher.ts:120."* Your teammate reviews the patch but can't see how
+> you got there. With AgentRelay, the handoff thread carries the full
+> investigative trail — what was tried, what was ruled out, what the
+> breakthrough was. Now their agent can apply the same pattern to the
+> next flaky test.
+
+Slack carries results; PRs carry diffs; AgentRelay carries the agent's
+reasoning. That's the part nobody else captures.
+
+### 4. Expert-on-tap inside a team
+
+> One person on the team owns `$service`. Their agent has the deep
+> CLAUDE.md, the gotchas, the historical context. Other developers' agents
+> ask that agent through AgentRelay instead of paging the senior on Slack.
+
+Junior unblocked, senior uninterrupted. The shared context lives in the
+handoff thread — reusable next time someone hits the same question.
+
+---
+
+## Quick start
+
+> 🚧 **v0.1.x onboarding is rougher than it should be (~15 min).**
+> v1.0 (this week) ships [invite URLs](https://github.com/swayamg20/AgentRelay/issues/6)
+> + a hosted relay so it'll be one command. For now, the path below works.
+> Full guide with troubleshooting: [`docs/onboarding.md`](docs/onboarding.md).
+
+### Self-host the relay (once per team) — Docker only
+
+```bash
+git clone https://github.com/swayamg20/AgentRelay
+cd AgentRelay
+cp .env.example .env
+
+# Rotate the secrets before exposing publicly:
+sed -i '' "s|^RELAY_PEPPER=.*|RELAY_PEPPER=$(openssl rand -hex 32)|" .env
+sed -i '' "s|^RELAY_ADMIN_TOKEN=.*|RELAY_ADMIN_TOKEN=$(openssl rand -hex 16)|" .env
+
+docker compose --profile selfhost up -d
+curl http://localhost:8080/healthz                           # → {"status":"ok"}
+```
+
+Postgres + relay come up together; migrations run on boot. Point your
+reverse proxy (Caddy / Cloudflare Tunnel / nginx) at `:8080`, set
+`RELAY_PUBLIC_URL`, and you're done.
+
+### Per-developer setup
+
+```bash
+# Register your identity (admin token from your team lead)
+npx -y -p agentrelay-mcp agentrelay register \
+  --relay https://your-team-relay.example.com \
+  --admin-token <admin-token> \
+  --handle bob@acme \
+  --email bob@acme.com \
+  --name "Bob" \
+  --role backend
+
+# Wire AgentRelay into Claude Code (user scope = works in every directory)
+claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp
+
+# Apply the recommended permission overlay (allow reads/tests, ask before
+# writes, deny git push / npm publish / curl / aws / kubectl)
+npx -y -p agentrelay-mcp agentrelay install --client all
+
+# Verify
+npx -y -p agentrelay-mcp agentrelay doctor
+```
+
+Then in Claude Code or Codex CLI:
+*"Send a handoff to frank@acme — I refactored the /users API, here's the
+contract diff, the test command, and the open question on the web side."*
+
+---
 
 ## How it works
 
@@ -71,18 +151,22 @@ when the sender is on someone else's laptop (the [trust model](#how-handoffs-sta
                                   Slack DM
 ```
 
-Two halves: a tiny **MCP server** ([`agentrelay-mcp` on npm](https://www.npmjs.com/package/agentrelay-mcp))
+Two halves: a tiny **MCP server**
+([`agentrelay-mcp` on npm](https://www.npmjs.com/package/agentrelay-mcp))
 that each developer runs locally, and a **relay service** that the team
-self-hosts via Docker. Agents send structured handoffs through the relay;
-recipients pull them with full provenance wrapping. Humans approve writes
-through Claude Code's existing permission system.
+self-hosts via Docker (or, soon, a hosted free tier you don't have to
+deploy). Agents send structured handoffs through the relay; recipients
+pull them with full provenance wrapping. Humans approve writes through
+Claude Code's existing permission system.
+
+---
 
 ## How handoffs stay safe
 
-Cross-machine agent communication only works if you can stop a malicious (or
-prompt-injected) sender from running anything they want on the receiver.
-AgentRelay enforces that with four mandatory layers — every handoff goes
-through all of them:
+Cross-machine agent communication only works if you can stop a
+prompt-injected (or malicious) sender from running anything they want on
+the receiver. AgentRelay enforces that with four mandatory layers — every
+handoff goes through all of them:
 
 | Layer | Mechanism | Where it runs |
 |---|---|---|
@@ -91,74 +175,26 @@ through all of them:
 | **L3** | Per-teammate trust. `~/.agentrelay/trust.yaml` — explicitly opt in teammates with granular `auto_write_paths`, `require_approval`. Unknown senders rejected by default. | MCP server |
 | **L4** | Audit + atomic revocation. Every state mutation logged. `agentrelay block <handle>` revokes a teammate instantly. | Relay + MCP CLI |
 
-Skip a layer, the safety guarantee evaporates. v0.1.0 wires all four; the
-demo video shows the L1 preamble surfacing live in both terminal sessions.
+Skip a layer, the safety guarantee evaporates. v0.1.0 wires all four.
 
-## Quick start
+---
 
-### Self-host the relay (once per team) — Docker only
+## How AgentRelay compares
 
-Just Docker. No Node, no pnpm, no build step. Postgres + relay come up
-together; migrations run on boot.
+Adjacent tools each solve a slice of agent coordination, but none solve
+peer-to-peer agent communication between humans on different laptops:
 
-```bash
-git clone https://github.com/swayamg20/AgentRelay
-cd AgentRelay
-cp .env.example .env
+| Tool | Coordination scope | Cross-machine | Cross-developer |
+|---|---|:---:|:---:|
+| [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) | Subagents in one developer's session | ❌ | ❌ |
+| [OpenAI Agents SDK handoffs](https://openai.github.io/openai-agents-python/handoffs/) | Agent → agent in one runtime | ❌ | ❌ |
+| [GitHub Copilot Coding Agent](https://github.blog/news-insights/product-news/github-copilot-coding-agent/) | Developer ↔ Copilot bot in cloud | ✅ | ❌ |
+| [Cursor Background Agents](https://docs.cursor.com/background-agent) | One developer's async tasks | ✅ | ❌ |
+| **AgentRelay** | **Agent-to-agent, between humans on different laptops** | **✅** | **✅** |
 
-# Edit .env — at minimum, regenerate the secrets before exposing publicly:
-#   sed -i '' "s|^RELAY_PEPPER=.*|RELAY_PEPPER=$(openssl rand -hex 32)|" .env
-#   sed -i '' "s|^RELAY_ADMIN_TOKEN=.*|RELAY_ADMIN_TOKEN=$(openssl rand -hex 16)|" .env
+---
 
-docker compose --profile selfhost up -d                           # postgres + relay
-curl http://localhost:8080/healthz                                # → {"status":"ok"}
-```
-
-That's the whole self-host setup. Behind the curtain:
-
-- Postgres on `:5433` (container `agentrelay-postgres`)
-- Relay on `:8080` (container `agentrelay-relay`, built from `relay/Dockerfile`)
-- Migrations applied on relay boot (idempotent)
-- Both restart `unless-stopped`
-
-To put it on a real server, point your reverse proxy (nginx / caddy /
-cloudflared) at `:8080`, set `RELAY_PUBLIC_URL` to the public URL, and
-you're done.
-
-### Per-developer setup
-
-Full step-by-step (with troubleshooting) lives in
-[`docs/onboarding.md`](docs/onboarding.md). The short version:
-
-```bash
-# Register your identity (admin token comes from your team lead).
-# Note: use the `agentrelay` CLI bin, not `agentrelay-mcp` (the MCP server).
-npx -y -p agentrelay-mcp agentrelay register \
-  --relay https://your-team-relay.example.com \
-  --admin-token <admin-token-from-team-lead> \
-  --handle bob@acme \
-  --email bob@acme.com \
-  --name "Bob" \
-  --role backend
-
-# Wire AgentRelay into Claude Code (user scope = works in every directory)
-claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp
-
-# Add the recommended permission overlay (allow reads/tests, ask before writes,
-# deny git push / npm publish / curl / aws / kubectl)
-npx -y -p agentrelay-mcp agentrelay install --client all
-
-# Verify
-npx -y -p agentrelay-mcp agentrelay doctor
-```
-
-Then in Claude Code or Codex CLI: *"Send a handoff to frank@acme telling him I refactored the /users API…"*
-
-> v0.1.x onboarding has known sharp edges (tracked in [v0.1.2](https://github.com/swayamg20/AgentRelay/milestone/1)).
-> v0.2.0 collapses the whole flow to one command: `agentrelay join <invite-url>`
-> ([#6](https://github.com/swayamg20/AgentRelay/issues/6)).
-
-## What ships in v0.1.0
+## What ships in v0.1
 
 | Surface | Status |
 |---|:---:|
@@ -169,6 +205,34 @@ Then in Claude Code or Codex CLI: *"Send a handoff to frank@acme telling him I r
 | Idempotency replay, intent invariant (`inform` / `ask_question`), block enforcement, audit log | ✅ |
 | Slack notification on inbox arrival (encrypted webhook URL at rest) | ✅ |
 | Four-layer trust model, all layers wired and demonstrated end-to-end | ✅ |
+
+## What's coming in v1.0 (this week)
+
+- One-command teammate onboarding via signed invite URLs
+  ([#6](https://github.com/swayamg20/AgentRelay/issues/6))
+- Hosted relay (free tier) so you don't have to deploy anything
+- Single `agentrelay` bin ([#5](https://github.com/swayamg20/AgentRelay/issues/5))
+- `agentrelay doctor --fix` to auto-remediate setup issues
+  ([#7](https://github.com/swayamg20/AgentRelay/issues/7))
+- 90-second cross-repo demo video
+- CI pipeline + end-to-end test suite
+
+Track [v1.0 milestone](https://github.com/swayamg20/AgentRelay/milestone/2)
+or browse the [project board](https://github.com/users/swayamg20/projects/2/views/1).
+
+## Beyond v1.0
+
+The MCP tools and trust model are domain-neutral — coding-agent assumptions
+mostly live in the *prompts* the receiving agent gets, not the relay. Once
+the coding-agent vertical is shipping smoothly, AgentRelay extends to any
+MCP-using agent: research agents, support agents, ops agents. That's the
+v2 thesis. The relay does not change.
+
+For the next-feature roadmap (auto mode, ambient agent, federation) see
+[`docs/next-steps.md`](docs/next-steps.md) and the
+[ideas backlog](https://github.com/swayamg20/AgentRelay/issues?q=is%3Aopen+label%3Aideas).
+
+---
 
 ## Repository
 
@@ -181,8 +245,8 @@ Then in Claude Code or Codex CLI: *"Send a handoff to frank@acme telling him I r
 │   ├── onboarding.md     ← team setup walkthrough + troubleshooting
 │   ├── next-steps.md     ← living planning index, linked to GH issues
 │   ├── roadmap.md        ← phase-by-phase release plan
-│   ├── auto-mode.md      ← v0.2 design: live pairing channel
-│   └── ambient-agent.md  ← v0.3 design: headless drafting
+│   ├── auto-mode.md      ← v0.3 design: live pairing channel
+│   └── ambient-agent.md  ← v0.4 design: headless drafting
 ├── relay/                ← Hono + Drizzle + Postgres relay (TypeScript)
 ├── mcp-server/           ← agentrelay-mcp on npm (TypeScript)
 ├── CLAUDE.md             ← contributor + agent-teammate rules
@@ -198,18 +262,17 @@ Postgres 16 · `@modelcontextprotocol/sdk` · zod · pino · vitest · Biome.
 ## Contributing
 
 We welcome issues, PRs, and feedback. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
-for development setup, code conventions, the testing workflow, and the trust
-model invariants you must not break. [`CLAUDE.md`](CLAUDE.md) documents the
-project rules in agent-teammate-readable form (handy if you bring Claude Code
-or Codex along to help).
+for development setup, code conventions, the testing workflow, and the
+trust-model invariants you must not break. [`CLAUDE.md`](CLAUDE.md) documents
+the project rules in agent-teammate-readable form (handy if you bring Claude
+Code or Codex along to help).
 
 ## Acknowledgments
 
 Built on [A2A protocol](https://a2a-protocol.org) (Linux Foundation),
 [Model Context Protocol](https://modelcontextprotocol.io),
-[Claude Code](https://claude.com/code),
-[OpenAI Codex CLI](https://github.com/openai/codex), and a lot of typing by
-[Claude Opus 4.7](https://www.anthropic.com/claude).
+[Claude Code](https://claude.com/code), and
+[OpenAI Codex CLI](https://github.com/openai/codex).
 
 ## License
 
