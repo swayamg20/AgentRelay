@@ -12,9 +12,11 @@ import { loadConfig, type AgentRelayConfig } from "../config.js";
 import { logger } from "../logger.js";
 import { FALLBACK_TRUST, loadTrust, type TrustFile } from "../trust.js";
 import { writeSecretFile } from "./io.js";
-import { configPath, trustPath, clientPaths, type SupportedClient } from "./paths.js";
+import { configPath, trustPath, clientPaths, mcpPath, type SupportedClient } from "./paths.js";
 import {
 	mergeClaudeSettings,
+	mergeClaudeJsonMcp,
+	mergeClaudeOverlay,
 	renderMergeReport,
 	type MergeOptions,
 	type MergeReport,
@@ -95,13 +97,24 @@ export interface InstallDeps {
 	readSettings?: (path: string) => Promise<string | undefined>;
 	writeSettings?: (path: string, content: string) => Promise<void>;
 	clientPaths?: typeof clientPaths;
+	mcpPath?: typeof mcpPath;
 	trustPath?: string;
 	writeTrust?: (path: string, content: string) => Promise<void>;
 	trustExists?: (path: string) => Promise<boolean>;
 }
 
 export type ClientInstallReport =
-	| { client: "claude-code"; path: string; format: "json"; report: MergeReport; written: boolean }
+	| {
+			client: "claude-code";
+			// Where the permission overlay was written.
+			path: string;
+			// Where the MCP server entry was written (Claude Code reads from a
+			// different file than the permission overlay).
+			mcpPath: string;
+			format: "json";
+			report: MergeReport;
+			written: boolean;
+	  }
 	| { client: "codex"; path: string; format: "toml"; report: TomlMergeReport; written: boolean };
 
 export interface InstallResult {
@@ -113,6 +126,7 @@ export async function install(opts: InstallOptions, deps: InstallDeps = {}): Pro
 	const readSettings = deps.readSettings ?? defaultReadSettings;
 	const writeSettings = deps.writeSettings ?? ((path, content) => writeSecretFile(path, content));
 	const resolvePaths = deps.clientPaths ?? clientPaths;
+	const resolveMcpPath = deps.mcpPath ?? mcpPath;
 	const trustFilePath = deps.trustPath ?? trustPath();
 	const writeTrust = deps.writeTrust ?? ((path, content) => writeSecretFile(path, content));
 	const trustExists = deps.trustExists ?? defaultExists;
@@ -121,24 +135,55 @@ export async function install(opts: InstallOptions, deps: InstallDeps = {}): Pro
 	const out: InstallResult = { clients: [], trustCreated: false };
 
 	for (const c of clients) {
-		const { settingsPath, format } = resolvePaths(c);
-		if (format === "json") {
-			const raw = await readSettings(settingsPath);
-			const current = raw === undefined ? {} : JSON.parse(raw);
-			const mergeOpts: MergeOptions = {
-				overwriteMcp: opts.overwrite,
-				overwritePermissions: opts.overwrite,
-			};
-			const { next, report } = mergeClaudeSettings(current, mergeOpts);
-			const changed =
-				report.mcpServerAdded ||
-				report.mcpServerOverwritten ||
-				Object.values(report.permissionsAdded).some((arr) => arr.length > 0);
-			if (changed) {
-				await writeSettings(settingsPath, JSON.stringify(next, null, 2) + "\n");
+		if (c === "claude-code") {
+			// Claude Code reads MCP entries from `~/.claude.json` (user-scope) and
+			// permission overlay from `~/.claude/settings.json`. Two different
+			// files — write each side separately. (Issue #1: writing the MCP entry
+			// to settings.json is the bug we're fixing.)
+			const overlayPath = resolvePaths(c).settingsPath;
+			const claudeJsonPath = resolveMcpPath(c);
+
+			// 1) MCP entry → ~/.claude.json
+			const rawJson = await readSettings(claudeJsonPath);
+			const currentJson = rawJson === undefined ? {} : JSON.parse(rawJson);
+			const mcpResult = mergeClaudeJsonMcp(currentJson, { overwriteMcp: opts.overwrite });
+			if (mcpResult.mcpServerAdded || mcpResult.mcpServerOverwritten) {
+				await writeSettings(claudeJsonPath, `${JSON.stringify(mcpResult.next, null, 2)}\n`);
 			}
-			out.clients.push({ client: "claude-code", path: settingsPath, format: "json", report, written: changed });
+
+			// 2) Permission overlay → ~/.claude/settings.json
+			const rawOverlay = await readSettings(overlayPath);
+			const currentOverlay = rawOverlay === undefined ? {} : JSON.parse(rawOverlay);
+			const overlayResult = mergeClaudeOverlay(currentOverlay, {
+				overwritePermissions: opts.overwrite,
+			});
+			const overlayHasChanges = Object.values(overlayResult.permissionsAdded).some(
+				(arr) => arr.length > 0,
+			);
+			if (overlayHasChanges) {
+				await writeSettings(overlayPath, `${JSON.stringify(overlayResult.next, null, 2)}\n`);
+			}
+
+			// Synthesize a MergeReport-compatible report so summarizeInstall +
+			// existing render logic keep working.
+			const report: MergeReport = {
+				mcpServerAdded: mcpResult.mcpServerAdded,
+				mcpServerOverwritten: mcpResult.mcpServerOverwritten,
+				permissionsAdded: overlayResult.permissionsAdded,
+				permissionsRemovedFromOtherBuckets: overlayResult.permissionsRemovedFromOtherBuckets,
+			};
+			const written =
+				mcpResult.mcpServerAdded || mcpResult.mcpServerOverwritten || overlayHasChanges;
+			out.clients.push({
+				client: "claude-code",
+				path: overlayPath,
+				mcpPath: claudeJsonPath,
+				format: "json",
+				report,
+				written,
+			});
 		} else {
+			const { settingsPath } = resolvePaths(c);
 			const raw = await readSettings(settingsPath);
 			const { tomlText, report } = mergeCodexSettings(raw, {
 				overwriteMcp: opts.overwrite,
@@ -149,7 +194,7 @@ export async function install(opts: InstallOptions, deps: InstallDeps = {}): Pro
 				report.mcpServerOverwritten ||
 				Object.values(report.permissionsAdded).some((arr) => arr.length > 0);
 			if (changed) {
-				await writeSettings(settingsPath, tomlText.endsWith("\n") ? tomlText : tomlText + "\n");
+				await writeSettings(settingsPath, tomlText.endsWith("\n") ? tomlText : `${tomlText}\n`);
 			}
 			out.clients.push({ client: "codex", path: settingsPath, format: "toml", report, written: changed });
 		}
@@ -192,9 +237,10 @@ export interface DoctorDeps {
 	whoami?: (relay: string, apiKey: string) => Promise<boolean>;
 }
 
-export async function doctor(deps: DoctorDeps = {}): Promise<DoctorReport> {
+export async function doctor(deps: DoctorDeps & { mcpPath?: typeof mcpPath } = {}): Promise<DoctorReport> {
 	const readSettings = deps.readSettings ?? defaultReadSettings;
 	const resolvePaths = deps.clientPaths ?? clientPaths;
+	const resolveMcpPath = deps.mcpPath ?? mcpPath;
 	const whoami = deps.whoami ?? defaultWhoami;
 
 	const cfg = await loadConfig();
@@ -242,25 +288,53 @@ export async function doctor(deps: DoctorDeps = {}): Promise<DoctorReport> {
 
 	for (const client of ["claude-code", "codex"] as const) {
 		const { settingsPath, format } = resolvePaths(client);
+		const mcpFilePath = resolveMcpPath(client);
+
+		// MCP entry — for claude-code this is in ~/.claude.json (NOT settings.json).
+		// For codex it's the same file as the overlay so we read it once below.
+		if (mcpFilePath === settingsPath) {
+			report.mcpEntryPresent[client] = false; // filled in by overlay block below
+		} else {
+			const rawMcp = await readSettings(mcpFilePath);
+			if (!rawMcp) {
+				report.mcpEntryPresent[client] = false;
+			} else {
+				try {
+					const mcpJson = JSON.parse(rawMcp) as Record<string, Record<string, unknown> | undefined>;
+					report.mcpEntryPresent[client] = Boolean(mcpJson?.mcpServers?.agentrelay);
+				} catch {
+					report.notes.push(`${client} mcp config (${mcpFilePath}) is malformed`);
+					report.mcpEntryPresent[client] = false;
+				}
+			}
+		}
+
+		// Overlay (permissions) — always lives in `settingsPath`.
 		const raw = await readSettings(settingsPath);
 		if (!raw) {
-			report.mcpEntryPresent[client] = false;
+			if (mcpFilePath === settingsPath) {
+				report.mcpEntryPresent[client] = false;
+			}
 			report.overlayApplied[client] = false;
 			continue;
 		}
 		try {
 			const settings =
 				format === "json" ? JSON.parse(raw) : (await import("smol-toml")).parse(raw);
-			const mcpKey = format === "json" ? "mcpServers" : "mcp_servers";
-			report.mcpEntryPresent[client] = Boolean(
-				(settings as Record<string, Record<string, unknown>>)?.[mcpKey]?.agentrelay,
-			);
+			if (mcpFilePath === settingsPath) {
+				const mcpKey = format === "json" ? "mcpServers" : "mcp_servers";
+				report.mcpEntryPresent[client] = Boolean(
+					(settings as Record<string, Record<string, unknown>>)?.[mcpKey]?.agentrelay,
+				);
+			}
 			const allowList: string[] =
-				(settings as Record<string, Record<string, unknown>>)?.permissions?.allow as string[] ?? [];
+				((settings as Record<string, Record<string, unknown>>)?.permissions?.allow as string[]) ?? [];
 			report.overlayApplied[client] = allowList.includes("mcp__agentrelay__*");
 		} catch {
 			report.notes.push(`${client} settings file is malformed`);
-			report.mcpEntryPresent[client] = false;
+			if (mcpFilePath === settingsPath) {
+				report.mcpEntryPresent[client] = false;
+			}
 			report.overlayApplied[client] = false;
 		}
 	}
@@ -288,11 +362,6 @@ export function remediationFor(kind: RemediationKind): string {
 		case "config-missing":
 			return 'agentrelay register --relay <url> --admin-token <token> --handle <you>@<team> --email <you>@example.com --name "<Your Name>" --role <role>';
 		case "mcp-missing":
-			// Until #1 lands, `agentrelay install` writes to the wrong file for
-			// claude-code. Give the canonical working command for each client.
-			if (kind.client === "claude-code") {
-				return "claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp";
-			}
 			return `agentrelay install --client ${kind.client}`;
 		case "overlay-missing":
 			return `agentrelay install --client ${kind.client}`;

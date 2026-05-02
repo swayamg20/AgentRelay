@@ -80,7 +80,7 @@ describe("install", () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it("writes settings + creates trust.yaml when both are missing", async () => {
+	it("writes mcp + overlay + creates trust.yaml when all are missing (claude-code dual-write)", async () => {
 		const writes: Array<[string, string]> = [];
 		const trustWrites: Array<[string, string]> = [];
 		const result = await install(
@@ -88,7 +88,8 @@ describe("install", () => {
 			{
 				readSettings: async () => undefined,
 				writeSettings: async (p, c) => void writes.push([p, c]),
-				clientPaths: () => ({ settingsPath: join(dir, "settings.json"), format: "json" }),
+				clientPaths: () => ({ settingsPath: join(dir, ".claude", "settings.json"), format: "json" }),
+				mcpPath: () => join(dir, ".claude.json"),
 				trustPath: join(dir, "trust.yaml"),
 				trustExists: async () => false,
 				writeTrust: async (p, c) => void trustWrites.push([p, c]),
@@ -97,9 +98,25 @@ describe("install", () => {
 		expect(result.clients[0]?.report.mcpServerAdded).toBe(true);
 		expect(result.clients[0]?.written).toBe(true);
 		expect(result.trustCreated).toBe(true);
-		expect(writes.length).toBe(1);
-		const settings = JSON.parse(writes[0]?.[1] ?? "{}");
-		expect(settings.mcpServers.agentrelay.command).toBe("npx");
+		// Two writes: ~/.claude.json (mcp) + ~/.claude/settings.json (overlay)
+		expect(writes.length).toBe(2);
+
+		const claudeJson = writes.find(([p]) => p.endsWith(".claude.json"));
+		const overlayJson = writes.find(([p]) => p.endsWith("settings.json"));
+		expect(claudeJson, "expected a write to ~/.claude.json").toBeDefined();
+		expect(overlayJson, "expected a write to settings.json").toBeDefined();
+
+		// MCP entry written to .claude.json with the type:'stdio' shape that
+		// matches what `claude mcp add` writes.
+		const claudeJsonObj = JSON.parse(claudeJson?.[1] ?? "{}");
+		expect(claudeJsonObj.mcpServers.agentrelay.type).toBe("stdio");
+		expect(claudeJsonObj.mcpServers.agentrelay.command).toBe("npx");
+		// And NOT to settings.json — that file only has the permission overlay.
+		const overlayObj = JSON.parse(overlayJson?.[1] ?? "{}");
+		expect(overlayObj.mcpServers).toBeUndefined();
+		expect(overlayObj.permissions.allow).toContain("mcp__agentrelay__*");
+		expect(overlayObj.permissions.deny).toContain("Bash(git push*)");
+
 		expect(trustWrites[0]?.[1]).toContain("version: 1");
 	});
 
@@ -124,7 +141,7 @@ describe("install", () => {
 		expect(writes[0]?.[1]).toContain("[permissions]");
 	});
 
-	it("--client all writes both JSON and TOML", async () => {
+	it("--client all writes claude.json + claude settings.json + codex TOML", async () => {
 		const writes: Array<[string, string]> = [];
 		const result = await install(
 			{ client: "all", overwrite: true },
@@ -133,17 +150,20 @@ describe("install", () => {
 				writeSettings: async (p, c) => void writes.push([p, c]),
 				clientPaths: (c) =>
 					c === "claude-code"
-						? { settingsPath: join(dir, "claude.json"), format: "json" }
+						? { settingsPath: join(dir, "claude-settings.json"), format: "json" }
 						: { settingsPath: join(dir, "codex.toml"), format: "toml" },
+				mcpPath: (c) => (c === "claude-code" ? join(dir, ".claude.json") : join(dir, "codex.toml")),
 				trustPath: join(dir, "trust.yaml"),
 				trustExists: async () => true,
 				writeTrust: async () => {},
 			},
 		);
 		expect(result.clients).toHaveLength(2);
-		expect(writes).toHaveLength(2);
-		expect(writes.find(([p]) => p.endsWith(".json"))?.[1]).toContain('"mcpServers"');
-		expect(writes.find(([p]) => p.endsWith(".toml"))?.[1]).toContain("[mcp_servers.agentrelay]");
+		// Three writes: .claude.json (mcp), claude-settings.json (overlay), codex.toml (combined)
+		expect(writes).toHaveLength(3);
+		expect(writes.find(([p]) => p.endsWith(".claude.json"))?.[1]).toContain('"mcpServers"');
+		expect(writes.find(([p]) => p.endsWith("claude-settings.json"))?.[1]).toContain('"permissions"');
+		expect(writes.find(([p]) => p.endsWith("codex.toml"))?.[1]).toContain("[mcp_servers.agentrelay]");
 	});
 
 	it("does not write when nothing changed", async () => {
@@ -234,7 +254,7 @@ describe("doctor", () => {
 			const out = formatDoctor(r);
 			expect(out).toMatch(/config:\s+MISSING.*→ run: agentrelay register/);
 			expect(out).toMatch(
-				/mcp\[claude-code\]:\s+MISSING\s+→ run: claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp/,
+				/mcp\[claude-code\]:\s+MISSING\s+→ run: agentrelay install --client claude-code/,
 			);
 			expect(out).toMatch(/mcp\[codex\]:\s+MISSING\s+→ run: agentrelay install --client codex/);
 			expect(out).toMatch(

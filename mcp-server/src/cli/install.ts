@@ -38,6 +38,19 @@ export const RECOMMENDED_MCP_ENTRY = {
 	env: {} as Record<string, string>,
 } as const;
 
+/**
+ * Same shape as RECOMMENDED_MCP_ENTRY but with the `type: "stdio"` discriminator
+ * Claude Code's `claude mcp add` command writes into `~/.claude.json`. Including
+ * `type` makes our entry indistinguishable from one Claude Code wrote itself,
+ * which avoids the user being prompted to "trust" the server again.
+ */
+export const RECOMMENDED_CLAUDE_JSON_MCP_ENTRY = {
+	type: "stdio",
+	command: "npx",
+	args: ["-y", "agentrelay-mcp"],
+	env: {} as Record<string, string>,
+} as const;
+
 const settingsSchema = z
 	.object({
 		mcpServers: z.record(z.string(), z.unknown()).optional(),
@@ -129,6 +142,89 @@ export function mergeClaudeSettings(
 	}
 
 	return { next, report };
+}
+
+/**
+ * Merge ONLY the `mcpServers.agentrelay` entry into a Claude `~/.claude.json`
+ * shape. Used for the user-scope MCP registration (which lives in a different
+ * file than the permission overlay — see paths.ts:mcpPath). Pure function,
+ * never mutates inputs. Returns the merged object plus a small report.
+ */
+export function mergeClaudeJsonMcp(
+	current: unknown,
+	options: { overwriteMcp: boolean },
+): { next: Record<string, unknown>; mcpServerAdded: boolean; mcpServerOverwritten: boolean } {
+	const parsed: Record<string, unknown> =
+		current === undefined || current === null
+			? {}
+			: (settingsSchema.passthrough().parse(current) as Record<string, unknown>);
+	const next: Record<string, unknown> = JSON.parse(JSON.stringify(parsed));
+	const servers = (next.mcpServers as Record<string, unknown> | undefined) ?? {};
+	next.mcpServers = servers;
+
+	const existing = servers.agentrelay;
+	let mcpServerAdded = false;
+	let mcpServerOverwritten = false;
+	if (existing === undefined) {
+		servers.agentrelay = { ...RECOMMENDED_CLAUDE_JSON_MCP_ENTRY };
+		mcpServerAdded = true;
+	} else if (!deepEqual(existing, RECOMMENDED_CLAUDE_JSON_MCP_ENTRY) && options.overwriteMcp) {
+		servers.agentrelay = { ...RECOMMENDED_CLAUDE_JSON_MCP_ENTRY };
+		mcpServerOverwritten = true;
+	}
+	return { next, mcpServerAdded, mcpServerOverwritten };
+}
+
+/**
+ * Merge ONLY the recommended permission overlay into a Claude
+ * `~/.claude/settings.json` shape. Used for the permission overlay
+ * (which lives in a different file than the MCP registration). Pure
+ * function, never mutates inputs.
+ */
+export function mergeClaudeOverlay(
+	current: unknown,
+	options: { overwritePermissions: boolean },
+): {
+	next: ClaudeSettings;
+	permissionsAdded: { allow: string[]; ask: string[]; deny: string[] };
+	permissionsRemovedFromOtherBuckets: { allow: string[]; ask: string[]; deny: string[] };
+} {
+	const parsed = current === undefined || current === null ? {} : settingsSchema.parse(current);
+	const next: ClaudeSettings = JSON.parse(JSON.stringify(parsed));
+	next.permissions = next.permissions ?? {};
+	next.permissions.allow = next.permissions.allow ?? [];
+	next.permissions.ask = next.permissions.ask ?? [];
+	next.permissions.deny = next.permissions.deny ?? [];
+
+	const permissionsAdded = { allow: [] as string[], ask: [] as string[], deny: [] as string[] };
+	const permissionsRemovedFromOtherBuckets = {
+		allow: [] as string[],
+		ask: [] as string[],
+		deny: [] as string[],
+	};
+
+	for (const bucket of ["allow", "ask", "deny"] as const) {
+		const recommended = RECOMMENDED_PERMISSIONS[bucket];
+		const buckets = next.permissions as Record<"allow" | "ask" | "deny", string[]>;
+		for (const rule of recommended) {
+			if (buckets[bucket].includes(rule)) continue;
+			const otherBuckets = (["allow", "ask", "deny"] as const).filter((b) => b !== bucket);
+			const inOther = otherBuckets.find((b) => buckets[b].includes(rule));
+			if (inOther) {
+				if (options.overwritePermissions) {
+					buckets[inOther] = buckets[inOther].filter((r) => r !== rule);
+					buckets[bucket].push(rule);
+					permissionsRemovedFromOtherBuckets[inOther].push(rule);
+					permissionsAdded[bucket].push(rule);
+				}
+			} else {
+				buckets[bucket].push(rule);
+				permissionsAdded[bucket].push(rule);
+			}
+		}
+	}
+
+	return { next, permissionsAdded, permissionsRemovedFromOtherBuckets };
 }
 
 /**
