@@ -11,7 +11,10 @@ const responseSchema = z.object({
 
 export type SendMessageResult = z.infer<typeof responseSchema>;
 
-export async function sendMessage(client: A2AClient, rawInput: unknown): Promise<SendMessageResult> {
+export async function sendMessage(
+	client: A2AClient,
+	rawInput: unknown,
+): Promise<SendMessageResult> {
 	const input = sendMessageInput.parse(rawInput);
 	const idempotencyKey = client.newIdempotencyKey();
 	const params = {

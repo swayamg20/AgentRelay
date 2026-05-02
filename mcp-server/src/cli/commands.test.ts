@@ -2,8 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentRelayConfig } from "../config.js";
 import { FALLBACK_TRUST, type TrustFile } from "../trust.js";
 import {
+	type AuditEvent,
 	blockCmd,
 	doctor,
 	fetchAudit,
@@ -15,9 +17,7 @@ import {
 	trustResetCmd,
 	trustSetCmd,
 	unblockCmd,
-	type AuditEvent,
 } from "./commands.js";
-import type { AgentRelayConfig } from "../config.js";
 
 describe("register", () => {
 	let dir: string;
@@ -88,7 +88,10 @@ describe("install", () => {
 			{
 				readSettings: async () => undefined,
 				writeSettings: async (p, c) => void writes.push([p, c]),
-				clientPaths: () => ({ settingsPath: join(dir, ".claude", "settings.json"), format: "json" }),
+				clientPaths: () => ({
+					settingsPath: join(dir, ".claude", "settings.json"),
+					format: "json",
+				}),
 				mcpPath: () => join(dir, ".claude.json"),
 				trustPath: join(dir, "trust.yaml"),
 				trustExists: async () => false,
@@ -162,8 +165,12 @@ describe("install", () => {
 		// Three writes: .claude.json (mcp), claude-settings.json (overlay), codex.toml (combined)
 		expect(writes).toHaveLength(3);
 		expect(writes.find(([p]) => p.endsWith(".claude.json"))?.[1]).toContain('"mcpServers"');
-		expect(writes.find(([p]) => p.endsWith("claude-settings.json"))?.[1]).toContain('"permissions"');
-		expect(writes.find(([p]) => p.endsWith("codex.toml"))?.[1]).toContain("[mcp_servers.agentrelay]");
+		expect(writes.find(([p]) => p.endsWith("claude-settings.json"))?.[1]).toContain(
+			'"permissions"',
+		);
+		expect(writes.find(([p]) => p.endsWith("codex.toml"))?.[1]).toContain(
+			"[mcp_servers.agentrelay]",
+		);
 	});
 
 	it("does not write when nothing changed", async () => {
@@ -235,8 +242,8 @@ describe("doctor", () => {
 			expect(r.overlayApplied["claude-code"]).toBe(true);
 			expect(formatDoctor(r)).toContain("config:");
 		} finally {
-			delete process.env.AGENTRELAY_CONFIG_PATH;
-			delete process.env.AGENTRELAY_TRUST_PATH;
+			process.env.AGENTRELAY_CONFIG_PATH = undefined;
+			process.env.AGENTRELAY_TRUST_PATH = undefined;
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -260,12 +267,10 @@ describe("doctor", () => {
 			expect(out).toMatch(
 				/overlay\[claude-code\]:\s+MISSING\s+→ run: agentrelay install --client claude-code/,
 			);
-			expect(out).toMatch(
-				/overlay\[codex\]:\s+MISSING\s+→ run: agentrelay install --client codex/,
-			);
+			expect(out).toMatch(/overlay\[codex\]:\s+MISSING\s+→ run: agentrelay install --client codex/);
 		} finally {
-			delete process.env.AGENTRELAY_CONFIG_PATH;
-			delete process.env.AGENTRELAY_TRUST_PATH;
+			process.env.AGENTRELAY_CONFIG_PATH = undefined;
+			process.env.AGENTRELAY_TRUST_PATH = undefined;
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
@@ -288,8 +293,8 @@ describe("doctor", () => {
 			expect(out).toMatch(/mcp\[claude-code\]:\s+OK(?!.*→ run)/);
 			expect(out).toMatch(/overlay\[claude-code\]:\s+OK(?!.*→ run)/);
 		} finally {
-			delete process.env.AGENTRELAY_CONFIG_PATH;
-			delete process.env.AGENTRELAY_TRUST_PATH;
+			process.env.AGENTRELAY_CONFIG_PATH = undefined;
+			process.env.AGENTRELAY_TRUST_PATH = undefined;
 			await rm(dir, { recursive: true, force: true });
 		}
 	});

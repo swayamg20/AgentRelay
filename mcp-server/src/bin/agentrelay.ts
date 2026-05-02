@@ -6,7 +6,6 @@
  */
 
 import { cac } from "cac";
-import { logger } from "../logger.js";
 import {
 	blockCmd,
 	doctor,
@@ -22,7 +21,8 @@ import {
 	unblockCmd,
 } from "../cli/commands.js";
 import { listTrust } from "../cli/trust-mutate.js";
-import { loadTrust, FALLBACK_TRUST } from "../trust.js";
+import { logger } from "../logger.js";
+import { FALLBACK_TRUST, loadTrust } from "../trust.js";
 
 const cli = cac("agentrelay");
 
@@ -68,28 +68,24 @@ cli
 			client: client as "claude-code" | "codex" | "all",
 			overwrite: Boolean(opts.overwrite),
 		});
-		process.stdout.write(summarizeInstall(result) + "\n");
+		process.stdout.write(`${summarizeInstall(result)}\n`);
 	});
 
-cli
-	.command("rotate-key", "Rotate this agent's API key")
-	.action(async () => {
-		try {
-			const r = await rotateKey();
-			process.stdout.write(`rotated key for agent ${r.agent_id} (key_id ${r.key_id})\n`);
-			process.stdout.write(`updated ${r.configPath}\n`);
-		} catch (err) {
-			process.stderr.write((err instanceof Error ? err.message : String(err)) + "\n");
-			process.exit(1);
-		}
-	});
+cli.command("rotate-key", "Rotate this agent's API key").action(async () => {
+	try {
+		const r = await rotateKey();
+		process.stdout.write(`rotated key for agent ${r.agent_id} (key_id ${r.key_id})\n`);
+		process.stdout.write(`updated ${r.configPath}\n`);
+	} catch (err) {
+		process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+		process.exit(1);
+	}
+});
 
-cli
-	.command("doctor", "Diagnose local config + connectivity")
-	.action(async () => {
-		const report = await doctor();
-		process.stdout.write(formatDoctor(report) + "\n");
-	});
+cli.command("doctor", "Diagnose local config + connectivity").action(async () => {
+	const report = await doctor();
+	process.stdout.write(`${formatDoctor(report)}\n`);
+});
 
 cli
 	.command("audit", "Stream local + relay audit ledger entries")
@@ -104,7 +100,8 @@ cli
 				since: typeof opts.since === "string" ? opts.since : undefined,
 				from: typeof opts.from === "string" ? opts.from : undefined,
 				action: typeof opts.action === "string" ? opts.action : undefined,
-				limit: typeof opts.limit === "number" ? opts.limit : opts.limit ? Number(opts.limit) : undefined,
+				limit:
+					typeof opts.limit === "number" ? opts.limit : opts.limit ? Number(opts.limit) : undefined,
 			});
 			const fmt =
 				opts.format === "tsv" || opts.format === "jsonl"
@@ -113,9 +110,9 @@ cli
 						? "tsv"
 						: "jsonl";
 			const out = renderAudit(events, fmt);
-			if (out.length > 0) process.stdout.write(out + "\n");
+			if (out.length > 0) process.stdout.write(`${out}\n`);
 		} catch (err) {
-			process.stderr.write((err instanceof Error ? err.message : String(err)) + "\n");
+			process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
 			process.exit(1);
 		}
 	});
@@ -128,7 +125,7 @@ cli
 			const t = await loadTrust();
 			const file = t.ok ? t.trust : FALLBACK_TRUST;
 			const out = listTrust(file);
-			process.stdout.write(out.blocked.length === 0 ? "(none)\n" : out.blocked.join("\n") + "\n");
+			process.stdout.write(out.blocked.length === 0 ? "(none)\n" : `${out.blocked.join("\n")}\n`);
 			return;
 		}
 		if (!handle) {
@@ -146,17 +143,15 @@ cli
 		process.stdout.write(changed ? `unblocked ${handle}\n` : `${handle} was not blocked\n`);
 	});
 
-cli
-	.command("trust list", "List per-teammate trust entries")
-	.action(async () => {
-		const t = await loadTrust();
-		const file = t.ok ? t.trust : FALLBACK_TRUST;
-		const out = listTrust(file);
-		process.stdout.write(`unknown_teammates.policy: ${out.unknownPolicy}\n`);
-		for (const { handle, entry } of out.teammates) {
-			process.stdout.write(`  ${handle}: ${JSON.stringify(entry)}\n`);
-		}
-	});
+cli.command("trust list", "List per-teammate trust entries").action(async () => {
+	const t = await loadTrust();
+	const file = t.ok ? t.trust : FALLBACK_TRUST;
+	const out = listTrust(file);
+	process.stdout.write(`unknown_teammates.policy: ${out.unknownPolicy}\n`);
+	for (const { handle, entry } of out.teammates) {
+		process.stdout.write(`  ${handle}: ${JSON.stringify(entry)}\n`);
+	}
+});
 
 cli
 	.command("trust set <handle>", "Set trust overlay for a teammate")
@@ -218,6 +213,10 @@ function parseBool(v: unknown): boolean {
 
 function parseList(v: unknown): string[] {
 	if (Array.isArray(v)) return v.map(String);
-	if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+	if (typeof v === "string")
+		return v
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean);
 	throw new Error(`expected comma-separated list, got ${String(v)}`);
 }

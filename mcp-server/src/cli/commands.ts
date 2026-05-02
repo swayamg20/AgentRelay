@@ -8,31 +8,25 @@ import { readFile, stat } from "node:fs/promises";
 import yaml from "js-yaml";
 import { request as undiciRequest } from "undici";
 import { z } from "zod";
-import { loadConfig, type AgentRelayConfig } from "../config.js";
+import { type AgentRelayConfig, loadConfig } from "../config.js";
 import { logger } from "../logger.js";
-import { FALLBACK_TRUST, loadTrust, type TrustFile } from "../trust.js";
-import { writeSecretFile } from "./io.js";
-import { configPath, trustPath, clientPaths, mcpPath, type SupportedClient } from "./paths.js";
+import { FALLBACK_TRUST, type TrustFile, loadTrust } from "../trust.js";
+import { type TomlMergeReport, mergeCodexSettings, renderTomlMergeReport } from "./install-toml.js";
 import {
-	mergeClaudeSettings,
+	type MergeReport,
 	mergeClaudeJsonMcp,
 	mergeClaudeOverlay,
 	renderMergeReport,
-	type MergeOptions,
-	type MergeReport,
 } from "./install.js";
+import { writeSecretFile } from "./io.js";
+import { type SupportedClient, clientPaths, configPath, mcpPath, trustPath } from "./paths.js";
 import {
-	mergeCodexSettings,
-	renderTomlMergeReport,
-	type TomlMergeReport,
-} from "./install-toml.js";
-import {
+	type TrustSetUpdate,
 	blockTeammate,
 	resetTeammate,
 	serializeTrust,
 	setTeammate,
 	unblockTeammate,
-	type TrustSetUpdate,
 } from "./trust-mutate.js";
 
 const adminAgentResponseSchema = z.object({
@@ -53,24 +47,35 @@ export interface RegisterOptions {
 
 export interface RegisterDeps {
 	now?: () => Date;
-	httpPost?: (url: string, body: unknown, headers: Record<string, string>) => Promise<{ status: number; json: unknown }>;
+	httpPost?: (
+		url: string,
+		body: unknown,
+		headers: Record<string, string>,
+	) => Promise<{ status: number; json: unknown }>;
 	configPath?: string;
 }
 
-export async function register(opts: RegisterOptions, deps: RegisterDeps = {}): Promise<AgentRelayConfig> {
+export async function register(
+	opts: RegisterOptions,
+	deps: RegisterDeps = {},
+): Promise<AgentRelayConfig> {
 	const post = deps.httpPost ?? defaultHttpPost;
 	const path = deps.configPath ?? configPath();
 	const url = `${stripTrailing(opts.relay)}/admin/agents`;
 	const headers: Record<string, string> = { "content-type": "application/json" };
 	if (opts.adminToken) headers.authorization = `Bearer ${opts.adminToken}`;
 
-	const res = await post(url, {
-		handle: opts.handle,
-		email: opts.email,
-		// Relay's schema names this field display_name (lld §3.3 / §2.1).
-		display_name: opts.name,
-		role: opts.role,
-	}, headers);
+	const res = await post(
+		url,
+		{
+			handle: opts.handle,
+			email: opts.email,
+			// Relay's schema names this field display_name (lld §3.3 / §2.1).
+			display_name: opts.name,
+			role: opts.role,
+		},
+		headers,
+	);
 	if (res.status >= 400) {
 		throw new Error(`relay ${url} returned ${res.status}: ${JSON.stringify(res.json)}`);
 	}
@@ -83,7 +88,7 @@ export async function register(opts: RegisterOptions, deps: RegisterDeps = {}): 
 		api_key: parsed.api_key,
 		default_session_id: null,
 	};
-	await writeSecretFile(path, JSON.stringify(config, null, 2) + "\n");
+	await writeSecretFile(path, `${JSON.stringify(config, null, 2)}\n`);
 	logger.info({ path }, "wrote ~/.agentrelay/config.json (mode 0600)");
 	return config;
 }
@@ -122,7 +127,10 @@ export interface InstallResult {
 	trustCreated: boolean;
 }
 
-export async function install(opts: InstallOptions, deps: InstallDeps = {}): Promise<InstallResult> {
+export async function install(
+	opts: InstallOptions,
+	deps: InstallDeps = {},
+): Promise<InstallResult> {
 	const readSettings = deps.readSettings ?? defaultReadSettings;
 	const writeSettings = deps.writeSettings ?? ((path, content) => writeSecretFile(path, content));
 	const resolvePaths = deps.clientPaths ?? clientPaths;
@@ -131,7 +139,8 @@ export async function install(opts: InstallOptions, deps: InstallDeps = {}): Pro
 	const writeTrust = deps.writeTrust ?? ((path, content) => writeSecretFile(path, content));
 	const trustExists = deps.trustExists ?? defaultExists;
 
-	const clients: SupportedClient[] = opts.client === "all" ? ["claude-code", "codex"] : [opts.client];
+	const clients: SupportedClient[] =
+		opts.client === "all" ? ["claude-code", "codex"] : [opts.client];
 	const out: InstallResult = { clients: [], trustCreated: false };
 
 	for (const c of clients) {
@@ -196,7 +205,13 @@ export async function install(opts: InstallOptions, deps: InstallDeps = {}): Pro
 			if (changed) {
 				await writeSettings(settingsPath, tomlText.endsWith("\n") ? tomlText : `${tomlText}\n`);
 			}
-			out.clients.push({ client: "codex", path: settingsPath, format: "toml", report, written: changed });
+			out.clients.push({
+				client: "codex",
+				path: settingsPath,
+				format: "toml",
+				report,
+				written: changed,
+			});
 		}
 	}
 
@@ -215,7 +230,11 @@ export function summarizeInstall(result: InstallResult): string {
 		parts.push(c.format === "json" ? renderMergeReport(c.report) : renderTomlMergeReport(c.report));
 		parts.push(c.written ? "  → wrote settings" : "  → no changes");
 	}
-	parts.push(result.trustCreated ? "[trust] created default ~/.agentrelay/trust.yaml" : "[trust] file already present");
+	parts.push(
+		result.trustCreated
+			? "[trust] created default ~/.agentrelay/trust.yaml"
+			: "[trust] file already present",
+	);
 	return parts.join("\n");
 }
 
@@ -237,7 +256,9 @@ export interface DoctorDeps {
 	whoami?: (relay: string, apiKey: string) => Promise<boolean>;
 }
 
-export async function doctor(deps: DoctorDeps & { mcpPath?: typeof mcpPath } = {}): Promise<DoctorReport> {
+export async function doctor(
+	deps: DoctorDeps & { mcpPath?: typeof mcpPath } = {},
+): Promise<DoctorReport> {
 	const readSettings = deps.readSettings ?? defaultReadSettings;
 	const resolvePaths = deps.clientPaths ?? clientPaths;
 	const resolveMcpPath = deps.mcpPath ?? mcpPath;
@@ -319,8 +340,7 @@ export async function doctor(deps: DoctorDeps & { mcpPath?: typeof mcpPath } = {
 			continue;
 		}
 		try {
-			const settings =
-				format === "json" ? JSON.parse(raw) : (await import("smol-toml")).parse(raw);
+			const settings = format === "json" ? JSON.parse(raw) : (await import("smol-toml")).parse(raw);
 			if (mcpFilePath === settingsPath) {
 				const mcpKey = format === "json" ? "mcpServers" : "mcp_servers";
 				report.mcpEntryPresent[client] = Boolean(
@@ -328,7 +348,8 @@ export async function doctor(deps: DoctorDeps & { mcpPath?: typeof mcpPath } = {
 				);
 			}
 			const allowList: string[] =
-				((settings as Record<string, Record<string, unknown>>)?.permissions?.allow as string[]) ?? [];
+				((settings as Record<string, Record<string, unknown>>)?.permissions?.allow as string[]) ??
+				[];
 			report.overlayApplied[client] = allowList.includes("mcp__agentrelay__*");
 		} catch {
 			report.notes.push(`${client} settings file is malformed`);
@@ -480,7 +501,11 @@ export interface RotateKeyResult {
 }
 
 export interface RotateKeyDeps {
-	httpPost?: (url: string, body: unknown, headers: Record<string, string>) => Promise<{ status: number; json: unknown }>;
+	httpPost?: (
+		url: string,
+		body: unknown,
+		headers: Record<string, string>,
+	) => Promise<{ status: number; json: unknown }>;
 	configPath?: string;
 	loadConfig?: () => Promise<AgentRelayConfig>;
 }
@@ -499,9 +524,7 @@ export interface RotateKeyDeps {
 export async function rotateKey(deps: RotateKeyDeps = {}): Promise<RotateKeyResult> {
 	const post = deps.httpPost ?? defaultHttpPost;
 	const path = deps.configPath ?? configPath();
-	const cfg = deps.loadConfig
-		? await deps.loadConfig()
-		: await loadConfigOrThrow(path);
+	const cfg = deps.loadConfig ? await deps.loadConfig() : await loadConfigOrThrow(path);
 
 	const url = `${stripTrailing(cfg.relay_url)}/agents/me/keys/rotate`;
 	const headers = {
@@ -518,7 +541,7 @@ export async function rotateKey(deps: RotateKeyDeps = {}): Promise<RotateKeyResu
 
 	const updated: AgentRelayConfig = { ...cfg, api_key: parsed.api_key };
 	try {
-		await writeSecretFile(path, JSON.stringify(updated, null, 2) + "\n");
+		await writeSecretFile(path, `${JSON.stringify(updated, null, 2)}\n`);
 	} catch (err) {
 		throw new Error(
 			`rotate-key: relay accepted the rotation but writing ${path} failed: ${
@@ -556,7 +579,10 @@ export interface AuditFilters {
 }
 
 export interface AuditDeps {
-	httpGet?: (url: string, headers: Record<string, string>) => Promise<{ status: number; json: unknown }>;
+	httpGet?: (
+		url: string,
+		headers: Record<string, string>,
+	) => Promise<{ status: number; json: unknown }>;
 	loadConfig?: () => Promise<AgentRelayConfig>;
 	configPath?: string;
 }
@@ -564,7 +590,10 @@ export interface AuditDeps {
 const MAX_AUDIT_LIMIT = 1000;
 const DEFAULT_AUDIT_LIMIT = 100;
 
-export async function fetchAudit(filters: AuditFilters = {}, deps: AuditDeps = {}): Promise<AuditEvent[]> {
+export async function fetchAudit(
+	filters: AuditFilters = {},
+	deps: AuditDeps = {},
+): Promise<AuditEvent[]> {
 	const get = deps.httpGet ?? defaultHttpGet;
 	const cfg = deps.loadConfig
 		? await deps.loadConfig()
@@ -608,7 +637,10 @@ export function renderAudit(events: AuditEvent[], format: AuditFormat): string {
 }
 
 function formatAuditDetails(e: AuditEvent): string {
-	if (!e.metadata) return e.resource_type === "handoff" ? "" : `${e.resource_type}${e.resource_id ? ` ${e.resource_id}` : ""}`;
+	if (!e.metadata)
+		return e.resource_type === "handoff"
+			? ""
+			: `${e.resource_type}${e.resource_id ? ` ${e.resource_id}` : ""}`;
 	const pairs = Object.entries(e.metadata).map(([k, v]) => {
 		const rendered = typeof v === "string" ? v : JSON.stringify(v);
 		return `${k}=${rendered}`;
@@ -619,14 +651,16 @@ function formatAuditDetails(e: AuditEvent): string {
 async function loadConfigOrThrow(_path: string): Promise<AgentRelayConfig> {
 	const cfg = await loadConfig();
 	if (!cfg.ok) {
-		throw new Error(`agentrelay config unavailable (${cfg.reason}). Run \`agentrelay register\` first.`);
+		throw new Error(
+			`agentrelay config unavailable (${cfg.reason}). Run \`agentrelay register\` first.`,
+		);
 	}
 	return cfg.config;
 }
 
 function shortBody(json: unknown): string {
 	const s = typeof json === "string" ? json : JSON.stringify(json);
-	return s.length > 200 ? s.slice(0, 200) + "…" : s;
+	return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 }
 
 // ---------- defaults ----------

@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { A2AClient } from "../a2a-client.js";
 import { A2ARpcError } from "../a2a-client.js";
 import { FALLBACK_TRUST, type TrustFile } from "../trust.js";
-import { acceptHandoff, HandoffRejectedByTrustError } from "./accept.js";
-import { checkInbox } from "./inbox.js";
+import { HandoffRejectedByTrustError, acceptHandoff } from "./accept.js";
 import { completeHandoff } from "./complete.js";
-import { dispatchTool } from "./index.js";
 import { handoffToTeammate } from "./handoff.js";
+import { checkInbox } from "./inbox.js";
+import { dispatchTool } from "./index.js";
 import { listTeammates } from "./list-teammates.js";
 import { sendMessage } from "./message.js";
 
@@ -18,7 +18,11 @@ function makeClient(scripted: Record<string, unknown[]>): {
 	let counter = 0;
 	const client: A2AClient = {
 		newIdempotencyKey: () => `idem-${++counter}`,
-		async request<T>(method: string, params: Record<string, unknown>, options?: { idempotencyKey?: string }) {
+		async request<T>(
+			method: string,
+			params: Record<string, unknown>,
+			options?: { idempotencyKey?: string },
+		) {
 			calls.push({ method, params, idempotencyKey: options?.idempotencyKey });
 			const queue = scripted[method];
 			if (!queue || queue.length === 0) {
@@ -126,7 +130,10 @@ describe("acceptHandoff", () => {
 	});
 
 	it("rejects blocked senders before any state mutation", async () => {
-		const blockedThread = { ...baseThread, sender: { ...baseThread.sender, handle: "mallory@external" } };
+		const blockedThread = {
+			...baseThread,
+			sender: { ...baseThread.sender, handle: "mallory@external" },
+		};
 		const { client, calls } = makeClient({
 			"tasks/get": [blockedThread],
 		});
@@ -138,7 +145,10 @@ describe("acceptHandoff", () => {
 	});
 
 	it("rejects unknown senders when policy is reject", async () => {
-		const stranger = { ...baseThread, sender: { ...baseThread.sender, handle: "stranger@elsewhere" } };
+		const stranger = {
+			...baseThread,
+			sender: { ...baseThread.sender, handle: "stranger@elsewhere" },
+		};
 		const { client } = makeClient({
 			"tasks/get": [stranger],
 		});
@@ -182,7 +192,9 @@ describe("sendMessage / completeHandoff / listTeammates", () => {
 
 	it("complete_handoff uses tasks/update with transition=complete", async () => {
 		const { client, calls } = makeClient({
-			"tasks/update": [{ thread_id: "t1", status: "completed", completed_at: "2026-04-25T12:00:00Z" }],
+			"tasks/update": [
+				{ thread_id: "t1", status: "completed", completed_at: "2026-04-25T12:00:00Z" },
+			],
 		});
 		await completeHandoff(client, { thread_id: "t1", result_summary: "done" });
 		expect(calls[0]?.params.transition).toBe("complete");
@@ -191,7 +203,11 @@ describe("sendMessage / completeHandoff / listTeammates", () => {
 	it("list_teammates parses the agents/list response", async () => {
 		const { client } = makeClient({
 			"agents/list": [
-				{ teammates: [{ handle: "frank@acme", name: "Frank", role: "frontend", skills: [], repos_owned: [] }] },
+				{
+					teammates: [
+						{ handle: "frank@acme", name: "Frank", role: "frontend", skills: [], repos_owned: [] },
+					],
+				},
 			],
 		});
 		const r = await listTeammates(client, {});

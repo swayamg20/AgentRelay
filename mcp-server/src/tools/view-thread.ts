@@ -92,7 +92,7 @@ export async function viewThread(
 					...thread.proposed_action,
 					rationale: wrap({ senderHandle, content: thread.proposed_action.rationale }),
 				}
-			: thread.proposed_action ?? undefined;
+			: (thread.proposed_action ?? undefined);
 
 	return {
 		...thread,

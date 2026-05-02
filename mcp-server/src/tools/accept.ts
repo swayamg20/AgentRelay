@@ -16,11 +16,7 @@
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
 import { wrap } from "../provenance.js";
-import {
-	type OverlayDecision,
-	type TrustFile,
-	computeOverlay,
-} from "../trust.js";
+import { type OverlayDecision, type TrustFile, computeOverlay } from "../trust.js";
 import { acceptHandoffInput, artifactSchema, proposedActionSchema } from "./schemas.js";
 
 const senderSchema = z.object({

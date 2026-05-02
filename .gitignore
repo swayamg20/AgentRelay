@@ -40,3 +40,6 @@ postgres-data/
 
 # Secrets / per-user state
 .agentrelay/
+
+# Claude Code per-session scratch (settings.local.json, scheduled_tasks.lock, etc.)
+.claude/

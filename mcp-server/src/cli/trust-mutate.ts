@@ -14,14 +14,20 @@ export function ensureTrust(file: TrustFile | undefined): TrustFile {
 	return JSON.parse(JSON.stringify(file)) as TrustFile;
 }
 
-export function blockTeammate(file: TrustFile, handle: string): { next: TrustFile; changed: boolean } {
+export function blockTeammate(
+	file: TrustFile,
+	handle: string,
+): { next: TrustFile; changed: boolean } {
 	const next = ensureTrust(file);
 	if (next.blocked.includes(handle)) return { next, changed: false };
 	next.blocked = [...next.blocked, handle].sort();
 	return { next, changed: true };
 }
 
-export function unblockTeammate(file: TrustFile, handle: string): { next: TrustFile; changed: boolean } {
+export function unblockTeammate(
+	file: TrustFile,
+	handle: string,
+): { next: TrustFile; changed: boolean } {
 	const next = ensureTrust(file);
 	if (!next.blocked.includes(handle)) return { next, changed: false };
 	next.blocked = next.blocked.filter((h) => h !== handle);
@@ -47,7 +53,10 @@ export function setTeammate(file: TrustFile, handle: string, update: TrustSetUpd
 	return next;
 }
 
-export function resetTeammate(file: TrustFile, handle: string): { next: TrustFile; changed: boolean } {
+export function resetTeammate(
+	file: TrustFile,
+	handle: string,
+): { next: TrustFile; changed: boolean } {
 	const next = ensureTrust(file);
 	if (!(handle in next.teammates)) return { next, changed: false };
 	delete next.teammates[handle];

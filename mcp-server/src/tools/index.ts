@@ -11,19 +11,16 @@
  */
 
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-	CallToolRequestSchema,
-	ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
 import { logger } from "../logger.js";
 import type { TrustFile } from "../trust.js";
-import { acceptHandoff, HandoffRejectedByTrustError } from "./accept.js";
-import { checkInbox } from "./inbox.js";
+import { HandoffRejectedByTrustError, acceptHandoff } from "./accept.js";
 import { completeHandoff } from "./complete.js";
 import { relayErrorToTool } from "./errors.js";
 import { handoffToTeammate } from "./handoff.js";
+import { checkInbox } from "./inbox.js";
 import { listTeammates } from "./list-teammates.js";
 import { sendMessage } from "./message.js";
 import { viewThread } from "./view-thread.js";
@@ -37,7 +34,8 @@ export interface ToolDeps {
 const TOOL_DEFS = [
 	{
 		name: "handoff_to_teammate",
-		description: "Package and send a handoff (a structured task transfer) to another teammate's agent via AgentRelay.",
+		description:
+			"Package and send a handoff (a structured task transfer) to another teammate's agent via AgentRelay.",
 	},
 	{
 		name: "check_inbox",
@@ -58,7 +56,8 @@ const TOOL_DEFS = [
 	},
 	{
 		name: "list_teammates",
-		description: "Discover teammates registered on this relay. Filter by role, skill, or owned repo.",
+		description:
+			"Discover teammates registered on this relay. Filter by role, skill, or owned repo.",
 	},
 	{
 		name: "view_thread",
@@ -149,7 +148,10 @@ export async function dispatchTool(
 	try {
 		switch (name) {
 			case "handoff_to_teammate": {
-				const r = await handoffToTeammate({ client: deps.client, senderHandle: deps.senderHandle }, input);
+				const r = await handoffToTeammate(
+					{ client: deps.client, senderHandle: deps.senderHandle },
+					input,
+				);
 				return jsonOk(r);
 			}
 			case "check_inbox": {

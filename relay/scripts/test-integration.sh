@@ -27,13 +27,21 @@ PG_CONTAINER="${RELAY_PG_CONTAINER:-agentrelay-postgres}"
 PG_USER="${RELAY_PG_USER:-agentrelay}"
 PG_DB="${RELAY_PG_DB:-agentrelay}"
 
-if ! docker ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+if [[ -z "${RELAY_TEST_TRUNCATE_VIA_PSQL:-}" ]] && ! docker ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
   echo "Postgres container '$PG_CONTAINER' is not running." >&2
   echo "Try: docker compose up -d" >&2
   exit 1
 fi
 
 truncate_all() {
+  if [[ -n "${RELAY_TEST_TRUNCATE_VIA_PSQL:-}" ]]; then
+    command -v psql >/dev/null || { echo "psql not on PATH" >&2; exit 1; }
+    psql "$RELAY_TEST_DATABASE_URL" -q -c \
+      "TRUNCATE agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks RESTART IDENTITY CASCADE;" \
+      >/dev/null 2>&1
+    return
+  fi
+
   docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -q -c \
     "TRUNCATE agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks RESTART IDENTITY CASCADE;" \
     >/dev/null 2>&1

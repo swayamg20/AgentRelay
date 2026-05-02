@@ -40,7 +40,9 @@ describe("a2a-client.request", () => {
 		}) as unknown as NonNullable<FetchSig>;
 
 		const { client } = makeClient(fetchImpl);
-		const result = await client.request<{ task_id: string }>("message/send", { recipient: "frank@acme" });
+		const result = await client.request<{ task_id: string }>("message/send", {
+			recipient: "frank@acme",
+		});
 		expect(result).toEqual({ task_id: "t1" });
 		expect(fetchImpl).toHaveBeenCalledTimes(1);
 	});
@@ -50,7 +52,9 @@ describe("a2a-client.request", () => {
 			.fn()
 			.mockResolvedValueOnce(new Response("boom", { status: 500 }))
 			.mockResolvedValueOnce(new Response("again", { status: 503 }))
-			.mockResolvedValueOnce(jsonResponse({ jsonrpc: "2.0", id: "x", result: { ok: true } })) as unknown as NonNullable<FetchSig>;
+			.mockResolvedValueOnce(
+				jsonResponse({ jsonrpc: "2.0", id: "x", result: { ok: true } }),
+			) as unknown as NonNullable<FetchSig>;
 
 		const { client, sleep } = makeClient(fetchImpl);
 		const result = await client.request<{ ok: boolean }>("tasks/list", {});
@@ -63,14 +67,18 @@ describe("a2a-client.request", () => {
 	});
 
 	it("gives up after maxAttempts on persistent 5xx", async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(new Response("nope", { status: 502 })) as unknown as NonNullable<FetchSig>;
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(new Response("nope", { status: 502 })) as unknown as NonNullable<FetchSig>;
 		const { client } = makeClient(fetchImpl, { maxAttempts: 2 });
 		await expect(client.request("tasks/list", {})).rejects.toBeInstanceOf(A2AHttpError);
 		expect(fetchImpl).toHaveBeenCalledTimes(2);
 	});
 
 	it("does not retry on 4xx", async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(new Response("bad", { status: 400 })) as unknown as NonNullable<FetchSig>;
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(new Response("bad", { status: 400 })) as unknown as NonNullable<FetchSig>;
 		const { client } = makeClient(fetchImpl);
 		await expect(client.request("tasks/list", {})).rejects.toMatchObject({
 			name: "A2AHttpError",
@@ -88,7 +96,9 @@ describe("a2a-client.request", () => {
 			}),
 		) as unknown as NonNullable<FetchSig>;
 		const { client } = makeClient(fetchImpl);
-		await expect(client.request("message/send", { recipient: "ghost" })).rejects.toBeInstanceOf(A2ARpcError);
+		await expect(client.request("message/send", { recipient: "ghost" })).rejects.toBeInstanceOf(
+			A2ARpcError,
+		);
 	});
 
 	it("preserves caller-supplied idempotency key on retry", async () => {

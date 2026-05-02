@@ -7,10 +7,7 @@ import { completeHandoffInput } from "./schemas.js";
 // to the literal "completed" string the MCP tool returns.
 const wireSchema = z.object({
 	thread_id: z.string(),
-	status: z.union([
-		z.literal("completed"),
-		z.object({ state: z.literal("completed") }),
-	]),
+	status: z.union([z.literal("completed"), z.object({ state: z.literal("completed") })]),
 	completed_at: z.string(),
 });
 
