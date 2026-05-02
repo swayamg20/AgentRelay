@@ -38,6 +38,7 @@ describe("agentrelay-mcp argv guard", () => {
 	it("hint mentions the alternate bin and the CLI invocation form", () => {
 		expect(CLI_MISUSE_HINT).toContain("agentrelay-mcp is the MCP server (stdio)");
 		expect(CLI_MISUSE_HINT).toContain("npx -y -p agentrelay-mcp agentrelay");
+		expect(CLI_MISUSE_HINT).toContain("agentrelay mcp");
 		expect(CLI_MISUSE_HINT).toContain("agentrelay --help");
 	});
 });

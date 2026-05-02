@@ -106,6 +106,10 @@ claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp
 claude mcp list   # should list 'agentrelay'
 ```
 
+Note: Internally, `agentrelay-mcp` and `agentrelay mcp` are equivalent. The
+shorter `agentrelay mcp` form will be the recommended invocation in v0.2;
+today both work.
+
 The `--scope user` flag means the entry works in every directory you open
 Claude Code in, not just one project.
 
@@ -218,12 +222,19 @@ is complete.
 
 ## Troubleshooting
 
+**Try `agentrelay doctor --fix` first.** It auto-remediates missing
+MCP entries and permission overlays. Manual issues (missing
+`~/.agentrelay/config.json`, broken `trust.yaml`) will be reported with
+the exact command to run. Use `agentrelay doctor --json` when scripting
+or checking the report in CI.
+
 These are the actual errors hit during the 2026-04-28 cross-machine test.
 
 ### `"agentrelay config unavailable"` log on register
 
-You ran the wrong bin. `agentrelay-mcp` is the MCP server (stdio); it
-silently ignores CLI args and starts the server. Use `agentrelay`:
+You ran the wrong bin. `agentrelay-mcp` is the MCP server (stdio) (equivalent
+to `agentrelay mcp`); it silently ignores CLI args and starts the server. Use
+`agentrelay`:
 
 ```bash
 npx -y -p agentrelay-mcp agentrelay register ...
