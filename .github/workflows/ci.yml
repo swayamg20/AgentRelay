@@ -47,7 +47,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm -r test
+      # Skip the e2e workspace — it needs Postgres + builds + a real
+      # relay subprocess and is covered by the dedicated `e2e` job.
+      - run: pnpm --filter relay --filter agentrelay-mcp test
 
   relay-integration:
     needs: lint-typecheck
@@ -79,6 +81,15 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
       - run: pnpm install --frozen-lockfile
+
+      # Apply migrations against the fresh Postgres service container
+      # before the per-file integration loop. The loop's TRUNCATE step
+      # assumes the schema exists; on a clean DB the first truncate
+      # would fail with `relation "agents" does not exist`. Drizzle
+      # migrate is idempotent.
+      - run: node --import tsx/esm relay/src/db/migrate.ts
+        env:
+          RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
 
       - run: pnpm --filter relay test:integration
         env:
@@ -113,6 +124,13 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # Apply migrations once before the e2e tests — TestRelay.boot()
+      # spawns the relay against this DB and the harness expects the
+      # schema to exist. Drizzle migrate is idempotent.
+      - run: node --import tsx/esm relay/src/db/migrate.ts
+        env:
+          RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
 
       - run: pnpm --filter agentrelay-e2e test
         env:
