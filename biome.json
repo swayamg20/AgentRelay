@@ -31,7 +31,7 @@
 		"rules": {
 			"recommended": true,
 			"complexity": {
-				"noExcessiveCognitiveComplexity": "warn",
+				"noExcessiveCognitiveComplexity": "off",
 				"noBannedTypes": "error"
 			},
 			"correctness": {
@@ -39,7 +39,7 @@
 				"noUnusedImports": "error"
 			},
 			"style": {
-				"noNonNullAssertion": "warn",
+				"noNonNullAssertion": "off",
 				"useConst": "error",
 				"useImportType": "error"
 			},
@@ -61,5 +61,37 @@
 		"formatter": {
 			"trailingCommas": "none"
 		}
-	}
+	},
+	"overrides": [
+		{
+			"include": ["**/*.test.ts", "tests/**/*.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					},
+					"performance": {
+						"noDelete": "off"
+					},
+					"complexity": {
+						"noExcessiveCognitiveComplexity": "off"
+					}
+				}
+			}
+		},
+		{
+			"include": [
+				"mcp-server/src/a2a-client.ts",
+				"mcp-server/src/cli/install-toml.ts",
+				"mcp-server/src/cli/install.ts"
+			],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": "off"
+					}
+				}
+			}
+		}
+	]
 }

@@ -225,15 +225,11 @@ export const invites = pgTable(
 		usedByAgentId: uuid("used_by_agent_id").references(() => agents.id, {
 			onDelete: "set null",
 		}),
-		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-			.notNull()
-			.defaultNow(),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 	},
 	(t) => ({
 		uniqTokenHash: uniqueIndex("uniq_invites_token_hash").on(t.tokenHash),
-		idxExpiresAt: index("idx_invites_expires_at")
-			.on(t.expiresAt)
-			.where(sql`${t.usedAt} IS NULL`),
+		idxExpiresAt: index("idx_invites_expires_at").on(t.expiresAt).where(sql`${t.usedAt} IS NULL`),
 	}),
 );
 

@@ -17,8 +17,6 @@ describe("agentrelay-mcp deprecation notice", () => {
 	});
 
 	it("does not emit when suppression env and TTY are both present", () => {
-		expect(shouldEmitDeprecationNotice({ AGENTRELAY_SUPPRESS_DEPRECATION: "1" }, true)).toBe(
-			false,
-		);
+		expect(shouldEmitDeprecationNotice({ AGENTRELAY_SUPPRESS_DEPRECATION: "1" }, true)).toBe(false);
 	});
 });
