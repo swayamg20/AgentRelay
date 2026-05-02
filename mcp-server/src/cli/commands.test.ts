@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import yaml from "js-yaml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRelayConfig } from "../config.js";
 import { FALLBACK_TRUST, type TrustFile } from "../trust.js";
@@ -11,6 +12,8 @@ import {
 	fetchAudit,
 	formatDoctor,
 	install,
+	invite,
+	join as joinCmd,
 	register,
 	renderAudit,
 	rotateKey,
@@ -18,6 +21,7 @@ import {
 	trustSetCmd,
 	unblockCmd,
 } from "./commands.js";
+import { serializeTrust } from "./trust-mutate.js";
 
 describe("register", () => {
 	let dir: string;
@@ -68,6 +72,241 @@ describe("register", () => {
 				{ httpPost, configPath: join(dir, "config.json") },
 			),
 		).rejects.toThrow(/401/);
+	});
+});
+
+describe("invite", () => {
+	const config = {
+		relay_url: "https://relay.test",
+		agent_handle: "frank@acme",
+	};
+
+	it("posts to /admin/invites and returns the invite payload", async () => {
+		const httpPost = vi.fn(async () => ({
+			status: 201,
+			json: {
+				url: "https://relay.test/join#invite-token",
+				jti: "invite-1",
+				expires_at: "2026-05-04T00:00:00.000Z",
+			},
+		}));
+
+		const result = await invite(
+			{
+				handle: "new@acme",
+				role: "frontend",
+				expiresInSeconds: 86_400,
+				adminToken: "adm_test",
+			},
+			{ httpPost, loadConfig: async () => ({ ok: true, config }) },
+		);
+
+		expect(result).toEqual({
+			url: "https://relay.test/join#invite-token",
+			jti: "invite-1",
+			expiresAt: "2026-05-04T00:00:00.000Z",
+		});
+		expect(httpPost).toHaveBeenCalledOnce();
+		expect(httpPost.mock.calls[0]?.[0]).toBe("https://relay.test/admin/invites");
+		expect(httpPost.mock.calls[0]?.[1]).toEqual({
+			handle: "new@acme",
+			role: "frontend",
+			inviter_handle: "frank@acme",
+			expires_in_seconds: 86_400,
+		});
+		const headers = httpPost.mock.calls[0]?.[2] as Record<string, string>;
+		expect(headers.authorization).toBe("Bearer adm_test");
+	});
+
+	it("throws on relay errors using the relay message", async () => {
+		const httpPost = vi.fn(async () => ({
+			status: 403,
+			json: { code: "forbidden", message: "Admin token required" },
+		}));
+
+		await expect(
+			invite(
+				{
+					handle: "new@acme",
+					role: "frontend",
+					expiresInSeconds: 86_400,
+					adminToken: "bad",
+				},
+				{ httpPost, loadConfig: async () => ({ ok: true, config }) },
+			),
+		).rejects.toThrow("Admin token required");
+	});
+
+	it("throws when agent_handle is missing from config", async () => {
+		const httpPost = vi.fn(async () => ({
+			status: 201,
+			json: { url: "https://relay.test/join#x", jti: "invite-1", expiresAt: "later" },
+		}));
+
+		await expect(
+			invite(
+				{
+					handle: "new@acme",
+					role: "frontend",
+					expiresInSeconds: 86_400,
+					adminToken: "adm_test",
+					relayUrl: "https://relay.test",
+				},
+				{
+					httpPost,
+					loadConfig: async () => ({ ok: true, config: { relay_url: "https://relay.test" } }),
+				},
+			),
+		).rejects.toThrow(/registered machine/);
+		expect(httpPost).not.toHaveBeenCalled();
+	});
+
+	it("throws when no relay URL is available", async () => {
+		const httpPost = vi.fn(async () => ({
+			status: 201,
+			json: { url: "https://relay.test/join#x", jti: "invite-1", expiresAt: "later" },
+		}));
+
+		await expect(
+			invite(
+				{
+					handle: "new@acme",
+					role: "frontend",
+					expiresInSeconds: 86_400,
+					adminToken: "adm_test",
+				},
+				{ httpPost, loadConfig: async () => ({ ok: false, reason: "missing", path: "/missing" }) },
+			),
+		).rejects.toThrow(/no relay URL/);
+		expect(httpPost).not.toHaveBeenCalled();
+	});
+});
+
+describe("join", () => {
+	let dir: string;
+
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), "agentrelay-join-"));
+	});
+
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	function inviteUrl(payload: Record<string, unknown>, base = "https://relay.test/join"): string {
+		const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+		return `${base}#v1.${encodedPayload}.sig`;
+	}
+
+	function readTrustYaml(raw: string): TrustFile {
+		return yaml.load(raw, { schema: yaml.JSON_SCHEMA }) as TrustFile;
+	}
+
+	it("redeems the invite, writes config and trust, installs clients, and returns identity", async () => {
+		const configFile = join(dir, "config.json");
+		const trustFile = join(dir, "trust.yaml");
+		const tokenPayload = {
+			jti: "invite-1",
+			inviter_handle: "lead@acme",
+		};
+		const httpPost = vi.fn(async () => ({
+			status: 201,
+			json: { agent_id: "agent-123", handle: "builder@acme", api_key: "ah_test_new" },
+		}));
+		const installFn = vi.fn(async () => ({ clients: [], trustCreated: false }));
+
+		const result = await joinCmd(
+			{ url: inviteUrl(tokenPayload) },
+			{ httpPost, configPath: configFile, trustPath: trustFile, installFn },
+		);
+
+		expect(result).toEqual({
+			handle: "builder@acme",
+			agentId: "agent-123",
+			relayUrl: "https://relay.test",
+		});
+		expect(httpPost).toHaveBeenCalledOnce();
+		const token = inviteUrl(tokenPayload).split("#")[1];
+		expect(httpPost.mock.calls[0]?.[0]).toBe("https://relay.test/invites/invite-1/redeem");
+		expect(httpPost.mock.calls[0]?.[1]).toEqual({ token });
+		expect(httpPost.mock.calls[0]?.[2]).toEqual({ "content-type": "application/json" });
+		expect(installFn).toHaveBeenCalledWith({ client: "all", overwrite: false });
+
+		const config = JSON.parse(await readFile(configFile, "utf8")) as AgentRelayConfig;
+		expect(config).toEqual({
+			relay_url: "https://relay.test",
+			agent_handle: "builder@acme",
+			agent_id: "agent-123",
+			api_key: "ah_test_new",
+			default_session_id: null,
+		});
+		const trust = readTrustYaml(await readFile(trustFile, "utf8"));
+		expect(trust.teammates["lead@acme"]).toEqual({});
+	});
+
+	it("throws on an invite URL without a fragment", async () => {
+		const httpPost = vi.fn(async () => ({ status: 201, json: {} }));
+
+		await expect(
+			joinCmd(
+				{ url: "https://relay.test/join" },
+				{ httpPost, configPath: join(dir, "config.json"), trustPath: join(dir, "trust.yaml") },
+			),
+		).rejects.toThrow("invalid invite URL");
+		expect(httpPost).not.toHaveBeenCalled();
+	});
+
+	it("throws on a malformed token payload", async () => {
+		const httpPost = vi.fn(async () => ({ status: 201, json: {} }));
+		const malformedPayload = Buffer.from("not json", "utf8").toString("base64url");
+
+		await expect(
+			joinCmd(
+				{ url: `https://relay.test/join#v1.${malformedPayload}.sig` },
+				{ httpPost, configPath: join(dir, "config.json"), trustPath: join(dir, "trust.yaml") },
+			),
+		).rejects.toThrow("malformed invite token");
+		expect(httpPost).not.toHaveBeenCalled();
+	});
+
+	it("throws relay error messages on non-2xx redemption responses", async () => {
+		const httpPost = vi.fn(async () => ({
+			status: 410,
+			json: { code: "already_used", message: "invite already used" },
+		}));
+
+		await expect(
+			joinCmd(
+				{ url: inviteUrl({ jti: "invite-1", inviter_handle: "lead@acme" }) },
+				{ httpPost, configPath: join(dir, "config.json"), trustPath: join(dir, "trust.yaml") },
+			),
+		).rejects.toThrow("invite already used");
+	});
+
+	it("preserves existing trust entries when adding the inviter", async () => {
+		const configFile = join(dir, "config.json");
+		const trustFile = join(dir, "trust.yaml");
+		const existingTrust: TrustFile = {
+			...JSON.parse(JSON.stringify(FALLBACK_TRUST)),
+			teammates: {
+				"old@acme": { auto_read: true },
+			},
+		};
+		await writeFile(trustFile, serializeTrust(existingTrust), { mode: 0o600 });
+		const httpPost = vi.fn(async () => ({
+			status: 201,
+			json: { agent_id: "agent-123", handle: "builder@acme", api_key: "ah_test_new" },
+		}));
+		const installFn = vi.fn(async () => ({ clients: [], trustCreated: false }));
+
+		await joinCmd(
+			{ url: inviteUrl({ jti: "invite-2", inviter_handle: "lead@acme" }) },
+			{ httpPost, configPath: configFile, trustPath: trustFile, installFn },
+		);
+
+		const trust = readTrustYaml(await readFile(trustFile, "utf8"));
+		expect(trust.teammates["old@acme"]?.auto_read).toBe(true);
+		expect(trust.teammates["lead@acme"]).toEqual({});
 	});
 });
 

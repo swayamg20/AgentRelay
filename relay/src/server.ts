@@ -8,6 +8,7 @@ import type { NotificationJob } from "./notifications/types.js";
 import { createA2aRoutes } from "./routes/a2a.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createAgentsRoutes } from "./routes/agents.js";
+import { createInviteRoutes } from "./routes/invites.js";
 import type { AppEnv } from "./types.js";
 
 export type { AppEnv };
@@ -54,6 +55,17 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 				adminToken: config.RELAY_ADMIN_TOKEN,
 				pepper: config.RELAY_PEPPER,
 				keyEnvironment,
+			}),
+		);
+		app.route(
+			"/",
+			createInviteRoutes({
+				db,
+				adminToken: config.RELAY_ADMIN_TOKEN,
+				pepper: config.RELAY_PEPPER,
+				keyEnvironment,
+				publicUrl: config.RELAY_PUBLIC_URL,
+				inviteSecret: config.RELAY_INVITE_SECRET,
 			}),
 		);
 		app.route("/agents", createAgentsRoutes({ db, pepper: config.RELAY_PEPPER, keyEnvironment }));

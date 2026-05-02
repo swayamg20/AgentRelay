@@ -78,7 +78,7 @@ handoff thread — reusable next time someone hits the same question.
 
 > 🚧 **v0.1.x onboarding is rougher than it should be (~15 min).**
 > v1.0 (this week) ships [invite URLs](https://github.com/swayamg20/AgentRelay/issues/6)
-> + a hosted relay so it'll be one command. For now, the path below works.
+> + a hosted relay. Self-hosted teams can use the invite flow below now.
 > Full guide with troubleshooting: [`docs/onboarding.md`](docs/onboarding.md).
 
 ### Self-host the relay (once per team) — Docker only
@@ -90,6 +90,7 @@ cp .env.example .env
 
 # Rotate the secrets before exposing publicly:
 sed -i '' "s|^RELAY_PEPPER=.*|RELAY_PEPPER=$(openssl rand -hex 32)|" .env
+sed -i '' "s|^RELAY_INVITE_SECRET=.*|RELAY_INVITE_SECRET=$(openssl rand -hex 32)|" .env
 sed -i '' "s|^RELAY_ADMIN_TOKEN=.*|RELAY_ADMIN_TOKEN=$(openssl rand -hex 16)|" .env
 
 docker compose --profile selfhost up -d
@@ -99,6 +100,29 @@ curl http://localhost:8080/healthz                           # → {"status":"ok
 Postgres + relay come up together; migrations run on boot. Point your
 reverse proxy (Caddy / Cloudflare Tunnel / nginx) at `:8080`, set
 `RELAY_PUBLIC_URL`, and you're done.
+
+### One-command onboarding via invite URLs (recommended)
+
+The team lead mints a single-use, expiring URL and shares it with the joiner
+over Slack/email:
+
+```bash
+AGENTRELAY_ADMIN_TOKEN=<lead-admin-token> \
+  npx -y -p agentrelay-mcp agentrelay invite pranjal@acme --role backend --expires 24h
+# → https://relay.example.com/join#v1.eyJoYW5kbGUi...&sig=...
+```
+
+The joiner runs one command on a clean machine:
+
+```bash
+npx -y -p agentrelay-mcp agentrelay join 'https://relay.example.com/join#v1.…'
+# ✓ joined as pranjal@acme
+# try: ask Claude "check my agentrelay inbox"
+```
+
+The URL fragment carries an HMAC-signed token — the relay enforces
+single-use semantics atomically with agent creation. The headless
+`agentrelay register --admin-token …` flow stays available for CI/automation.
 
 ### Per-developer setup
 

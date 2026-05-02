@@ -210,6 +210,33 @@ export const agentBlocks = pgTable(
 	}),
 );
 
+export const invites = pgTable(
+	"invites",
+	{
+		jti: uuid("jti").primaryKey(),
+		tokenHash: text("token_hash").notNull(),
+		handle: text("handle").notNull(),
+		role: text("role").notNull(),
+		inviterId: uuid("inviter_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+		usedAt: timestamp("used_at", { withTimezone: true, mode: "date" }),
+		usedByAgentId: uuid("used_by_agent_id").references(() => agents.id, {
+			onDelete: "set null",
+		}),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.defaultNow(),
+	},
+	(t) => ({
+		uniqTokenHash: uniqueIndex("uniq_invites_token_hash").on(t.tokenHash),
+		idxExpiresAt: index("idx_invites_expires_at")
+			.on(t.expiresAt)
+			.where(sql`${t.usedAt} IS NULL`),
+	}),
+);
+
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type AgentCard = typeof agentCards.$inferSelect;

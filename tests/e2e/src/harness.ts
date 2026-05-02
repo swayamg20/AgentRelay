@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { dirname, resolve as pathResolve } from "node:path";
 import type { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { request } from "undici";
@@ -15,6 +15,8 @@ import { request } from "undici";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 export const REPO_ROOT = pathResolve(__dirname, "../../..");
+const RELAY_PACKAGE_ROOT = pathResolve(REPO_ROOT, "relay");
+const RELAY_TEST_UTILS_PATH = pathResolve(REPO_ROOT, "relay/dist/db/test-utils.js");
 
 // Single source of truth for the MCP server binary path. Issue #5 will
 // collapse `agentrelay-mcp` into `agentrelay mcp`; when that lands,
@@ -30,6 +32,18 @@ type RelayChild =
 type RelayExit = {
   code: number | null;
   signal: NodeJS.Signals | null;
+};
+
+type TestDbUtils = {
+  tryConnect: () => Promise<{
+    available: boolean;
+    reason?: string;
+    handle?: {
+      sql: unknown;
+      close: () => Promise<void>;
+    };
+  }>;
+  truncateAll: (sql: unknown) => Promise<void>;
 };
 
 type CreatedAgent = {
@@ -72,13 +86,18 @@ export class TestRelay {
     const port = opts?.port ?? 18080;
     const baseUrl = `http://localhost:${port}`;
     const adminToken = randomBytes(32).toString("hex");
+    const databaseUrl =
+      opts?.databaseUrl ??
+      process.env.RELAY_TEST_DATABASE_URL ??
+      "postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay";
+
+    await resetTestDatabase(databaseUrl);
+
     const env = envWith({
-      RELAY_DATABASE_URL:
-        opts?.databaseUrl ??
-        process.env.RELAY_TEST_DATABASE_URL ??
-        "postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay",
+      RELAY_DATABASE_URL: databaseUrl,
       RELAY_PEPPER: randomBytes(32).toString("hex"),
       RELAY_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
+      RELAY_INVITE_SECRET: randomBytes(32).toString("hex"),
       RELAY_ADMIN_TOKEN: adminToken,
       RELAY_METRICS_TOKEN: randomBytes(32).toString("hex"),
       RELAY_PUBLIC_URL: baseUrl,
@@ -309,6 +328,53 @@ function envWith(overrides: Record<string, string>): Record<string, string> {
     }
   }
   return { ...env, ...overrides };
+}
+
+async function resetTestDatabase(databaseUrl: string): Promise<void> {
+  const previousCwd = process.cwd();
+  const previousTestUrl = process.env.RELAY_TEST_DATABASE_URL;
+  const previousDatabaseUrl = process.env.RELAY_DATABASE_URL;
+  process.env.RELAY_TEST_DATABASE_URL = databaseUrl;
+  process.env.RELAY_DATABASE_URL = databaseUrl;
+
+  try {
+    process.chdir(RELAY_PACKAGE_ROOT);
+    const module = (await import(pathToFileURL(RELAY_TEST_UTILS_PATH).href)) as unknown;
+    if (!isTestDbUtils(module)) {
+      throw new Error("relay test-utils module does not expose tryConnect/truncateAll");
+    }
+
+    const conn = await module.tryConnect();
+    if (!conn.available || conn.handle === undefined) {
+      throw new Error(`test database unavailable: ${conn.reason ?? "unknown reason"}`);
+    }
+
+    try {
+      await module.truncateAll(conn.handle.sql);
+    } finally {
+      await conn.handle.close();
+    }
+  } finally {
+    process.chdir(previousCwd);
+    restoreEnv("RELAY_TEST_DATABASE_URL", previousTestUrl);
+    restoreEnv("RELAY_DATABASE_URL", previousDatabaseUrl);
+  }
+}
+
+function isTestDbUtils(value: unknown): value is TestDbUtils {
+  return (
+    isRecord(value) &&
+    typeof value.tryConnect === "function" &&
+    typeof value.truncateAll === "function"
+  );
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
 }
 
 function isHealthy(responseBody: string): boolean {

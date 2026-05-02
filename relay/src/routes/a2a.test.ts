@@ -18,6 +18,7 @@ const TEST_ENV = {
 	RELAY_DATABASE_URL: process.env.RELAY_TEST_DATABASE_URL ?? "postgres://x:y@localhost/x",
 	RELAY_PEPPER: "p".repeat(32),
 	RELAY_ENCRYPTION_KEY: "e".repeat(16),
+	RELAY_INVITE_SECRET: "i".repeat(32),
 	RELAY_ADMIN_TOKEN: "admin-token-secret",
 	RELAY_METRICS_TOKEN: "metrics-token",
 	RELAY_PUBLIC_URL: "http://localhost:8080",

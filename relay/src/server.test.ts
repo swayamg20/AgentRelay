@@ -8,6 +8,7 @@ const TEST_ENV = {
 	RELAY_DATABASE_URL: "postgres://test:test@localhost:5433/test",
 	RELAY_PEPPER: "a".repeat(32),
 	RELAY_ENCRYPTION_KEY: "b".repeat(16),
+	RELAY_INVITE_SECRET: "i".repeat(32),
 	RELAY_ADMIN_TOKEN: "admin-token",
 	RELAY_METRICS_TOKEN: "metrics-token",
 	RELAY_PUBLIC_URL: "http://localhost:8080",

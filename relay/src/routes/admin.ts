@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { generateKey } from "../auth/keys.js";
+import { type KeyEnvironment, generateKey } from "../auth/keys.js";
 import { adminAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { agents, apiKeys } from "../db/schema.js";
 import { RelayError } from "../errors.js";
+import { registerAgentWithInitialKey } from "../services/agent-registration.js";
 import type { AppEnv } from "../types.js";
 
 const handleRegex = /^[a-z0-9._-]+@[a-z0-9.-]+$/;
@@ -23,7 +24,7 @@ export interface AdminRoutesOptions {
 	db: Database;
 	adminToken: string;
 	pepper: string;
-	keyEnvironment: "live" | "test";
+	keyEnvironment: KeyEnvironment;
 }
 
 export function createAdminRoutes(opts: AdminRoutesOptions): Hono<AppEnv> {
@@ -40,40 +41,23 @@ export function createAdminRoutes(opts: AdminRoutesOptions): Hono<AppEnv> {
 			});
 		}
 		const input = parsed.data;
-		const generated = generateKey(opts.keyEnvironment, opts.pepper);
 
-		const result = await opts.db.transaction(async (tx) => {
-			const [existing] = await tx
-				.select({ id: agents.id })
-				.from(agents)
-				.where(eq(agents.handle, input.handle));
-			if (existing) {
-				throw new RelayError("invalid_params", `Handle '${input.handle}' is already registered`);
-			}
-			const [agent] = await tx
-				.insert(agents)
-				.values({
-					handle: input.handle,
-					email: input.email,
-					displayName: input.display_name,
-					role: input.role,
-				})
-				.returning();
-			if (!agent) throw new RelayError("internal", "Failed to create agent");
-			await tx.insert(apiKeys).values({
-				agentId: agent.id,
-				keyHash: generated.hash,
-				salt: generated.salt,
-				label: "initial",
-			});
-			return agent;
-		});
+		const result = await opts.db.transaction(async (tx) =>
+			registerAgentWithInitialKey(tx, {
+				handle: input.handle,
+				email: input.email,
+				role: input.role,
+				displayName: input.display_name,
+				pepper: opts.pepper,
+				keyEnvironment: opts.keyEnvironment,
+			}),
+		);
 
 		return c.json(
 			{
-				agent_id: result.id,
-				handle: result.handle,
-				api_key: generated.raw,
+				agent_id: result.agent.id,
+				handle: result.agent.handle,
+				api_key: result.apiKey,
 			},
 			201,
 		);

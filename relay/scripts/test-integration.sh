@@ -37,13 +37,13 @@ truncate_all() {
   if [[ -n "${RELAY_TEST_TRUNCATE_VIA_PSQL:-}" ]]; then
     command -v psql >/dev/null || { echo "psql not on PATH" >&2; exit 1; }
     psql "$RELAY_TEST_DATABASE_URL" -q -c \
-      "TRUNCATE agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks RESTART IDENTITY CASCADE;" \
+      "TRUNCATE agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks, invites RESTART IDENTITY CASCADE;" \
       >/dev/null 2>&1
     return
   fi
 
   docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -q -c \
-    "TRUNCATE agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks RESTART IDENTITY CASCADE;" \
+    "TRUNCATE agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks, invites RESTART IDENTITY CASCADE;" \
     >/dev/null 2>&1
 }
 
@@ -54,6 +54,7 @@ INTEGRATION_FILES=(
   src/db/schema.test.ts
   src/routes/admin.test.ts
   src/routes/agents.test.ts
+  src/routes/invites.test.ts
   src/routes/a2a.test.ts
   src/routes/blocks.test.ts
   src/routes/me.test.ts

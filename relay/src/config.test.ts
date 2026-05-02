@@ -5,6 +5,7 @@ const VALID_ENV = {
 	RELAY_DATABASE_URL: "postgres://u:p@localhost:5433/db",
 	RELAY_PEPPER: "p".repeat(32),
 	RELAY_ENCRYPTION_KEY: "e".repeat(16),
+	RELAY_INVITE_SECRET: "i".repeat(32),
 	RELAY_ADMIN_TOKEN: "admin-token",
 	RELAY_METRICS_TOKEN: "metrics-token",
 	RELAY_PUBLIC_URL: "http://localhost:8080",
@@ -33,6 +34,12 @@ describe("loadConfig", () => {
 		expect(() => loadConfig({ ...VALID_ENV, RELAY_PEPPER: "short" } as NodeJS.ProcessEnv)).toThrow(
 			/RELAY_PEPPER/,
 		);
+	});
+
+	it("rejects too-short invite secret", () => {
+		expect(() =>
+			loadConfig({ ...VALID_ENV, RELAY_INVITE_SECRET: "short" } as NodeJS.ProcessEnv),
+		).toThrow(/RELAY_INVITE_SECRET/);
 	});
 
 	it("rejects missing required fields", () => {

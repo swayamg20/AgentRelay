@@ -12,6 +12,8 @@ import {
 	fetchAudit,
 	formatDoctor,
 	install,
+	invite,
+	join,
 	register,
 	renderAudit,
 	rotateKey,
@@ -52,6 +54,78 @@ cli
 			adminToken: opts.adminToken as string | undefined,
 		});
 		process.stdout.write(`registered ${cfg.agent_handle} (id ${cfg.agent_id})\n`);
+	});
+
+cli
+	.command("invite <handle>", "Create a single-use invite URL")
+	.option("--role <role>", "Role for the invited agent")
+	.option("--expires <duration>", "Invite lifetime: seconds, Nh, or Nd", { default: "24h" })
+	.option("--relay <url>", "Override relay URL")
+	.action(async (handle: string | undefined, opts: Record<string, unknown>) => {
+		try {
+			if (!handle) {
+				process.stderr.write("agentrelay invite: handle required\n");
+				process.exit(2);
+			}
+			if (!opts.role || typeof opts.role !== "string") {
+				process.stderr.write("agentrelay invite: --role is required\n");
+				process.exit(2);
+			}
+			const adminToken = process.env.AGENTRELAY_ADMIN_TOKEN;
+			if (!adminToken) {
+				process.stderr.write("agentrelay invite: AGENTRELAY_ADMIN_TOKEN env var required\n");
+				process.exit(1);
+			}
+
+			const expires = String(opts.expires ?? "24h");
+			let expiresInSeconds: number;
+			if (/^\d+$/.test(expires)) {
+				expiresInSeconds = Number(expires);
+			} else {
+				const hours = /^(\d+)h$/.exec(expires);
+				const days = /^(\d+)d$/.exec(expires);
+				if (hours) {
+					expiresInSeconds = Number(hours[1] ?? "0") * 3600;
+				} else if (days) {
+					expiresInSeconds = Number(days[1] ?? "0") * 86_400;
+				} else {
+					throw new Error("invalid --expires; use seconds, Nh, or Nd");
+				}
+			}
+
+			const result = await invite({
+				handle,
+				role: opts.role,
+				expiresInSeconds,
+				adminToken,
+				relayUrl: typeof opts.relay === "string" ? opts.relay : undefined,
+			});
+			process.stdout.write(`${result.url}\n`);
+			process.stderr.write(`expires at: ${result.expiresAt}\n`);
+		} catch (err) {
+			process.stderr.write(
+				`agentrelay invite: ${err instanceof Error ? err.message : String(err)}\n`,
+			);
+			process.exit(1);
+		}
+	});
+
+cli
+	.command("join <url>", "Redeem a signed invite URL and onboard this machine")
+	.action(async (url: string | undefined) => {
+		try {
+			if (!url) {
+				throw new Error("url required");
+			}
+			const result = await join({ url });
+			process.stdout.write(`joined as ${result.handle}\n`);
+			process.stdout.write('try: ask Claude "check my agentrelay inbox"\n');
+		} catch (err) {
+			process.stderr.write(
+				`agentrelay join: ${err instanceof Error ? err.message : String(err)}\n`,
+			);
+			process.exit(1);
+		}
 	});
 
 cli
