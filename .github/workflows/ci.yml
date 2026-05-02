@@ -87,7 +87,7 @@ jobs:
       # assumes the schema exists; on a clean DB the first truncate
       # would fail with `relation "agents" does not exist`. Drizzle
       # migrate is idempotent.
-      - run: node --import tsx/esm relay/src/db/migrate.ts
+      - run: pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts
         env:
           RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
 
@@ -128,7 +128,7 @@ jobs:
       # Apply migrations once before the e2e tests — TestRelay.boot()
       # spawns the relay against this DB and the harness expects the
       # schema to exist. Drizzle migrate is idempotent.
-      - run: node --import tsx/esm relay/src/db/migrate.ts
+      - run: pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts
         env:
           RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
 
