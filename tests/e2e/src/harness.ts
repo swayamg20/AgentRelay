@@ -18,11 +18,10 @@ export const REPO_ROOT = pathResolve(__dirname, "../../..");
 const RELAY_PACKAGE_ROOT = pathResolve(REPO_ROOT, "relay");
 const RELAY_TEST_UTILS_PATH = pathResolve(REPO_ROOT, "relay/dist/db/test-utils.js");
 
-// Single source of truth for the MCP server binary path. Issue #5 will
-// collapse `agentrelay-mcp` into `agentrelay mcp`; when that lands,
-// update this to point at the new bin and (perhaps) prepend ["mcp"] to
-// the spawn args.
-export const MCP_BIN_PATH = pathResolve(REPO_ROOT, "mcp-server/dist/bin/agentrelay-mcp.js");
+// Single source of truth for the MCP server binary path. Issue #5 moved
+// internal callers to `agentrelay mcp`; the deprecated `agentrelay-mcp`
+// bin is still preserved for one minor version for external compatibility.
+export const MCP_BIN_PATH = pathResolve(REPO_ROOT, "mcp-server/dist/bin/agentrelay.js");
 export const RELAY_BIN_PATH = pathResolve(REPO_ROOT, "relay/dist/main.js");
 
 type RelayChild =
@@ -280,7 +279,7 @@ export class AgentHarness {
 
     const transport = new StdioClientTransport({
       command: "node",
-      args: [MCP_BIN_PATH],
+      args: [MCP_BIN_PATH, "mcp"],
       env: envWith({
         HOME: opts.homeDir,
         AGENTRELAY_CONFIG_PATH: configPath,

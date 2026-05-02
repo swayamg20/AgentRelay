@@ -7,8 +7,14 @@ import type { AgentRelayConfig } from "../config.js";
 import { FALLBACK_TRUST, type TrustFile } from "../trust.js";
 import {
 	type AuditEvent,
+	type DoctorReport,
+	type InstallOptions,
+	type InstallResult,
 	blockCmd,
 	doctor,
+	doctorFix,
+	doctorHasMissing,
+	doctorReportToJson,
 	fetchAudit,
 	formatDoctor,
 	install,
@@ -536,6 +542,182 @@ describe("doctor", () => {
 			process.env.AGENTRELAY_TRUST_PATH = undefined;
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("doctorFix", () => {
+	it("auto-installs missing client entries once per client and reports manual config remediation", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-fix-"));
+		const claudeMcpPath = join(dir, ".claude.json");
+		const claudeSettingsPath = join(dir, "claude-settings.json");
+		const codexSettingsPath = join(dir, "codex.toml");
+		let installed = false;
+		const installCalls: InstallOptions[] = [];
+		const installDep = async (opts: InstallOptions): Promise<InstallResult> => {
+			installCalls.push(opts);
+			installed = true;
+			return { clients: [], trustCreated: false };
+		};
+
+		const readSettings = async (path: string): Promise<string | undefined> => {
+			if (!installed) return undefined;
+			if (path === claudeMcpPath) {
+				return JSON.stringify({ mcpServers: { agentrelay: { command: "npx" } } });
+			}
+			if (path === claudeSettingsPath) {
+				return JSON.stringify({ permissions: { allow: ["mcp__agentrelay__*"] } });
+			}
+			if (path === codexSettingsPath) {
+				return [
+					"[mcp_servers.agentrelay]",
+					'command = "npx"',
+					'args = ["-y", "agentrelay-mcp"]',
+					"",
+					"[permissions]",
+					'allow = ["mcp__agentrelay__*"]',
+				].join("\n");
+			}
+			return undefined;
+		};
+
+		try {
+			process.env.AGENTRELAY_CONFIG_PATH = join(dir, "missing-config.json");
+			process.env.AGENTRELAY_TRUST_PATH = join(dir, "missing-trust.yaml");
+			const result = await doctorFix({
+				readSettings,
+				clientPaths: (client) =>
+					client === "claude-code"
+						? { settingsPath: claudeSettingsPath, format: "json" }
+						: { settingsPath: codexSettingsPath, format: "toml" },
+				mcpPath: (client) => (client === "claude-code" ? claudeMcpPath : codexSettingsPath),
+				whoami: async () => true,
+				install: installDep,
+			});
+
+			expect(installCalls).toEqual([
+				{ client: "claude-code", overwrite: false },
+				{ client: "codex", overwrite: false },
+			]);
+			expect(result.fixed.map((f) => f.command)).toEqual([
+				"agentrelay install --client claude-code",
+				"agentrelay install --client codex",
+			]);
+			expect(result.before.mcpEntryPresent["claude-code"]).toBe(false);
+			expect(result.before.mcpEntryPresent.codex).toBe(false);
+			expect(result.before.overlayApplied["claude-code"]).toBe(false);
+			expect(result.before.overlayApplied.codex).toBe(false);
+			expect(result.after.mcpEntryPresent["claude-code"]).toBe(true);
+			expect(result.after.mcpEntryPresent.codex).toBe(true);
+			expect(result.after.overlayApplied["claude-code"]).toBe(true);
+			expect(result.after.overlayApplied.codex).toBe(true);
+			expect(result.skippedManual.map((s) => s.kind.type)).toContain("config-missing");
+			expect(result.skippedManual.find((s) => s.kind.type === "config-missing")?.command).toContain(
+				"agentrelay register",
+			);
+		} finally {
+			process.env.AGENTRELAY_CONFIG_PATH = undefined;
+			process.env.AGENTRELAY_TRUST_PATH = undefined;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("remediates missing MCP entries and overlays end-to-end in a fresh tmpdir", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-fix-acceptance-"));
+		const configFile = join(dir, ".agentrelay", "config.json");
+		const trustFile = join(dir, ".agentrelay", "trust.yaml");
+		const claudeMcpPath = join(dir, ".claude.json");
+		const claudeSettingsPath = join(dir, ".claude", "settings.json");
+		const codexSettingsPath = join(dir, ".codex", "config.toml");
+		const clientPathsForTmp = (client: "claude-code" | "codex") =>
+			client === "claude-code"
+				? { settingsPath: claudeSettingsPath, format: "json" as const }
+				: { settingsPath: codexSettingsPath, format: "toml" as const };
+		const mcpPathForTmp = (client: "claude-code" | "codex") =>
+			client === "claude-code" ? claudeMcpPath : codexSettingsPath;
+
+		try {
+			process.env.AGENTRELAY_CONFIG_PATH = configFile;
+			process.env.AGENTRELAY_TRUST_PATH = trustFile;
+
+			const result = await doctorFix({
+				clientPaths: clientPathsForTmp,
+				mcpPath: mcpPathForTmp,
+				whoami: async () => true,
+				install: async (opts) =>
+					install(opts, {
+						clientPaths: clientPathsForTmp,
+						mcpPath: mcpPathForTmp,
+						trustPath: trustFile,
+					}),
+			});
+
+			expect(result.fixed.map((f) => f.kind)).toEqual([
+				{ type: "mcp-missing", client: "claude-code" },
+				{ type: "mcp-missing", client: "codex" },
+			]);
+			expect(result.after.mcpEntryPresent["claude-code"]).toBe(true);
+			expect(result.after.mcpEntryPresent.codex).toBe(true);
+			expect(result.after.overlayApplied["claude-code"]).toBe(true);
+			expect(result.after.overlayApplied.codex).toBe(true);
+			expect(result.after.configPresent).toBe(false);
+			expect(doctorHasMissing(result.after)).toBe(true);
+			expect(result.skippedManual).toEqual([
+				{
+					kind: { type: "config-missing" },
+					command:
+						'agentrelay register --relay <url> --admin-token <token> --handle <you>@<team> --email <you>@example.com --name "<Your Name>" --role <role>',
+				},
+			]);
+		} finally {
+			process.env.AGENTRELAY_CONFIG_PATH = undefined;
+			process.env.AGENTRELAY_TRUST_PATH = undefined;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("detects missing reports and leaves skipped connectivity out of the failure predicate", () => {
+		const fullyOk: DoctorReport = {
+			configPresent: true,
+			configPath: "/tmp/config.json",
+			relayReachable: true,
+			apiKeyValid: true,
+			mcpEntryPresent: { "claude-code": true, codex: true },
+			overlayApplied: { "claude-code": true, codex: true },
+			trustParseable: true,
+			trustPath: "/tmp/trust.yaml",
+			notes: [],
+		};
+		const freshMissing: DoctorReport = {
+			...fullyOk,
+			configPresent: false,
+			relayReachable: false,
+			apiKeyValid: false,
+			mcpEntryPresent: { "claude-code": false, codex: false },
+			overlayApplied: { "claude-code": false, codex: false },
+			trustParseable: false,
+		};
+
+		expect(doctorHasMissing(freshMissing)).toBe(true);
+		expect(doctorHasMissing(fullyOk)).toBe(false);
+		expect(
+			doctorHasMissing({ ...fullyOk, relayReachable: "skipped", apiKeyValid: "skipped" }),
+		).toBe(false);
+	});
+
+	it("serializes the report shape as pretty JSON", () => {
+		const report: DoctorReport = {
+			configPresent: true,
+			configPath: "/tmp/config.json",
+			relayReachable: "skipped",
+			apiKeyValid: "skipped",
+			mcpEntryPresent: { "claude-code": true },
+			overlayApplied: { "claude-code": true },
+			trustParseable: true,
+			trustPath: "/tmp/trust.yaml",
+			notes: ["ok"],
+		};
+
+		expect(doctorReportToJson(report)).toBe(JSON.stringify(report, null, 2));
 	});
 });
 

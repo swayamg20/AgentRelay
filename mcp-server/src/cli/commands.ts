@@ -521,8 +521,8 @@ export async function doctor(
 
 /**
  * Remediation commands a user can copy-paste to fix a MISSING / BROKEN
- * doctor check. Pure mapping — no I/O. Returning a non-empty string means
- * the line should render with a `→ run: <cmd>` suffix.
+ * doctor check. Pure mapping — no I/O. `command` is the rendered hint, and
+ * `auto` controls whether `doctor --fix` can safely run it in-process.
  */
 export type RemediationKind =
 	| { type: "config-missing" }
@@ -530,23 +530,109 @@ export type RemediationKind =
 	| { type: "overlay-missing"; client: string }
 	| { type: "trust-broken" };
 
-export function remediationFor(kind: RemediationKind): string {
+export interface Remediation {
+	command: string;
+	auto: boolean;
+}
+
+export function remediationFor(kind: RemediationKind): Remediation {
 	switch (kind.type) {
 		case "config-missing":
-			return 'agentrelay register --relay <url> --admin-token <token> --handle <you>@<team> --email <you>@example.com --name "<Your Name>" --role <role>';
+			return {
+				command:
+					'agentrelay register --relay <url> --admin-token <token> --handle <you>@<team> --email <you>@example.com --name "<Your Name>" --role <role>',
+				auto: false,
+			};
 		case "mcp-missing":
-			return `agentrelay install --client ${kind.client}`;
+			return { command: `agentrelay install --client ${kind.client}`, auto: true };
 		case "overlay-missing":
-			return `agentrelay install --client ${kind.client}`;
+			return { command: `agentrelay install --client ${kind.client}`, auto: true };
 		case "trust-broken":
-			return "rm ~/.agentrelay/trust.yaml && agentrelay install --client all";
+			return {
+				command: "rm ~/.agentrelay/trust.yaml && agentrelay install --client all",
+				auto: false,
+			};
 	}
+}
+
+export function doctorReportToJson(r: DoctorReport): string {
+	return JSON.stringify(r, null, 2);
+}
+
+export interface DoctorFixResult {
+	before: DoctorReport;
+	after: DoctorReport;
+	fixed: Array<{ kind: RemediationKind; command: string }>;
+	skippedManual: Array<{ kind: RemediationKind; command: string }>;
+}
+
+export interface DoctorFixDeps extends DoctorDeps {
+	mcpPath?: typeof mcpPath;
+	install?: (opts: InstallOptions) => Promise<InstallResult>;
+}
+
+export async function doctorFix(deps: DoctorFixDeps = {}): Promise<DoctorFixResult> {
+	const installFn = deps.install ?? install;
+	const before = await doctor(deps);
+	const fixed: DoctorFixResult["fixed"] = [];
+	const skippedManual: DoctorFixResult["skippedManual"] = [];
+	const installedClients = new Set<SupportedClient>();
+
+	const handleRemediation = async (kind: RemediationKind): Promise<void> => {
+		const remediation = remediationFor(kind);
+		if (!remediation.auto) {
+			skippedManual.push({ kind, command: remediation.command });
+			return;
+		}
+
+		if (
+			(kind.type === "mcp-missing" || kind.type === "overlay-missing") &&
+			isSupportedClient(kind.client)
+		) {
+			if (!installedClients.has(kind.client)) {
+				await installFn({ client: kind.client, overwrite: false });
+				installedClients.add(kind.client);
+				fixed.push({ kind, command: remediation.command });
+			}
+		}
+	};
+
+	if (!before.configPresent) {
+		await handleRemediation({ type: "config-missing" });
+	}
+	for (const [client, present] of Object.entries(before.mcpEntryPresent)) {
+		if (!present) {
+			await handleRemediation({ type: "mcp-missing", client });
+		}
+	}
+	for (const [client, applied] of Object.entries(before.overlayApplied)) {
+		if (!applied) {
+			await handleRemediation({ type: "overlay-missing", client });
+		}
+	}
+	if (!before.trustParseable) {
+		await handleRemediation({ type: "trust-broken" });
+	}
+
+	const after = await doctor(deps);
+	return { before, after, fixed, skippedManual };
+}
+
+export function doctorHasMissing(r: DoctorReport): boolean {
+	return (
+		!r.configPresent ||
+		Object.values(r.mcpEntryPresent).some((present) => !present) ||
+		Object.values(r.overlayApplied).some((applied) => !applied) ||
+		!r.trustParseable ||
+		r.relayReachable === false ||
+		r.apiKeyValid === false
+	);
 }
 
 export function formatDoctor(report: DoctorReport): string {
 	const renderLine = (label: string, ok: boolean, kind: RemediationKind, suffix = ""): string => {
 		const status = ok ? "OK" : "MISSING";
-		const hint = ok ? "" : `  → run: ${remediationFor(kind)}`;
+		const hint = ok ? "" : `  → run: ${remediationFor(kind).command}`;
 		return `${label}${status}${suffix}${hint}`;
 	};
 
@@ -570,10 +656,14 @@ export function formatDoctor(report: DoctorReport): string {
 	lines.push(
 		report.trustParseable
 			? trustLabel
-			: `${trustLabel}  → run: ${remediationFor({ type: "trust-broken" })}`,
+			: `${trustLabel}  → run: ${remediationFor({ type: "trust-broken" }).command}`,
 	);
 	for (const note of report.notes) lines.push(`  note: ${note}`);
 	return lines.join("\n");
+}
+
+function isSupportedClient(client: string): client is SupportedClient {
+	return client === "claude-code" || client === "codex";
 }
 
 export interface MutateTrustDeps {

@@ -9,6 +9,9 @@ import { cac } from "cac";
 import {
 	blockCmd,
 	doctor,
+	doctorFix,
+	doctorHasMissing,
+	doctorReportToJson,
 	fetchAudit,
 	formatDoctor,
 	install,
@@ -156,10 +159,40 @@ cli.command("rotate-key", "Rotate this agent's API key").action(async () => {
 	}
 });
 
-cli.command("doctor", "Diagnose local config + connectivity").action(async () => {
-	const report = await doctor();
-	process.stdout.write(`${formatDoctor(report)}\n`);
-});
+cli
+	.command("doctor", "Diagnose local config + connectivity")
+	.option("--json", "Emit the report as JSON")
+	.option("--fix", "Auto-remediate any MISSING entries that have an auto remediation")
+	.action(async (opts: Record<string, unknown>) => {
+		if (opts.fix) {
+			const r = await doctorFix();
+			if (opts.json) {
+				process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+			} else {
+				if (r.fixed.length === 0) {
+					process.stdout.write("doctor --fix: nothing to auto-remediate\n");
+				} else {
+					process.stdout.write("doctor --fix: applied:\n");
+					for (const f of r.fixed) process.stdout.write(`  → ${f.command}\n`);
+				}
+				if (r.skippedManual.length > 0) {
+					process.stdout.write("\nManual remediations required:\n");
+					for (const s of r.skippedManual) process.stdout.write(`  → ${s.command}\n`);
+				}
+				process.stdout.write(`\n${formatDoctor(r.after)}\n`);
+			}
+			const stillBroken = doctorHasMissing(r.after);
+			if (stillBroken) process.exit(1);
+			return;
+		}
+
+		const report = await doctor();
+		if (opts.json) {
+			process.stdout.write(`${doctorReportToJson(report)}\n`);
+		} else {
+			process.stdout.write(`${formatDoctor(report)}\n`);
+		}
+	});
 
 cli
 	.command("audit", "Stream local + relay audit ledger entries")
@@ -245,6 +278,11 @@ cli
 		const changed = await trustResetCmd(handle);
 		process.stdout.write(changed ? `reset ${handle}\n` : `${handle} had no entry\n`);
 	});
+
+cli.command("mcp", "Start the AgentRelay MCP server (stdio)").action(async () => {
+	const { runMcpServer } = await import("./run-mcp.js");
+	await runMcpServer();
+});
 
 cli.help();
 cli.version("0.0.1");

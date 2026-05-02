@@ -22,6 +22,7 @@ export const CLI_MISUSE_HINT =
 	"agentrelay-mcp is the MCP server (stdio), not the AgentRelay CLI.\n" +
 	"Did you mean to run the CLI?\n" +
 	"  npx -y -p agentrelay-mcp agentrelay <cmd> [...args]\n" +
+	"Or run the MCP server via the new form: agentrelay mcp\n" +
 	"See: agentrelay --help\n";
 
 export function isCliMisuse(arg: string | undefined): boolean {
