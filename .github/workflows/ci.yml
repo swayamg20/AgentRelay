@@ -90,3 +90,38 @@ jobs:
         env:
           RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
           RELAY_TEST_TRUNCATE_VIA_PSQL: '1'
+
+  e2e:
+    needs: [unit, relay-integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentrelay
+          POSTGRES_PASSWORD: agentrelay-dev
+          POSTGRES_DB: agentrelay
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U agentrelay -d agentrelay"
+          --health-interval 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter agentrelay-e2e test
+        env:
+          RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
