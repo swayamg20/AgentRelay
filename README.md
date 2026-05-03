@@ -81,33 +81,7 @@ handoff thread — reusable next time someone hits the same question.
 > + a hosted relay. Self-hosted teams can use the invite flow below now.
 > Full guide with troubleshooting: [`docs/onboarding.md`](docs/onboarding.md).
 
-### Self-host the relay (once per team)
-
-Two paths — pick one. A future hosted relay (run by the project) will
-remove even this step for teams that don't want to operate their own.
-
-**Recommended: deploy to Fly.io (~$5–10/mo).**
-The repo ships a checked-in `fly.toml` and an auto-deploy GitHub Actions
-workflow. End-to-end walkthrough — including Postgres provisioning,
-secrets, custom domain, and tag-triggered deploys — is in
-[`docs/deploy-fly.md`](docs/deploy-fly.md). The short version:
-
-```bash
-brew install flyctl && fly auth signup
-fly launch --no-deploy --copy-config
-fly postgres create --name agentrelay-pg --vm-size shared-cpu-1x --volume-size 1
-fly postgres attach agentrelay-pg
-fly secrets set RELAY_PEPPER=$(openssl rand -hex 32) \
-                RELAY_ENCRYPTION_KEY=$(openssl rand -hex 32) \
-                RELAY_INVITE_SECRET=$(openssl rand -hex 32) \
-                RELAY_ADMIN_TOKEN=$(openssl rand -hex 16) \
-                RELAY_METRICS_TOKEN=$(openssl rand -hex 16) \
-                RELAY_PUBLIC_URL=https://<your-app>.fly.dev
-fly deploy
-curl https://<your-app>.fly.dev/healthz                       # → {"status":"ok"}
-```
-
-**Alternative: Docker on your own server.**
+### Self-host the relay (once per team) — Docker only
 
 ```bash
 git clone https://github.com/swayamg20/AgentRelay
@@ -125,7 +99,13 @@ curl http://localhost:8080/healthz                           # → {"status":"ok
 
 Postgres + relay come up together; migrations run on boot. Point your
 reverse proxy (Caddy / Cloudflare Tunnel / nginx) at `:8080`, set
-`RELAY_PUBLIC_URL`, and you're done.
+`RELAY_PUBLIC_URL` in `.env`, and you're done.
+
+The relay is a standard Dockerfile-based service — deploy it anywhere
+that runs containers (your own VPS, Railway, Fly.io, Render, Hetzner,
+Oracle Cloud, a Raspberry Pi). [`docs/hosting.md`](docs/hosting.md) is
+a brief survey of the popular options with realistic cost notes; the
+project doesn't recommend any one platform.
 
 ### One-command onboarding via invite URLs (recommended)
 
@@ -293,6 +273,8 @@ For the next-feature roadmap (auto mode, ambient agent, federation) see
 │   ├── hld.md            ← state machine, sequence diagrams
 │   ├── lld.md            ← schemas, endpoints, error codes
 │   ├── onboarding.md     ← team setup walkthrough + troubleshooting
+│   ├── hosting.md        ← survey of where to host the relay (cost, setup effort)
+│   ├── deploy-fly.md     ← worked example: deploy to Fly.io
 │   ├── next-steps.md     ← living planning index, linked to GH issues
 │   ├── roadmap.md        ← phase-by-phase release plan
 │   ├── auto-mode.md      ← v0.3 design: live pairing channel

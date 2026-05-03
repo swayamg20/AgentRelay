@@ -1,7 +1,12 @@
 # Deploying AgentRelay relay to Fly.io
 
+> One worked example among several. AgentRelay deploys to anything that
+> runs containers — see [`hosting.md`](hosting.md) for the platform
+> survey. This doc exists for users who already use Fly; the project
+> doesn't recommend Fly over other hosts.
+
 ## What this gets you
-This walkthrough gets you a 256 MB shared-cpu-1x AgentRelay relay running on Fly.io in the default `iad` region, reachable at a `*.fly.dev` subdomain or your own domain via CNAME. Fly auto-provisions HTTPS for the app, the internal port is 8080, and the healthcheck path is `/healthz`.
+A 256 MB shared-cpu-1x AgentRelay relay on Fly.io in the default `iad` region, reachable at a `*.fly.dev` subdomain or your own domain via CNAME. Fly auto-provisions HTTPS for the app, the internal port is 8080, and the healthcheck path is `/healthz`.
 
 **Cost (May 2026):** Fly.io retired its free tier in October 2024. Realistic monthly bill for AgentRelay's footprint is **~$5–10/mo** — roughly $2 for the smallest VM and $5 for a development Postgres cluster. New signups get a 2-hour or 7-day trial; you'll need to add a credit card before deploying.
 
