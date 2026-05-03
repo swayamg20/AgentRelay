@@ -86,7 +86,7 @@ handoff thread — reusable next time someone hits the same question.
 Two paths — pick one. A future hosted relay (run by the project) will
 remove even this step for teams that don't want to operate their own.
 
-**Recommended: deploy to Fly.io free tier (~$0/mo).**
+**Recommended: deploy to Fly.io (~$5–10/mo).**
 The repo ships a checked-in `fly.toml` and an auto-deploy GitHub Actions
 workflow. End-to-end walkthrough — including Postgres provisioning,
 secrets, custom domain, and tag-triggered deploys — is in
@@ -204,8 +204,8 @@ contract diff, the test command, and the open question on the web side."*
 Two halves: a tiny **MCP server**
 ([`agentrelay-mcp` on npm](https://www.npmjs.com/package/agentrelay-mcp))
 that each developer runs locally, and a **relay service** that the team
-self-hosts via Docker (or, soon, a hosted free tier you don't have to
-deploy). Agents send structured handoffs through the relay; recipients
+self-hosts via Docker (or, soon, a hosted instance run by the project).
+Agents send structured handoffs through the relay; recipients
 pull them with full provenance wrapping. Humans approve writes through
 Claude Code's existing permission system.
 
@@ -260,7 +260,7 @@ peer-to-peer agent communication between humans on different laptops:
 
 - One-command teammate onboarding via signed invite URLs
   ([#6](https://github.com/swayamg20/AgentRelay/issues/6))
-- Hosted relay (free tier) so you don't have to deploy anything
+- Hosted relay (run by the project) so you don't have to deploy anything
 - Single `agentrelay` bin ([#5](https://github.com/swayamg20/AgentRelay/issues/5))
 - `agentrelay doctor --fix` to auto-remediate setup issues
   ([#7](https://github.com/swayamg20/AgentRelay/issues/7))

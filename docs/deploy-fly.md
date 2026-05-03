@@ -1,7 +1,9 @@
 # Deploying AgentRelay relay to Fly.io
 
 ## What this gets you
-This walkthrough gets you a 256 MB shared-cpu-1x free-tier AgentRelay relay running on Fly.io in the default `iad` region, reachable at a `*.fly.dev` subdomain or your own domain via CNAME. Fly auto-provisions HTTPS for the app, the internal port is 8080, and the healthcheck path is `/healthz`.
+This walkthrough gets you a 256 MB shared-cpu-1x AgentRelay relay running on Fly.io in the default `iad` region, reachable at a `*.fly.dev` subdomain or your own domain via CNAME. Fly auto-provisions HTTPS for the app, the internal port is 8080, and the healthcheck path is `/healthz`.
+
+**Cost (May 2026):** Fly.io retired its free tier in October 2024. Realistic monthly bill for AgentRelay's footprint is **~$5–10/mo** — roughly $2 for the smallest VM and $5 for a development Postgres cluster. New signups get a 2-hour or 7-day trial; you'll need to add a credit card before deploying.
 
 After setup, `fly deploy` is the one-command release path from the repo root. The committed `fly.toml` builds from the repo root using `relay/Dockerfile`, migrations run on container boot via the entrypoint with no separate `release_command`, and auto-deploy on `v*.*.*` tag push via GitHub Actions is wired up through `.github/workflows/deploy.yml` but optional.
 
@@ -114,16 +116,26 @@ If you need to roll forward a stuck migration, edit Drizzle metadata in the post
 ### Relay rejects a secret as too short
 The relay's zod config requires `RELAY_PEPPER`, `RELAY_ENCRYPTION_KEY`, and `RELAY_INVITE_SECRET` to be at least 32 bytes. `openssl rand -hex 32` produces 64 hex chars (32 bytes), which is correct. `openssl rand -hex 16` produces 32 hex chars (16 bytes) - only safe for `RELAY_ADMIN_TOKEN` and `RELAY_METRICS_TOKEN`.
 
-### Free-tier machine reclaim
-Fly may stop idle free-tier machines. `fly.toml` sets `auto_start_machines = true` so the next inbound request boots a machine cold (~2s startup). For consistent latency, upgrade to paid `shared-cpu-1x` (~$1.94/mo) and set `min_machines_running = 1`.
+### Idle machine cold-starts
+`fly.toml` sets `auto_stop_machines = true` and `min_machines_running = 0` to suspend idle VMs and minimize spend. The next inbound request boots a machine cold (~2s startup). For consistent latency, set `min_machines_running = 1` (the VM stays warm; you pay the full ~$2/mo continuously instead of pro-rated).
 
 ### Custom domain stuck on "awaiting CNAME"
 Run `fly certs show relay.yourdomain.com -a <your-app-name>`. The output lists exactly which DNS records Fly is looking for. Cloudflare's "proxied" mode (the orange cloud) breaks Fly's ACME challenge - set the record to "DNS only" (grey cloud) until the cert issues, then optionally re-enable proxying.
 
-## Cost expectations
-- Relay app on free tier: $0/mo (3x shared-1x 256 MB free forever)
-- Postgres on free tier: $0/mo (3 GB volume free)
-- Custom domain: ~$9/yr at Cloudflare Registrar
-- Total: ~$1/mo amortized
+## Cost expectations (May 2026)
 
-If your relay starts handling real traffic, upgrade Postgres to `shared-cpu-2x` with a 10 GB volume (~$8/mo) before you run out of memory.
+Fly.io retired its free tier in October 2024. Realistic AgentRelay monthly bill:
+
+| Component | Cost |
+|---|---|
+| Relay app — shared-cpu-1x, 256 MB, auto-stop on idle | ~$2/mo |
+| Postgres — `development` cluster (1 GB volume) | ~$5/mo |
+| Bandwidth | $0 within typical usage |
+| Custom domain (Cloudflare Registrar) | ~$9/yr |
+| **Total** | **~$7/mo + $9/yr domain** |
+
+If your relay starts handling real traffic, upgrade Postgres to `shared-cpu-2x` with a 10 GB volume (~$15/mo total) before you run out of memory. For latency-sensitive use, set `min_machines_running = 1` to avoid cold starts (no extra cost for the VM since it's already provisioned, just no auto-stop savings).
+
+If $7/mo is a hard no, two alternatives:
+- **Hetzner CX22** (~€3.79/mo): the same `docker compose --profile selfhost up -d` flow works on a Hetzner box. Self-installed Postgres on the same VM. Cheaper, more resources, but full Linux ops.
+- **Oracle Cloud Always Free**: $0 forever (4 ARM cores, 24 GB RAM). Capacity limits in some regions; significant setup work. Worth it only if "free forever" is a hard requirement.
