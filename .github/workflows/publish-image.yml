@@ -1,0 +1,99 @@
+# Build and publish the AgentRelay relay image to GitHub Container Registry.
+#
+# Triggers:
+#   - push to `main`        → publishes :latest (and :main, :sha-<short>)
+#   - push of `v*.*.*` tag  → publishes :vX.Y.Z, :X.Y.Z, :vX.Y, :vX
+#
+# Multi-arch (linux/amd64 + linux/arm64) so operators can pull on Apple
+# Silicon, Raspberry Pi, ARM VPS instances, and standard amd64 servers
+# without a separate workflow per arch.
+#
+# Auth: uses the auto-provisioned GITHUB_TOKEN scoped via `permissions:`
+# below. No extra secret needed. The first push to main may require a
+# manual click-through on the GHCR package settings to make it publicly
+# pullable ("Inherit access from source repository").
+
+name: publish-image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+# Image builds for `main` pile up if pushes land in quick succession;
+# cancel in-flight runs. Tag pushes use a unique group so releases never
+# get cancelled mid-build.
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/swayamg20/agentrelay-relay
+
+jobs:
+  build-and-push:
+    name: Build and push multi-arch image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # Tag plan:
+          #   main branch  → :latest, :main, :sha-<short>
+          #   vX.Y.Z tag   → :vX.Y.Z, :X.Y.Z, :vX.Y, :vX, :latest (via raw)
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},prefix=v
+            type=semver,pattern={{major}}.{{minor}},prefix=v
+            type=semver,pattern={{major}},prefix=v
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=agentrelay-relay
+            org.opencontainers.image.description=AgentRelay relay (Hono + Drizzle + Postgres)
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: relay/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
