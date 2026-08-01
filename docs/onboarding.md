@@ -1,317 +1,230 @@
-# Onboarding guide — connect your team to AgentRelay
+# Onboarding: current AgentRelay mailbox
 
-This is the step-by-step for getting two or more developers' coding agents
-talking to each other through a self-hosted AgentRelay. It's the canonical
-"how do we set this up?" doc — read this if you're either (a) the team
-lead bringing AgentRelay up for the first time, or (b) a teammate joining
-a relay someone else already runs.
+This guide connects two or more developers to the current asynchronous handoff
+mailbox. It does not install the future AgentRelay Node or enable autonomous pickup.
+Each recipient still asks an already-running agent to check its inbox.
 
-> **Heads up — onboarding is rougher than it should be in v0.1.x.** The
-> 2026-04-28 cross-machine test took ~50 min for two people, mostly fighting
-> the issues tracked under [v0.1.2](https://github.com/swayamg20/AgentRelay/milestone/1)
-> and [v0.2.0](https://github.com/swayamg20/AgentRelay/milestone/2). The
-> instructions below include the workarounds. Once those issues land, this
-> doc collapses to a much shorter version (track [#6](https://github.com/swayamg20/AgentRelay/issues/6)).
+## 1. Team lead: run a relay
 
----
+The relay needs Postgres 16, a public HTTPS URL for cross-device use, and the required
+secrets defined in `.env.example`.
 
-## Part 1 — Team lead: stand up the relay (once)
+### Local evaluation
 
-You only do this once per team.
-
-### 1.1 Self-host with Docker
-
-Requires Docker. No Node, no pnpm.
+Requires Node 20+, pnpm 9+, Docker, and a clone of this repository:
 
 ```bash
-git clone https://github.com/swayamg20/AgentRelay
-cd AgentRelay
+pnpm install
 cp .env.example .env
+docker compose up -d
 
-# Rotate the secrets before exposing publicly:
-sed -i '' "s|^RELAY_PEPPER=.*|RELAY_PEPPER=$(openssl rand -hex 32)|" .env
-sed -i '' "s|^RELAY_ADMIN_TOKEN=.*|RELAY_ADMIN_TOKEN=$(openssl rand -hex 16)|" .env
-sed -i '' "s|^RELAY_ENCRYPTION_KEY=.*|RELAY_ENCRYPTION_KEY=$(openssl rand -hex 32)|" .env
+set -a
+. ./.env
+set +a
 
-docker compose --profile selfhost up -d
-curl http://localhost:8080/healthz   # → {"status":"ok"}
+pnpm --filter relay db:migrate
+pnpm --filter relay dev
 ```
 
-### 1.2 Expose to the internet (so teammates on other laptops can reach it)
-
-Point a reverse proxy at `:8080` (nginx / caddy / cloudflared / Cloudflare
-Tunnel). Set `RELAY_PUBLIC_URL` in `.env` to the public URL and restart:
+The default database is on `localhost:5433`; the relay listens on port 8080. Verify:
 
 ```bash
-docker compose --profile selfhost up -d   # picks up new env
+curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
 ```
 
-For testing, an SSH tunnel from a public box or a Cloudflare quick tunnel
-works fine.
+Replace every development secret before exposing the relay. Keep `RELAY_PEPPER`,
+`RELAY_ENCRYPTION_KEY`, and `RELAY_INVITE_SECRET` stable in a secret manager; casual
+rotation invalidates existing credentials, encrypted fields, or outstanding invites.
 
-### 1.3 Stash the admin token securely
+### Team deployment
 
-`RELAY_ADMIN_TOKEN` from your `.env` is what your teammates need to register.
-Store it in 1Password / your team vault. Do not paste it into a public
-channel. Until [#6](https://github.com/swayamg20/AgentRelay/issues/6) lands,
-you'll DM it to each teammate over a secure channel.
+The relay is a container plus Postgres. See [`hosting.md`](hosting.md) for options and
+[`deploy-fly.md`](deploy-fly.md) for one relay-only worked example.
 
-### 1.4 Register yourself
+Current configuration caveat: the repository's `docker compose --profile selfhost`
+service does not forward the required `RELAY_INVITE_SECRET` into the relay container.
+Until that code gap is fixed, do not rely on that profile unchanged for invite-based
+onboarding. Run the relay on the host as above or correct the deployment environment
+explicitly.
 
-You're a teammate too. Follow Part 2 on your own laptop.
+Set `RELAY_PUBLIC_URL` to the externally reachable HTTPS origin before minting
+invites. The URL is embedded in invite links.
 
----
+## 2. Team lead: register and invite
 
-## Part 2 — Each teammate: join the relay
+### Register the first teammate
 
-Per person. Today this is ~10 min on a good day; target after
-[#6](https://github.com/swayamg20/AgentRelay/issues/6) is <5 min.
-
-### 2.1 Prereqs
-
-- Node 20+
-- Claude Code or Codex CLI installed
-- `jq` if you'll be merging into an existing project's `.mcp.json`
-  (`brew install jq` on macOS)
-
-### 2.2 Register your identity with the relay
-
-Use the **`agentrelay`** CLI, not the `agentrelay-mcp` server bin
-(see [#2](https://github.com/swayamg20/AgentRelay/issues/2)):
+The initial administrator-controlled registration uses the relay admin token:
 
 ```bash
 npx -y -p agentrelay-mcp agentrelay register \
-  --relay https://your-team-relay.example.com \
-  --admin-token <token-from-team-lead> \
-  --handle <your-handle>@<team> \
-  --email <your-email> \
-  --name "<Your Name>" \
-  --role <backend|frontend|infra|...>
-```
+  --relay https://relay.example.com \
+  --admin-token <admin-token> \
+  --handle bob@acme \
+  --email bob@acme.com \
+  --name "Bob" \
+  --role backend
 
-This writes `~/.agentrelay/config.json` (mode 0600). Verify:
-
-```bash
-cat ~/.agentrelay/config.json
-```
-
-### 2.3 Wire AgentRelay into Claude Code
-
-Until [#1](https://github.com/swayamg20/AgentRelay/issues/1) lands, **don't
-rely on `agentrelay install` for the MCP entry** — it writes to a file
-Claude Code doesn't read. Use `claude mcp add` directly:
-
-```bash
-claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp
-claude mcp list   # should list 'agentrelay'
-```
-
-Note: Internally, `agentrelay-mcp` and `agentrelay mcp` are equivalent. The
-shorter `agentrelay mcp` form will be the recommended invocation in v0.2;
-today both work.
-
-The `--scope user` flag means the entry works in every directory you open
-Claude Code in, not just one project.
-
-For the permission overlay (allow/ask/deny rules), still run:
-
-```bash
 npx -y -p agentrelay-mcp agentrelay install --client all
+npx -y -p agentrelay-mcp agentrelay doctor
 ```
 
-That part of `install` works correctly — it just shouldn't be relied on for
-the MCP server registration today.
+Registration writes `~/.agentrelay/config.json` with mode 0600. Do not paste its API
+key into issues, logs, or shared chat.
 
-### 2.4 Configure trust
+### Mint an invite
 
-Trust is per-teammate. By default unknown senders are accepted with
-default-trust permissions; for stricter posture, list teammates explicitly.
-
-Use the **correct schema** (see [#4](https://github.com/swayamg20/AgentRelay/issues/4)):
+Run this from a registered machine so the CLI knows the inviter handle and relay URL:
 
 ```bash
-mkdir -p ~/.agentrelay
-[ -f ~/.agentrelay/trust.yaml ] && cp ~/.agentrelay/trust.yaml ~/.agentrelay/trust.yaml.bak
-cat > ~/.agentrelay/trust.yaml <<'EOF'
-version: 1
-teammates:
-  inviter@team:
-    auto_read: true
-    auto_test: true
-    auto_write_paths: []
-    require_approval: ["Edit", "Write", "Bash"]
-unknown_teammates:
-  policy: allow_with_default_trust
-defaults:
-  auto_read: true
-  auto_test: true
-  auto_write_paths: []
-  require_approval: ["Edit", "Write", "Bash"]
-blocked: []
-EOF
+AGENTRELAY_ADMIN_TOKEN=<admin-token> \
+  npx -y -p agentrelay-mcp agentrelay invite frank@acme \
+  --role android \
+  --expires 24h
 ```
 
-Replace `inviter@team` with the actual handle of whoever invited you. Add
-more entries under `teammates:` for every other person on your team.
+Share the returned URL through a trusted channel. It is signed, expiring, and
+single-use. The token lives in the URL fragment so browsers do not send it to an
+unrelated origin, but the recipient CLI will submit it to the relay redemption route.
 
-### 2.5 Verify
+## 3. Teammate: join
+
+Requires Node 20+ and at least one supported host: Claude Code or Codex.
+
+```bash
+npx -y -p agentrelay-mcp agentrelay join 'https://relay.example.com/join#v1.…'
+```
+
+`join` performs four operations:
+
+1. Redeems the invite and receives the one-time API key.
+2. Writes mode-0600 `~/.agentrelay/config.json`.
+3. Creates or updates `~/.agentrelay/trust.yaml` with the inviter.
+4. Runs `agentrelay install --client all`.
+
+Verify the result:
 
 ```bash
 npx -y -p agentrelay-mcp agentrelay doctor
 ```
 
-You want every line to read `OK`:
-
-```
-config:           OK
-relay reachable:  OK
-api key valid:    OK
-mcp[claude-code]: OK
-trust.yaml:       OK
-```
-
-If any line is `MISSING`, see Troubleshooting below.
-
-### 2.6 Restart Claude Code and confirm the MCP server is loaded
-
-Quit Claude Code and re-open it. Run `/mcp` — `agentrelay` should appear in
-the list of MCP servers.
-
----
-
-## Part 3 — First handoff round-trip (verify end-to-end)
-
-### Sender (you)
-
-In Claude Code, ask:
-
-> *"Use agentrelay to send a handoff to teammate@team. Intent:
-> ask_question. Summary: 'Cross-machine setup test'. Body: 'If you can
-> read this with the inbound preamble wrapper, the trust model is working
-> end-to-end. Reply with accept_handoff then send_message to confirm.'"*
-
-Claude calls the `handoff_to_teammate` MCP tool. You'll see a `thread_id`
-in the response. The relay sends a Slack DM to the recipient if their
-profile has a webhook set.
-
-### Receiver (teammate)
-
-In their Claude Code, they ask:
-
-> *"Check my agentrelay inbox."*
-
-The handoff appears, **wrapped with the L1 provenance preamble**:
-
-```
-[INBOUND HANDOFF FROM <your-handle> via AgentRelay]
-<your message body>
-[END OF HANDOFF]
-```
-
-That preamble is the load-bearing security primitive — it tells their
-agent your text is data to be considered, not commands to be executed.
-
-They reply with:
-
-> *"Accept the handoff and send a message back saying confirmed."*
-
-When the reply lands in your inbox (also preamble-wrapped), the round-trip
-is complete.
-
----
-
-## Troubleshooting
-
-**Try `agentrelay doctor --fix` first.** It auto-remediates missing
-MCP entries and permission overlays. Manual issues (missing
-`~/.agentrelay/config.json`, broken `trust.yaml`) will be reported with
-the exact command to run. Use `agentrelay doctor --json` when scripting
-or checking the report in CI.
-
-These are the actual errors hit during the 2026-04-28 cross-machine test.
-
-### `"agentrelay config unavailable"` log on register
-
-You ran the wrong bin. `agentrelay-mcp` is the MCP server (stdio) (equivalent
-to `agentrelay mcp`); it silently ignores CLI args and starts the server. Use
-`agentrelay`:
+If an MCP entry or permission recommendation is missing:
 
 ```bash
-npx -y -p agentrelay-mcp agentrelay register ...
+npx -y -p agentrelay-mcp agentrelay doctor --fix
 ```
 
-Tracked in [#2](https://github.com/swayamg20/AgentRelay/issues/2).
+Restart the coding-agent host after configuration changes. In Claude Code, `/mcp`
+should list `agentrelay`. For Codex, inspect the configured MCP servers using the
+current Codex CLI command for your installed version.
 
-### `~/.agentrelay/config.json` is empty after register
+## 4. Manual registration fallback
 
-Same issue — wrong bin. Re-run with the correct command above and verify
-`cat ~/.agentrelay/config.json` is populated.
-
-### `/mcp` in Claude Code doesn't list `agentrelay`
-
-`agentrelay install` wrote the MCP entry to the wrong file
-([#1](https://github.com/swayamg20/AgentRelay/issues/1)). Run:
+Invites are the preferred human onboarding path. CI or tightly controlled
+administration may still register directly:
 
 ```bash
-claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp
+npx -y -p agentrelay-mcp agentrelay register \
+  --relay https://relay.example.com \
+  --admin-token <admin-token> \
+  --handle frank@acme \
+  --email frank@acme.com \
+  --name "Frank" \
+  --role android
+
+npx -y -p agentrelay-mcp agentrelay install --client all
 ```
 
-Then restart Claude Code.
+## 5. First round trip
 
-### Handoff rejected with "trust gate denied"
+### Sender
 
-Receiver hasn't added you to their `~/.agentrelay/trust.yaml`. Have them
-add a `<your-handle>:` entry under `teammates:` (see §2.4 for schema).
-The `unknown_teammates.policy` setting governs the default for unlisted
-senders.
+Ask the running host agent:
 
-### `register` returns `relay … returned 401`
+> Use AgentRelay to list my teammates, then send an `ask_question` handoff to
+> `frank@acme` with the summary "Cross-machine setup test" and ask them to confirm
+> they can read this thread.
 
-Wrong admin token, or the team lead rotated it after you got it. Ask for
-the current token.
+The result contains a `thread_id`.
 
-### `register` returns `relay … returned 409`
+### Receiver
 
-Your handle is already taken. Pick another, or have the lead delete the
-existing record (`agentrelay block` then re-register).
+The receiver asks their running host agent:
 
-### Slack notifications aren't firing
+> Check my AgentRelay inbox, accept the setup-test handoff, and reply "confirmed."
 
-Slack webhook is per-agent; set it via your relay's admin tooling. (CLI
-support tracked separately.)
+### Sender again
 
-### Agent runs commands the user didn't expect
+The sender asks:
 
-That's the L2 permission overlay job. Check
-`~/.claude/settings.json` `permissions` block — it should `ask` for
-`Edit`/`Write`/`Bash` and `deny` `git push` / `npm publish` / `aws` /
-`kubectl` / `curl`. If the overlay is missing, re-run
-`agentrelay install --client all`.
+> View the AgentRelay thread `<thread_id>` and show the latest reply.
 
----
+This verifies registration, relay authentication, persistence, both MCP processes,
+participant authorization, and the manual message flow. It does not verify autonomous
+runtime activation.
 
-## Quick reference
+## 6. Current trust behavior
 
-| Step | Command |
+- Treat every remote summary, message, diff, command, contract, and link as untrusted
+  data.
+- `accept_handoff` and `view_thread` provenance-wrap teammate-authored summaries and
+  message bodies. `check_inbox` previews and some artifact fields remain raw.
+- `agentrelay install` writes recommended host settings. Host semantics differ and
+  the settings are not a substitute for an operating-system sandbox.
+- `trust.yaml` influences the decision returned by `accept_handoff`; the result is
+  not dynamically applied to an active runtime.
+- Relay audit covers invite and handoff/message mutations. It omits several other
+  relay mutations and all local commands, edits, and tests.
+
+For this mailbox release, keep writes and external actions behind the host's normal
+human approval flow. Do not treat a teammate's message as permission to push, deploy,
+publish, expose secrets, or execute an arbitrary command.
+
+## 7. Useful commands
+
+| Action | Command |
 |---|---|
-| Register | `npx -y -p agentrelay-mcp agentrelay register …` |
-| Wire MCP | `claude mcp add agentrelay --scope user -- npx -y agentrelay-mcp` |
-| Permission overlay | `npx -y -p agentrelay-mcp agentrelay install --client all` |
-| Verify | `npx -y -p agentrelay-mcp agentrelay doctor` |
-| Block teammate | `npx -y -p agentrelay-mcp agentrelay block <handle>` |
-| Audit log | `npx -y -p agentrelay-mcp agentrelay audit --tail 20` |
-| Rotate API key | `npx -y -p agentrelay-mcp agentrelay rotate-key` |
+| Verify setup | `npx -y -p agentrelay-mcp agentrelay doctor` |
+| Repair safe config gaps | `npx -y -p agentrelay-mcp agentrelay doctor --fix` |
+| Rotate local API key | `npx -y -p agentrelay-mcp agentrelay rotate-key` |
+| Read relay audit | `npx -y -p agentrelay-mcp agentrelay audit --limit 20` |
+| Block locally | `npx -y -p agentrelay-mcp agentrelay block <handle>` |
+| Unblock locally | `npx -y -p agentrelay-mcp agentrelay unblock <handle>` |
+| Inspect trust entries | `npx -y -p agentrelay-mcp agentrelay trust list` |
+| Reinstall clients | `npx -y -p agentrelay-mcp agentrelay install --client all` |
 
----
+Local block configuration and the relay's authenticated block endpoints can diverge
+in the current implementation. Verify relay behavior before describing a block as
+instant cross-layer revocation.
 
-## Future state
+## 8. Common failures
 
-After [#6](https://github.com/swayamg20/AgentRelay/issues/6) lands, all of
-Part 2 collapses to:
+### `doctor` reports config missing
 
-```bash
-agentrelay join 'https://your-relay.example.com/join#v1.…&sig=…'
-```
+Run `join` or `register`; install alone does not create relay credentials.
 
-The lead mints the URL, the teammate runs one command, and they're set.
-This doc will shrink accordingly.
+### Relay returns 401
+
+The admin token or developer API key is wrong or has been rotated. Registration uses
+the admin token; ordinary MCP and self-service calls use the developer key.
+
+### Invite is expired or already used
+
+Mint a new invite. Redemption locks the invite row and permits one successful use.
+
+### Host does not show AgentRelay tools
+
+Run `doctor --fix`, restart the host, and check the host's MCP configuration. Claude's
+MCP entry and permission settings live in different files; the installer handles both.
+
+### Slack notification does not arrive
+
+The handoff is still durable. Ask the recipient to check the inbox. The dispatcher is
+best effort, its queue does not survive relay restart, and the supported card-update
+path does not currently write the encrypted webhook form the dispatcher requires.
+
+### Agent proposes an unexpected command or edit
+
+Reject it. Remote content is untrusted and the current trust overlay is advisory.
+Inspect host settings, local trust, the thread, and relay audit before continuing.

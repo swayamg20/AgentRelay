@@ -1,59 +1,91 @@
 # Next steps
 
-Living planning doc. Each item links to a GitHub issue with the proposed
-solution sketched out. Strike through items as they ship.
+This is the near-term implementation queue. The architecture is defined in
+[`RFC 001`](rfcs/001-agentrelay-node-and-missions.md); the broader sequence and
+evaluation gates live in [`roadmap.md`](roadmap.md).
 
-## v0.1.2 — Onboarding fixes (this week)
+## 1. Close current mailbox integrity gaps
 
-Surfaced by the 2026-04-28 cross-machine integration test (~50 min for two
-people; target was <15). All four are mechanical.
+- [ ] Provenance-wrap every teammate-originated artifact and proposed-action field.
+- [ ] Preserve `send_message.payload` through the relay instead of storing only
+  artifacts.
+- [ ] Preserve completion artifacts through `complete_handoff`.
+- [ ] Make `agentrelay block` update both local trust state and relay enforcement, or
+  clearly separate the two operations.
+- [ ] Correct webhook storage/dispatch encryption behavior.
+- [ ] Add tests that demonstrate the effective security and payload boundary.
 
-- [#1](https://github.com/swayamg20/AgentRelay/issues/1) — `agentrelay install` writes MCP entry to wrong settings file
-- [#2](https://github.com/swayamg20/AgentRelay/issues/2) — `agentrelay-mcp` bin silently accepts CLI verbs as args
-- [#3](https://github.com/swayamg20/AgentRelay/issues/3) — `doctor` MISSING entries should suggest the exact remediation command
-- [#4](https://github.com/swayamg20/AgentRelay/issues/4) — `trust.yaml` example in docs uses wrong schema
+These fixes come first because autonomous execution must not amplify known contract
+or trust gaps.
 
-Milestone: [v0.1.2](https://github.com/swayamg20/AgentRelay/milestone/1).
+## 2. Write executable Mission schemas
 
-## v0.2.0 — 10-minute onboarding
+- [ ] Add Mission, participant, revision, typed message, artifact, policy, delivery,
+  and run schemas.
+- [ ] Add Mission and delivery state-machine transition tests.
+- [ ] Define one fake backend repository and one fake Android repository at frozen
+  commits.
+- [ ] Define a hidden cross-repository acceptance scenario.
+- [ ] Add a fake runtime adapter and deterministic transcript fixtures.
 
-The 50-minute number is the headline. Goal: a teammate goes from "got the
-URL" to "first handoff received" in under 10 minutes on a clean machine.
+Keep this layer small. Do not implement multi-party Missions, parallel actors, smart
+routing, or provider-specific fields.
 
-- [#5](https://github.com/swayamg20/AgentRelay/issues/5) — Collapse `agentrelay-mcp` and `agentrelay` into a single bin (breaking)
-- [#6](https://github.com/swayamg20/AgentRelay/issues/6) — One-command onboarding via signed invite URLs (`agentrelay invite` / `agentrelay join`)
-- [#7](https://github.com/swayamg20/AgentRelay/issues/7) — `agentrelay doctor --fix` to auto-remediate MISSING entries
+## 3. Build durable delivery
 
-Milestone: [v0.2.0](https://github.com/swayamg20/AgentRelay/milestone/2).
+- [ ] Persist Nodes, workspace bindings, Missions, events, deliveries, claims, runs,
+  and acknowledgements.
+- [ ] Append each event and delivery record transactionally with its domain mutation.
+- [ ] Add per-Mission sequence numbers and cursor replay.
+- [ ] Add claim leases, renewal, expiry, retry, cancellation, and dead-letter policy.
+- [ ] Store idempotency receipts for the Mission retention period.
+- [ ] Prove reconnect and recovery through cursor polling; leave SSE out of this slice.
 
-## Beyond v0.2
+Required tests: disconnect before claim, after claim, and after host acceptance;
+duplicate signal; relay restart; late output after terminal Mission.
 
-- **v0.3 — auto mode**: live pairing channel between two agents. Design lives
-  in [`docs/auto-mode.md`](auto-mode.md).
-- **v0.4 — ambient agent**: headless drafting on the relay side. Design lives
-  in [`docs/ambient-agent.md`](ambient-agent.md).
-- **v1.0** — see [`docs/roadmap.md`](roadmap.md) for the phase-by-phase plan.
+## 4. Build the local Node
 
-## Open questions
+- [ ] Add a `node/` workspace with a foreground daemon command first.
+- [ ] Register a device-scoped credential and capabilities.
+- [ ] Configure logical workspace aliases locally.
+- [ ] Persist delivery cursor and processing journal.
+- [ ] Validate repository URL, base commit, and dirty-worktree policy.
+- [ ] Validate a pre-registered clean checkout or operator-created worktree.
+- [ ] Enforce local path, command, network, budget, expiry, and revocation policy.
+- [ ] Record normalized runtime and policy events.
 
-- **Invite URL signing key rotation.** `RELAY_INVITE_SECRET` rotation strategy
-  needs spec'ing — invalidate all open invites or carry both keys for a
-  grace window?
-- **Relay hosting model.** Is a hosted "AgentRelay Cloud" the right v1.0
-  story, or do we stay self-host-only? Affects the invite URL UX (custom
-  domain vs `*.agentrelay.dev`).
-- **Admin-token rotation UX.** Today rotation breaks every joiner who hasn't
-  registered yet. Invite URLs (#6) sidestep the issue; should we deprecate
-  raw admin-token onboarding for humans entirely?
-- **Per-team relay vs multi-tenant.** Current design is one relay per team.
-  Worth re-examining once we have >5 self-hosters.
+Start with one eligible Node per logical agent and one active turn per Mission.
 
-## Process notes
+## 5. Add the first real adapter
 
-- One issue per concern. Cross-cutting doc updates ride along with the
-  feature issue, not as their own row.
-- Probable solution lives in the issue body so the work is loadable
-  without re-deriving context.
-- Closed issues stay linked here (struck through) so future contributors
-  can follow the through-line from "thing was painful" → "issue → PR →
-  released".
+- [ ] Pin a supported Codex app-server version.
+- [ ] Generate and test the matching protocol schema.
+- [ ] Implement probe, session start/resume, turn start, event stream, cancellation,
+  and recovery.
+- [ ] Require the RFC's structured turn dispositions: `reply`, `propose_contract`,
+  `ready`, `blocked` (with optional requested input), or `failed`.
+- [ ] Run the two-machine backend-and-Android Mission.
+
+Do not use Codex remote control, generic MCP notifications, or preview host channels
+as the activation foundation.
+
+## 6. Evaluate
+
+- [ ] Freeze several coupled cross-repository tasks and budgets.
+- [ ] Run the baseline and structured AgentRelay conditions.
+- [ ] Record strict integrated success, intervention count, cost, time, contract drift,
+  repeated work, replay behavior, and security violations.
+- [ ] Publish the trace and an honest result, including failed runs.
+- [ ] Decide whether to continue, narrow, or stop before adding more runtimes.
+
+## Deferred decisions
+
+- Relay-readable versus relay-blind payloads.
+- Inline patches versus signed artifact storage versus immutable git references.
+- Exact owner/agent/node/workspace credential and revocation UX.
+- Claude adapter choice.
+- Hosted service and federation.
+
+Open GitHub issues should link back to the RFC section they implement. Closed mailbox
+issues remain in GitHub history; this file no longer mirrors old release milestones.

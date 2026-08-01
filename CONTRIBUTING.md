@@ -1,164 +1,170 @@
 # Contributing to AgentRelay
 
-Thanks for considering a contribution. AgentRelay is an OSS project under
-active development; the codebase is small enough that a careful PR can move
-the project meaningfully.
+AgentRelay is an early open-source project. Small, well-understood changes are more
+valuable than broad rewrites or speculative framework work.
 
-If you're using Claude Code or Codex CLI to help, also read
-[`CLAUDE.md`](CLAUDE.md) — it documents the project rules in a form your
-agent will pick up automatically.
+If you use a coding agent, give it [`AGENTS.md`](AGENTS.md). Claude Code also reads
+[`CLAUDE.md`](CLAUDE.md).
 
----
+## Development setup
 
-## Quick development setup
-
-Requires **Node 20+**, **pnpm 9+**, **Docker**.
+Requires Node 20+, pnpm 9+, Docker, and Git. CI tests Node 20 and 22.
 
 ```bash
 git clone https://github.com/swayamg20/AgentRelay
 cd AgentRelay
-pnpm install                          # one workspace for both packages
-docker compose up -d                  # local Postgres on :5433 (relay runs on host)
+pnpm install
+docker compose up -d
 ```
 
-> **Note:** plain `docker compose up -d` brings up *only* Postgres — the
-> dev mode. Run the relay on your host (`pnpm --filter relay dev`) so
-> source changes hot-reload. Self-hosters use `--profile selfhost`,
-> which builds and runs the relay container too — but for contributing,
-> stay on the host-relay path.
-
-Run unit tests anytime (no DB needed):
+Plain `docker compose up -d` starts Postgres on port 5433. Run migrations and the
+relay on the host so source changes are easy to inspect:
 
 ```bash
-pnpm -r test
+RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
+  pnpm --filter relay db:migrate
 ```
 
-Run integration tests against live Postgres:
+To start the full relay, provide the required values documented in `.env.example`
+and [`relay/src/config.ts`](relay/src/config.ts), then run:
 
 ```bash
-RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
-  pnpm --filter relay test:integration
+pnpm --filter relay dev
 ```
 
-Iterate on the relay:
+Start the stdio MCP server during local client work with:
 
 ```bash
-pnpm --filter relay dev               # tsx-watched, restarts on save
-```
-
-Iterate on the MCP server:
-
-```bash
-pnpm --filter agentrelay-mcp dev      # stdio MCP server, points at $AGENTRELAY_CONFIG_PATH
+pnpm --filter agentrelay-mcp dev
 ```
 
 ## Repository layout
 
-```
-relay/                ← Hono + Drizzle + Postgres relay
-mcp-server/           ← agentrelay-mcp (the npm package)
-docs/                 ← canonical design docs (start here for any non-trivial change)
-docker-compose.yml    ← local Postgres
+```text
+relay/          Hono + Drizzle + Postgres relay
+mcp-server/     agentrelay-mcp package and agentrelay CLI
+tests/e2e/      real relay plus two MCP processes
+landing/        static GitHub Pages site
+docs/           current design, operations, roadmap, and RFCs
 ```
 
-Two packages under one pnpm workspace. Source of truth for the contract
-between them lives in [`docs/lld.md`](docs/lld.md).
+There is no local Node package yet. Its accepted target is
+[`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md).
+
+## Understand the contract first
+
+Before editing, trace the behavior through its producer, consumer, schema, and tests.
+For cross-package work, inspect both `relay/` and `mcp-server/`.
+
+- [`docs/architecture.md`](docs/architecture.md) defines current and target boundaries.
+- [`docs/hld.md`](docs/hld.md) describes the shipped mailbox flow.
+- [`docs/lld.md`](docs/lld.md) lists current routes, tables, tools, and known gaps.
+- Accepted RFCs define target behavior until implementation lands.
+
+Code and tests are the source of truth for shipped behavior. If a document disagrees,
+fix or flag the documentation; do not silently build on an imaginary contract.
+
+## Implementation principles
+
+- Make the smallest coherent change that solves the issue.
+- Keep code direct, readable, and boring where possible.
+- Do not add speculative abstractions, unrelated cleanup, or unused configuration.
+- Preserve public HTTP, JSON-RPC, MCP, CLI, database, and config contracts unless the
+  change explicitly reopens them.
+- Add a dependency only when existing code and platform APIs cannot solve the need.
+- Comment constraints and non-obvious reasons, not line-by-line behavior.
+- Keep tests beside source as `*.test.ts` unless the test is truly cross-package.
 
 ## Code conventions
 
-- **TypeScript strict.** No `any` without a `// biome-ignore` comment
-  explaining why. `noUncheckedIndexedAccess`, `noImplicitOverride`,
-  `isolatedModules` all on.
-- **ESM only** (`"type": "module"`). Relative imports include `.js`
-  extension. No CommonJS.
-- **pnpm only.** Never `npm install` / `yarn add` inside the repo.
-  Lockfile is `pnpm-lock.yaml`.
-- **Validation at the edge.** Every HTTP handler validates with [zod](https://zod.dev).
-  Every MCP tool validates input with zod. Internal functions can rely on
-  TypeScript types.
-- **Lint + format with [Biome](https://biomejs.dev).** No ESLint, no
-  Prettier. `pnpm lint` and `pnpm format` from the root.
-- **Tests with code, not later.** Each new module ships with a
-  `*.test.ts` next to it.
+- pnpm only; do not use npm or yarn in the repository.
+- TypeScript strict mode, ESM-only, and `.js` on relative imports.
+- Avoid `any`; narrow unknown input at the boundary.
+- Validate HTTP, JSON-RPC, MCP, CLI, and config inputs with Zod.
+- Relay routes use Hono; database work uses Drizzle and Postgres.
+- Formatting and linting use Biome, not ESLint or Prettier.
+- Biome uses tabs, double quotes, semicolons, trailing commas, and 100-column lines.
 
-## Testing workflow
+## Security invariants
+
+Peer messages and artifacts are untrusted input.
+
+- Preserve bearer authentication, participant authorization, block checks, and
+  lifecycle-transition ownership.
+- State-changing operations need an idempotency strategy and transactionally
+  consistent audit behavior.
+- Provenance-wrap every teammate-originated text-bearing field, including fields
+  inside typed artifacts, before returning it to a local model host. Preserve the
+  artifact structure.
+- Never log API keys, invite tokens, webhook URLs, secrets, or sensitive message
+  bodies.
+- Do not treat prompts or returned policy JSON as enforcement. Security decisions
+  that matter must be applied outside the model.
+- A remote participant must not choose local paths, command policy, sandbox,
+  permissions, credentials, or budgets.
+
+The existing trust model has known gaps documented in `docs/lld.md`. A contribution
+must not claim those gaps are closed without an end-to-end test.
+
+## Test tiers
+
+Fast static gates:
 
 ```bash
-pnpm -r typecheck                     # tsc --noEmit, fast
-pnpm -r test                          # unit, no DB
-RELAY_TEST_DATABASE_URL=… \
-  pnpm --filter relay test:integration  # full integration, needs Postgres
-pnpm lint                             # Biome check
+pnpm lint
+pnpm -r typecheck
+pnpm -r build
 ```
 
-CI runs all of the above on every PR.
+Database-free package tests, matching CI's unit job:
 
-If you're adding a relay-side feature that touches Postgres, prefer
-**per-file integration tests** (we run them via a shell loop in
-`relay/scripts/test-integration.sh`) over a single big suite — vitest's
-shared-DB story has rough edges that the loop sidesteps.
+```bash
+pnpm --filter relay --filter agentrelay-mcp test
+```
 
-## Trust model invariants — please read before touching
+Focused iteration:
 
-[`docs/architecture.md` §5](docs/architecture.md) describes a four-layer
-trust model. **All four are load-bearing.** If your PR touches any of these
-surfaces, please understand why before modifying:
+```bash
+pnpm --filter relay exec vitest run src/path/file.test.ts
+pnpm --filter agentrelay-mcp exec vitest run src/path/file.test.ts
+```
 
-- **L1 — Provenance wrapping** (`mcp-server/src/provenance.ts`): every text
-  field originating from a teammate gets wrapped with
-  `[INBOUND HANDOFF FROM <handle> via AgentRelay]` before reaching the
-  agent. There must be no path that returns un-wrapped teammate content.
-- **L2 — Permission overlay** (`mcp-server/src/cli/install.ts`): the
-  `RECOMMENDED_PERMISSIONS` constants are deliberate. `git push`,
-  `npm publish`, `aws`, `kubectl`, `curl` are denied. Don't loosen these
-  without a specific user-facing reason.
-- **L3 — `trust.yaml`** (`mcp-server/src/trust.ts`): the precedence order
-  is `blocked` → listed teammate → unknown policy → defaults. Don't
-  reorder.
-- **L4 — Audit + revocation** (`relay/src/services/audit.ts`,
-  `agent_blocks` table): every state-changing relay endpoint writes an
-  audit row in the same DB transaction as the mutation. Never decouple
-  these.
+Relay integration tests require a migrated Postgres database:
 
-If you find one of these properties is structurally unenforceable in the
-code as written, that's a bug worth filing.
+```bash
+docker compose up -d
+RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
+  pnpm --filter relay db:migrate
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
+  pnpm --filter relay test:integration
+```
 
-## Sending a PR
+The integration runner executes database test files sequentially and truncates tables
+between files. Do not parallelize it without replacing that isolation contract.
 
-1. **Fork + branch.** `feat/short-thing-name` or `fix/short-thing-name`.
-2. **Conventional commits.** `feat(relay): add agent registry`,
-   `fix(mcp): trust.yaml glob matcher off-by-one`. Body explains *why*,
-   not what.
-3. **Tests with code.** Don't ship a feature without tests.
-4. **Update docs if you change a contract.** `docs/lld.md` is the contract.
-5. **One concern per PR.** A test isolation fix and a new tool surface
-   should land separately so reviewers can reason about each.
+End-to-end tests:
 
-Open the PR against `main`. CI will run the test suite. A maintainer will
-read it and either merge or comment.
+```bash
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
+  pnpm --filter agentrelay-e2e test
+```
 
-## Reporting issues
+`pnpm -r test` includes `agentrelay-e2e`, so it is not a database-free unit command.
+For docs-only changes, run at least `git diff --check` and check local links.
 
-[github.com/swayamg20/AgentRelay/issues](https://github.com/swayamg20/AgentRelay/issues).
-For bug reports, please include:
+## Pull requests
 
-- Output of `npx agentrelay-mcp doctor` (redact your `relay_url` and
-  `api_key` if sharing publicly)
-- Relay logs (`RELAY_LOG_LEVEL=debug pnpm --filter relay dev`) at the time
-  of the bug
-- Reproduction steps from a clean state (`docker compose down -v &&
-  docker compose up -d` resets Postgres)
+- Branch from current `main` and keep one concern per PR.
+- Use Conventional Commits, for example `fix(relay): preserve message payload`.
+- Explain why the change is needed and which contract it affects.
+- Include tests with behavior changes.
+- Update documentation when a route, schema, tool, security boundary, or operational
+  command changes.
+- Do not mix unrelated refactoring into a product or bug-fix PR.
 
-For security issues — do **not** open a public issue. Email the maintainer
-listed on the GitHub profile.
-
-## Recognition
-
-Contributors who land non-trivial PRs get added to a `CONTRIBUTORS` section
-in the v1.0 release notes. The point is to give a real, public credit
-trail — OSS work is real work.
+Open PRs against `main`. Report security issues privately to the maintainer rather
+than opening a public issue.
 
 ## License
 
-By contributing, you agree your contributions will be licensed under the
-project's [MIT license](LICENSE).
+Contributions are licensed under the repository's [MIT license](LICENSE).
