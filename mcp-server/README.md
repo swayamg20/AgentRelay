@@ -1,86 +1,120 @@
 # agentrelay-mcp
 
-The MCP server for [AgentRelay](https://github.com/swayamg20/AgentRelay). Runs as
-a local stdio process; exposes seven tools to Claude Code and Codex CLI for
-sending and receiving structured handoffs between teammates' agents.
+The current local tool surface for [AgentRelay](https://github.com/swayamg20/AgentRelay).
+It runs as a stdio MCP process and lets an already-running Claude Code or Codex host
+use the AgentRelay handoff mailbox.
 
-> **Status:** v0.1.0 — async mailbox flow verified end-to-end with real two-laptop demo.
+> **Package:** `agentrelay-mcp` 0.2.0.
+> **Boundary:** this package does not run a background listener, wake a closed host,
+> or start autonomous coding-agent turns. That work belongs to the planned
+> AgentRelay Node.
 
-## Install
+## Join a relay
+
+Preferred invite flow:
 
 ```bash
-# Per-developer, scoped to one project — recommended for trying it out.
-npx agentrelay-mcp register \
-  --relay <your-team-relay-url> \
+npx -y -p agentrelay-mcp agentrelay join 'https://relay.example.com/join#v1.…'
+npx -y -p agentrelay-mcp agentrelay doctor
+```
+
+Administrator-controlled registration:
+
+```bash
+npx -y -p agentrelay-mcp agentrelay register \
+  --relay https://relay.example.com \
   --admin-token <admin-token> \
   --handle bob@acme \
   --email bob@acme.com \
   --name "Bob" \
   --role backend
 
-npx agentrelay-mcp install --client claude-code
-# or --client codex, or --client all
+npx -y -p agentrelay-mcp agentrelay install --client all
+npx -y -p agentrelay-mcp agentrelay doctor --fix
 ```
 
-The `register` step writes `~/.agentrelay/config.json` (mode 0600) with your
-relay URL + API key. The `install` step adds the MCP entry + a recommended
-permission overlay to your client's settings.
+Local credentials and trust live under `~/.agentrelay/` with mode 0600. Client
+configuration is written to the current Claude and Codex user config locations.
 
-## Tools surfaced to the agent
+## Tools
 
-| Tool | What it does |
+| Tool | Behavior |
 |---|---|
-| `handoff_to_teammate` | Package and send a structured handoff (summary, artifacts, intent) |
-| `check_inbox` | List handoffs awaiting your response |
-| `accept_handoff` | Pull a teammate's handoff into your session with L1 provenance wrapping |
-| `view_thread` | Read-only fetch of any thread you're a participant in |
-| `send_message` | Append a message to an existing thread |
-| `complete_handoff` | Mark a handoff complete with a result summary |
-| `list_teammates` | Discover the team roster |
+| `handoff_to_teammate` | Create a typed handoff with summary, intent, and artifacts. |
+| `check_inbox` | List received handoffs. |
+| `accept_handoff` | Fetch and accept a handoff; return wrapped thread text and a local trust decision. |
+| `view_thread` | Read a participant thread without changing its lifecycle. |
+| `send_message` | Append a message to an active thread. |
+| `complete_handoff` | Mark an accepted handoff complete. |
+| `list_teammates` | Fetch the active team roster. |
 
-## Trust model
+The relay stores messages durably, but pickup is explicit. A human or running agent
+must call `check_inbox` or `view_thread`.
 
-The MCP server enforces three of the four trust layers (the relay handles the
-fourth):
+## CLI
 
-1. **L1 — Provenance wrapping.** Every text field originating from a teammate
-   is wrapped with `[INBOUND HANDOFF FROM <handle> via AgentRelay]` before
-   the agent sees it. Treats inbound content as untrusted data, not commands.
-2. **L2 — Permission overlay.** `agentrelay install` writes a recommended
-   `permissions` block to your client's settings: read/test allowed, writes
-   ask, external effects (push, publish, deploy) deny.
-3. **L3 — Per-teammate trust.** `~/.agentrelay/trust.yaml` opts in specific
-   teammates and granular policies (auto_write_paths, require_approval).
-4. **L4 — Audit + revocation.** `agentrelay audit` shows every action; 
-   `agentrelay block <handle>` revokes a teammate atomically.
+- `agentrelay register`
+- `agentrelay invite <handle>`
+- `agentrelay join <url>`
+- `agentrelay install --client <claude-code|codex|all>`
+- `agentrelay doctor [--fix] [--json]`
+- `agentrelay rotate-key`
+- `agentrelay audit`
+- `agentrelay block <handle>` / `unblock <handle>`
+- `agentrelay trust list|set|reset`
+- `agentrelay mcp`
 
-Full design: [architecture.md §5 in the repo](https://github.com/swayamg20/AgentRelay/blob/main/docs/architecture.md).
+## Security posture
 
-## CLI commands
+Peer content is untrusted data.
 
-- `agentrelay register` — onboard with a relay
-- `agentrelay install --client <claude-code|codex|all>` — wire into your CLI
-- `agentrelay doctor` — diagnose config / connectivity
-- `agentrelay rotate-key` — self-rotate your API key
-- `agentrelay audit` — query your audit log
-- `agentrelay block <handle>` / `unblock` — revoke a teammate
-- `agentrelay trust list/set/reset` — manage `~/.agentrelay/trust.yaml`
+Current protections include bearer authentication, participant authorization,
+relay-side blocks for new handoffs, audit records for invite and handoff/message
+mutations, provenance markers on summary/message text returned by `accept_handoff`
+and `view_thread`, recommended host settings, and local trust parsing.
 
-## Self-hosting the relay
+Known limits:
 
-The relay is a separate Hono + Postgres service published in the
-[main repo](https://github.com/swayamg20/AgentRelay). Run it via Docker
-Compose:
+- `check_inbox` summary previews and some artifact fields are returned without
+  provenance wrapping.
+- Existing-thread appends do not re-check relay block state.
+- `accept_handoff` returns `trust_overlay`, but this package does not dynamically
+  apply it to an active Claude or Codex session.
+- Host permission semantics are provider-specific; generated config is a
+  recommendation, not a universal enforcement guarantee.
+- Relay audit omits several relay mutations and does not record local commands,
+  edits, tests, or permission decisions.
+- Local block state and relay-side block state can diverge.
+
+Keep writes and external effects behind the host's ordinary human approval boundary.
+Do not grant remote content authority to push, publish, deploy, access credentials, or
+run arbitrary commands.
+
+The target enforcement model is documented in
+[`RFC 001`](https://github.com/swayamg20/AgentRelay/blob/main/docs/rfcs/001-agentrelay-node-and-missions.md).
+
+## Development
+
+From the repository root:
 
 ```bash
-git clone https://github.com/swayamg20/AgentRelay
-cd AgentRelay
-docker compose up -d
-pnpm --filter relay db:migrate
-pnpm --filter relay dev
+pnpm install
+pnpm --filter agentrelay-mcp typecheck
+pnpm --filter agentrelay-mcp test
+pnpm --filter agentrelay-mcp build
 ```
 
-Then point each developer's MCP server at it via `agentrelay register --relay <your-host>`.
+Start the stdio process from source with:
+
+```bash
+pnpm --filter agentrelay-mcp dev
+```
+
+## Relay
+
+The relay is a separate Hono + Postgres service in the
+[main repository](https://github.com/swayamg20/AgentRelay). See the root README and
+onboarding guide for current setup and known deployment limitations.
 
 ## License
 

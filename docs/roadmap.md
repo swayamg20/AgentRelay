@@ -1,166 +1,150 @@
 # Roadmap
 
-AgentRelay: cross-developer agent-to-agent communication. The protocol is
-horizontal (any team's agents can plug in via A2A), the first product surface
-is engineering-vertical (Claude Code + Codex CLI, code-flavored artifacts).
-Horizontal expansion to other functions is a v2.0+ direction, not v1.
+> **Updated:** 2026-08-01. This roadmap replaces the old mailbox -> Auto Mode ->
+> Ambient Agent release sequence. The architectural contract is
+> [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
-One MCP server, two clients (Claude Code + Codex CLI), one A2A-compliant relay.
+## Direction
 
----
+AgentRelay is a cross-device communication and collaboration network for independently
+owned agents. Coding across separate repositories is the first proving vertical, not
+the product's final boundary.
 
-## Distribution & success criteria
+The current repository is an authenticated asynchronous mailbox. The next milestone
+is not another notification mode. It is a durable delivery ledger plus a persistent
+local Node that can start or resume a bounded agent turn.
 
-- **Open-source launch** (MIT license, public GitHub, npm + PyPI packages).
-- **First adopters: dogfood at Travenues / ixigo internally** — the team is the
-  honest-feedback loop. No paid tier, no hosted service in v1.
-- **Polish bar:** a stranger on the internet can run `npx agentrelay-mcp` and
-  `docker compose up` and have a working two-laptop demo within 5 minutes.
-- **Each release ships with a launch demo video and a blog post** (90-second
-  screen recording, two-terminal split-screen).
+We progress through evidence gates, not calendar promises or version hype.
 
-## Pacing model
+## Stage 0: make the existing foundation honest
 
-We don't think in weeks — Claude Code and Codex do the typing, the human
-debugs integration friction. We think in **phases**, each ending with a
-shippable artifact: a tagged release, a demo video, a blog post.
+Before autonomous execution:
 
-## Phase 0 — Scaffolding (one focused session)
+- Preserve the current handoff API as a compatibility surface.
+- Fix teammate-originated artifact fields that bypass provenance wrapping.
+- Preserve `send_message` payloads and completion artifacts end to end.
+- Make local block state and relay block enforcement converge.
+- Stop claiming current A2A v1 conformance until a current compatibility suite passes.
+- Stop describing the returned trust overlay as runtime enforcement.
+- Add regression tests for each corrected contract.
 
-Foundation work before any feature lands. No release.
+**Exit gate:** current docs, code, and tests agree about the mailbox's actual security
+and delivery guarantees.
 
-- Repo layout (`relay/`, `mcp-server/`, `examples/`, `docs/`)
-- Postgres + Alembic migration baseline (v0.1 schema)
-- A2A test compatibility kit hooked into CI
-- API key auth + admin endpoints
-- `agentrelay register` and `agentrelay install` working end-to-end against a
-  local relay
-- Provenance-wrapping helper in MCP server (used by every inbound tool result)
+## Stage 1: executable Mission contract
 
-Exit criteria: two devs on two laptops can both register against a local
-relay and call `list_teammates()` and see each other.
+- Add a small shared protocol package or module with Mission, participant, message,
+  artifact, delivery, run, and policy schemas.
+- Implement deterministic Mission and delivery state machines with invalid-transition
+  tests.
+- Add fake backend and Android repositories with frozen commits and executable
+  acceptance fixtures.
+- Build a fake runtime adapter so coordination can be tested without model variance.
 
-## Phase 1 — v0.1: Async Mailbox (the launch)
+**Exit gate:** a deterministic two-participant fixture completes through typed events,
+including one contract revision, without a real coding-agent runtime.
 
-The base case: agents talk through a persistent inbox, humans approve at the
-permission layer (not per-message).
+## Stage 2: durable delivery ledger
 
-**Demo (b) — clarification dance.** Bob hands off API contract, Frank's
-agent reads it, spots a gap, sends a Q to Bob's agent via `send_message`,
-Bob's agent answers from his repo, Frank's agent finishes the plan, Frank
-ships. Two terminals + Slack DMs in the screen recording. ~90 seconds.
+- Add node identity, workspace-binding, Mission, event, delivery, claim, run, and
+  acknowledgement persistence.
+- Commit domain events and delivery rows in the same Postgres transaction.
+- Implement ordered cursor replay, bounded claims, lease expiry, retry, cancellation,
+  and duplicate suppression.
+- Start with cursor polling over the durable ledger.
+- Defer authenticated SSE until replay, claims, and recovery are already correct.
 
-Features:
-- A2A-compliant relay (LF A2A spec, JSON-RPC over HTTPS)
-- Agent Card registry at `/.well-known/agent-card.json?id=<handle>`
-- MCP server (`agentrelay-mcp`) on Claude Code and Codex CLI
-- Six tools: `handoff_to_teammate`, `check_inbox`, `accept_handoff`,
-  `send_message`, `complete_handoff`, `list_teammates`
-- Routing: explicit only (`to: "frank"`)
-- Notification: Slack DM webhook
-- **Trust model layers 1–4 fully wired** (provenance wrapping, recommended
-  Claude Code permission config, `~/.agentrelay/trust.yaml`, audit log)
-- CLI: `agentrelay register/install/rotate-key/doctor/audit/block`
-- `intent: "inform" | "ask_question"` on handoffs (no proposed_action yet)
+**Exit gate:** forced disconnects, relay restarts, expired leases, and duplicate
+notifications cause no lost event and no duplicated effect.
 
-Exit criteria: the demo (b) script runs end-to-end on two real laptops, no
-manual hand-holding. Tagged `v0.1.0`, demo video published.
+## Stage 3: AgentRelay Node
 
-## Phase 1.5 — v0.1.5: Propose Action (small follow-up release)
+- Add a `node/` pnpm workspace and daemon CLI.
+- Register device-scoped credentials and capabilities.
+- Map logical workspace aliases to locally approved repositories.
+- Persist the event cursor, processing journal, and Mission-to-session mapping.
+- Validate a pre-registered clean checkout or operator-created worktree, including
+  repository identity, base commit, and dirty state before each run.
+- Apply local path, command, network, approval, budget, expiry, and revocation policy
+  outside the model.
+- Record runtime, tool, artifact, test, and policy-decision evidence.
 
-Adds the third intent — Bob's agent can ask Frank's agent to make a
-*specific change* in Frank's codebase. Frank's agent drafts the diff,
-queues it for Frank's approval. This is the first cross-codebase
-delegation primitive; it's small enough to ship as a patch release rather
-than a major version.
+**Exit gate:** two Nodes on separate machines complete the fake-adapter Mission after
+one Node is killed and restarted mid-run.
 
-Features:
-- `intent: "propose_action"` on handoffs
-- New schema: `handoffs.proposed_action` JSONB column
-- New MCP tool: `draft_proposed_action(thread_id)` — receiver-side, returns
-  the agent's drafted diff for human approval
-- Receiver UX: drafted diff surfaces with provenance (*"Bob asked me to do
-  X. Drafted Y. Approve to apply?"*) routed through Claude Code's existing
-  permission flow
+## Stage 4: Codex vertical slice
 
-No new demo video — this is a feature update post on the v0.1 blog.
+- Implement one pinned Codex app-server adapter over local stdio or a Unix socket.
+- Start or resume a dedicated thread per Mission.
+- Serialize turns, normalize lifecycle events, handle busy sessions, and cancel
+  safely.
+- Run the backend-and-Android scenario with each agent limited to its own repository.
+- Deny push, merge, publish, deploy, arbitrary network access, and secrets.
 
-Exit criteria: Bob's agent can request a small refactor in Frank's repo,
-Frank's agent drafts the diff, Frank approves, change lands. Tagged `v0.1.5`.
+The proof must include:
 
-## Phase 2 — v0.2: Auto Mode (live channel)
+- Ten or more meaningful exchanges where the task requires them, without optimizing
+  for message count.
+- One accepted API-contract revision.
+- One offline/reconnect recovery.
+- One duplicate delivery.
+- One adversarial message or artifact attempting to expand local authority.
+- One mid-run cancellation or revocation.
+- Passing backend, Android, contract, and end-user scenario checks.
+- No human input after the initial Mission and policy grant.
 
-Pairing protocol for synchronous, RPC-shaped agent conversations when both
-developers are online and opted in. See [auto-mode.md](./auto-mode.md).
+**Exit gate:** both participant workspaces are review-ready with a complete replayable
+trace and no forbidden effect.
 
-**Demo (c) — live pair.** Bob asks Frank's agent a question mid-flow,
-answer streams back in seconds. Never opens Slack. ~60-second video.
+## Stage 5: evaluate before broadening
 
-Features:
-- `/pair <handle>` and `/unpair` slash commands
-- Presence heartbeat from each MCP server to relay
-- Long-poll endpoint on relay (SSE)
-- New tools: `ask_teammate`, `wait_for_teammate_message`, `reply_to_teammate`
-- Listener-mode session: dedicated agent session that long-polls and
-  auto-answers questions from paired teammate
-- Stop-hook integration for non-listener pickup
-- Auto-fallback to async mailbox if peer goes offline mid-call
+Run several frozen cross-repository tasks under comparable budgets:
 
-Exit criteria: demo (c) script runs end-to-end. Tagged `v0.2.0`, demo video
-published.
+1. One capable agent with both repositories.
+2. Two isolated agents using ordinary free-form coordination.
+3. Two agents using typed AgentRelay Missions.
+4. Typed Missions plus executable cross-repository verification.
 
-## Phase 3 — v0.3: Ambient Agent
+Measure strict integrated success, human interventions, wall time, cost, turns,
+clarification loops, contract drift, repeated work, premature completion, replay
+correctness, and policy violations.
 
-Headless answer generation for read-only questions, queued for human
-approval. See [ambient-agent.md](./ambient-agent.md).
+**Continue only if:** structured collaboration repeatedly improves integrated success
+or preserves a valuable repository-ownership boundary at an acceptable cost.
 
-Features:
-- Headless drafting via `claude --print` / `codex exec` on the receiver's box
-- Auto-respond flag (off by default) for read-only questions
-- Drafted answers always queued for human approval, never auto-sent
-- Desktop tray daemon (macOS/Windows) for native notifications + "Open in
-  CLI" deep-link
-- Smart routing: role-based (Mode B), repo-aware via CODEOWNERS-style
-  mapping (Mode C)
+**Stop or reshape if:** it needs human nudges to pick up messages, regularly finishes
+with incompatible contracts, loses correctness after reconnect, or costs materially
+more than the strongest simple baseline without a compensating benefit. Any secret
+disclosure, unauthorized write, or capability escalation fails the run.
 
-No demo until features prove themselves; v0.3 is more about back-end
-robustness than user-facing wow.
+## Stage 6: harden and interoperate
 
-## Phase 4 — v1.0: The Case Study
+Only after the Codex slice clears the evaluation gate:
 
-The "we use this every day" moment. Not a feature release — a positioning
-release.
+- Add a Claude Agent SDK or headless adapter.
+- Pass a current A2A compatibility suite and publish correct Agent Cards.
+- Add multi-node selection only if one logical agent genuinely needs it.
+- Add stronger artifact storage, retention, observability, and operator tooling.
+- Decide whether the relay may read payloads or needs relay-blind encryption.
+- Package a reliable two-machine setup and demo.
 
-**Demo (d) — cross-stack feature ship.** Bob (backend) → Frank (web) →
-Mike (mobile), three sequential handoffs, one feature ships in an
-afternoon. Real internal team, real shipped code. Long-form blog post,
-not a 90-second video.
+## Later, demand-driven work
 
-Exit criteria: at least one real feature shipped through the full handoff
-chain at Travenues / ixigo, with screenshots and metrics. Tagged `v1.0.0`.
+- Multi-party or parallel Missions.
+- Cross-organization federation.
+- Hosted multi-tenant service, SSO, billing, and administration.
+- Desktop or mobile notification UI.
+- Non-engineering Mission applications and artifact types.
+- Auto-push, PR, merge, deploy, or production actions under explicit policy.
 
-## Beyond v1.0 — Horizontal expansion
+These are product questions, not implied commitments.
 
-The protocol was always horizontal; v1.0+ surfaces that publicly.
+## Explicit non-goals for the first proof
 
-- **Generic artifact types** (not just code-flavored — spreadsheets, CMS
-  drafts, design files)
-- **Non-engineering MCP server packages** (finance, ops, marketing) with
-  vertical-specific tools
-- **Possibly hosted version** with multi-tenancy, billing, SSO
-- **Federation** (multiple relays talking to each other across orgs)
-
-These are directional, not committed. The OSS protocol is the load-bearing
-piece; whether AgentRelay-the-org commercializes anything is a v1.0+
-conversation.
-
-## Non-goals (explicitly out of scope for v1)
-
-- Real-time co-editing (this is not a Liveblocks competitor)
-- Replacing Slack/Linear (notifications go through them, not against them)
-- Multi-org federation (single team/org per relay until v1.0+)
-- LLM-judged routing ("which teammate is the best fit?") — too
-  hallucination-prone
-- Auto-merge / auto-PR creation by the receiving agent
-- Solving prompt injection (we mitigate via the trust model; the industry
-  hasn't solved it and we don't claim to)
+- Real-time collaborative editing.
+- A central manager LLM.
+- LLM-based recipient routing.
+- Waking a sleeping or powered-off laptop.
+- Repository synchronization.
+- A new transport that competes with A2A or MCP.
+- Claiming that agent count alone improves software quality.

@@ -6,6 +6,15 @@ that runs containers will work. The base setup
 and Postgres on one box; managed-Postgres platforms typically expect
 you to run them separately.
 
+This page covers only the shared relay. The planned AgentRelay Node, workspace
+bindings, and coding-agent runtime adapters stay on each developer's machine. See
+[`architecture.md`](architecture.md).
+
+> **Current Compose caveat:** the self-host profile does not yet forward the required
+> `RELAY_INVITE_SECRET` into the relay container. Correct that deployment environment
+> before relying on signed invite onboarding, or use the host-run flow in
+> [`onboarding.md`](onboarding.md).
+
 This doc is a quick survey of common options as of **May 2026** so you
 don't have to research each one. Pricing changes; verify before
 committing. The project does not endorse any specific platform — pick
@@ -35,7 +44,7 @@ Whichever platform you pick, the relay needs:
   - `RELAY_ENCRYPTION_KEY` (32 bytes hex) — `openssl rand -hex 32`
   - `RELAY_INVITE_SECRET` (32+ bytes hex) — `openssl rand -hex 32`
   - `RELAY_ADMIN_TOKEN` (16+ bytes hex) — `openssl rand -hex 16`
-  - `RELAY_METRICS_TOKEN` (any non-empty string) — `openssl rand -hex 16`
+  - `RELAY_METRICS_TOKEN` (8+ characters) — `openssl rand -hex 16`
   - `RELAY_PUBLIC_URL` — the publicly-resolvable HTTPS URL of the relay
   - Plus the others from `.env.example` if you want to override defaults.
 
