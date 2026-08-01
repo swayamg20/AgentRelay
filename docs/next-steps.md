@@ -63,8 +63,8 @@ Start with one eligible Node per logical agent and one active turn per Mission.
 - [ ] Generate and test the matching protocol schema.
 - [ ] Implement probe, session start/resume, turn start, event stream, cancellation,
   and recovery.
-- [ ] Require structured turn disposition: reply, ready, blocked, input required, or
-  failed.
+- [ ] Require the RFC's structured turn dispositions: `reply`, `propose_contract`,
+  `ready`, `blocked` (with optional requested input), or `failed`.
 - [ ] Run the two-machine backend-and-Android Mission.
 
 Do not use Codex remote control, generic MCP notifications, or preview host channels
