@@ -3,18 +3,20 @@ import { z } from "zod";
 import {
 	type ArtifactRef,
 	type ContractRevision,
+	type Delivery,
 	type Message,
-	type MissionContext,
 	type MissionStatus,
 	type TurnDisposition,
-	type VerificationEvidence,
 	artifactRefSchema,
 	contractRevisionSchema,
 	contractVersionSchema,
 	deliveryCursorSchema,
+	deliverySchema,
+	isoTimestampSchema,
 	messageSchema,
 	missionContextSchema,
 	missionEventEnvelopeSchema,
+	missionStatusSchema,
 	policyProfileNameSchema,
 	storedDeliverySchema,
 	turnDispositionSchema,
@@ -124,6 +126,54 @@ const rawMissionCoordinatorAppendInputSchema = z.discriminatedUnion("type", [
 	verificationRecordedEventSchema.omit(relayOwnedEventFields),
 ]);
 
+const nodeCoordinatorTurnDispositionSchema = turnDispositionSchema.refine(
+	(disposition): disposition is CoordinatorTurnDisposition =>
+		disposition.kind === "reply" ||
+		disposition.kind === "propose_contract" ||
+		disposition.kind === "ready",
+	"Delivery completion supports reply, propose_contract, and ready turns",
+);
+
+export const nodeDeliveryResultPayloadSchema = z
+	.discriminatedUnion("type", [
+		z
+			.object({
+				type: z.literal("turn_completed"),
+				disposition: nodeCoordinatorTurnDispositionSchema,
+			})
+			.strict(),
+		z.object({ type: z.literal("contract_acknowledged") }).strict(),
+		z
+			.object({
+				type: z.literal("verification_recorded"),
+				evidence: z.array(verificationEvidenceSchema).min(1).max(16),
+			})
+			.strict(),
+	])
+	.superRefine((result, ctx) => {
+		if (result.type !== "verification_recorded") return;
+		if (
+			new Set(result.evidence.map((evidence) => evidence.command_id)).size !==
+			result.evidence.length
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Verification completion must contain one result per command",
+				path: ["evidence"],
+			});
+		}
+		if (
+			new Set(result.evidence.map((evidence) => evidence.verification_id)).size !==
+			result.evidence.length
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Verification evidence IDs must be unique",
+				path: ["evidence"],
+			});
+		}
+	});
+
 type RawMissionCoordinatorEvent = z.infer<typeof rawMissionCoordinatorEventSchema>;
 type RawMissionCoordinatorAppendInput = z.infer<typeof rawMissionCoordinatorAppendInputSchema>;
 export type CoordinatorTurnDisposition = Extract<
@@ -158,6 +208,41 @@ export const missionCoordinatorAppendInputSchema = rawMissionCoordinatorAppendIn
 	.superRefine(validateCoordinatorEventPayload)
 	.transform((event): MissionCoordinatorAppendInput => event as MissionCoordinatorAppendInput);
 
+export const missionVerificationRecordSchema = z
+	.object({
+		event_id: uuidSchema,
+		participant_agent_id: uuidSchema,
+		contract_version: contractVersionSchema,
+		verification_round: z.number().int().positive().max(2_147_483_647),
+		evidence: verificationEvidenceSchema,
+	})
+	.strict();
+
+const rawMissionCoordinatorStateSchema = z
+	.object({
+		mission_context: missionContextSchema,
+		required_verification_commands: requiredCommandsSchema,
+		status: missionStatusSchema,
+		sequence_no: z.number().int().nonnegative().max(2_147_483_647),
+		turn_count: z.number().int().nonnegative().max(200),
+		contract_version: contractVersionSchema,
+		verification_round: z.number().int().nonnegative().max(2_147_483_647),
+		active_contract: artifactRefSchema,
+		pending_revision: contractRevisionSchema.nullable(),
+		accepted_revisions: z.array(contractRevisionSchema).max(200),
+		current_participant_agent_id: uuidSchema.nullable(),
+		ready_agent_ids: z.array(uuidSchema).max(2),
+		verification_records: z.array(missionVerificationRecordSchema).max(3_200),
+		messages: z.array(messageSchema).max(200),
+		applied_events: z.array(missionCoordinatorEventSchema).max(4_096),
+	})
+	.strict();
+
+export type MissionCoordinatorState = z.infer<typeof rawMissionCoordinatorStateSchema>;
+export const missionCoordinatorStateSchema = rawMissionCoordinatorStateSchema.superRefine(
+	validateMissionCoordinatorState,
+);
+
 export const missionParticipantAcceptanceInputSchema = z
 	.object({
 		idempotency_key: missionEventEnvelopeSchema.shape.idempotency_key,
@@ -171,55 +256,102 @@ export const missionParticipantAcceptanceInputSchema = z
 	})
 	.strict();
 
+export const missionParticipantAcceptanceReceiptSchema = z
+	.object({
+		mission_id: uuidSchema,
+		participant_agent_id: uuidSchema,
+		idempotency_key: missionEventEnvelopeSchema.shape.idempotency_key,
+		contract: artifactRefSchema,
+		local_policy_grant: missionParticipantAcceptanceInputSchema.shape.local_policy_grant,
+		accepted_at: isoTimestampSchema,
+	})
+	.strict();
+
+export const missionParticipantAcceptanceResultSchema = z
+	.object({
+		receipt: missionParticipantAcceptanceReceiptSchema,
+		replayed: z.boolean(),
+	})
+	.strict();
+
+export const missionParticipantBindingSchema = z
+	.object({
+		agent_id: uuidSchema,
+		node_id: uuidSchema,
+		workspace_binding_id: uuidSchema,
+	})
+	.strict();
+
+export type MissionParticipantBinding = z.infer<typeof missionParticipantBindingSchema>;
+
+const rawMissionCreationResultSchema = z
+	.object({
+		mission_id: uuidSchema,
+		state: missionCoordinatorStateSchema,
+		participant_bindings: z.array(missionParticipantBindingSchema).length(2),
+		replayed: z.boolean(),
+	})
+	.strict();
+
+export type MissionCreationResult = z.infer<typeof rawMissionCreationResultSchema>;
+export const missionCreationResultSchema = rawMissionCreationResultSchema.superRefine(
+	validateMissionCreationResult,
+);
+
+export const missionParticipantAcceptanceStatusSchema = z.enum(["pending", "accepted"]);
+
+const rawNodeMissionAssignmentSchema = z
+	.object({
+		mission_id: uuidSchema,
+		coordinator_config: missionCoordinatorConfigSchema,
+		coordinator_state: missionCoordinatorStateSchema,
+		participant_agent_id: uuidSchema,
+		workspace_binding_id: uuidSchema,
+		acceptance_status: missionParticipantAcceptanceStatusSchema,
+		acceptance_receipt: missionParticipantAcceptanceReceiptSchema.nullable(),
+	})
+	.strict();
+
+export type NodeMissionAssignment = z.infer<typeof rawNodeMissionAssignmentSchema>;
+export const nodeMissionAssignmentSchema = rawNodeMissionAssignmentSchema.superRefine(
+	validateNodeMissionAssignment,
+);
+
+export const nodeMissionAssignmentListRequestSchema = z
+	.object({
+		status: missionStatusSchema.optional(),
+		limit: z.number().int().positive().max(200).default(50),
+	})
+	.strict();
+
+export const nodeMissionAssignmentListSchema = z
+	.object({
+		missions: z.array(nodeMissionAssignmentSchema).max(200),
+	})
+	.strict();
+
+const missionDeliveryItemFields = {
+	event: missionCoordinatorEventSchema,
+	actor_agent_id: uuidSchema,
+	source_delivery_id: uuidSchema.nullable(),
+	causal_parent_event_id: uuidSchema.nullable(),
+} as const;
+
+export const missionDeliveryItemSchema = z
+	.object({
+		delivery: deliverySchema,
+		...missionDeliveryItemFields,
+	})
+	.strict()
+	.superRefine(validateMissionDeliveryItem);
+
 export const storedMissionDeliveryItemSchema = z
 	.object({
 		delivery: storedDeliverySchema,
-		event: missionCoordinatorEventSchema,
-		actor_agent_id: uuidSchema,
-		source_delivery_id: uuidSchema.nullable(),
-		causal_parent_event_id: uuidSchema.nullable(),
+		...missionDeliveryItemFields,
 	})
 	.strict()
-	.superRefine((item, ctx) => {
-		if (item.delivery.mission_event_id !== item.event.event_id) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Delivery must reference the returned Mission event",
-				path: ["delivery", "mission_event_id"],
-			});
-		}
-		if (item.delivery.mission_id !== item.event.mission_id) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Delivery and event must belong to the same Mission",
-				path: ["delivery", "mission_id"],
-			});
-		}
-		if (item.event.type === "participants_accepted") {
-			if (item.source_delivery_id !== null) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: "Derived participant acceptance has no source delivery",
-					path: ["source_delivery_id"],
-				});
-			}
-		} else {
-			if (item.actor_agent_id !== item.event.participant_agent_id) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: "Stored event actor must match the participant result",
-					path: ["actor_agent_id"],
-				});
-			}
-			if (item.source_delivery_id !== item.event.delivery_id) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: "Stored event must retain its source delivery",
-					path: ["source_delivery_id"],
-				});
-			}
-		}
-	});
+	.superRefine(validateMissionDeliveryItem);
 
 export const storedMissionDeliveryCursorPageSchema = z
 	.object({
@@ -259,17 +391,327 @@ export const storedMissionDeliveryCursorPageSchema = z
 		}
 	});
 
+export const recoverableMissionDeliveryPageRequestSchema = z
+	.object({
+		limit: z.number().int().positive().max(200).default(50),
+	})
+	.strict();
+
+export const recoverableMissionDeliveryPageSchema = z
+	.object({
+		items: z.array(missionDeliveryItemSchema).max(200),
+		as_of: isoTimestampSchema,
+	})
+	.strict()
+	.superRefine((page, ctx) => {
+		for (let index = 1; index < page.items.length; index += 1) {
+			const previousCursor = page.items[index - 1]!.delivery.cursor;
+			const cursor = page.items[index]!.delivery.cursor;
+			if (compareDeliveryCursors(previousCursor, cursor) >= 0) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Recoverable delivery cursors must be strictly increasing",
+					path: ["items", index, "delivery", "cursor"],
+				});
+			}
+		}
+
+		const nodeIds = new Set(page.items.map((item) => item.delivery.node_id));
+		if (nodeIds.size > 1) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "A recoverable delivery page belongs to one Node",
+				path: ["items"],
+			});
+		}
+
+		const asOf = Date.parse(page.as_of);
+		for (const [index, item] of page.items.entries()) {
+			const { delivery } = item;
+			const resumableLease =
+				(delivery.status === "leased" || delivery.status === "executing") &&
+				delivery.lease !== null &&
+				delivery.logical_settlement === null;
+			const dueRetry =
+				delivery.status === "stored" &&
+				delivery.attempt_count > 0 &&
+				delivery.logical_settlement === null &&
+				Date.parse(delivery.available_at) <= asOf;
+			if (!resumableLease && !dueRetry) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Recovery pages contain only resumable leases or due stored retries",
+					path: ["items", index, "delivery", "status"],
+				});
+			}
+		}
+	});
+
 export type MissionParticipantAcceptanceInput = z.infer<
 	typeof missionParticipantAcceptanceInputSchema
 >;
+export type MissionParticipantAcceptanceReceipt = z.infer<
+	typeof missionParticipantAcceptanceReceiptSchema
+>;
+export type MissionParticipantAcceptanceResult = z.infer<
+	typeof missionParticipantAcceptanceResultSchema
+>;
+export type MissionParticipantAcceptanceStatus = z.infer<
+	typeof missionParticipantAcceptanceStatusSchema
+>;
+export type NodeMissionAssignmentListRequest = z.infer<
+	typeof nodeMissionAssignmentListRequestSchema
+>;
+export type NodeMissionAssignmentList = z.infer<typeof nodeMissionAssignmentListSchema>;
+export type NodeDeliveryResultPayload = z.infer<typeof nodeDeliveryResultPayloadSchema>;
+export type MissionDeliveryItem = z.infer<typeof missionDeliveryItemSchema>;
 export type StoredMissionDeliveryItem = z.infer<typeof storedMissionDeliveryItemSchema>;
 export type StoredMissionDeliveryCursorPage = z.infer<typeof storedMissionDeliveryCursorPageSchema>;
+export type RecoverableMissionDeliveryPageRequest = z.infer<
+	typeof recoverableMissionDeliveryPageRequestSchema
+>;
+export type RecoverableMissionDeliveryPage = z.infer<typeof recoverableMissionDeliveryPageSchema>;
+
+export type MissionVerificationRecord = z.infer<typeof missionVerificationRecordSchema>;
+
+function validateMissionCoordinatorState(
+	state: MissionCoordinatorState,
+	ctx: z.RefinementCtx,
+): void {
+	const manifest = state.mission_context.manifest;
+	const participantIds = manifest.participants.map((participant) => participant.agent_id);
+	if (!sameStringSet(participantIds, Object.keys(state.required_verification_commands))) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Coordinator state must retain verification commands for both participants",
+			path: ["required_verification_commands"],
+		});
+	}
+	if (
+		state.active_contract.version !== state.contract_version ||
+		!manifest.allowed_artifact_types.includes(state.active_contract.type)
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Active contract must match the coordinator contract version and artifact policy",
+			path: ["active_contract"],
+		});
+	}
+	if (
+		state.current_participant_agent_id !== null &&
+		!participantIds.includes(state.current_participant_agent_id)
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Current participant must belong to the Mission",
+			path: ["current_participant_agent_id"],
+		});
+	}
+	if (
+		new Set(state.ready_agent_ids).size !== state.ready_agent_ids.length ||
+		state.ready_agent_ids.some((participantId) => !participantIds.includes(participantId))
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Ready participants must be unique Mission participants",
+			path: ["ready_agent_ids"],
+		});
+	}
+	if (state.applied_events.length !== state.sequence_no) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Coordinator sequence must equal its applied event count",
+			path: ["sequence_no"],
+		});
+	}
+	for (const [index, event] of state.applied_events.entries()) {
+		if (event.mission_id !== manifest.mission_id || event.sequence_no !== index + 1) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Applied events must be contiguous and belong to the Mission",
+				path: ["applied_events", index],
+			});
+		}
+	}
+	for (const [index, message] of state.messages.entries()) {
+		if (message.mission_id !== manifest.mission_id) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Coordinator messages must belong to the Mission",
+				path: ["messages", index, "mission_id"],
+			});
+		}
+	}
+	for (const [index, revision] of [
+		...state.accepted_revisions,
+		...(state.pending_revision === null ? [] : [state.pending_revision]),
+	].entries()) {
+		if (revision.mission_id !== manifest.mission_id) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Contract revisions must belong to the Mission",
+				path: ["accepted_revisions", index, "mission_id"],
+			});
+		}
+	}
+}
+
+function validateMissionCreationResult(result: MissionCreationResult, ctx: z.RefinementCtx): void {
+	const participantIds = result.state.mission_context.manifest.participants.map(
+		(participant) => participant.agent_id,
+	);
+	if (result.mission_id !== result.state.mission_context.manifest.mission_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Creation result Mission ID must match coordinator state",
+			path: ["mission_id"],
+		});
+	}
+	const bindingAgentIds = result.participant_bindings.map((binding) => binding.agent_id);
+	if (!sameStringSet(participantIds, bindingAgentIds)) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Creation result must bind exactly the Mission participants",
+			path: ["participant_bindings"],
+		});
+	}
+	if (
+		new Set(result.participant_bindings.map((binding) => binding.node_id)).size !==
+			result.participant_bindings.length ||
+		new Set(result.participant_bindings.map((binding) => binding.workspace_binding_id)).size !==
+			result.participant_bindings.length
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Mission participant Node and workspace bindings must be unique",
+			path: ["participant_bindings"],
+		});
+	}
+}
+
+function validateNodeMissionAssignment(
+	assignment: NodeMissionAssignment,
+	ctx: z.RefinementCtx,
+): void {
+	const config = assignment.coordinator_config;
+	const manifest = config.mission_context.manifest;
+	const state = assignment.coordinator_state;
+	if (
+		assignment.mission_id !== manifest.mission_id ||
+		assignment.mission_id !== state.mission_context.manifest.mission_id
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Assignment Mission ID must match its config and current state",
+			path: ["mission_id"],
+		});
+	}
+	if (
+		!isDeepStrictEqual(config.mission_context, state.mission_context) ||
+		!isDeepStrictEqual(config.required_verification_commands, state.required_verification_commands)
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Coordinator state must retain the immutable Mission config",
+			path: ["coordinator_state"],
+		});
+	}
+	const participant = manifest.participants.find(
+		(candidate) => candidate.agent_id === assignment.participant_agent_id,
+	);
+	if (participant === undefined) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Assignment participant must belong to the Mission",
+			path: ["participant_agent_id"],
+		});
+		return;
+	}
+	const accepted = assignment.acceptance_status === "accepted";
+	if (accepted !== (assignment.acceptance_receipt !== null)) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Participant acceptance status and receipt must agree",
+			path: ["acceptance_receipt"],
+		});
+	}
+	if (assignment.acceptance_status === "pending" && state.status !== "awaiting_acceptance") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Pending participant acceptance requires an awaiting Mission",
+			path: ["acceptance_status"],
+		});
+	}
+	const receipt = assignment.acceptance_receipt;
+	if (
+		receipt !== null &&
+		(receipt.mission_id !== assignment.mission_id ||
+			receipt.participant_agent_id !== assignment.participant_agent_id ||
+			!isDeepStrictEqual(receipt.contract, manifest.shared_contract) ||
+			receipt.local_policy_grant.profile_name !== participant.requested_local_policy_profile)
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Acceptance receipt must bind the exact Mission participant contract and policy",
+			path: ["acceptance_receipt"],
+		});
+	}
+}
 
 function compareDeliveryCursors(left: string, right: string): number {
 	if (left.length !== right.length) {
 		return left.length > right.length ? 1 : -1;
 	}
 	return left === right ? 0 : left > right ? 1 : -1;
+}
+
+function validateMissionDeliveryItem(
+	item: {
+		delivery: Delivery;
+		event: MissionCoordinatorEvent;
+		actor_agent_id: string;
+		source_delivery_id: string | null;
+	},
+	ctx: z.RefinementCtx,
+): void {
+	if (item.delivery.mission_event_id !== item.event.event_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Delivery must reference the returned Mission event",
+			path: ["delivery", "mission_event_id"],
+		});
+	}
+	if (item.delivery.mission_id !== item.event.mission_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Delivery and event must belong to the same Mission",
+			path: ["delivery", "mission_id"],
+		});
+	}
+	if (item.event.type === "participants_accepted") {
+		if (item.source_delivery_id !== null) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Derived participant acceptance has no source delivery",
+				path: ["source_delivery_id"],
+			});
+		}
+		return;
+	}
+	if (item.actor_agent_id !== item.event.participant_agent_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Stored event actor must match the participant result",
+			path: ["actor_agent_id"],
+		});
+	}
+	if (item.source_delivery_id !== item.event.delivery_id) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Stored event must retain its source delivery",
+			path: ["source_delivery_id"],
+		});
+	}
 }
 
 function validateCoordinatorEventPayload(
@@ -289,7 +731,17 @@ function validateCoordinatorEventPayload(
 	if (event.type !== "turn_completed") {
 		return;
 	}
+	validateTurnResultCompanions(event, ctx);
+}
 
+function validateTurnResultCompanions(
+	event: {
+		disposition: TurnDisposition;
+		message: Message | null;
+		revision: ContractRevision | null;
+	},
+	ctx: z.RefinementCtx,
+): void {
 	const kind = event.disposition.kind;
 	if ((kind === "reply") !== (event.message !== null)) {
 		ctx.addIssue({
@@ -315,32 +767,6 @@ function validateCoordinatorEventPayload(
 }
 
 export type MissionCoordinatorConfig = z.infer<typeof missionCoordinatorConfigSchema>;
-
-export interface MissionVerificationRecord {
-	readonly event_id: string;
-	readonly participant_agent_id: string;
-	readonly contract_version: number;
-	readonly verification_round: number;
-	readonly evidence: VerificationEvidence;
-}
-
-export interface MissionCoordinatorState {
-	readonly mission_context: MissionContext;
-	readonly required_verification_commands: Readonly<Record<string, readonly string[]>>;
-	readonly status: MissionStatus;
-	readonly sequence_no: number;
-	readonly turn_count: number;
-	readonly contract_version: number;
-	readonly verification_round: number;
-	readonly active_contract: ArtifactRef;
-	readonly pending_revision: ContractRevision | null;
-	readonly accepted_revisions: readonly ContractRevision[];
-	readonly current_participant_agent_id: string | null;
-	readonly ready_agent_ids: readonly string[];
-	readonly verification_records: readonly MissionVerificationRecord[];
-	readonly messages: readonly Message[];
-	readonly applied_events: readonly MissionCoordinatorEvent[];
-}
 
 export class InvalidMissionCoordinatorEventError extends Error {
 	constructor(readonly reason: string) {
@@ -732,7 +1158,14 @@ function applyVerificationRecorded(
 		verification_round: event.verification_round,
 		evidence: structuredClone(event.evidence),
 	};
-	if (event.evidence.outcome === "failed") {
+	const verification_records = [...state.verification_records, record];
+	const participantRecords = verification_records.filter(
+		(candidate) => candidate.participant_agent_id === event.participant_agent_id,
+	);
+	if (!allParticipantCommandsRecorded(required, participantRecords)) {
+		return { ...state, verification_records };
+	}
+	if (participantRecords.some((candidate) => candidate.evidence.outcome === "failed")) {
 		const remainingTurns = state.mission_context.manifest.max_turns - state.turn_count;
 		const canRetry = remainingTurns >= missionParticipantIds(state).length;
 		return {
@@ -746,7 +1179,6 @@ function applyVerificationRecorded(
 		};
 	}
 
-	const verification_records = [...state.verification_records, record];
 	if (!allRequiredCommandsPassed(state, verification_records)) {
 		return { ...state, verification_records };
 	}
@@ -755,6 +1187,15 @@ function applyVerificationRecorded(
 		status: transitionMissionStatus(state.status, { type: "verification_passed" }),
 		verification_records,
 	};
+}
+
+function allParticipantCommandsRecorded(
+	requiredCommands: readonly string[],
+	records: readonly MissionVerificationRecord[],
+): boolean {
+	return requiredCommands.every((commandId) =>
+		records.some((record) => record.evidence.command_id === commandId),
+	);
 }
 
 function findReplay(

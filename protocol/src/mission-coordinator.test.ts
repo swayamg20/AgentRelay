@@ -4,7 +4,16 @@ import {
 	createMissionCoordinatorState,
 	missionCoordinatorAppendInputSchema,
 	missionCoordinatorEventSchema,
+	missionCoordinatorStateSchema,
+	missionCreationResultSchema,
 	missionParticipantAcceptanceInputSchema,
+	missionParticipantAcceptanceResultSchema,
+	nodeDeliveryResultPayloadSchema,
+	nodeMissionAssignmentListRequestSchema,
+	nodeMissionAssignmentListSchema,
+	nodeMissionAssignmentSchema,
+	recoverableMissionDeliveryPageRequestSchema,
+	recoverableMissionDeliveryPageSchema,
 	reduceMissionCoordinatorEvent,
 	replayMissionCoordinatorEvents,
 	storedMissionDeliveryCursorPageSchema,
@@ -22,6 +31,8 @@ const IDS = {
 	message2: "00000000-0000-4000-8000-000000000009",
 	backendNode: "00000000-0000-4000-8000-000000000010",
 	androidNode: "00000000-0000-4000-8000-000000000011",
+	backendBinding: "00000000-0000-4000-8000-000000000012",
+	androidBinding: "00000000-0000-4000-8000-000000000013",
 } as const;
 
 const CONTRACT_V1 = {
@@ -147,6 +158,127 @@ describe("Mission coordinator", () => {
 		).toBe(false);
 	});
 
+	it("publishes strict creation, acceptance, and pre-delivery assignment results", () => {
+		const state = createMissionCoordinatorState(CONFIG);
+		const creation = {
+			mission_id: IDS.mission,
+			state,
+			participant_bindings: [
+				{
+					agent_id: IDS.backend,
+					node_id: IDS.backendNode,
+					workspace_binding_id: IDS.backendBinding,
+				},
+				{
+					agent_id: IDS.android,
+					node_id: IDS.androidNode,
+					workspace_binding_id: IDS.androidBinding,
+				},
+			],
+			replayed: false,
+		};
+		const receipt = {
+			mission_id: IDS.mission,
+			participant_agent_id: IDS.backend,
+			idempotency_key: "accept:backend",
+			contract: CONTRACT_V1,
+			local_policy_grant: {
+				profile_name: "coding",
+				grant_sha256: "e".repeat(64),
+			},
+			accepted_at: "2026-08-02T10:01:00.000Z",
+		};
+		const assignment = {
+			mission_id: IDS.mission,
+			coordinator_config: CONFIG,
+			coordinator_state: state,
+			participant_agent_id: IDS.backend,
+			workspace_binding_id: IDS.backendBinding,
+			acceptance_status: "accepted" as const,
+			acceptance_receipt: receipt,
+		};
+
+		expect(missionCoordinatorStateSchema.parse(state)).toEqual(state);
+		expect(missionCreationResultSchema.parse(creation)).toEqual(creation);
+		expect(missionParticipantAcceptanceResultSchema.parse({ receipt, replayed: true })).toEqual({
+			receipt,
+			replayed: true,
+		});
+		expect(nodeMissionAssignmentSchema.parse(assignment)).toEqual(assignment);
+		expect(nodeMissionAssignmentListRequestSchema.parse({ status: "awaiting_acceptance" })).toEqual(
+			{ status: "awaiting_acceptance", limit: 50 },
+		);
+		expect(nodeMissionAssignmentListSchema.parse({ missions: [assignment] })).toEqual({
+			missions: [assignment],
+		});
+
+		expect(
+			missionCreationResultSchema.safeParse({
+				...creation,
+				participantBindings: creation.participant_bindings,
+			}).success,
+		).toBe(false);
+		expect(
+			nodeMissionAssignmentSchema.safeParse({ ...assignment, local_path: "/tmp/backend" }).success,
+		).toBe(false);
+		expect(
+			nodeMissionAssignmentSchema.safeParse({
+				...assignment,
+				acceptance_status: "pending",
+			}).success,
+		).toBe(false);
+		expect(
+			nodeMissionAssignmentSchema.safeParse({
+				...assignment,
+				participant_agent_id: IDS.android,
+			}).success,
+		).toBe(false);
+	});
+
+	it("accepts only content-bearing Node result payloads", () => {
+		const turn = {
+			type: "turn_completed" as const,
+			disposition: {
+				kind: "reply" as const,
+				message_type: "progress" as const,
+				message: "The endpoint is ready.",
+			},
+		};
+		expect(nodeDeliveryResultPayloadSchema.parse(turn)).toEqual(turn);
+		expect(nodeDeliveryResultPayloadSchema.parse({ type: "contract_acknowledged" })).toEqual({
+			type: "contract_acknowledged",
+		});
+		const evidence = verificationEvent(3, IDS.backend, 1, "backend-contract").evidence;
+		expect(
+			nodeDeliveryResultPayloadSchema.parse({
+				type: "verification_recorded",
+				evidence: [evidence],
+			}),
+		).toEqual({ type: "verification_recorded", evidence: [evidence] });
+		expect(
+			nodeDeliveryResultPayloadSchema.safeParse({
+				...turn,
+				participant_agent_id: IDS.backend,
+				delivery_id: numberedUuid(999),
+				contract_version: 1,
+				created_at: "2026-08-02T10:00:00.000Z",
+				message: { message_id: IDS.message1 },
+			}).success,
+		).toBe(false);
+		expect(
+			nodeDeliveryResultPayloadSchema.safeParse({
+				type: "contract_acknowledged",
+				revision_id: IDS.revision,
+			}).success,
+		).toBe(false);
+		expect(
+			nodeDeliveryResultPayloadSchema.safeParse({
+				type: "verification_recorded",
+				evidence: [evidence, evidence],
+			}).success,
+		).toBe(false);
+	});
+
 	it("validates joined Mission events in one ordered Node cursor page", () => {
 		const firstEvent = acceptedEvent(1);
 		const secondEvent = replyTurn(2, IDS.backend, 1, IDS.message1, null, "Reply.");
@@ -216,6 +348,50 @@ describe("Mission coordinator", () => {
 			storedMissionDeliveryCursorPageSchema.safeParse({
 				items: [first],
 				next_cursor: null,
+			}).success,
+		).toBe(false);
+	});
+
+	it("lists due retries and active or expired unsettled leases for restart recovery", () => {
+		const firstEvent = acceptedEvent(1);
+		const secondEvent = replyTurn(2, IDS.backend, 1, IDS.message1, null, "Reply.");
+		const dueRetry = storedMissionDeliveryItem(1, firstEvent);
+		dueRetry.delivery.attempt_count = 1;
+		dueRetry.delivery.last_fencing_token = "1";
+		const resumable = storedMissionDeliveryItem(2, secondEvent);
+		resumable.delivery.status = "executing";
+		resumable.delivery.attempt_count = 1;
+		resumable.delivery.last_fencing_token = "1";
+		resumable.delivery.lease = {
+			lease_id: numberedUuid(800),
+			fencing_token: "1",
+			expires_at: "2026-08-02T11:00:00.000Z",
+		};
+		const page = {
+			items: [dueRetry, resumable],
+			as_of: "2026-08-02T10:30:00.000Z",
+		};
+
+		expect(recoverableMissionDeliveryPageRequestSchema.parse({})).toEqual({ limit: 50 });
+		expect(recoverableMissionDeliveryPageSchema.parse(page)).toEqual(page);
+		expect(
+			recoverableMissionDeliveryPageSchema.safeParse({
+				items: [storedMissionDeliveryItem(1, firstEvent)],
+				as_of: page.as_of,
+			}).success,
+		).toBe(false);
+		expect(
+			recoverableMissionDeliveryPageSchema.safeParse({
+				items: [
+					{
+						...dueRetry,
+						delivery: {
+							...dueRetry.delivery,
+							available_at: "2026-08-02T11:00:00.000Z",
+						},
+					},
+				],
+				as_of: page.as_of,
 			}).success,
 		).toBe(false);
 	});
@@ -507,6 +683,36 @@ describe("Mission coordinator", () => {
 		);
 	});
 
+	it("records a participant's full command set before reducing its verification outcome", () => {
+		const config = structuredClone(CONFIG);
+		config.required_verification_commands[IDS.backend] = [
+			"backend-contract",
+			"backend-integration",
+		];
+		let state = replayMissionCoordinatorEvents(config, [
+			acceptedEvent(1),
+			readyTurn(2, IDS.backend, 1),
+			readyTurn(3, IDS.android, 1),
+		]);
+
+		state = reduceMissionCoordinatorEvent(
+			state,
+			verificationEvent(4, IDS.backend, 1, "backend-integration", "failed"),
+		);
+		expect(state).toMatchObject({ status: "verifying" });
+		expect(state.verification_records).toHaveLength(1);
+
+		state = reduceMissionCoordinatorEvent(
+			state,
+			verificationEvent(5, IDS.backend, 1, "backend-contract"),
+		);
+		expect(state).toMatchObject({
+			status: "active",
+			current_participant_agent_id: IDS.backend,
+			verification_records: [],
+		});
+	});
+
 	it("clears stale readiness after peer work and rejects duplicate commands in one round", () => {
 		let state = replayMissionCoordinatorEvents(CONFIG, [
 			acceptedEvent(1),
@@ -749,12 +955,15 @@ function storedMissionDeliveryItem(
 			contract_version: 1,
 			verification_round: null,
 			lease: null,
+			logical_settlement: null,
 			idempotency_key: `delivery:${cursor}`,
 			causal_parent_delivery_id: null,
 			available_at: createdAt,
 			created_at: createdAt,
 			updated_at: createdAt,
 			acknowledged_at: null,
+			cancelled_at: null,
+			cancellation_reason: null,
 			dead_lettered_at: null,
 		},
 		event,

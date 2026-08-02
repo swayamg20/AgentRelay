@@ -95,10 +95,26 @@ export const deliveryStatusSchema = z.enum([
 	"leased",
 	"executing",
 	"acknowledged",
+	"cancelled",
 	"dead_lettered",
 ]);
 
 export const deliveryKindSchema = z.enum(["turn", "verification", "contract_acknowledgement"]);
+
+export const deliveryCancellationReasonSchema = z.enum([
+	"mission_cancelled",
+	"mission_expired",
+	"mission_failed",
+	"work_superseded",
+	"node_revoked",
+	"workspace_revoked",
+]);
+
+export const deliveryReleaseClassificationSchema = z.enum([
+	"transient",
+	"permanent",
+	"policy_denied",
+]);
 
 export const deliveryCursorSchema = z
 	.string()
@@ -583,6 +599,17 @@ export const deliveryLeaseSchema = z
 	})
 	.strict();
 
+export const deliveryLeaseAuthoritySchema = deliveryLeaseSchema
+	.pick({ lease_id: true, fencing_token: true })
+	.strict();
+
+export const deliveryLogicalSettlementSchema = z
+	.object({
+		settled_by_event_id: uuidSchema,
+		settled_at: isoTimestampSchema,
+	})
+	.strict();
+
 export const deliverySchema = z
 	.object({
 		delivery_id: uuidSchema,
@@ -598,12 +625,15 @@ export const deliverySchema = z
 		contract_version: contractVersionSchema,
 		verification_round: z.number().int().positive().max(2_147_483_647).nullable(),
 		lease: deliveryLeaseSchema.nullable(),
+		logical_settlement: deliveryLogicalSettlementSchema.nullable(),
 		idempotency_key: identifierSchema,
 		causal_parent_delivery_id: uuidSchema.nullable(),
 		available_at: isoTimestampSchema,
 		created_at: isoTimestampSchema,
 		updated_at: isoTimestampSchema,
 		acknowledged_at: isoTimestampSchema.nullable(),
+		cancelled_at: isoTimestampSchema.nullable(),
+		cancellation_reason: deliveryCancellationReasonSchema.nullable(),
 		dead_lettered_at: isoTimestampSchema.nullable(),
 	})
 	.strict()
@@ -658,10 +688,10 @@ export const deliverySchema = z
 				path: ["attempt_count"],
 			});
 		}
-		if ((delivery.attempt_count === 0) !== (delivery.last_fencing_token === "0")) {
+		if (delivery.last_fencing_token !== String(delivery.attempt_count)) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "Initial attempt count and fencing token must advance together",
+				message: "Latest fencing token must equal the delivery attempt count",
 				path: ["last_fencing_token"],
 			});
 		}
@@ -679,6 +709,20 @@ export const deliverySchema = z
 				path: ["acknowledged_at"],
 			});
 		}
+		if ((delivery.status === "cancelled") !== (delivery.cancelled_at !== null)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Cancellation timestamp must match cancelled status",
+				path: ["cancelled_at"],
+			});
+		}
+		if ((delivery.status === "cancelled") !== (delivery.cancellation_reason !== null)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Cancellation reason must match cancelled status",
+				path: ["cancellation_reason"],
+			});
+		}
 		if ((delivery.status === "dead_lettered") !== (delivery.dead_lettered_at !== null)) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
@@ -686,11 +730,31 @@ export const deliverySchema = z
 				path: ["dead_lettered_at"],
 			});
 		}
+		if (delivery.status === "acknowledged" && delivery.logical_settlement === null) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Acknowledged delivery requires logical settlement",
+				path: ["logical_settlement"],
+			});
+		}
+		if (
+			delivery.logical_settlement !== null &&
+			delivery.status !== "acknowledged" &&
+			delivery.status !== "cancelled"
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Logical settlement belongs only to acknowledged or cancelled work",
+				path: ["logical_settlement"],
+			});
+		}
 		const createdAt = Date.parse(delivery.created_at);
 		for (const [field, value] of [
 			["available_at", delivery.available_at],
 			["updated_at", delivery.updated_at],
+			["settled_at", delivery.logical_settlement?.settled_at ?? null],
 			["acknowledged_at", delivery.acknowledged_at],
+			["cancelled_at", delivery.cancelled_at],
 			["dead_lettered_at", delivery.dead_lettered_at],
 		] as const) {
 			if (value !== null && Date.parse(value) < createdAt) {
@@ -727,7 +791,9 @@ export const deliverySchema = z
 			});
 		}
 		for (const [field, value] of [
+			["settled_at", delivery.logical_settlement?.settled_at ?? null],
 			["acknowledged_at", delivery.acknowledged_at],
+			["cancelled_at", delivery.cancelled_at],
 			["dead_lettered_at", delivery.dead_lettered_at],
 		] as const) {
 			if (value !== null && Date.parse(value) > updatedAt) {
@@ -911,8 +977,12 @@ export type OpaqueReference = z.infer<typeof opaqueReferenceSchema>;
 export type MissionStatus = z.infer<typeof missionStatusSchema>;
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
 export type DeliveryKind = z.infer<typeof deliveryKindSchema>;
+export type DeliveryCancellationReason = z.infer<typeof deliveryCancellationReasonSchema>;
+export type DeliveryReleaseClassification = z.infer<typeof deliveryReleaseClassificationSchema>;
 export type DeliveryCursor = z.infer<typeof deliveryCursorSchema>;
 export type DeliveryLease = z.infer<typeof deliveryLeaseSchema>;
+export type DeliveryLeaseAuthority = z.infer<typeof deliveryLeaseAuthoritySchema>;
+export type DeliveryLogicalSettlement = z.infer<typeof deliveryLogicalSettlementSchema>;
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 export type Runtime = z.infer<typeof runtimeSchema>;
