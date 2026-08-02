@@ -6,11 +6,16 @@ import {
 	deliverySchema,
 	messageSchema,
 	missionContextSchema,
+	missionEventEnvelopeSchema,
 	missionManifestSchema,
+	nodeDescriptorSchema,
 	policyRequestSchema,
 	runSchema,
+	storedDeliveryCursorPageRequestSchema,
+	storedDeliveryCursorPageSchema,
 	turnDispositionSchema,
 	verificationEvidenceSchema,
+	workspaceBindingDescriptorSchema,
 } from "./schemas.js";
 
 const ids = {
@@ -26,6 +31,8 @@ const ids = {
 	lease: "00000000-0000-4000-8000-000000000010",
 	run: "00000000-0000-4000-8000-000000000011",
 	revision: "00000000-0000-4000-8000-000000000012",
+	workspaceBinding: "00000000-0000-4000-8000-000000000013",
+	otherNode: "00000000-0000-4000-8000-000000000014",
 } as const;
 
 const artifact = {
@@ -89,6 +96,100 @@ const manifest = {
 function clone<T>(value: T): T {
 	return structuredClone(value);
 }
+
+describe("relay-visible Node contracts", () => {
+	const node = {
+		node_id: ids.node,
+		agent_id: ids.backendAgent,
+		name: "backend-mac",
+		status: "active" as const,
+		capabilities: ["runtime.fake"],
+		last_seen_at: "2026-08-02T10:01:00.000Z",
+		created_at: "2026-08-02T10:00:00.000Z",
+		updated_at: "2026-08-02T10:01:00.000Z",
+		revoked_at: null,
+	};
+	const binding = {
+		workspace_binding_id: ids.workspaceBinding,
+		node_id: ids.node,
+		agent_id: ids.backendAgent,
+		alias: "backend-api",
+		repository_url: "https://github.com/acme/backend.git",
+		allowed_base_refs: ["refs/heads/main"],
+		status: "active" as const,
+		created_at: "2026-08-02T10:01:00.000Z",
+		updated_at: "2026-08-02T10:01:00.000Z",
+		revoked_at: null,
+	};
+
+	it("describes a Node and logical workspace without exposing local authority", () => {
+		expect(nodeDescriptorSchema.parse(node)).toEqual(node);
+		expect(workspaceBindingDescriptorSchema.parse(binding)).toEqual(binding);
+
+		expect(
+			workspaceBindingDescriptorSchema.safeParse({
+				...binding,
+				local_path: "/Users/alice/backend",
+				allowed_commands: ["git push"],
+			}).success,
+		).toBe(false);
+	});
+
+	it("requires revocation state and chronology to agree", () => {
+		expect(
+			nodeDescriptorSchema.safeParse({
+				...node,
+				status: "revoked",
+				revoked_at: null,
+			}).success,
+		).toBe(false);
+		expect(
+			nodeDescriptorSchema.safeParse({
+				...node,
+				capabilities: ["runtime.fake", "runtime.fake"],
+			}).success,
+		).toBe(false);
+		expect(
+			workspaceBindingDescriptorSchema.safeParse({
+				...binding,
+				status: "revoked",
+				revoked_at: "2026-08-02T09:59:00.000Z",
+			}).success,
+		).toBe(false);
+		expect(
+			workspaceBindingDescriptorSchema.safeParse({
+				...binding,
+				allowed_base_refs: ["../outside"],
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe("missionEventEnvelopeSchema", () => {
+	const envelope = {
+		event_id: ids.event,
+		idempotency_key: "mission-event:1",
+		mission_id: ids.mission,
+		sequence_no: 1,
+		created_at: "2026-08-02T10:02:00.000Z",
+	};
+
+	it("accepts only relay-owned event identity and ordering fields", () => {
+		expect(missionEventEnvelopeSchema.parse(envelope)).toEqual(envelope);
+		expect(
+			missionEventEnvelopeSchema.safeParse({
+				...envelope,
+				sequence_no: 0,
+			}).success,
+		).toBe(false);
+		expect(
+			missionEventEnvelopeSchema.safeParse({
+				...envelope,
+				local_path: "/tmp/repo",
+			}).success,
+		).toBe(false);
+	});
+});
 
 describe("missionManifestSchema", () => {
 	it("accepts a bounded two-participant version-1 Mission", () => {
@@ -406,6 +507,7 @@ describe("deliverySchema", () => {
 		max_attempts: 3,
 		last_fencing_token: "1",
 		contract_version: 1,
+		verification_round: null,
 		lease: {
 			lease_id: ids.lease,
 			fencing_token: "1",
@@ -419,9 +521,89 @@ describe("deliverySchema", () => {
 		acknowledged_at: null,
 		dead_lettered_at: null,
 	};
+	const storedDelivery = {
+		...leasedDelivery,
+		status: "stored" as const,
+		attempt_count: 0,
+		last_fencing_token: "0",
+		lease: null,
+		updated_at: leasedDelivery.created_at,
+	};
 
 	it("accepts a leased durable delivery", () => {
 		expect(deliverySchema.parse(leasedDelivery)).toEqual(leasedDelivery);
+	});
+
+	it("supports contract-acknowledgement delivery work", () => {
+		const acknowledgement = {
+			...storedDelivery,
+			kind: "contract_acknowledgement" as const,
+		};
+		expect(deliverySchema.parse(acknowledgement)).toEqual(acknowledgement);
+	});
+
+	it("binds verification work to one coordinator round", () => {
+		const verification = {
+			...storedDelivery,
+			kind: "verification" as const,
+			verification_round: 2,
+		};
+		expect(deliverySchema.parse(verification)).toEqual(verification);
+		expect(deliverySchema.safeParse({ ...verification, verification_round: null }).success).toBe(
+			false,
+		);
+		expect(deliverySchema.safeParse({ ...storedDelivery, verification_round: 1 }).success).toBe(
+			false,
+		);
+	});
+
+	it("validates an ordered, single-Node stored-delivery cursor page", () => {
+		expect(storedDeliveryCursorPageRequestSchema.parse({})).toEqual({
+			after_cursor: null,
+			limit: 50,
+		});
+		const second = {
+			...storedDelivery,
+			delivery_id: "00000000-0000-4000-8000-000000000099",
+			cursor: "2",
+		};
+		const page = { items: [storedDelivery, second], next_cursor: "2" };
+		expect(storedDeliveryCursorPageSchema.parse(page)).toEqual(page);
+		expect(storedDeliveryCursorPageSchema.parse({ items: [], next_cursor: "42" })).toEqual({
+			items: [],
+			next_cursor: "42",
+		});
+		expect(
+			storedDeliveryCursorPageRequestSchema.safeParse({
+				after_cursor: "9223372036854775808",
+				limit: 50,
+			}).success,
+		).toBe(false);
+
+		expect(
+			storedDeliveryCursorPageSchema.safeParse({
+				items: [second, storedDelivery],
+				next_cursor: "1",
+			}).success,
+		).toBe(false);
+		expect(
+			storedDeliveryCursorPageSchema.safeParse({
+				items: [storedDelivery, { ...second, node_id: ids.otherNode }],
+				next_cursor: "2",
+			}).success,
+		).toBe(false);
+		expect(
+			storedDeliveryCursorPageSchema.safeParse({
+				items: [leasedDelivery],
+				next_cursor: "1",
+			}).success,
+		).toBe(false);
+		expect(
+			storedDeliveryCursorPageSchema.safeParse({
+				items: [storedDelivery],
+				next_cursor: null,
+			}).success,
+		).toBe(false);
 	});
 
 	it("requires active leases and matching terminal timestamps", () => {

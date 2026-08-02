@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
 	InvalidMissionCoordinatorEventError,
 	createMissionCoordinatorState,
+	missionCoordinatorAppendInputSchema,
 	missionCoordinatorEventSchema,
+	missionParticipantAcceptanceInputSchema,
 	reduceMissionCoordinatorEvent,
 	replayMissionCoordinatorEvents,
+	storedMissionDeliveryCursorPageSchema,
 } from "./mission-coordinator.js";
 
 const IDS = {
@@ -17,6 +20,8 @@ const IDS = {
 	revision: "00000000-0000-4000-8000-000000000007",
 	message1: "00000000-0000-4000-8000-000000000008",
 	message2: "00000000-0000-4000-8000-000000000009",
+	backendNode: "00000000-0000-4000-8000-000000000010",
+	androidNode: "00000000-0000-4000-8000-000000000011",
 } as const;
 
 const CONTRACT_V1 = {
@@ -79,6 +84,142 @@ const CONFIG = {
 };
 
 describe("Mission coordinator", () => {
+	it("accepts client append inputs without relay-owned event fields", () => {
+		const inputs = [
+			acceptedEvent(1),
+			replyTurn(2, IDS.backend, 1, IDS.message1, null, "Reply."),
+			acknowledgement(3, IDS.backend),
+			verificationEvent(4, IDS.backend, 1, "backend-contract"),
+		].map(toAppendInput);
+
+		for (const input of inputs) {
+			expect(missionCoordinatorAppendInputSchema.parse(input)).toEqual(input);
+			expect(input).toHaveProperty("idempotency_key");
+		}
+
+		expect(
+			missionCoordinatorAppendInputSchema.safeParse({
+				...inputs[0],
+				event_id: eventId(99),
+			}).success,
+		).toBe(false);
+		expect(
+			missionCoordinatorAppendInputSchema.safeParse({
+				...inputs[1],
+				message: null,
+			}).success,
+		).toBe(false);
+		for (const input of inputs.slice(2)) {
+			const withoutDelivery = { ...input };
+			delete withoutDelivery.delivery_id;
+			expect(missionCoordinatorAppendInputSchema.safeParse(withoutDelivery).success).toBe(false);
+		}
+	});
+
+	it("accepts one participant receipt without accepting participant identity from the payload", () => {
+		const acceptance = {
+			idempotency_key: "mission-acceptance:backend",
+			contract: CONTRACT_V1,
+			local_policy_grant: {
+				profile_name: "bounded-code",
+				grant_sha256: "e".repeat(64),
+			},
+		};
+
+		expect(missionParticipantAcceptanceInputSchema.parse(acceptance)).toEqual(acceptance);
+		expect(
+			missionParticipantAcceptanceInputSchema.safeParse({
+				...acceptance,
+				participant_agent_id: IDS.backend,
+			}).success,
+		).toBe(false);
+		expect(
+			missionParticipantAcceptanceInputSchema.safeParse({
+				...acceptance,
+				contract: { ...CONTRACT_V1, local_path: "/tmp/contract.json" },
+			}).success,
+		).toBe(false);
+		expect(
+			missionParticipantAcceptanceInputSchema.safeParse({
+				...acceptance,
+				local_policy_grant: { ...acceptance.local_policy_grant, grant_sha256: "not-a-hash" },
+			}).success,
+		).toBe(false);
+	});
+
+	it("validates joined Mission events in one ordered Node cursor page", () => {
+		const firstEvent = acceptedEvent(1);
+		const secondEvent = replyTurn(2, IDS.backend, 1, IDS.message1, null, "Reply.");
+		const first = storedMissionDeliveryItem(1, firstEvent);
+		const second = storedMissionDeliveryItem(2, secondEvent);
+		const page = { items: [first, second], next_cursor: "2" };
+
+		expect(storedMissionDeliveryCursorPageSchema.parse(page)).toEqual(page);
+		expect(storedMissionDeliveryCursorPageSchema.parse({ items: [], next_cursor: "42" })).toEqual({
+			items: [],
+			next_cursor: "42",
+		});
+
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [
+					{
+						...first,
+						delivery: { ...first.delivery, mission_event_id: IDS.outsider },
+					},
+				],
+				next_cursor: "1",
+			}).success,
+		).toBe(false);
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [{ ...second, actor_agent_id: IDS.android }],
+				next_cursor: "2",
+			}).success,
+		).toBe(false);
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [{ ...second, source_delivery_id: IDS.outsider }],
+				next_cursor: "2",
+			}).success,
+		).toBe(false);
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [
+					{
+						...first,
+						event: { ...first.event, mission_id: IDS.outsider },
+					},
+				],
+				next_cursor: "1",
+			}).success,
+		).toBe(false);
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [second, first],
+				next_cursor: "1",
+			}).success,
+		).toBe(false);
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [
+					first,
+					{
+						...second,
+						delivery: { ...second.delivery, node_id: IDS.androidNode },
+					},
+				],
+				next_cursor: "2",
+			}).success,
+		).toBe(false);
+		expect(
+			storedMissionDeliveryCursorPageSchema.safeParse({
+				items: [first],
+				next_cursor: null,
+			}).success,
+		).toBe(false);
+	});
+
 	it("starts only from exact participant and contract acceptance", () => {
 		const initial = createMissionCoordinatorState(CONFIG);
 		const event = acceptedEvent(1);
@@ -497,6 +638,7 @@ function acknowledgement(sequence: number, participantAgentId: string) {
 		...envelope(sequence),
 		type: "contract_acknowledged" as const,
 		participant_agent_id: participantAgentId,
+		delivery_id: deliveryId(sequence),
 		revision_id: IDS.revision,
 		contract_version: 2,
 		artifact: structuredClone(CONTRACT_V2),
@@ -560,6 +702,7 @@ function verificationEvent(
 		...envelope(sequence),
 		type: "verification_recorded" as const,
 		participant_agent_id: participantAgentId,
+		delivery_id: deliveryId(sequence),
 		contract_version: contractVersion,
 		verification_round: verificationRound,
 		evidence: {
@@ -584,6 +727,51 @@ function envelope(sequence: number) {
 		sequence_no: sequence,
 		created_at: timestamp(sequence),
 	};
+}
+
+function storedMissionDeliveryItem(
+	cursor: number,
+	event: ReturnType<typeof acceptedEvent> | ReturnType<typeof replyTurn>,
+) {
+	const createdAt = timestamp(cursor);
+	return {
+		delivery: {
+			delivery_id: numberedUuid(400 + cursor),
+			node_id: IDS.backendNode,
+			mission_id: event.mission_id,
+			mission_event_id: event.event_id,
+			kind: "turn" as const,
+			cursor: String(cursor),
+			status: "stored" as const,
+			attempt_count: 0,
+			max_attempts: 3,
+			last_fencing_token: "0",
+			contract_version: 1,
+			verification_round: null,
+			lease: null,
+			idempotency_key: `delivery:${cursor}`,
+			causal_parent_delivery_id: null,
+			available_at: createdAt,
+			created_at: createdAt,
+			updated_at: createdAt,
+			acknowledged_at: null,
+			dead_lettered_at: null,
+		},
+		event,
+		actor_agent_id:
+			event.type === "participants_accepted" ? IDS.backend : event.participant_agent_id,
+		source_delivery_id: event.type === "participants_accepted" ? null : event.delivery_id,
+		causal_parent_event_id: cursor === 1 ? null : eventId(cursor - 1),
+	};
+}
+
+function toAppendInput(event: Record<string, unknown>): Record<string, unknown> {
+	const input = { ...event };
+	delete input.event_id;
+	delete input.mission_id;
+	delete input.sequence_no;
+	delete input.created_at;
+	return input;
 }
 
 function eventId(sequence: number): string {

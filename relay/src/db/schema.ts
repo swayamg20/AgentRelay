@@ -3,6 +3,7 @@ import {
 	bigserial,
 	check,
 	customType,
+	foreignKey,
 	index,
 	integer,
 	jsonb,
@@ -235,6 +236,302 @@ export const invites = pgTable(
 	}),
 );
 
+// ─── Durable Mission ledger ─────────────────────────────────────────────────
+
+export const nodes = pgTable(
+	"nodes",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		agentId: uuid("agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		name: text("name").notNull(),
+		status: text("status").notNull().default("active"),
+		capabilities: jsonb("capabilities").notNull().default(sql`'[]'::jsonb`),
+		lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		createdAt,
+		updatedAt,
+	},
+	(t) => ({
+		agentIdx: index("idx_nodes_agent").on(t.agentId),
+		identityOwnerIdx: uniqueIndex("idx_nodes_identity_owner").on(t.id, t.agentId),
+		activeNameIdx: uniqueIndex("idx_nodes_active_name")
+			.on(t.agentId, t.name)
+			.where(sql`${t.status} = 'active'`),
+		statusCheck: check("nodes_status_chk", sql`${t.status} IN ('active','revoked')`),
+		revokedAtCheck: check(
+			"nodes_revoked_at_chk",
+			sql`(${t.status} = 'revoked') = (${t.revokedAt} IS NOT NULL)`,
+		),
+	}),
+);
+
+export const workspaceBindings = pgTable(
+	"workspace_bindings",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		nodeId: uuid("node_id")
+			.notNull()
+			.references(() => nodes.id, { onDelete: "restrict" }),
+		alias: text("alias").notNull(),
+		repositoryUrl: text("repository_url").notNull(),
+		allowedBaseRefs: textArray("allowed_base_refs").notNull().default(sql`'{}'::text[]`),
+		status: text("status").notNull().default("active"),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		createdAt,
+		updatedAt,
+	},
+	(t) => ({
+		nodeIdx: index("idx_workspace_bindings_node").on(t.nodeId),
+		identityNodeIdx: uniqueIndex("idx_workspace_bindings_identity_node").on(t.id, t.nodeId),
+		activeAliasIdx: uniqueIndex("idx_workspace_bindings_active_alias")
+			.on(t.nodeId, t.alias)
+			.where(sql`${t.status} = 'active'`),
+		statusCheck: check("workspace_bindings_status_chk", sql`${t.status} IN ('active','revoked')`),
+		revokedAtCheck: check(
+			"workspace_bindings_revoked_at_chk",
+			sql`(${t.status} = 'revoked') = (${t.revokedAt} IS NOT NULL)`,
+		),
+	}),
+);
+
+export const missions = pgTable(
+	"missions",
+	{
+		id: uuid("id").primaryKey(),
+		createdByAgentId: uuid("created_by_agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		coordinatorConfig: jsonb("coordinator_config").notNull(),
+		state: jsonb("state").notNull(),
+		status: text("status").notNull().default("awaiting_acceptance"),
+		lastEventSequence: integer("last_event_sequence").notNull().default(0),
+		contractVersion: integer("contract_version").notNull().default(1),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		createdAt,
+		updatedAt,
+	},
+	(t) => ({
+		creatorIdx: index("idx_missions_creator").on(t.createdByAgentId, t.createdAt.desc()),
+		statusIdx: index("idx_missions_status").on(t.status, t.updatedAt.desc()),
+		statusCheck: check(
+			"missions_status_chk",
+			sql`${t.status} IN ('awaiting_acceptance','active','verifying','blocked','completed','cancelled','expired','failed')`,
+		),
+		sequenceCheck: check("missions_sequence_chk", sql`${t.lastEventSequence} >= 0`),
+		contractVersionCheck: check("missions_contract_version_chk", sql`${t.contractVersion} > 0`),
+	}),
+);
+
+export const missionParticipants = pgTable(
+	"mission_participants",
+	{
+		missionId: uuid("mission_id")
+			.notNull()
+			.references(() => missions.id, { onDelete: "restrict" }),
+		agentId: uuid("agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		nodeId: uuid("node_id")
+			.notNull()
+			.references(() => nodes.id, { onDelete: "restrict" }),
+		workspaceBindingId: uuid("workspace_binding_id")
+			.notNull()
+			.references(() => workspaceBindings.id, { onDelete: "restrict" }),
+		role: text("role").notNull(),
+		status: text("status").notNull().default("pending"),
+		acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+		acceptanceIdempotencyKey: text("acceptance_idempotency_key"),
+		acceptanceReceipt: jsonb("acceptance_receipt"),
+		createdAt,
+	},
+	(t) => ({
+		pk: primaryKey({ columns: [t.missionId, t.agentId] }),
+		nodeIdx: index("idx_mission_participants_node").on(t.nodeId, t.missionId),
+		missionNodeIdx: uniqueIndex("idx_mission_participants_mission_node").on(t.missionId, t.nodeId),
+		acceptanceIdempotencyIdx: uniqueIndex("idx_mission_participants_acceptance_idempotency")
+			.on(t.missionId, t.acceptanceIdempotencyKey)
+			.where(sql`${t.acceptanceIdempotencyKey} IS NOT NULL`),
+		nodeOwnerFk: foreignKey({
+			columns: [t.nodeId, t.agentId],
+			foreignColumns: [nodes.id, nodes.agentId],
+			name: "mission_participants_node_owner_fk",
+		}),
+		bindingNodeFk: foreignKey({
+			columns: [t.workspaceBindingId, t.nodeId],
+			foreignColumns: [workspaceBindings.id, workspaceBindings.nodeId],
+			name: "mission_participants_binding_node_fk",
+		}),
+		statusCheck: check(
+			"mission_participants_status_chk",
+			sql`${t.status} IN ('pending','accepted')`,
+		),
+		acceptedAtCheck: check(
+			"mission_participants_accepted_at_chk",
+			sql`(${t.status} = 'accepted') = (${t.acceptedAt} IS NOT NULL)
+				AND (${t.status} = 'accepted') = (${t.acceptanceIdempotencyKey} IS NOT NULL)
+				AND (${t.status} = 'accepted') = (${t.acceptanceReceipt} IS NOT NULL)`,
+		),
+	}),
+);
+
+export const missionEvents = pgTable(
+	"mission_events",
+	{
+		id: uuid("id").primaryKey(),
+		missionId: uuid("mission_id")
+			.notNull()
+			.references(() => missions.id, { onDelete: "restrict" }),
+		sequenceNo: integer("sequence_no").notNull(),
+		type: text("type").notNull(),
+		actorAgentId: uuid("actor_agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		idempotencyKey: text("idempotency_key").notNull(),
+		sourceDeliveryId: uuid("source_delivery_id"),
+		causalParentEventId: uuid("causal_parent_event_id"),
+		payload: jsonb("payload").notNull(),
+		createdAt,
+	},
+	(t) => ({
+		missionSequenceIdx: uniqueIndex("idx_mission_events_sequence").on(t.missionId, t.sequenceNo),
+		idempotencyIdx: uniqueIndex("idx_mission_events_idempotency").on(t.missionId, t.idempotencyKey),
+		missionIdentityIdx: uniqueIndex("idx_mission_events_mission_identity").on(t.missionId, t.id),
+		missionCreatedIdx: index("idx_mission_events_created").on(t.missionId, t.createdAt),
+		causalParentFk: foreignKey({
+			columns: [t.missionId, t.causalParentEventId],
+			foreignColumns: [t.missionId, t.id],
+			name: "mission_events_causal_parent_fk",
+		}),
+		actorParticipantFk: foreignKey({
+			columns: [t.missionId, t.actorAgentId],
+			foreignColumns: [missionParticipants.missionId, missionParticipants.agentId],
+			name: "mission_events_actor_participant_fk",
+		}),
+		typeCheck: check(
+			"mission_events_type_chk",
+			sql`${t.type} IN ('participants_accepted','turn_completed','contract_acknowledged','verification_recorded')`,
+		),
+		sequenceCheck: check("mission_events_sequence_chk", sql`${t.sequenceNo} > 0`),
+	}),
+);
+
+export const nodeDeliveries = pgTable(
+	"node_deliveries",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		nodeId: uuid("node_id")
+			.notNull()
+			.references(() => nodes.id, { onDelete: "restrict" }),
+		missionId: uuid("mission_id")
+			.notNull()
+			.references(() => missions.id, { onDelete: "restrict" }),
+		missionEventId: uuid("mission_event_id")
+			.notNull()
+			.references(() => missionEvents.id, { onDelete: "restrict" }),
+		kind: text("kind").notNull(),
+		cursor: bigserial("cursor", { mode: "bigint" }).notNull(),
+		status: text("status").notNull().default("stored"),
+		attemptCount: integer("attempt_count").notNull().default(0),
+		maxAttempts: integer("max_attempts").notNull().default(5),
+		lastFencingToken: text("last_fencing_token").notNull().default("0"),
+		activeLeaseId: uuid("active_lease_id"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+		contractVersion: integer("contract_version").notNull(),
+		verificationRound: integer("verification_round"),
+		idempotencyKey: text("idempotency_key").notNull(),
+		causalParentDeliveryId: uuid("causal_parent_delivery_id"),
+		settledByEventId: uuid("settled_by_event_id"),
+		settledAt: timestamp("settled_at", { withTimezone: true }),
+		availableAt: timestamp("available_at", { withTimezone: true }).notNull().default(sql`now()`),
+		acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+		deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
+		createdAt,
+		updatedAt,
+	},
+	(t) => ({
+		cursorIdx: uniqueIndex("idx_node_deliveries_cursor").on(t.cursor),
+		nodeCursorIdx: index("idx_node_deliveries_node_cursor").on(t.nodeId, t.cursor),
+		identityScopeIdx: uniqueIndex("idx_node_deliveries_identity_scope").on(
+			t.nodeId,
+			t.missionId,
+			t.id,
+		),
+		missionIdentityIdx: uniqueIndex("idx_node_deliveries_mission_identity").on(t.missionId, t.id),
+		eventKindIdx: uniqueIndex("idx_node_deliveries_event_kind").on(
+			t.nodeId,
+			t.missionEventId,
+			t.kind,
+		),
+		idempotencyIdx: uniqueIndex("idx_node_deliveries_idempotency").on(t.nodeId, t.idempotencyKey),
+		causalParentFk: foreignKey({
+			columns: [t.nodeId, t.missionId, t.causalParentDeliveryId],
+			foreignColumns: [t.nodeId, t.missionId, t.id],
+			name: "node_deliveries_causal_parent_fk",
+		}),
+		eventMissionFk: foreignKey({
+			columns: [t.missionId, t.missionEventId],
+			foreignColumns: [missionEvents.missionId, missionEvents.id],
+			name: "node_deliveries_event_mission_fk",
+		}),
+		participantNodeFk: foreignKey({
+			columns: [t.missionId, t.nodeId],
+			foreignColumns: [missionParticipants.missionId, missionParticipants.nodeId],
+			name: "node_deliveries_participant_node_fk",
+		}),
+		settlementEventMissionFk: foreignKey({
+			columns: [t.missionId, t.settledByEventId],
+			foreignColumns: [missionEvents.missionId, missionEvents.id],
+			name: "node_deliveries_settlement_event_mission_fk",
+		}),
+		kindCheck: check(
+			"node_deliveries_kind_chk",
+			sql`${t.kind} IN ('turn','verification','contract_acknowledgement')`,
+		),
+		statusCheck: check(
+			"node_deliveries_status_chk",
+			sql`${t.status} IN ('stored','leased','executing','acknowledged','dead_lettered')`,
+		),
+		verificationRoundCheck: check(
+			"node_deliveries_verification_round_chk",
+			sql`(${t.kind} = 'verification') = (${t.verificationRound} IS NOT NULL)
+				AND (${t.verificationRound} IS NULL OR ${t.verificationRound} > 0)`,
+		),
+		attemptCheck: check(
+			"node_deliveries_attempt_chk",
+			sql`${t.attemptCount} >= 0 AND ${t.maxAttempts} > 0 AND ${t.attemptCount} <= ${t.maxAttempts}`,
+		),
+		fencingTokenCheck: check(
+			"node_deliveries_fencing_token_chk",
+			sql`${t.lastFencingToken} ~ '^(0|[1-9][0-9]*)$'`,
+		),
+		initialFenceCheck: check(
+			"node_deliveries_initial_fence_chk",
+			sql`(${t.attemptCount} = 0) = (${t.lastFencingToken} = '0')`,
+		),
+		leaseCheck: check(
+			"node_deliveries_lease_chk",
+			sql`(${t.status} IN ('leased','executing')) = (${t.activeLeaseId} IS NOT NULL)
+				AND (${t.status} IN ('leased','executing')) = (${t.leaseExpiresAt} IS NOT NULL)
+				AND (${t.status} NOT IN ('leased','executing') OR ${t.attemptCount} > 0)`,
+		),
+		acknowledgedAtCheck: check(
+			"node_deliveries_acknowledged_at_chk",
+			sql`(${t.status} = 'acknowledged') = (${t.acknowledgedAt} IS NOT NULL)
+				AND (${t.status} != 'acknowledged' OR ${t.attemptCount} > 0)`,
+		),
+		deadLetteredAtCheck: check(
+			"node_deliveries_dead_lettered_at_chk",
+			sql`(${t.status} = 'dead_lettered') = (${t.deadLetteredAt} IS NOT NULL)`,
+		),
+		settlementCheck: check(
+			"node_deliveries_settlement_chk",
+			sql`(${t.settledByEventId} IS NOT NULL) = (${t.settledAt} IS NOT NULL)`,
+		),
+	}),
+);
+
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type AgentCard = typeof agentCards.$inferSelect;
@@ -242,3 +539,9 @@ export type ApiKey = typeof apiKeys.$inferSelect;
 export type Handoff = typeof handoffs.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
+export type Node = typeof nodes.$inferSelect;
+export type WorkspaceBinding = typeof workspaceBindings.$inferSelect;
+export type Mission = typeof missions.$inferSelect;
+export type MissionParticipant = typeof missionParticipants.$inferSelect;
+export type MissionEvent = typeof missionEvents.$inferSelect;
+export type NodeDelivery = typeof nodeDeliveries.$inferSelect;

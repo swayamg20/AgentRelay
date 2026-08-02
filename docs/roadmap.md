@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-01. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-02. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -49,6 +49,11 @@ relay delivery and real Nodes remain unproved.
 including one contract revision, without a real coding-agent runtime.
 
 ## Stage 2: durable delivery ledger
+
+**Status:** internal ledger kernel implemented with independent acceptance receipts,
+source-bound result settlement, verification generations, and joined cursor replay.
+Node credentials, public polling, fenced leases, transport acknowledgements,
+recovery, and the Stage 2 exit gate remain open.
 
 - Add node identity, workspace-binding, Mission, event, delivery, claim, run, and
   acknowledgement persistence.

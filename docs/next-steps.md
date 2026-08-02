@@ -52,13 +52,26 @@ in-memory scripted proof, not durable relay or real-runtime evidence.
 
 ## 3. Build durable delivery
 
-- [ ] Persist Nodes, workspace bindings, Missions, events, deliveries, claims, runs,
-  and acknowledgements.
-- [ ] Append each event and delivery record transactionally with its domain mutation.
-- [ ] Add per-Mission sequence numbers and cursor replay.
+- [x] Persist internal Nodes, workspace bindings, exact Mission participant routing,
+  Mission config/projection, append-only events, and initially stored deliveries.
+- [x] Append each coordinator event, reducer projection, derived delivery set, and
+  audit row transactionally.
+- [x] Add relay-owned per-Mission event sequence numbers and read-only per-Node cursor
+  replay over joined immutable events.
+- [x] Persist two independent exact acceptance receipts, bind results to source work,
+  and prevent settled or stale verification-round work from advancing a Mission.
+- [ ] Add independently revocable Node credentials and authenticated enrollment,
+  Mission, and polling routes.
 - [ ] Add claim leases, renewal, expiry, retry, cancellation, and dead-letter policy.
-- [ ] Store idempotency receipts for the Mission retention period.
+- [ ] Persist claim/attempt history, runs, acknowledgements, and exact operation
+  receipts for the Mission retention period.
 - [ ] Prove reconnect and recovery through cursor polling; leave SSE out of this slice.
+
+The completed kernel is deliberately internal: no agent credential can impersonate a
+Node, and no runtime can consume an unfenced delivery. Event append replays immutable
+event and derived-delivery IDs; logical settlement is distinct from transport
+acknowledgement. The next state-changing Node operations need fenced, durable
+operation receipts.
 
 Required tests: disconnect before claim, after claim, and after host acceptance;
 duplicate signal; relay restart; late output after terminal Mission.

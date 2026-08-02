@@ -24,7 +24,7 @@
 		"build": "tsc -p tsconfig.json",
 		"prepack": "pnpm run build",
 		"test": "vitest run",
-		"test:exports": "node --input-type=module -e \"const p = await import('@agentrelay/protocol'); const t = await import('@agentrelay/protocol/testing'); if (!p.missionManifestSchema || !p.transitionDeliveryState || !p.acceptHostEvent || !p.missionCoordinatorEventSchema || !t.FakeAgentHostAdapter || !t.runMissionFixture || !t.backendAndroidMissionFixture) throw new Error('protocol exports missing')\"",
+		"test:exports": "node --input-type=module -e \"const p = await import('@agentrelay/protocol'); const t = await import('@agentrelay/protocol/testing'); if (!p.missionManifestSchema || !p.transitionDeliveryState || !p.acceptHostEvent || !p.missionCoordinatorEventSchema || !p.missionCoordinatorAppendInputSchema || !p.missionParticipantAcceptanceInputSchema || !p.storedMissionDeliveryItemSchema || !p.storedMissionDeliveryCursorPageSchema || !p.nodeDescriptorSchema || !p.workspaceBindingDescriptorSchema || !p.storedDeliveryCursorPageSchema || !t.FakeAgentHostAdapter || !t.runMissionFixture || !t.backendAndroidMissionFixture) throw new Error('protocol exports missing')\"",
 		"test:watch": "vitest",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},

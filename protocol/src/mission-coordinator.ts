@@ -11,20 +11,18 @@ import {
 	artifactRefSchema,
 	contractRevisionSchema,
 	contractVersionSchema,
-	isoTimestampSchema,
+	deliveryCursorSchema,
 	messageSchema,
 	missionContextSchema,
+	missionEventEnvelopeSchema,
+	policyProfileNameSchema,
+	storedDeliverySchema,
 	turnDispositionSchema,
 	uuidSchema,
 	verificationEvidenceSchema,
 } from "./schemas.js";
 import { transitionMissionStatus } from "./state-machines.js";
 
-const idempotencyKeySchema = z
-	.string()
-	.min(1)
-	.max(128)
-	.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const commandIdSchema = z
 	.string()
 	.min(1)
@@ -62,58 +60,72 @@ export const missionCoordinatorConfigSchema = z
 		}
 	});
 
-const eventEnvelopeShape = {
-	event_id: uuidSchema,
-	idempotency_key: idempotencyKeySchema,
-	mission_id: uuidSchema,
-	sequence_no: z.number().int().safe().positive(),
-	created_at: isoTimestampSchema,
-};
+const relayOwnedEventFields = {
+	event_id: true,
+	mission_id: true,
+	sequence_no: true,
+	created_at: true,
+} as const;
+
+const participantsAcceptedEventSchema = z
+	.object({
+		...missionEventEnvelopeSchema.shape,
+		type: z.literal("participants_accepted"),
+		participant_agent_ids: z.array(uuidSchema).length(2),
+		contract: artifactRefSchema,
+	})
+	.strict();
+const turnCompletedEventSchema = z
+	.object({
+		...missionEventEnvelopeSchema.shape,
+		type: z.literal("turn_completed"),
+		participant_agent_id: uuidSchema,
+		delivery_id: uuidSchema,
+		contract_version: contractVersionSchema,
+		disposition: turnDispositionSchema,
+		message: messageSchema.nullable(),
+		revision: contractRevisionSchema.nullable(),
+	})
+	.strict();
+const contractAcknowledgedEventSchema = z
+	.object({
+		...missionEventEnvelopeSchema.shape,
+		type: z.literal("contract_acknowledged"),
+		participant_agent_id: uuidSchema,
+		delivery_id: uuidSchema,
+		revision_id: uuidSchema,
+		contract_version: contractVersionSchema,
+		artifact: artifactRefSchema,
+	})
+	.strict();
+const verificationRecordedEventSchema = z
+	.object({
+		...missionEventEnvelopeSchema.shape,
+		type: z.literal("verification_recorded"),
+		participant_agent_id: uuidSchema,
+		delivery_id: uuidSchema,
+		contract_version: contractVersionSchema,
+		verification_round: z.number().int().safe().positive(),
+		evidence: verificationEvidenceSchema,
+	})
+	.strict();
 
 const rawMissionCoordinatorEventSchema = z.discriminatedUnion("type", [
-	z
-		.object({
-			...eventEnvelopeShape,
-			type: z.literal("participants_accepted"),
-			participant_agent_ids: z.array(uuidSchema).length(2),
-			contract: artifactRefSchema,
-		})
-		.strict(),
-	z
-		.object({
-			...eventEnvelopeShape,
-			type: z.literal("turn_completed"),
-			participant_agent_id: uuidSchema,
-			delivery_id: uuidSchema,
-			contract_version: contractVersionSchema,
-			disposition: turnDispositionSchema,
-			message: messageSchema.nullable(),
-			revision: contractRevisionSchema.nullable(),
-		})
-		.strict(),
-	z
-		.object({
-			...eventEnvelopeShape,
-			type: z.literal("contract_acknowledged"),
-			participant_agent_id: uuidSchema,
-			revision_id: uuidSchema,
-			contract_version: contractVersionSchema,
-			artifact: artifactRefSchema,
-		})
-		.strict(),
-	z
-		.object({
-			...eventEnvelopeShape,
-			type: z.literal("verification_recorded"),
-			participant_agent_id: uuidSchema,
-			contract_version: contractVersionSchema,
-			verification_round: z.number().int().safe().positive(),
-			evidence: verificationEvidenceSchema,
-		})
-		.strict(),
+	participantsAcceptedEventSchema,
+	turnCompletedEventSchema,
+	contractAcknowledgedEventSchema,
+	verificationRecordedEventSchema,
+]);
+
+const rawMissionCoordinatorAppendInputSchema = z.discriminatedUnion("type", [
+	participantsAcceptedEventSchema.omit(relayOwnedEventFields),
+	turnCompletedEventSchema.omit(relayOwnedEventFields),
+	contractAcknowledgedEventSchema.omit(relayOwnedEventFields),
+	verificationRecordedEventSchema.omit(relayOwnedEventFields),
 ]);
 
 type RawMissionCoordinatorEvent = z.infer<typeof rawMissionCoordinatorEventSchema>;
+type RawMissionCoordinatorAppendInput = z.infer<typeof rawMissionCoordinatorAppendInputSchema>;
 export type CoordinatorTurnDisposition = Extract<
 	TurnDisposition,
 	{ readonly kind: "reply" | "propose_contract" | "ready" }
@@ -128,46 +140,179 @@ export type MissionCoordinatorEvent =
 			readonly disposition: CoordinatorTurnDisposition;
 	  });
 
+type RawAppendTurnCompletedInput = Extract<
+	RawMissionCoordinatorAppendInput,
+	{ readonly type: "turn_completed" }
+>;
+export type MissionCoordinatorAppendInput =
+	| Exclude<RawMissionCoordinatorAppendInput, { readonly type: "turn_completed" }>
+	| (Omit<RawAppendTurnCompletedInput, "disposition"> & {
+			readonly disposition: CoordinatorTurnDisposition;
+	  });
+
 export const missionCoordinatorEventSchema = rawMissionCoordinatorEventSchema
-	.superRefine((event, ctx) => {
-		if (event.type === "participants_accepted") {
-			if (new Set(event.participant_agent_ids).size !== event.participant_agent_ids.length) {
+	.superRefine(validateCoordinatorEventPayload)
+	.transform((event): MissionCoordinatorEvent => event as MissionCoordinatorEvent);
+
+export const missionCoordinatorAppendInputSchema = rawMissionCoordinatorAppendInputSchema
+	.superRefine(validateCoordinatorEventPayload)
+	.transform((event): MissionCoordinatorAppendInput => event as MissionCoordinatorAppendInput);
+
+export const missionParticipantAcceptanceInputSchema = z
+	.object({
+		idempotency_key: missionEventEnvelopeSchema.shape.idempotency_key,
+		contract: artifactRefSchema,
+		local_policy_grant: z
+			.object({
+				profile_name: policyProfileNameSchema,
+				grant_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+			})
+			.strict(),
+	})
+	.strict();
+
+export const storedMissionDeliveryItemSchema = z
+	.object({
+		delivery: storedDeliverySchema,
+		event: missionCoordinatorEventSchema,
+		actor_agent_id: uuidSchema,
+		source_delivery_id: uuidSchema.nullable(),
+		causal_parent_event_id: uuidSchema.nullable(),
+	})
+	.strict()
+	.superRefine((item, ctx) => {
+		if (item.delivery.mission_event_id !== item.event.event_id) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Delivery must reference the returned Mission event",
+				path: ["delivery", "mission_event_id"],
+			});
+		}
+		if (item.delivery.mission_id !== item.event.mission_id) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Delivery and event must belong to the same Mission",
+				path: ["delivery", "mission_id"],
+			});
+		}
+		if (item.event.type === "participants_accepted") {
+			if (item.source_delivery_id !== null) {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
-					message: "Accepted Mission participants must be unique",
-					path: ["participant_agent_ids"],
+					message: "Derived participant acceptance has no source delivery",
+					path: ["source_delivery_id"],
 				});
 			}
-			return;
+		} else {
+			if (item.actor_agent_id !== item.event.participant_agent_id) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Stored event actor must match the participant result",
+					path: ["actor_agent_id"],
+				});
+			}
+			if (item.source_delivery_id !== item.event.delivery_id) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Stored event must retain its source delivery",
+					path: ["source_delivery_id"],
+				});
+			}
 		}
-		if (event.type !== "turn_completed") {
-			return;
+	});
+
+export const storedMissionDeliveryCursorPageSchema = z
+	.object({
+		items: z.array(storedMissionDeliveryItemSchema).max(200),
+		next_cursor: deliveryCursorSchema.nullable(),
+	})
+	.strict()
+	.superRefine((page, ctx) => {
+		for (let index = 1; index < page.items.length; index += 1) {
+			const previousCursor = page.items[index - 1]!.delivery.cursor;
+			const cursor = page.items[index]!.delivery.cursor;
+			if (compareDeliveryCursors(previousCursor, cursor) >= 0) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Delivery cursors must be strictly increasing",
+					path: ["items", index, "delivery", "cursor"],
+				});
+			}
 		}
 
-		const kind = event.disposition.kind;
-		if ((kind === "reply") !== (event.message !== null)) {
+		const nodeIds = new Set(page.items.map((item) => item.delivery.node_id));
+		if (nodeIds.size > 1) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "Reply dispositions require exactly one Message companion",
-				path: ["message"],
+				message: "A Mission delivery cursor page belongs to one Node",
+				path: ["items"],
 			});
 		}
-		if ((kind === "propose_contract") !== (event.revision !== null)) {
+
+		const finalCursor = page.items.at(-1)?.delivery.cursor;
+		if (finalCursor !== undefined && page.next_cursor !== finalCursor) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "Contract proposals require exactly one revision companion",
-				path: ["revision"],
+				message: "Next cursor must match the final returned delivery",
+				path: ["next_cursor"],
 			});
 		}
-		if (kind !== "reply" && kind !== "propose_contract" && kind !== "ready") {
+	});
+
+export type MissionParticipantAcceptanceInput = z.infer<
+	typeof missionParticipantAcceptanceInputSchema
+>;
+export type StoredMissionDeliveryItem = z.infer<typeof storedMissionDeliveryItemSchema>;
+export type StoredMissionDeliveryCursorPage = z.infer<typeof storedMissionDeliveryCursorPageSchema>;
+
+function compareDeliveryCursors(left: string, right: string): number {
+	if (left.length !== right.length) {
+		return left.length > right.length ? 1 : -1;
+	}
+	return left === right ? 0 : left > right ? 1 : -1;
+}
+
+function validateCoordinatorEventPayload(
+	event: RawMissionCoordinatorEvent | RawMissionCoordinatorAppendInput,
+	ctx: z.RefinementCtx,
+): void {
+	if (event.type === "participants_accepted") {
+		if (new Set(event.participant_agent_ids).size !== event.participant_agent_ids.length) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "This coordinator slice supports reply, propose_contract, and ready turns",
-				path: ["disposition", "kind"],
+				message: "Accepted Mission participants must be unique",
+				path: ["participant_agent_ids"],
 			});
 		}
-	})
-	.transform((event): MissionCoordinatorEvent => event as MissionCoordinatorEvent);
+		return;
+	}
+	if (event.type !== "turn_completed") {
+		return;
+	}
+
+	const kind = event.disposition.kind;
+	if ((kind === "reply") !== (event.message !== null)) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Reply dispositions require exactly one Message companion",
+			path: ["message"],
+		});
+	}
+	if ((kind === "propose_contract") !== (event.revision !== null)) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Contract proposals require exactly one revision companion",
+			path: ["revision"],
+		});
+	}
+	if (kind !== "reply" && kind !== "propose_contract" && kind !== "ready") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "This coordinator slice supports reply, propose_contract, and ready turns",
+			path: ["disposition", "kind"],
+		});
+	}
+}
 
 export type MissionCoordinatorConfig = z.infer<typeof missionCoordinatorConfigSchema>;
 

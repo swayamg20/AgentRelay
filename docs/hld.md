@@ -1,7 +1,8 @@
-# High-level design: current mailbox implementation
+# High-level design: current relay implementation
 
 > **Scope:** Current repository implementation as of 2026-08-02.
-> This document describes the existing handoff plane, not the autonomous Node target.
+> This document describes the existing handoff plane and internal durable-ledger
+> kernel, not the autonomous Node target.
 > See [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the next system.
 
 ## Purpose
@@ -12,7 +13,8 @@ the conversation and enforces participant access. A local stdio MCP server expos
 the mailbox as tools to Claude Code or Codex.
 
 Humans or active agent sessions still initiate inbox checks and every subsequent
-tool call. There is no daemon, durable processing claim, or runtime activation loop.
+tool call. There is no daemon, Node credential/API, durable processing claim, or
+runtime activation loop.
 
 ## Components
 
@@ -42,6 +44,9 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - Participant authorization and lifecycle transitions.
 - Audit records for invite, handoff/message, and block mutations.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
+- An internal Mission-ledger service that persists Mission projections and append-only
+  events, derives stored per-Node deliveries in the same transaction, and reads them
+  through an opaque cursor. No HTTP route invokes this service yet.
 
 The HTTP application is stateless with respect to durable domain rows, but the
 notification queue is process-local and not durable.
@@ -78,6 +83,11 @@ Agent 1---1 AgentCard
   +---N Handoff ---N Message
              |
              +----- mutation AuditLog rows
+
+Agent 1---N Node ---N WorkspaceBinding
+                 \---N MissionParticipant ---1 Mission ---N MissionEvent
+                                                    |
+                                                    +---N NodeDelivery
 ```
 
 - `Agent` is the current logical developer identity.
@@ -93,6 +103,14 @@ Agent 1---1 AgentCard
 - `AgentBlock` prevents a blocked sender from creating a new handoff for the blocker
   or appending another message to an existing thread whose receiver blocked them.
 - `Invite` records signed-token identity, expiry, and one-time redemption.
+- `Node` and `WorkspaceBinding` are relay-visible routing identities without a local
+  checkout path or executable command authority.
+- `Mission` stores the immutable coordinator config plus a reducer projection;
+  `MissionEvent` is append-only and ordered within that Mission.
+- `NodeDelivery` points one Node cursor to work derived from a committed Mission
+  event. Verification work is bound to one coordinator round. This checkpoint can
+  logically settle consumed or invalidated work, but transport state remains
+  `stored`; it cannot claim or run deliveries.
 
 Exact tables and current route names are summarized in [`lld.md`](lld.md). Source
 under `relay/src/db/schema.ts` remains authoritative for column-level behavior.
@@ -159,6 +177,11 @@ and the relay-owned idempotency key is not exposed to the model.
   rows for invite, handoff/message, and block mutations.
 - Participant access checks and most state transitions.
 - Idempotent replay for handoff creation and message append.
+- Through the internal ledger service: Mission creation, ordered event append,
+  independent exact participant-acceptance receipts, reducer-projection updates,
+  source-delivery and causal links, derived stored deliveries, logical settlement,
+  audit, stable event/delivery-ID replay, and joined cursor replay. Each mutation and
+  its consequences share one Postgres transaction.
 
 ### Best effort today
 
@@ -168,10 +191,11 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ### Not implemented today
 
-- A durable event/outbox ledger and replay cursor.
-- Delivery claim, acknowledgement, retry lease, or duplicate processing receipt.
+- Node enrollment/credentials or an authenticated polling route over the internal
+  Node/workspace and delivery records.
+- Delivery claim, transport acknowledgement, retry lease, dead-letter transition, or
+  general transport-operation receipt.
 - Runtime-session start/resume/cancel.
-- Device and workspace identity.
 - Local worktree isolation and per-Mission policy enforcement.
 - Local command, edit, test, and permission-decision audit.
 - A current A2A compatibility proof.
@@ -212,10 +236,17 @@ model. See the security section of [`architecture.md`](architecture.md).
 - Block/unblock and content-bearing mutations use the same directed-pair transaction
   lock, so no new content mutation can commit after a successful block response.
 - A terminal handoff rejects new messages and transitions.
+- Mission-event append takes a Mission-scoped transaction lock, reconstructs the
+  current projection from stored events, then commits the new event, projection,
+  source-work settlement, derived deliveries, and audit together. Each participant
+  acceptance is its own exact receipt; the second receipt atomically derives the
+  aggregate activation event and first turn. A failed delivery insert rolls back that
+  entire mutation. Cursor reads do not imply claim, execution, or acknowledgement.
 
 ## Relationship to the next design
 
 The current APIs remain a compatibility and inspection surface while Missions are
-proved. The next design adds Nodes, workspace bindings, durable events, deliveries,
-claims, runs, and Mission revisions rather than stretching the handoff row into a
-runtime scheduler.
+proved. The internal kernel now stores Nodes, workspace bindings, Missions, events,
+and unclaimed deliveries without stretching the handoff row into a scheduler. The
+next checkpoint adds separately revocable Node credentials and fenced lease/claim/
+completion APIs before any local runtime is allowed to consume that work.
