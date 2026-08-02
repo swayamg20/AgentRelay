@@ -126,12 +126,16 @@ d("durable Mission ledger", () => {
 			coordinatorConfig: fixture.config,
 		});
 		expect(created.replayed).toBe(false);
-		await waitUntil(async () => {
-			const [row] = await handle.sql<Array<{ expired: boolean }>>`
+		await waitUntil(
+			async () => {
+				const [row] = await handle.sql<Array<{ expired: boolean }>>`
 				SELECT clock_timestamp() >= ${expiresAt.toISOString()}::timestamptz AS expired
 			`;
-			return row?.expired === true;
-		}, "Stored Mission did not expire according to the database clock", 5_000);
+				return row?.expired === true;
+			},
+			"Stored Mission did not expire according to the database clock",
+			5_000,
+		);
 
 		const replay = await createMissionLedger(handle.db, {
 			createdByAgentId: fixture.backendAgentId,
