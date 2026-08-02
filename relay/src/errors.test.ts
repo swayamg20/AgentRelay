@@ -19,9 +19,11 @@ describe("RelayError", () => {
 		});
 	});
 
-	it("maps missing Node resources to precise 404 errors", () => {
+	it("maps missing Node and Mission resources to precise 404 errors", () => {
 		expect(new RelayError("node_not_found", "missing").httpStatus).toBe(404);
 		expect(new RelayError("workspace_not_found", "missing").httpStatus).toBe(404);
+		expect(new RelayError("mission_not_found", "missing").httpStatus).toBe(404);
+		expect(new RelayError("delivery_not_found", "missing").httpStatus).toBe(404);
 	});
 
 	it("error map covers all known symbols with consistent shapes", () => {

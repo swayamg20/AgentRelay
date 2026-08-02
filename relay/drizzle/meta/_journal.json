@@ -50,6 +50,20 @@
 			"when": 1785848400000,
 			"tag": "0006_node_credentials",
 			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1785934800000,
+			"tag": "0007_delivery_claims",
+			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1786021200000,
+			"tag": "0008_audit_actor_kind",
+			"breakpoints": true
 		}
 	]
 }

@@ -1,14 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { MissionCoordinatorConfig } from "@agentrelay/protocol";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import postgres, { type Sql } from "postgres";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb } from "../db/client.js";
 import {
+	agentBlocks,
 	agents,
 	auditLog,
 	missionEvents,
 	missionParticipants,
 	missions,
+	nodeCredentials,
 	nodeDeliveries,
 	nodes,
 	workspaceBindings,
@@ -20,6 +23,7 @@ import {
 	createMissionLedger,
 	listStoredDeliveryEvents,
 } from "./mission-ledger.js";
+import { revokeNode, revokeWorkspace } from "./node-enrollment.js";
 
 const TEST_URL = process.env.RELAY_TEST_DATABASE_URL ?? process.env.RELAY_DATABASE_URL;
 const conn = await tryConnect();
@@ -83,7 +87,355 @@ d("durable Mission ledger", () => {
 
 		expect(await handle.db.select().from(missions)).toHaveLength(1);
 		expect(await handle.db.select().from(missionParticipants)).toHaveLength(2);
+
+		await revokeNode(handle.db, fixture.backendAgentId, fixture.backendNodeId);
+		const replayAfterRevocation = await createMissionLedger(handle.db, {
+			createdByAgentId: fixture.backendAgentId,
+			coordinatorConfig: structuredClone(fixture.config),
+		});
+		expect(replayAfterRevocation).toEqual({ ...first, replayed: true });
 	});
+
+	it("uses the database clock for fresh Mission expiry when the relay host clock is skewed", async () => {
+		const fixture = await seedFixture(handle);
+		const missionExpiresAt = new Date(fixture.config.mission_context.manifest.expires_at).getTime();
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date(missionExpiresAt + 86_400_000));
+
+		try {
+			const result = await createMissionLedger(handle.db, {
+				createdByAgentId: fixture.backendAgentId,
+				coordinatorConfig: fixture.config,
+			});
+			expect(result.replayed).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("preserves exact Mission creation replay after the stored Mission expires", async () => {
+		const fixture = await seedFixture(handle);
+		const [clock] = await handle.sql<Array<{ expires_at: string }>>`
+			SELECT (clock_timestamp() + interval '1500 milliseconds')::text AS expires_at
+		`;
+		if (!clock) throw new Error("expected database clock");
+		const expiresAt = new Date(clock.expires_at);
+		fixture.config.mission_context.manifest.expires_at = expiresAt.toISOString();
+		const created = await createMissionLedger(handle.db, {
+			createdByAgentId: fixture.backendAgentId,
+			coordinatorConfig: fixture.config,
+		});
+		expect(created.replayed).toBe(false);
+		await waitUntil(async () => {
+			const [row] = await handle.sql<Array<{ expired: boolean }>>`
+				SELECT clock_timestamp() >= ${expiresAt.toISOString()}::timestamptz AS expired
+			`;
+			return row?.expired === true;
+		}, "Stored Mission did not expire according to the database clock", 5_000);
+
+		const replay = await createMissionLedger(handle.db, {
+			createdByAgentId: fixture.backendAgentId,
+			coordinatorConfig: structuredClone(fixture.config),
+		});
+		expect(replay.replayed).toBe(true);
+		expect(replay.missionId).toBe(fixture.missionId);
+	});
+
+	it("rejects fresh Mission creation that expires while waiting on the Mission lock", async () => {
+		if (!TEST_URL) throw new Error("expected test database URL");
+		const fixture = await seedFixture(handle);
+		const blockerSql = postgres(TEST_URL, { max: 1, onnotice: () => undefined });
+		const observerSql = postgres(TEST_URL, { max: 1, onnotice: () => undefined });
+		const lockAcquired = deferredWithValue<number>();
+		const releaseLock = deferred();
+		let creation: Promise<unknown> | undefined;
+		const blocker = blockerSql.begin(async (tx) => {
+			await tx`SELECT pg_advisory_xact_lock(hashtextextended(${fixture.missionId}, 0))`;
+			const [connection] = await tx`SELECT pg_backend_pid()::integer AS pid`;
+			lockAcquired.resolve(Number(connection?.pid));
+			await releaseLock.promise;
+		});
+
+		try {
+			const blockerPid = await lockAcquired.promise;
+			const [clock] = await observerSql<Array<{ expires_at: string }>>`
+				SELECT (clock_timestamp() + interval '500 milliseconds')::text AS expires_at
+			`;
+			if (!clock) throw new Error("expected database clock");
+			const expiresAt = new Date(clock.expires_at);
+			fixture.config.mission_context.manifest.expires_at = expiresAt.toISOString();
+			creation = createMissionLedger(handle.db, {
+				createdByAgentId: fixture.backendAgentId,
+				coordinatorConfig: fixture.config,
+			});
+			const creationOutcome = creation.then(
+				() => ({ succeeded: true as const }),
+				(error: unknown) => ({ succeeded: false as const, error }),
+			);
+			await waitUntil(
+				async () => (await blockedByCount(observerSql, blockerPid)) >= 1,
+				"Mission creation did not wait on the Mission lock",
+			);
+			await waitUntil(async () => {
+				const [row] = await observerSql<Array<{ expired: boolean }>>`
+						SELECT clock_timestamp() >= ${expiresAt.toISOString()}::timestamptz AS expired
+					`;
+				return row?.expired === true;
+			}, "Mission did not expire according to the database clock");
+			releaseLock.resolve();
+			await blocker;
+
+			expect(await creationOutcome).toMatchObject({
+				succeeded: false,
+				error: { code: "invalid_transition" },
+			});
+			expect(
+				await handle.db.select().from(missions).where(eq(missions.id, fixture.missionId)),
+			).toEqual([]);
+			expect(
+				await handle.db.select().from(auditLog).where(eq(auditLog.resourceId, fixture.missionId)),
+			).toEqual([]);
+		} finally {
+			releaseLock.resolve();
+			await blocker.catch(() => undefined);
+			await creation?.catch(() => undefined);
+			await observerSql.end({ timeout: 2 });
+			await blockerSql.end({ timeout: 2 });
+		}
+	});
+
+	it("requires a participant creator and a mutually unblocked Mission", async () => {
+		const fixture = await seedFixture(handle);
+		const thirdAgentId = randomUUID();
+		await handle.db.insert(agents).values({
+			id: thirdAgentId,
+			handle: `third-${thirdAgentId}@acme`,
+			email: `third-${thirdAgentId}@example.com`,
+			displayName: "Third party",
+			role: "manager",
+		});
+		const thirdPartyConfig = structuredClone(fixture.config);
+		thirdPartyConfig.mission_context.created_by.principal_id = thirdAgentId;
+		await expect(
+			createMissionLedger(handle.db, {
+				createdByAgentId: thirdAgentId,
+				coordinatorConfig: thirdPartyConfig,
+			}),
+		).rejects.toMatchObject({ code: "not_authorized_transition" });
+
+		await handle.db.insert(agentBlocks).values({
+			blockerId: fixture.androidAgentId,
+			blockedId: fixture.backendAgentId,
+		});
+		await expect(
+			createMissionLedger(handle.db, {
+				createdByAgentId: fixture.backendAgentId,
+				coordinatorConfig: fixture.config,
+			}),
+		).rejects.toMatchObject({ code: "teammate_blocked" });
+		expect(await handle.db.select().from(missions)).toEqual([]);
+	});
+
+	it("serializes fresh Mission creation behind the mutual block fence", async () => {
+		if (!TEST_URL) throw new Error("expected test database URL");
+		const fixture = await seedFixture(handle);
+		const blockerSql = postgres(TEST_URL, { max: 1, onnotice: () => undefined });
+		const observerSql = postgres(TEST_URL, { max: 1, onnotice: () => undefined });
+		const lockAcquired = deferredWithValue<number>();
+		const commitBlock = deferred();
+		let creation: Promise<unknown> | undefined;
+		const blocker = blockerSql.begin(async (tx) => {
+			const lockKey = `agentrelay:block:${fixture.androidAgentId}:${fixture.backendAgentId}`;
+			await tx`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}::text, 0))`;
+			const [connection] = await tx`SELECT pg_backend_pid()::integer AS pid`;
+			lockAcquired.resolve(Number(connection?.pid));
+			await commitBlock.promise;
+			await tx`
+				INSERT INTO agent_blocks (blocker_id, blocked_id)
+				VALUES (${fixture.androidAgentId}, ${fixture.backendAgentId})
+			`;
+		});
+
+		try {
+			const blockerPid = await lockAcquired.promise;
+			creation = createMissionLedger(handle.db, {
+				createdByAgentId: fixture.backendAgentId,
+				coordinatorConfig: fixture.config,
+			});
+			const creationOutcome = creation.then(
+				() => ({ succeeded: true as const }),
+				(error: unknown) => ({ succeeded: false as const, error }),
+			);
+			await waitUntil(
+				async () => (await blockedByCount(observerSql, blockerPid)) >= 1,
+				"Mission creation did not wait on the block fence",
+			);
+			commitBlock.resolve();
+			await blocker;
+			expect(await creationOutcome).toMatchObject({
+				succeeded: false,
+				error: { code: "teammate_blocked" },
+			});
+			expect(await handle.db.select().from(missions)).toEqual([]);
+		} finally {
+			commitBlock.resolve();
+			await blocker.catch(() => undefined);
+			await creation?.catch(() => undefined);
+			await observerSql.end({ timeout: 2 });
+			await blockerSql.end({ timeout: 2 });
+		}
+	});
+
+	it("fences fresh acceptance after either participant blocks the other", async () => {
+		const acceptanceFixture = await createFixtureMission(handle);
+		await handle.db.insert(agentBlocks).values({
+			blockerId: acceptanceFixture.androidAgentId,
+			blockedId: acceptanceFixture.backendAgentId,
+		});
+		await expect(
+			acceptMissionParticipant(handle.db, {
+				missionId: acceptanceFixture.missionId,
+				participantAgentId: acceptanceFixture.backendAgentId,
+				acceptance: participantAcceptanceInput(
+					acceptanceFixture,
+					acceptanceFixture.backendAgentId,
+					"accept:blocked",
+				),
+			}),
+		).rejects.toMatchObject({ code: "teammate_blocked" });
+	});
+
+	it("fences fresh peer events after either participant blocks the other", async () => {
+		const eventFixture = await createFixtureMission(handle);
+		const activated = await activateMission(handle, eventFixture);
+		await handle.db.insert(agentBlocks).values({
+			blockerId: eventFixture.androidAgentId,
+			blockedId: eventFixture.backendAgentId,
+		});
+		await expect(
+			appendMissionEvent(handle.db, {
+				missionId: eventFixture.missionId,
+				actorAgentId: eventFixture.backendAgentId,
+				event: replyInput({
+					fixture: eventFixture,
+					participantAgentId: eventFixture.backendAgentId,
+					deliveryId: activated.backendTurnDeliveryId,
+					idempotencyKey: "turn:blocked",
+					messageId: randomUUID(),
+					messageIdempotencyKey: "message:blocked",
+					message: "This content must not cross the block fence.",
+					sequenceNo: 1,
+					causalParentMessageId: null,
+				}),
+			}),
+		).rejects.toMatchObject({ code: "teammate_blocked" });
+		expect(await handle.db.select().from(missionEvents)).toHaveLength(1);
+		expect(await handle.db.select().from(nodeDeliveries)).toHaveLength(1);
+	});
+
+	it.each(["node", "workspace"] as const)(
+		"serializes Mission creation behind concurrent %s revocation",
+		async (revocationScope) => {
+			if (!TEST_URL) throw new Error("expected test database URL");
+			const fixture = await seedFixture(handle);
+			const blockingMissionId = randomUUID();
+			await handle.db.insert(missions).values({
+				id: blockingMissionId,
+				createdByAgentId: fixture.backendAgentId,
+				coordinatorConfig: {},
+				state: {},
+				status: "awaiting_acceptance",
+				expiresAt: new Date(Date.now() + 120_000),
+			});
+			await handle.db.insert(missionParticipants).values({
+				missionId: blockingMissionId,
+				agentId: fixture.backendAgentId,
+				nodeId: fixture.backendNodeId,
+				workspaceBindingId: fixture.backendBindingId,
+				role: "backend",
+			});
+
+			const blockerSql = postgres(TEST_URL, { max: 1, onnotice: () => undefined });
+			const observerSql = postgres(TEST_URL, { max: 1, onnotice: () => undefined });
+			const lockAcquired = deferred();
+			const releaseLock = deferred();
+			let revocation: Promise<void> | undefined;
+			let creation: Promise<unknown> | undefined;
+			const blocker = blockerSql.begin(async (tx) => {
+				await tx`SELECT pg_advisory_xact_lock(hashtextextended(${blockingMissionId}, 0))`;
+				lockAcquired.resolve();
+				await releaseLock.promise;
+			});
+
+			try {
+				await lockAcquired.promise;
+				revocation =
+					revocationScope === "node"
+						? revokeNode(handle.db, fixture.backendAgentId, fixture.backendNodeId)
+						: revokeWorkspace(
+								handle.db,
+								{
+									agentId: fixture.backendAgentId,
+									nodeId: fixture.backendNodeId,
+									credentialId: fixture.backendCredentialId,
+								},
+								"backend-api",
+							);
+				await waitUntil(
+					async () => (await advisoryWaiterCount(observerSql)) >= 1,
+					"revocation did not wait on the participant Mission lock",
+				);
+
+				creation = createMissionLedger(handle.db, {
+					createdByAgentId: fixture.backendAgentId,
+					coordinatorConfig: fixture.config,
+				});
+				const creationOutcome = creation.then(
+					() => ({ succeeded: true as const }),
+					(error: unknown) => ({ succeeded: false as const, error }),
+				);
+				await waitUntil(
+					async () => (await advisoryWaiterCount(observerSql)) >= 2,
+					"Mission creation did not wait on the participant Node lock",
+				);
+
+				releaseLock.resolve();
+				await blocker;
+				await revocation;
+				expect(await creationOutcome).toMatchObject({
+					succeeded: false,
+					error: { code: "invalid_params" },
+				});
+
+				expect(
+					await handle.db.select().from(missions).where(eq(missions.id, fixture.missionId)),
+				).toEqual([]);
+				expect(
+					await handle.db
+						.select()
+						.from(nodeDeliveries)
+						.where(eq(nodeDeliveries.missionId, fixture.missionId)),
+				).toEqual([]);
+				const [node] = await handle.db
+					.select({ status: nodes.status })
+					.from(nodes)
+					.where(eq(nodes.id, fixture.backendNodeId));
+				const [workspace] = await handle.db
+					.select({ status: workspaceBindings.status })
+					.from(workspaceBindings)
+					.where(eq(workspaceBindings.id, fixture.backendBindingId));
+				expect(node?.status).toBe(revocationScope === "node" ? "revoked" : "active");
+				expect(workspace?.status).toBe("revoked");
+			} finally {
+				releaseLock.resolve();
+				await blocker.catch(() => undefined);
+				await revocation?.catch(() => undefined);
+				await creation?.catch(() => undefined);
+				await observerSql.end({ timeout: 2 });
+				await blockerSql.end({ timeout: 2 });
+			}
+		},
+	);
 
 	it("derives activation from two exact acceptance receipts and replays a concurrent receipt", async () => {
 		const fixture = await createFixtureMission(handle);
@@ -188,6 +540,36 @@ d("durable Mission ledger", () => {
 		);
 		expect(await handle.db.select().from(missionEvents)).toHaveLength(1);
 		expect(await handle.db.select().from(nodeDeliveries)).toHaveLength(1);
+
+		const creationReplay = await createMissionLedger(handle.db, {
+			createdByAgentId: fixture.backendAgentId,
+			coordinatorConfig: structuredClone(fixture.config),
+		});
+		expect(creationReplay.replayed).toBe(true);
+		expect(creationReplay.state).toMatchObject({ status: "active", sequence_no: 1 });
+	});
+
+	it("uses the database clock for acceptance when the relay host clock is skewed", async () => {
+		const fixture = await createFixtureMission(handle);
+		const missionExpiresAt = new Date(fixture.config.mission_context.manifest.expires_at).getTime();
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date(missionExpiresAt + 86_400_000));
+
+		try {
+			const result = await acceptMissionParticipant(handle.db, {
+				missionId: fixture.missionId,
+				participantAgentId: fixture.backendAgentId,
+				acceptance: participantAcceptanceInput(
+					fixture,
+					fixture.backendAgentId,
+					"accept:database-clock",
+				),
+			});
+
+			expect(Date.parse(result.receipt.accepted_at)).toBeLessThan(missionExpiresAt);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("serializes concurrent exact event retries with stable event and delivery identities", async () => {
@@ -793,6 +1175,7 @@ interface Fixture {
 	readonly androidAgentId: string;
 	readonly backendNodeId: string;
 	readonly androidNodeId: string;
+	readonly backendCredentialId: string;
 	readonly backendBindingId: string;
 	readonly androidBindingId: string;
 	readonly contractV1: ContractRef;
@@ -820,6 +1203,7 @@ async function seedFixture(handle: TestDb): Promise<Fixture> {
 	const androidAgentId = randomUUID();
 	const backendNodeId = randomUUID();
 	const androidNodeId = randomUUID();
+	const backendCredentialId = randomUUID();
 	const backendBindingId = randomUUID();
 	const androidBindingId = randomUUID();
 	const artifactId = randomUUID();
@@ -896,6 +1280,12 @@ async function seedFixture(handle: TestDb): Promise<Fixture> {
 		{ id: backendNodeId, agentId: backendAgentId, name: "backend-mac" },
 		{ id: androidNodeId, agentId: androidAgentId, name: "android-mac" },
 	]);
+	await handle.db.insert(nodeCredentials).values({
+		id: backendCredentialId,
+		nodeId: backendNodeId,
+		keyHash: Buffer.from(`hash-${backendCredentialId}`),
+		salt: Buffer.from(`salt-${backendCredentialId}`),
+	});
 	await handle.db.insert(workspaceBindings).values([
 		{
 			id: backendBindingId,
@@ -919,6 +1309,7 @@ async function seedFixture(handle: TestDb): Promise<Fixture> {
 		androidAgentId,
 		backendNodeId,
 		androidNodeId,
+		backendCredentialId,
 		backendBindingId,
 		androidBindingId,
 		contractV1,
@@ -1124,4 +1515,61 @@ function verificationInput(
 function only(values: readonly string[], label: string): string {
 	if (values.length !== 1) throw new Error(`expected exactly one ${label}`);
 	return values[0]!;
+}
+
+interface Deferred {
+	readonly promise: Promise<void>;
+	resolve: () => void;
+}
+
+function deferred(): Deferred {
+	let resolve = () => undefined;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+function deferredWithValue<T>(): {
+	readonly promise: Promise<T>;
+	resolve: (value: T) => void;
+} {
+	let resolve = (_value: T): void => undefined;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+async function advisoryWaiterCount(sql: Sql): Promise<number> {
+	const [row] = await sql<Array<{ waiters: string }>>`
+		SELECT count(*)::text AS waiters
+		FROM pg_locks
+		WHERE locktype = 'advisory'
+			AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+			AND NOT granted
+	`;
+	return Number(row?.waiters ?? "0");
+}
+
+async function blockedByCount(sql: Sql, blockerPid: number): Promise<number> {
+	const [row] = await sql<Array<{ waiters: string }>>`
+		SELECT count(*)::text AS waiters
+		FROM pg_stat_activity
+		WHERE ${blockerPid} = ANY(pg_blocking_pids(pid))
+	`;
+	return Number(row?.waiters ?? "0");
+}
+
+async function waitUntil(
+	predicate: () => Promise<boolean>,
+	message: string,
+	timeoutMs = 2_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (await predicate()) return;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error(message);
 }

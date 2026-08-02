@@ -48,6 +48,6 @@ export async function truncateAll(sql: Sql): Promise<void> {
 	// with CASCADE would clear the dependents — but explicit listing makes intent
 	// obvious and survives future schema additions that aren't FK-rooted at agents.
 	await sql.unsafe(
-		"TRUNCATE TABLE node_deliveries, mission_events, mission_participants, missions, workspace_bindings, node_credentials, nodes, messages, handoffs, agent_cards, api_keys, audit_log, agent_blocks, invites, agents RESTART IDENTITY CASCADE",
+		"TRUNCATE TABLE delivery_operation_receipts, node_deliveries, mission_events, mission_participants, missions, workspace_bindings, node_credentials, nodes, messages, handoffs, agent_cards, api_keys, audit_log, agent_blocks, invites, agents RESTART IDENTITY CASCADE",
 	);
 }

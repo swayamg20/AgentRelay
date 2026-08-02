@@ -9,7 +9,6 @@ const conn = await tryConnect();
 const d = conn.available ? describe : describe.skip;
 
 if (!conn.available) {
-	// biome-ignore lint/suspicious/noConsoleLog: integration tests self-skip without DB
 	console.warn(`[schema.test] skipping integration tests: ${conn.reason}`);
 }
 
@@ -210,7 +209,7 @@ d("db schema integration", () => {
 		).rejects.toThrow(/idx_messages_seq/);
 	});
 
-	it("audit_log: round-trips and bigserial id auto-increments", async () => {
+	it("audit_log: round-trips typed actors and bigserial id auto-increments", async () => {
 		const agentId = await makeAgent("-8");
 		const [a1] = await handle.db
 			.insert(auditLog)
@@ -231,9 +230,30 @@ d("db schema integration", () => {
 				resourceId: randomUUID(),
 			})
 			.returning();
+		const [admin] = await handle.db
+			.insert(auditLog)
+			.values({
+				actorKind: "admin",
+				actorId: null,
+				action: "agent.disable",
+				resourceType: "agent",
+				resourceId: agentId,
+			})
+			.returning();
 		expect(a1?.id).toBeDefined();
+		expect(a1).toMatchObject({ actorKind: "agent", actorId: agentId });
 		expect(a2?.id).toBeDefined();
 		expect(BigInt(a2?.id ?? 0n)).toBeGreaterThan(BigInt(a1?.id ?? 0n));
+		expect(admin).toMatchObject({ actorKind: "admin", actorId: null });
+		await expect(
+			handle.db.insert(auditLog).values({
+				actorKind: "admin",
+				actorId: agentId,
+				action: "invalid.admin",
+				resourceType: "agent",
+				resourceId: agentId,
+			}),
+		).rejects.toThrow(/audit_log_actor_identity_chk/);
 	});
 
 	it("updated_at trigger advances timestamp on UPDATE", async () => {

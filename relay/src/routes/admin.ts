@@ -1,12 +1,15 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type KeyEnvironment, generateKey } from "../auth/keys.js";
 import { adminAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
-import { agents, apiKeys } from "../db/schema.js";
+import { agents, apiKeys, nodeCredentials, nodes, workspaceBindings } from "../db/schema.js";
 import { RelayError } from "../errors.js";
 import { registerAgentWithInitialKey } from "../services/agent-registration.js";
+import { writeAudit } from "../services/audit.js";
+import { cancelDeliveriesForNodeRevocations } from "../services/delivery-revocation.js";
+import { lockAgentLifecycle, lockNodeMutation } from "../services/node-enrollment.js";
 import type { AppEnv } from "../types.js";
 
 const handleRegex = /^[a-z0-9._-]+@[a-z0-9.-]+$/;
@@ -73,8 +76,15 @@ export function createAdminRoutes(opts: AdminRoutesOptions): Hono<AppEnv> {
 		const generated = generateKey(opts.keyEnvironment, opts.pepper);
 
 		const newKey = await opts.db.transaction(async (tx) => {
-			const [agent] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId));
+			await lockAgentLifecycle(tx, agentId);
+			const [agent] = await tx
+				.select({ id: agents.id, status: agents.status })
+				.from(agents)
+				.where(eq(agents.id, agentId));
 			if (!agent) throw new RelayError("recipient_not_found", "Agent not found");
+			if (agent.status !== "active") {
+				throw new RelayError("invalid_transition", "Cannot rotate keys for a disabled agent");
+			}
 
 			// revoke all currently-active keys atomically
 			await tx.update(apiKeys).set({ revokedAt: new Date() }).where(eq(apiKeys.agentId, agentId));
@@ -105,17 +115,61 @@ export function createAdminRoutes(opts: AdminRoutesOptions): Hono<AppEnv> {
 		if (!params.success) {
 			throw new RelayError("invalid_params", "Invalid agent id");
 		}
-		const [updated] = await opts.db
-			.update(agents)
-			.set({ status: "disabled" })
-			.where(eq(agents.id, params.data.id))
-			.returning({ id: agents.id });
-		if (!updated) throw new RelayError("recipient_not_found", "Agent not found");
-		// Revoke all keys belonging to the disabled agent — defence in depth.
-		await opts.db
-			.update(apiKeys)
-			.set({ revokedAt: new Date() })
-			.where(eq(apiKeys.agentId, params.data.id));
+		const agentId = params.data.id;
+		await opts.db.transaction(async (tx) => {
+			await lockAgentLifecycle(tx, agentId);
+			const [agent] = await tx.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId));
+			if (!agent) throw new RelayError("recipient_not_found", "Agent not found");
+
+			const ownedNodes = await tx
+				.select({ id: nodes.id })
+				.from(nodes)
+				.where(eq(nodes.agentId, agentId))
+				.orderBy(asc(nodes.id));
+			for (const node of ownedNodes) await lockNodeMutation(tx, node.id);
+
+			const nodeIds = ownedNodes.map((node) => node.id);
+			if (nodeIds.length > 0) {
+				await cancelDeliveriesForNodeRevocations(tx, {
+					nodeIds,
+					actorKind: "admin",
+					actorId: null,
+					targetAgentId: agentId,
+					requestId: c.get("requestId"),
+				});
+				await tx
+					.update(nodeCredentials)
+					.set({ revokedAt: sql`clock_timestamp()` })
+					.where(and(inArray(nodeCredentials.nodeId, nodeIds), isNull(nodeCredentials.revokedAt)));
+				await tx
+					.update(workspaceBindings)
+					.set({ status: "revoked", revokedAt: sql`clock_timestamp()` })
+					.where(
+						and(inArray(workspaceBindings.nodeId, nodeIds), eq(workspaceBindings.status, "active")),
+					);
+				await tx
+					.update(nodes)
+					.set({ status: "revoked", revokedAt: sql`clock_timestamp()` })
+					.where(and(inArray(nodes.id, nodeIds), eq(nodes.status, "active")));
+			}
+			await tx.update(agents).set({ status: "disabled" }).where(eq(agents.id, agentId));
+			await tx
+				.update(apiKeys)
+				.set({ revokedAt: sql`clock_timestamp()` })
+				.where(and(eq(apiKeys.agentId, agentId), isNull(apiKeys.revokedAt)));
+			await writeAudit(tx, {
+				actorKind: "admin",
+				actorId: null,
+				action: "agent.disable",
+				resourceType: "agent",
+				resourceId: agentId,
+				requestId: c.get("requestId"),
+				metadata: {
+					target_agent_id: agentId,
+					revoked_node_ids: nodeIds,
+				},
+			});
+		});
 		return c.body(null, 204);
 	});
 

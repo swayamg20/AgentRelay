@@ -7,20 +7,26 @@ import {
 	type MissionCoordinatorAppendInput,
 	type MissionCoordinatorEvent,
 	type MissionCoordinatorState,
+	type MissionDeliveryItem,
 	type MissionParticipantAcceptanceInput,
+	type MissionStatus,
+	type NodeMissionAssignment,
 	type StoredMissionDeliveryCursorPage,
 	createMissionCoordinatorState,
 	deliverySchema,
 	missionCoordinatorAppendInputSchema,
 	missionCoordinatorConfigSchema,
 	missionCoordinatorEventSchema,
+	missionCoordinatorStateSchema,
 	missionParticipantAcceptanceInputSchema,
+	missionParticipantAcceptanceResultSchema,
+	nodeMissionAssignmentSchema,
 	reduceMissionCoordinatorEvent,
 	replayMissionCoordinatorEvents,
 	storedDeliveryCursorPageRequestSchema,
 	storedMissionDeliveryCursorPageSchema,
 } from "@agentrelay/protocol";
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import {
 	type Mission,
@@ -35,6 +41,12 @@ import {
 } from "../db/schema.js";
 import { RelayError } from "../errors.js";
 import { writeAudit } from "./audit.js";
+import { assertMissionTrustBoundary } from "./mission-trust.js";
+import {
+	type NodeCredentialContext,
+	assertActiveNodeCredential,
+	lockNodeMutation,
+} from "./node-enrollment.js";
 
 export interface MissionParticipantBinding {
 	readonly agentId: string;
@@ -72,7 +84,53 @@ export interface AcceptMissionParticipantResult {
 
 export type StoredDeliveryLedgerPage = StoredMissionDeliveryCursorPage;
 
-type LedgerTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+export type LedgerTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+export interface SourceDeliveryAuthorization {
+	readonly status: "stored" | "executing";
+	readonly nodeId?: string;
+	readonly leaseId?: string;
+	readonly fencingToken?: string;
+}
+
+export async function listNodeMissionAssignments(
+	db: Database,
+	input: {
+		readonly nodeId: string;
+		readonly status?: MissionStatus;
+		readonly limit: number;
+	},
+): Promise<NodeMissionAssignment[]> {
+	const conditions = [eq(missionParticipants.nodeId, input.nodeId)];
+	if (input.status !== undefined) conditions.push(eq(missions.status, input.status));
+	const rows = await db
+		.select({ mission: missions, participant: missionParticipants })
+		.from(missionParticipants)
+		.innerJoin(missions, eq(missions.id, missionParticipants.missionId))
+		.where(and(...conditions))
+		.orderBy(desc(missions.createdAt), desc(missions.id))
+		.limit(input.limit);
+	return rows.map(({ mission, participant }) => assignmentFromRows(mission, participant));
+}
+
+export async function getNodeMissionAssignment(
+	db: Database,
+	input: { readonly nodeId: string; readonly missionId: string },
+): Promise<NodeMissionAssignment> {
+	const [row] = await db
+		.select({ mission: missions, participant: missionParticipants })
+		.from(missionParticipants)
+		.innerJoin(missions, eq(missions.id, missionParticipants.missionId))
+		.where(
+			and(
+				eq(missionParticipants.nodeId, input.nodeId),
+				eq(missionParticipants.missionId, input.missionId),
+			),
+		)
+		.limit(1);
+	if (!row) throw new RelayError("mission_not_found", "Mission not found");
+	return assignmentFromRows(row.mission, row.participant);
+}
 
 export async function createMissionLedger(
 	db: Database,
@@ -94,9 +152,30 @@ export async function createMissionLedger(
 			"Authenticated Mission creator does not match mission_context.created_by",
 		);
 	}
+	if (
+		!context.manifest.participants.some(
+			(participant) => participant.agent_id === input.createdByAgentId,
+		)
+	) {
+		throw new RelayError(
+			"not_authorized_transition",
+			"The first Mission slice must be created by one of its two participants",
+		);
+	}
 
 	return db.transaction(async (tx) => {
-		await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${missionId}, 0))`);
+		const [observedMission] = await tx.select().from(missions).where(eq(missions.id, missionId));
+		const participantBindings = observedMission
+			? await loadParticipantBindings(
+					tx,
+					missionId,
+					missionCoordinatorConfigSchema
+						.parse(observedMission.coordinatorConfig)
+						.mission_context.manifest.participants.map((participant) => participant.agent_id),
+				)
+			: await resolveActiveParticipantBindings(tx, context.manifest.participants);
+		await lockParticipantNodes(tx, participantBindings);
+		await lockMissionMutation(tx, missionId);
 
 		const [existing] = await tx.select().from(missions).where(eq(missions.id, missionId));
 		if (existing) {
@@ -112,7 +191,7 @@ export async function createMissionLedger(
 			}
 			return {
 				missionId,
-				state: createMissionCoordinatorState(existingConfig),
+				state: missionStateFromRow(existing),
 				participantBindings: await loadParticipantBindings(
 					tx,
 					missionId,
@@ -125,52 +204,19 @@ export async function createMissionLedger(
 		}
 
 		const participantIds = context.manifest.participants.map((participant) => participant.agent_id);
-		const requiredAgentIds = [...new Set([...participantIds, input.createdByAgentId])];
-		const activeAgents = await tx
-			.select({ id: agents.id })
-			.from(agents)
-			.where(and(inArray(agents.id, requiredAgentIds), eq(agents.status, "active")));
-		if (activeAgents.length !== requiredAgentIds.length) {
-			throw new RelayError(
-				"invalid_params",
-				"Mission creator and every participant must be active agents",
-			);
-		}
-
-		const participantBindings: MissionParticipantBinding[] = [];
-		for (const participant of context.manifest.participants) {
-			const matches = await tx
-				.select({
-					workspaceBindingId: workspaceBindings.id,
-					nodeId: nodes.id,
-				})
-				.from(workspaceBindings)
-				.innerJoin(nodes, eq(nodes.id, workspaceBindings.nodeId))
-				.where(
-					and(
-						eq(nodes.agentId, participant.agent_id),
-						eq(nodes.status, "active"),
-						eq(workspaceBindings.status, "active"),
-						eq(workspaceBindings.alias, participant.workspace_alias),
-						eq(workspaceBindings.repositoryUrl, participant.repository_url),
-					),
-				);
-			if (matches.length !== 1) {
-				throw new RelayError(
-					"invalid_params",
-					"Mission participant must resolve to exactly one active Node workspace",
-					{
-						participant_agent_id: participant.agent_id,
-						workspace_alias: participant.workspace_alias,
-						eligible_nodes: matches.length,
-					},
-				);
-			}
-			participantBindings.push({
-				agentId: participant.agent_id,
-				nodeId: matches[0]!.nodeId,
-				workspaceBindingId: matches[0]!.workspaceBindingId,
-			});
+		await assertMissionCreationAuthoritiesActive(tx, {
+			creatorAgentId: input.createdByAgentId,
+			participants: context.manifest.participants,
+			participantBindings,
+		});
+		await assertMissionTrustBoundary(tx, [
+			input.createdByAgentId,
+			...context.manifest.participants.map((participant) => participant.agent_id),
+		]);
+		const expiresAt = new Date(context.manifest.expires_at);
+		const creationTime = await readDatabaseClock(tx);
+		if (expiresAt.getTime() <= creationTime.getTime()) {
+			throw new RelayError("invalid_transition", "Mission has expired");
 		}
 
 		const state = createMissionCoordinatorState(config);
@@ -182,7 +228,7 @@ export async function createMissionLedger(
 			status: state.status,
 			lastEventSequence: state.sequence_no,
 			contractVersion: state.contract_version,
-			expiresAt: new Date(context.manifest.expires_at),
+			expiresAt,
 		});
 		await tx.insert(missionParticipants).values(
 			context.manifest.participants.map((participant) => {
@@ -218,24 +264,52 @@ export async function acceptMissionParticipant(
 		participantAgentId: string;
 		acceptance: unknown;
 		requestId?: string;
+		nodeAuth?: NodeCredentialContext;
 	},
 ): Promise<AcceptMissionParticipantResult> {
 	const acceptance = missionParticipantAcceptanceInputSchema.parse(input.acceptance);
+	if (input.nodeAuth && input.nodeAuth.agentId !== input.participantAgentId) {
+		throw new RelayError(
+			"not_authorized_transition",
+			"Authenticated Node owner does not match the Mission participant",
+		);
+	}
 
 	return db.transaction(async (tx) => {
-		await lockMission(tx, input.missionId);
+		if (input.nodeAuth) {
+			await lockNodeMutation(tx, input.nodeAuth.nodeId);
+			await assertActiveNodeCredential(tx, input.nodeAuth);
+		}
+		await lockMissionMutation(tx, input.missionId);
 		const [mission] = await tx.select().from(missions).where(eq(missions.id, input.missionId));
 		if (!mission) throw new RelayError("invalid_params", "Mission not found");
 
-		const [participant] = await tx
-			.select()
+		const participantConditions = [
+			eq(missionParticipants.missionId, input.missionId),
+			eq(missionParticipants.agentId, input.participantAgentId),
+		];
+		if (input.nodeAuth) {
+			participantConditions.push(eq(missionParticipants.nodeId, input.nodeAuth.nodeId));
+		}
+		const [participantRow] = await tx
+			.select({ participant: missionParticipants })
 			.from(missionParticipants)
+			.innerJoin(nodes, eq(nodes.id, missionParticipants.nodeId))
+			.innerJoin(
+				workspaceBindings,
+				and(
+					eq(workspaceBindings.id, missionParticipants.workspaceBindingId),
+					eq(workspaceBindings.nodeId, missionParticipants.nodeId),
+				),
+			)
 			.where(
 				and(
-					eq(missionParticipants.missionId, input.missionId),
-					eq(missionParticipants.agentId, input.participantAgentId),
+					...participantConditions,
+					eq(nodes.status, "active"),
+					eq(workspaceBindings.status, "active"),
 				),
 			);
+		const participant = participantRow?.participant;
 		if (!participant) {
 			throw new RelayError(
 				"not_authorized_transition",
@@ -254,17 +328,22 @@ export async function acceptMissionParticipant(
 					"Mission participant already accepted with a different receipt",
 				);
 			}
-			return {
+			return missionParticipantAcceptanceResultSchema.parse({
 				receipt: acceptanceReceiptFromParticipant(participant, storedAcceptance),
 				replayed: true,
-			};
+			});
 		}
 
-		if (Date.now() >= mission.expiresAt.getTime()) {
-			throw new RelayError("invalid_transition", "Mission has expired");
-		}
 		const config = missionCoordinatorConfigSchema.parse(mission.coordinatorConfig);
 		const manifest = config.mission_context.manifest;
+		await assertMissionTrustBoundary(tx, [
+			mission.createdByAgentId,
+			...manifest.participants.map((candidate) => candidate.agent_id),
+		]);
+		const acceptedAt = await readDatabaseClock(tx);
+		if (acceptedAt.getTime() >= mission.expiresAt.getTime()) {
+			throw new RelayError("invalid_transition", "Mission has expired");
+		}
 		const manifestParticipant = manifest.participants.find(
 			(candidate) => candidate.agent_id === input.participantAgentId,
 		);
@@ -300,7 +379,6 @@ export async function acceptMissionParticipant(
 			);
 		}
 
-		const acceptedAt = new Date();
 		const [acceptedParticipant] = await tx
 			.update(missionParticipants)
 			.set({
@@ -340,6 +418,7 @@ export async function acceptMissionParticipant(
 			.from(missionParticipants)
 			.where(eq(missionParticipants.missionId, input.missionId));
 		if (participants.length === manifest.participants.length && participants.every(isAccepted)) {
+			await assertAllParticipantBindingsActive(tx, input.missionId, manifest.participants.length);
 			const aggregate = missionCoordinatorAppendInputSchema.parse({
 				idempotency_key: `mission:${input.missionId}:participants-accepted`,
 				type: "participants_accepted",
@@ -351,13 +430,15 @@ export async function acceptMissionParticipant(
 				appendInput: aggregate,
 				requestId: input.requestId,
 				allowDerivedAcceptance: true,
+				sourceAuthorization: null,
+				recordedAt: acceptedAt,
 			});
 		}
 
-		return {
+		return missionParticipantAcceptanceResultSchema.parse({
 			receipt: acceptanceReceiptFromParticipant(acceptedParticipant, acceptance),
 			replayed: false,
-		};
+		});
 	});
 }
 
@@ -379,7 +460,7 @@ export async function appendMissionEvent(
 	}
 
 	return db.transaction(async (tx) => {
-		await lockMission(tx, input.missionId);
+		await lockMissionMutation(tx, input.missionId);
 		const [mission] = await tx.select().from(missions).where(eq(missions.id, input.missionId));
 		if (!mission) throw new RelayError("invalid_params", "Mission not found");
 		return appendMissionEventInTransaction(tx, mission, {
@@ -387,11 +468,12 @@ export async function appendMissionEvent(
 			appendInput,
 			requestId: input.requestId,
 			allowDerivedAcceptance: false,
+			sourceAuthorization: { status: "stored" },
 		});
 	});
 }
 
-async function appendMissionEventInTransaction(
+export async function appendMissionEventInTransaction(
 	tx: LedgerTransaction,
 	mission: Mission,
 	input: {
@@ -399,6 +481,8 @@ async function appendMissionEventInTransaction(
 		appendInput: MissionCoordinatorAppendInput;
 		requestId?: string;
 		allowDerivedAcceptance: boolean;
+		sourceAuthorization: SourceDeliveryAuthorization | null;
+		recordedAt?: Date;
 	},
 ): Promise<AppendMissionEventResult> {
 	const sourceDeliveryId =
@@ -446,9 +530,15 @@ async function appendMissionEventInTransaction(
 		};
 	}
 
-	if (Date.now() >= mission.expiresAt.getTime()) {
+	const recordedAt = input.recordedAt ?? (await readDatabaseClock(tx));
+	if (recordedAt.getTime() >= mission.expiresAt.getTime()) {
 		throw new RelayError("invalid_transition", "Mission has expired");
 	}
+	const config = missionCoordinatorConfigSchema.parse(mission.coordinatorConfig);
+	await assertMissionTrustBoundary(tx, [
+		mission.createdByAgentId,
+		...config.mission_context.manifest.participants.map((participant) => participant.agent_id),
+	]);
 	if (input.appendInput.type === "participants_accepted") {
 		if (!input.allowDerivedAcceptance) {
 			throw new RelayError(
@@ -461,7 +551,6 @@ async function appendMissionEventInTransaction(
 		assertAuthorizedActor(input.actorAgentId, input.appendInput);
 	}
 
-	const config = missionCoordinatorConfigSchema.parse(mission.coordinatorConfig);
 	const storedRows = await tx
 		.select()
 		.from(missionEvents)
@@ -476,7 +565,16 @@ async function appendMissionEventInTransaction(
 	}
 
 	if (input.appendInput.type !== "participants_accepted") {
-		await assertSourceDelivery(tx, mission.id, input.actorAgentId, input.appendInput);
+		if (input.sourceAuthorization === null) {
+			throw new RelayError("internal", "Mission result is missing source delivery authority");
+		}
+		await assertSourceDelivery(
+			tx,
+			mission.id,
+			input.actorAgentId,
+			input.appendInput,
+			input.sourceAuthorization,
+		);
 	}
 
 	const event = missionCoordinatorEventSchema.parse({
@@ -484,7 +582,7 @@ async function appendMissionEventInTransaction(
 		event_id: randomUUID(),
 		mission_id: mission.id,
 		sequence_no: currentState.sequence_no + 1,
-		created_at: new Date().toISOString(),
+		created_at: recordedAt.toISOString(),
 	});
 	let nextState: MissionCoordinatorState;
 	try {
@@ -513,7 +611,8 @@ async function appendMissionEventInTransaction(
 	if (sourceDeliveryId !== null && shouldSettleSourceDelivery(nextState, event)) {
 		const settledAt = new Date(event.created_at);
 		const settlementConditions =
-			event.type === "verification_recorded" && event.evidence.outcome === "failed"
+			event.type === "verification_recorded" &&
+			(nextState.status === "active" || nextState.status === "failed")
 				? and(
 						eq(nodeDeliveries.missionId, mission.id),
 						eq(nodeDeliveries.kind, "verification"),
@@ -528,7 +627,7 @@ async function appendMissionEventInTransaction(
 					);
 		const settled = await tx
 			.update(nodeDeliveries)
-			.set({ settledByEventId: event.event_id, settledAt })
+			.set({ settledByEventId: event.event_id, settledAt, updatedAt: settledAt })
 			.where(settlementConditions)
 			.returning({ id: nodeDeliveries.id });
 		if (!settled.some((delivery) => delivery.id === sourceDeliveryId)) {
@@ -582,6 +681,7 @@ async function appendMissionEventInTransaction(
 			status: nextState.status,
 			lastEventSequence: nextState.sequence_no,
 			contractVersion: nextState.contract_version,
+			updatedAt: recordedAt,
 		})
 		.where(eq(missions.id, mission.id));
 	await writeAudit(tx, {
@@ -617,6 +717,9 @@ export async function listStoredDeliveryEvents(
 		eq(nodeDeliveries.nodeId, input.nodeId),
 		eq(nodeDeliveries.status, "stored"),
 		isNull(nodeDeliveries.settledByEventId),
+		lte(nodeDeliveries.availableAt, sql`clock_timestamp()`),
+		inArray(missions.status, ["active", "verifying"]),
+		gt(missions.expiresAt, sql`clock_timestamp()`),
 	];
 	if (page.after_cursor !== null) {
 		conditions.push(gt(nodeDeliveries.cursor, BigInt(page.after_cursor)));
@@ -625,23 +728,18 @@ export async function listStoredDeliveryEvents(
 		.select({ delivery: nodeDeliveries, event: missionEvents })
 		.from(nodeDeliveries)
 		.innerJoin(missionEvents, eq(missionEvents.id, nodeDeliveries.missionEventId))
+		.innerJoin(missions, eq(missions.id, nodeDeliveries.missionId))
 		.where(and(...conditions))
 		.orderBy(asc(nodeDeliveries.cursor))
 		.limit(page.limit);
-	const items = rows.map((row) => ({
-		delivery: deliveryFromRow(row.delivery),
-		event: eventFromRow(row.event),
-		actor_agent_id: row.event.actorAgentId,
-		source_delivery_id: row.event.sourceDeliveryId,
-		causal_parent_event_id: row.event.causalParentEventId,
-	}));
+	const items = rows.map((row) => missionDeliveryItemFromRows(row.delivery, row.event));
 	return storedMissionDeliveryCursorPageSchema.parse({
 		items,
 		next_cursor: items.at(-1)?.delivery.cursor ?? page.after_cursor,
 	});
 }
 
-async function lockMission(tx: LedgerTransaction, missionId: string): Promise<void> {
+export async function lockMissionMutation(tx: LedgerTransaction, missionId: string): Promise<void> {
 	await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${missionId}, 0))`);
 }
 
@@ -669,6 +767,18 @@ function acceptanceReceiptFromParticipant(
 		local_policy_grant: acceptance.local_policy_grant,
 		accepted_at: participant.acceptedAt.toISOString(),
 	};
+}
+
+async function readDatabaseClock(db: Pick<Database, "execute">): Promise<Date> {
+	const [clock] = await db.execute(sql<{ now: string }>`SELECT clock_timestamp()::text AS now`);
+	if (!clock || typeof clock.now !== "string") {
+		throw new RelayError("internal", "Database clock is unavailable for Mission mutation");
+	}
+	const now = new Date(clock.now);
+	if (!Number.isFinite(now.getTime())) {
+		throw new RelayError("internal", "Database returned an invalid Mission timestamp");
+	}
+	return now;
 }
 
 function isAccepted(participant: MissionParticipant): boolean {
@@ -722,12 +832,54 @@ async function assertExactParticipantAcceptances(
 	}
 }
 
+async function assertAllParticipantBindingsActive(
+	tx: LedgerTransaction,
+	missionId: string,
+	expectedCount: number,
+): Promise<void> {
+	const activeBindings = await tx
+		.select({ agentId: missionParticipants.agentId })
+		.from(missionParticipants)
+		.innerJoin(nodes, eq(nodes.id, missionParticipants.nodeId))
+		.innerJoin(agents, eq(agents.id, missionParticipants.agentId))
+		.innerJoin(
+			workspaceBindings,
+			and(
+				eq(workspaceBindings.id, missionParticipants.workspaceBindingId),
+				eq(workspaceBindings.nodeId, missionParticipants.nodeId),
+			),
+		)
+		.where(
+			and(
+				eq(missionParticipants.missionId, missionId),
+				eq(nodes.status, "active"),
+				eq(agents.status, "active"),
+				eq(workspaceBindings.status, "active"),
+			),
+		);
+	if (activeBindings.length !== expectedCount) {
+		throw new RelayError(
+			"invalid_transition",
+			"Every Mission participant must retain an active Node and workspace binding",
+		);
+	}
+}
+
 async function assertSourceDelivery(
 	tx: LedgerTransaction,
 	missionId: string,
 	actorAgentId: string,
 	event: Exclude<MissionCoordinatorAppendInput, { readonly type: "participants_accepted" }>,
+	authorization: SourceDeliveryAuthorization,
 ): Promise<void> {
+	if (
+		authorization.status === "executing" &&
+		(authorization.nodeId === undefined ||
+			authorization.leaseId === undefined ||
+			authorization.fencingToken === undefined)
+	) {
+		throw new RelayError("internal", "Executing source authorization is incomplete");
+	}
 	const [source] = await tx
 		.select({
 			delivery: nodeDeliveries,
@@ -762,10 +914,15 @@ async function assertSourceDelivery(
 				? "contract_acknowledgement"
 				: "verification";
 	if (
-		source.delivery.status !== "stored" ||
+		source.delivery.status !== authorization.status ||
 		source.delivery.settledByEventId !== null ||
 		source.delivery.kind !== expectedKind ||
 		source.delivery.contractVersion !== event.contract_version ||
+		(authorization.nodeId !== undefined && source.delivery.nodeId !== authorization.nodeId) ||
+		(authorization.leaseId !== undefined &&
+			source.delivery.activeLeaseId !== authorization.leaseId) ||
+		(authorization.fencingToken !== undefined &&
+			source.delivery.lastFencingToken !== authorization.fencingToken) ||
 		(event.type === "verification_recorded" &&
 			source.delivery.verificationRound !== event.verification_round)
 	) {
@@ -781,7 +938,8 @@ function shouldSettleSourceDelivery(
 	event: MissionCoordinatorEvent,
 ): boolean {
 	if (event.type !== "verification_recorded") return event.type !== "participants_accepted";
-	if (event.evidence.outcome === "failed") return true;
+	if (next.status !== "verifying") return true;
+	if (event.evidence.outcome === "failed") return false;
 	const required = next.required_verification_commands[event.participant_agent_id] ?? [];
 	return required.every((commandId) =>
 		next.verification_records.some(
@@ -818,6 +976,7 @@ function deriveDeliveryTargets(
 	if (event.type === "turn_completed" && event.disposition.kind === "propose_contract") {
 		const pendingVersion = next.pending_revision?.version;
 		if (pendingVersion === undefined) {
+			if (next.status === "failed") return [];
 			throw new RelayError("internal", "Contract proposal did not produce a pending revision");
 		}
 		return next.mission_context.manifest.participants.map((participant) => ({
@@ -871,7 +1030,7 @@ function appendInputFromEvent(event: MissionCoordinatorEvent): MissionCoordinato
 	return missionCoordinatorAppendInputSchema.parse(input);
 }
 
-function eventFromRow(row: typeof missionEvents.$inferSelect): MissionCoordinatorEvent {
+export function eventFromRow(row: typeof missionEvents.$inferSelect): MissionCoordinatorEvent {
 	if (row.payload === null || typeof row.payload !== "object" || Array.isArray(row.payload)) {
 		throw new RelayError("internal", "Stored Mission event payload is not an object");
 	}
@@ -886,7 +1045,7 @@ function eventFromRow(row: typeof missionEvents.$inferSelect): MissionCoordinato
 	});
 }
 
-function deliveryFromRow(row: typeof nodeDeliveries.$inferSelect): Delivery {
+export function deliveryFromRow(row: typeof nodeDeliveries.$inferSelect): Delivery {
 	return deliverySchema.parse({
 		delivery_id: row.id,
 		node_id: row.nodeId,
@@ -908,27 +1067,156 @@ function deliveryFromRow(row: typeof nodeDeliveries.$inferSelect): Delivery {
 						fencing_token: row.lastFencingToken,
 						expires_at: row.leaseExpiresAt.toISOString(),
 					},
+		logical_settlement:
+			row.settledByEventId === null || row.settledAt === null
+				? null
+				: {
+						settled_by_event_id: row.settledByEventId,
+						settled_at: row.settledAt.toISOString(),
+					},
 		idempotency_key: row.idempotencyKey,
 		causal_parent_delivery_id: row.causalParentDeliveryId,
 		available_at: row.availableAt.toISOString(),
 		created_at: row.createdAt.toISOString(),
 		updated_at: row.updatedAt.toISOString(),
 		acknowledged_at: row.acknowledgedAt?.toISOString() ?? null,
+		cancelled_at: row.cancelledAt?.toISOString() ?? null,
+		cancellation_reason: row.cancellationReason,
 		dead_lettered_at: row.deadLetteredAt?.toISOString() ?? null,
 	});
 }
 
+export function missionDeliveryItemFromRows(
+	delivery: typeof nodeDeliveries.$inferSelect,
+	event: typeof missionEvents.$inferSelect,
+): MissionDeliveryItem {
+	return {
+		delivery: deliveryFromRow(delivery),
+		event: eventFromRow(event),
+		actor_agent_id: event.actorAgentId,
+		source_delivery_id: event.sourceDeliveryId,
+		causal_parent_event_id: event.causalParentEventId,
+	};
+}
+
 function missionStateFromRow(row: typeof missions.$inferSelect): MissionCoordinatorState {
 	const config = missionCoordinatorConfigSchema.parse(row.coordinatorConfig);
-	const eventState = row.state as MissionCoordinatorState;
+	const parsed = missionCoordinatorStateSchema.safeParse(row.state);
 	if (
-		eventState === null ||
-		typeof eventState !== "object" ||
-		eventState.mission_context?.manifest.mission_id !== config.mission_context.manifest.mission_id
+		!parsed.success ||
+		parsed.data.mission_context.manifest.mission_id !== config.mission_context.manifest.mission_id
 	) {
 		throw new RelayError("internal", "Stored Mission projection is invalid");
 	}
-	return structuredClone(eventState);
+	return structuredClone(parsed.data);
+}
+
+function assignmentFromRows(
+	mission: Mission,
+	participant: MissionParticipant,
+): NodeMissionAssignment {
+	const acceptance =
+		participant.acceptanceReceipt === null
+			? null
+			: acceptanceReceiptFromParticipant(
+					participant,
+					missionParticipantAcceptanceInputSchema.parse(participant.acceptanceReceipt),
+				);
+	return nodeMissionAssignmentSchema.parse({
+		mission_id: mission.id,
+		coordinator_config: mission.coordinatorConfig,
+		coordinator_state: missionStateFromRow(mission),
+		participant_agent_id: participant.agentId,
+		workspace_binding_id: participant.workspaceBindingId,
+		acceptance_status: participant.status,
+		acceptance_receipt: acceptance,
+	});
+}
+
+interface MissionParticipantTarget {
+	readonly agent_id: string;
+	readonly workspace_alias: string;
+	readonly repository_url: string;
+}
+
+async function resolveActiveParticipantBindings(
+	tx: LedgerTransaction,
+	participants: readonly MissionParticipantTarget[],
+): Promise<MissionParticipantBinding[]> {
+	const participantBindings: MissionParticipantBinding[] = [];
+	for (const participant of participants) {
+		const matches = await tx
+			.select({
+				workspaceBindingId: workspaceBindings.id,
+				nodeId: nodes.id,
+			})
+			.from(workspaceBindings)
+			.innerJoin(nodes, eq(nodes.id, workspaceBindings.nodeId))
+			.where(
+				and(
+					eq(nodes.agentId, participant.agent_id),
+					eq(nodes.status, "active"),
+					eq(workspaceBindings.status, "active"),
+					eq(workspaceBindings.alias, participant.workspace_alias),
+					eq(workspaceBindings.repositoryUrl, participant.repository_url),
+				),
+			);
+		if (matches.length !== 1) {
+			throw new RelayError(
+				"invalid_params",
+				"Mission participant must resolve to exactly one active Node workspace",
+				{
+					participant_agent_id: participant.agent_id,
+					workspace_alias: participant.workspace_alias,
+					eligible_nodes: matches.length,
+				},
+			);
+		}
+		participantBindings.push({
+			agentId: participant.agent_id,
+			nodeId: matches[0]!.nodeId,
+			workspaceBindingId: matches[0]!.workspaceBindingId,
+		});
+	}
+	return participantBindings;
+}
+
+async function lockParticipantNodes(
+	tx: LedgerTransaction,
+	participantBindings: readonly MissionParticipantBinding[],
+): Promise<void> {
+	const nodeIds = [...new Set(participantBindings.map((binding) => binding.nodeId))].sort();
+	for (const nodeId of nodeIds) await lockNodeMutation(tx, nodeId);
+}
+
+async function assertMissionCreationAuthoritiesActive(
+	tx: LedgerTransaction,
+	input: {
+		readonly creatorAgentId: string;
+		readonly participants: readonly MissionParticipantTarget[];
+		readonly participantBindings: readonly MissionParticipantBinding[];
+	},
+): Promise<void> {
+	const participantIds = input.participants.map((participant) => participant.agent_id);
+	const requiredAgentIds = [...new Set([...participantIds, input.creatorAgentId])];
+	const activeAgents = await tx
+		.select({ id: agents.id })
+		.from(agents)
+		.where(and(inArray(agents.id, requiredAgentIds), eq(agents.status, "active")));
+	if (activeAgents.length !== requiredAgentIds.length) {
+		throw new RelayError(
+			"invalid_params",
+			"Mission creator and every participant must be active agents",
+		);
+	}
+
+	const currentBindings = await resolveActiveParticipantBindings(tx, input.participants);
+	if (!isDeepStrictEqual(currentBindings, input.participantBindings)) {
+		throw new RelayError(
+			"invalid_params",
+			"Mission participant Node workspace binding changed during creation",
+		);
+	}
 }
 
 async function loadParticipantBindings(
