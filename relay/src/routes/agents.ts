@@ -213,24 +213,29 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 			await opts.db.update(agents).set({ role: input.role }).where(eq(agents.id, agent.id));
 		}
 
-		// Upsert agent_cards
-		await opts.db
-			.insert(agentCards)
-			.values({
-				agentId: agent.id,
-				card: { id: agent.handle, name: agent.handle },
-				skills: input.skills ?? [],
-				reposOwned: input.repos_owned ?? [],
-				notificationWebhookUrl: encryptedWebhook ?? null,
-			})
-			.onConflictDoUpdate({
-				target: agentCards.agentId,
-				set: {
-					...(input.skills !== undefined ? { skills: input.skills } : {}),
-					...(input.repos_owned !== undefined ? { reposOwned: input.repos_owned } : {}),
-					...(encryptedWebhook !== undefined ? { notificationWebhookUrl: encryptedWebhook } : {}),
-				},
-			});
+		const hasCardUpdate =
+			input.skills !== undefined ||
+			input.repos_owned !== undefined ||
+			encryptedWebhook !== undefined;
+		if (hasCardUpdate) {
+			await opts.db
+				.insert(agentCards)
+				.values({
+					agentId: agent.id,
+					card: { id: agent.handle, name: agent.handle },
+					skills: input.skills ?? [],
+					reposOwned: input.repos_owned ?? [],
+					notificationWebhookUrl: encryptedWebhook ?? null,
+				})
+				.onConflictDoUpdate({
+					target: agentCards.agentId,
+					set: {
+						...(input.skills !== undefined ? { skills: input.skills } : {}),
+						...(input.repos_owned !== undefined ? { reposOwned: input.repos_owned } : {}),
+						...(encryptedWebhook !== undefined ? { notificationWebhookUrl: encryptedWebhook } : {}),
+					},
+				});
+		}
 
 		return c.json({ ok: true });
 	});
