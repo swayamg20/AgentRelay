@@ -46,7 +46,22 @@ export async function startServer(opts: {
 		}
 		const trust = trustResult.ok ? trustResult.trust : FALLBACK_TRUST;
 
-		registerTools(server, { client, trust, senderHandle: cfg.agent_handle });
+		registerTools(server, {
+			client,
+			trust,
+			senderHandle: cfg.agent_handle,
+			loadTrust: async () => {
+				const current = await loadTrust();
+				if (!current.ok) {
+					logger.warn(
+						{ reason: current.reason, path: current.path },
+						"trust.yaml unreadable during tool call — using safe defaults",
+					);
+					return FALLBACK_TRUST;
+				}
+				return current.trust;
+			},
+		});
 		logger.info({ handle: cfg.agent_handle, relay: cfg.relay_url }, "agentrelay-mcp ready");
 	} else {
 		// No config → register a stub that explains how to fix it for every call.

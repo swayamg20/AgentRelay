@@ -29,6 +29,7 @@ export interface ToolDeps {
 	client: A2AClient;
 	trust: TrustFile;
 	senderHandle: string;
+	loadTrust?: () => Promise<TrustFile>;
 }
 
 const TOOL_DEFS = [
@@ -106,6 +107,7 @@ const TOOL_INPUT_SCHEMAS = {
 			thread_id: { type: "string" },
 			body: { type: "string" },
 			payload: { type: "object" },
+			artifacts: { type: "array" },
 		},
 		required: ["thread_id", "body"],
 	},
@@ -159,7 +161,11 @@ export async function dispatchTool(
 				return jsonOk(r);
 			}
 			case "accept_handoff": {
-				const r = await acceptHandoff({ client: deps.client, trust: deps.trust }, input);
+				const trust = deps.loadTrust ? await deps.loadTrust() : deps.trust;
+				const r = await acceptHandoff(
+					{ client: deps.client, trust, callerHandle: deps.senderHandle },
+					input,
+				);
 				return jsonOk(r);
 			}
 			case "send_message": {

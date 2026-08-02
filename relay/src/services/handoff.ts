@@ -1,7 +1,9 @@
+import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { type Handoff, agentBlocks, agents, handoffs, messages } from "../db/schema.js";
 import { RelayError } from "../errors.js";
+import { lockAgentBlockPair } from "./agent-block-lock.js";
 import { writeAudit } from "./audit.js";
 
 export type Intent = "inform" | "ask_question" | "propose_action";
@@ -25,6 +27,7 @@ export interface CreateHandoffInput {
 	summary: string;
 	intent: Intent;
 	artifacts: ArtifactInput[];
+	initialPayload: Record<string, unknown>;
 	proposedAction: ProposedActionInput | null;
 	metadata: Record<string, unknown>;
 	idempotencyKey: string | null;
@@ -36,6 +39,7 @@ export interface AppendMessageInput {
 	taskId: string;
 	body: string;
 	payload: Record<string, unknown>;
+	artifacts: ArtifactInput[];
 	idempotencyKey: string | null;
 	requestId: string;
 }
@@ -81,8 +85,17 @@ async function nextSequenceNo(
 	return (rows[0]?.max ?? 0) + 1;
 }
 
+async function lockIdempotencyKey(
+	// biome-ignore lint/suspicious/noExplicitAny: transactions share this SQL execution surface
+	tx: any,
+	key: string,
+): Promise<void> {
+	await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`idempotency:${key}`}::text))`);
+}
+
 async function isSenderBlocked(
-	db: Database,
+	// biome-ignore lint/suspicious/noExplicitAny: transactions and the root DB share this query surface
+	db: any,
 	senderId: string,
 	recipientId: string,
 ): Promise<boolean> {
@@ -99,48 +112,61 @@ export async function createHandoff(
 	input: CreateHandoffInput,
 ): Promise<{ handoff: Handoff; replayed: boolean }> {
 	validateIntentInvariant(input.intent, input.proposedAction);
-
-	// Resolve recipient handle → id.
-	const [recipient] = await db
-		.select({ id: agents.id, status: agents.status })
-		.from(agents)
-		.where(eq(agents.handle, input.recipientHandle));
-	if (!recipient || recipient.status !== "active") {
-		throw new RelayError(
-			"recipient_not_found",
-			`No active agent with handle '${input.recipientHandle}'`,
-		);
-	}
-	if (recipient.id === input.senderId) {
-		throw new RelayError("invalid_params", "Cannot send a handoff to yourself");
-	}
-	if (await isSenderBlocked(db, input.senderId, recipient.id)) {
-		throw new RelayError("teammate_blocked", "Sender is blocked by recipient");
-	}
-
-	// Idempotency replay (lld §10).
-	if (input.idempotencyKey) {
-		const [existing] = await db
-			.select()
-			.from(handoffs)
-			.where(eq(handoffs.idempotencyKey, input.idempotencyKey));
-		if (existing) {
-			const samePayload =
-				existing.senderId === input.senderId &&
-				existing.recipientId === recipient.id &&
-				existing.summary === input.summary &&
-				existing.intent === input.intent;
-			if (!samePayload) {
-				throw new RelayError(
-					"duplicate_idempotency_key",
-					"idempotency_key reused with a different payload",
-				);
-			}
-			return { handoff: existing, replayed: true };
-		}
-	}
-
 	return await db.transaction(async (tx) => {
+		if (input.idempotencyKey) {
+			await lockIdempotencyKey(tx, input.idempotencyKey);
+		}
+
+		// Resolve even disabled recipients so an already-committed request can
+		// replay after mutable account or block state changes.
+		const [recipient] = await tx
+			.select({ id: agents.id, status: agents.status })
+			.from(agents)
+			.where(eq(agents.handle, input.recipientHandle));
+
+		if (input.idempotencyKey) {
+			const [existing] = await tx
+				.select()
+				.from(handoffs)
+				.where(eq(handoffs.idempotencyKey, input.idempotencyKey));
+			if (existing) {
+				const [initialMessage] = await tx
+					.select({ payload: messages.payload })
+					.from(messages)
+					.where(and(eq(messages.handoffId, existing.id), eq(messages.sequenceNo, 1)));
+				const samePayload =
+					existing.senderId === input.senderId &&
+					existing.recipientId === recipient?.id &&
+					existing.summary === input.summary &&
+					existing.intent === input.intent &&
+					isDeepStrictEqual(existing.artifacts, input.artifacts) &&
+					isDeepStrictEqual(initialMessage?.payload, input.initialPayload) &&
+					isDeepStrictEqual(existing.proposedAction, input.proposedAction) &&
+					isDeepStrictEqual(existing.metadata, input.metadata);
+				if (!samePayload) {
+					throw new RelayError(
+						"duplicate_idempotency_key",
+						"idempotency_key reused with a different payload",
+					);
+				}
+				return { handoff: existing, replayed: true };
+			}
+		}
+
+		if (!recipient || recipient.status !== "active") {
+			throw new RelayError(
+				"recipient_not_found",
+				`No active agent with handle '${input.recipientHandle}'`,
+			);
+		}
+		if (recipient.id === input.senderId) {
+			throw new RelayError("invalid_params", "Cannot send a handoff to yourself");
+		}
+		await lockAgentBlockPair(tx, recipient.id, input.senderId);
+		if (await isSenderBlocked(tx, input.senderId, recipient.id)) {
+			throw new RelayError("teammate_blocked", "Sender is blocked by recipient");
+		}
+
 		const [handoff] = await tx
 			.insert(handoffs)
 			.values({
@@ -161,7 +187,8 @@ export async function createHandoff(
 			handoffId: handoff.id,
 			authorId: input.senderId,
 			body: input.summary,
-			payload: {},
+			payload: input.initialPayload,
+			artifacts: input.artifacts,
 			sequenceNo: 1,
 		});
 
@@ -183,13 +210,17 @@ export async function appendMessage(
 	input: AppendMessageInput,
 ): Promise<{ messageId: string; sequenceNo: number; createdAt: Date; replayed: boolean }> {
 	return await db.transaction(async (tx) => {
-		const [handoff] = await tx.select().from(handoffs).where(eq(handoffs.id, input.taskId));
+		if (input.idempotencyKey) {
+			await lockIdempotencyKey(tx, input.idempotencyKey);
+		}
+		const [handoff] = await tx
+			.select()
+			.from(handoffs)
+			.where(eq(handoffs.id, input.taskId))
+			.for("update");
 		if (!handoff) throw new RelayError("thread_not_found", "Thread not found");
 		if (handoff.senderId !== input.senderId && handoff.recipientId !== input.senderId) {
 			throw new RelayError("not_a_participant", "Caller is not a participant of this thread");
-		}
-		if (handoff.status === "completed" || handoff.status === "cancelled") {
-			throw new RelayError("thread_terminal", `Thread is ${handoff.status}`);
 		}
 
 		if (input.idempotencyKey) {
@@ -198,7 +229,13 @@ export async function appendMessage(
 				.from(messages)
 				.where(eq(messages.idempotencyKey, input.idempotencyKey));
 			if (existing) {
-				if (existing.handoffId !== handoff.id || existing.body !== input.body) {
+				if (
+					existing.handoffId !== handoff.id ||
+					existing.authorId !== input.senderId ||
+					existing.body !== input.body ||
+					!isDeepStrictEqual(existing.payload, input.payload) ||
+					!isDeepStrictEqual(existing.artifacts, input.artifacts)
+				) {
 					throw new RelayError(
 						"duplicate_idempotency_key",
 						"idempotency_key reused with a different payload",
@@ -213,6 +250,16 @@ export async function appendMessage(
 			}
 		}
 
+		if (handoff.status === "completed" || handoff.status === "cancelled") {
+			throw new RelayError("thread_terminal", `Thread is ${handoff.status}`);
+		}
+		const recipientId =
+			handoff.senderId === input.senderId ? handoff.recipientId : handoff.senderId;
+		await lockAgentBlockPair(tx, recipientId, input.senderId);
+		if (await isSenderBlocked(tx, input.senderId, recipientId)) {
+			throw new RelayError("teammate_blocked", "Sender is blocked by the other participant");
+		}
+
 		const seq = await nextSequenceNo(tx, handoff.id);
 		const [created] = await tx
 			.insert(messages)
@@ -221,6 +268,7 @@ export async function appendMessage(
 				authorId: input.senderId,
 				body: input.body,
 				payload: input.payload,
+				artifacts: input.artifacts,
 				sequenceNo: seq,
 				idempotencyKey: input.idempotencyKey,
 			})
@@ -251,6 +299,7 @@ export interface TransitionInput {
 	transition: "accept" | "complete" | "cancel";
 	sessionId?: string;
 	resultSummary?: string;
+	resultArtifacts?: ArtifactInput[];
 	requestId: string;
 }
 
@@ -286,6 +335,10 @@ export async function transitionHandoff(db: Database, input: TransitionInput): P
 						"invalid_transition",
 						`Cannot accept handoff in status '${handoff.status}'`,
 					);
+				}
+				await lockAgentBlockPair(tx, handoff.recipientId, handoff.senderId);
+				if (await isSenderBlocked(tx, handoff.senderId, handoff.recipientId)) {
+					throw new RelayError("teammate_blocked", "Sender is blocked by recipient");
 				}
 				const [updated] = await tx
 					.update(handoffs)
@@ -323,12 +376,17 @@ export async function transitionHandoff(db: Database, input: TransitionInput): P
 						`Cannot complete handoff in status '${handoff.status}'`,
 					);
 				}
+				await lockAgentBlockPair(tx, handoff.senderId, input.callerId);
+				if (await isSenderBlocked(tx, input.callerId, handoff.senderId)) {
+					throw new RelayError("teammate_blocked", "Recipient is blocked by sender");
+				}
 				const [updated] = await tx
 					.update(handoffs)
 					.set({
 						status: "completed",
 						completedAt: now,
 						completedSummary: input.resultSummary ?? null,
+						completionArtifacts: input.resultArtifacts ?? [],
 					})
 					.where(and(eq(handoffs.id, handoff.id), eq(handoffs.status, "accepted")))
 					.returning();
@@ -396,6 +454,7 @@ export async function getHandoff(
 		author_id: string;
 		body: string;
 		payload: unknown;
+		artifacts: unknown;
 		sequence_no: number;
 		created_at: Date;
 	}>;
@@ -411,6 +470,7 @@ export async function getHandoff(
 			author_id: messages.authorId,
 			body: messages.body,
 			payload: messages.payload,
+			artifacts: messages.artifacts,
 			sequence_no: messages.sequenceNo,
 			created_at: messages.createdAt,
 		})

@@ -51,6 +51,7 @@ truncate_all() {
 # errors.test.ts, server.test.ts, auth/keys.test.ts, notifications/crypto.test.ts)
 # are pure unit tests and run fine via the regular `test` script.
 INTEGRATION_FILES=(
+  src/db/migration-0004.test.ts
   src/db/schema.test.ts
   src/routes/admin.test.ts
   src/routes/agents.test.ts

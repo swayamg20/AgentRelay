@@ -1,8 +1,12 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
+import { agentCards } from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
 import { createLogger } from "../logger.js";
+import { decryptWebhook } from "../notifications/crypto.js";
+import { NotificationDispatcher } from "../notifications/dispatcher.js";
 import { createServer } from "../server.js";
 
 const conn = await tryConnect();
@@ -104,6 +108,94 @@ d("self-management endpoints", () => {
 		const body = (await me.json()) as { skills: string[]; repos_owned: string[] };
 		expect(body.skills).toEqual(["react"]);
 		expect(body.repos_owned).toEqual(["apps/web/"]);
+	});
+
+	it("encrypts notification webhooks before storage and allows explicit clearing", async () => {
+		const frank = await register("frank@acme");
+		const webhook = "https://hooks.slack.com/services/T000/B000/secret";
+		const updated = await app.request("/agents/me/card", {
+			method: "PUT",
+			headers: bearer(frank.key),
+			body: JSON.stringify({ notification_webhook_url: webhook }),
+		});
+		expect(updated.status).toBe(200);
+
+		const [stored] = await handle.db
+			.select({ url: agentCards.notificationWebhookUrl })
+			.from(agentCards)
+			.where(eq(agentCards.agentId, frank.id));
+		expect(stored?.url).toMatch(/^enc:v1:/);
+		expect(stored?.url).not.toContain("hooks.slack.com");
+		expect(decryptWebhook(stored?.url ?? "", TEST_ENV.RELAY_ENCRYPTION_KEY)).toBe(webhook);
+
+		const unrelatedUpdate = await app.request("/agents/me/card", {
+			method: "PUT",
+			headers: bearer(frank.key),
+			body: JSON.stringify({ role: "staff frontend" }),
+		});
+		expect(unrelatedUpdate.status).toBe(200);
+		const [afterUnrelatedUpdate] = await handle.db
+			.select({ url: agentCards.notificationWebhookUrl })
+			.from(agentCards)
+			.where(eq(agentCards.agentId, frank.id));
+		expect(afterUnrelatedUpdate?.url).toBe(stored?.url);
+		const postedUrls: string[] = [];
+		const dispatcher = new NotificationDispatcher({
+			db: handle.db,
+			encryptionKey: TEST_ENV.RELAY_ENCRYPTION_KEY,
+			publicUrl: TEST_ENV.RELAY_PUBLIC_URL,
+			logger: createLogger(loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv)),
+			slackPoster: async (url) => {
+				postedUrls.push(url);
+				return { status: 200, ok: true };
+			},
+		});
+		await expect(
+			dispatcher.dispatchOne({
+				kind: "notify.handoff.created",
+				recipientAgentId: frank.id,
+				threadId: "00000000-0000-4000-8000-000000000001",
+				senderHandle: "bob@acme",
+				senderName: "Bob",
+				summary: "hello",
+				publicUrl: TEST_ENV.RELAY_PUBLIC_URL,
+				enqueuedAt: Date.now(),
+			}),
+		).resolves.toMatchObject({ ok: true, attempts: 1 });
+		expect(postedUrls).toEqual([webhook]);
+
+		const cleared = await app.request("/agents/me/card", {
+			method: "PUT",
+			headers: bearer(frank.key),
+			body: JSON.stringify({ notification_webhook_url: null }),
+		});
+		expect(cleared.status).toBe(200);
+		const [afterClear] = await handle.db
+			.select({ url: agentCards.notificationWebhookUrl })
+			.from(agentCards)
+			.where(eq(agentCards.agentId, frank.id));
+		expect(afterClear?.url).toBeNull();
+	});
+
+	it("rejects notification webhook targets outside the exact Slack allowlist", async () => {
+		const frank = await register("frank@acme");
+		for (const webhook of [
+			"http://hooks.slack.com/services/T/B/secret",
+			"https://hooks.slack.com.evil.test/services/T/B/secret",
+			"https://127.0.0.1/internal/metadata",
+		]) {
+			const response = await app.request("/agents/me/card", {
+				method: "PUT",
+				headers: bearer(frank.key),
+				body: JSON.stringify({ notification_webhook_url: webhook }),
+			});
+			expect(response.status).toBe(400);
+		}
+		const [stored] = await handle.db
+			.select({ url: agentCards.notificationWebhookUrl })
+			.from(agentCards)
+			.where(eq(agentCards.agentId, frank.id));
+		expect(stored).toBeUndefined();
 	});
 
 	// ─── POST /agents/me/keys/rotate ──────────────────────────────────────────

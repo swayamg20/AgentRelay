@@ -195,10 +195,14 @@ d("db schema integration", () => {
 			.values({ senderId, recipientId: recipient.id, summary: "s" })
 			.returning();
 		if (!h) throw new Error("handoff insert failed");
+		expect(h.completionArtifacts).toEqual([]);
 
-		await handle.db
+		const [created] = await handle.db
 			.insert(messages)
-			.values({ handoffId: h.id, authorId: senderId, body: "first", sequenceNo: 1 });
+			.values({ handoffId: h.id, authorId: senderId, body: "first", sequenceNo: 1 })
+			.returning();
+		expect(created?.payload).toEqual({});
+		expect(created?.artifacts).toEqual([]);
 		await expect(
 			handle.db
 				.insert(messages)

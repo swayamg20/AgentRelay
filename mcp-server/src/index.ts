@@ -3,7 +3,8 @@
  * scripts and tests) import from here.
  */
 
-export { wrap, wrapAsMcpText } from "./provenance.js";
+export { markTeammateValue, wrap, wrapAsMcpText } from "./provenance.js";
+export type { ProvenanceMarked, TeammateProvenance } from "./provenance.js";
 export { loadConfig, resolveConfigPath, unavailableMessage } from "./config.js";
 export type { AgentRelayConfig, LoadConfigResult } from "./config.js";
 export { createA2AClient, A2AHttpError, A2ARpcError } from "./a2a-client.js";

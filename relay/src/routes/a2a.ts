@@ -5,6 +5,7 @@ import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { agentCards, agents, handoffs } from "../db/schema.js";
 import { ERROR_MAP, type ErrorSymbol, RelayError } from "../errors.js";
+import { mailboxArtifactSchema } from "../mailbox-schemas.js";
 import type { NotificationJob, NotificationKind } from "../notifications/types.js";
 import {
 	type HandoffStatus,
@@ -45,7 +46,8 @@ const messageSendParams = z.object({
 			)
 			.min(1),
 	}),
-	artifacts: z.array(z.record(z.unknown())).default([]),
+	artifacts: z.array(mailboxArtifactSchema).default([]),
+	payload: z.record(z.unknown()).optional(),
 	proposed_action: proposedActionSchema.nullable().optional(),
 	metadata: z.record(z.unknown()).default({}),
 });
@@ -65,12 +67,23 @@ const tasksListParams = z.object({
 		.default({ limit: 50, cursor: null }),
 });
 
-const tasksUpdateParams = z.object({
-	task_id: z.string().uuid(),
-	transition: z.enum(["accept", "complete", "cancel"]),
-	session_id: z.string().optional(),
-	result_summary: z.string().optional(),
-});
+const tasksUpdateParams = z
+	.object({
+		task_id: z.string().uuid(),
+		transition: z.enum(["accept", "complete", "cancel"]),
+		session_id: z.string().optional(),
+		result_summary: z.string().optional(),
+		artifacts: z.array(mailboxArtifactSchema).optional(),
+	})
+	.superRefine((value, ctx) => {
+		if (value.transition !== "complete" && value.artifacts !== undefined) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["artifacts"],
+				message: "artifacts are only valid for the complete transition",
+			});
+		}
+	});
 
 const tasksCancelParams = z.object({ task_id: z.string().uuid() });
 
@@ -264,21 +277,24 @@ async function handleMessageSend(params: unknown, ctx: DispatchCtx): Promise<unk
 	const p = parseParams(messageSendParams, params);
 	const text = p.message.parts.map((part) => part.text).join("\n");
 	const metadata = p.metadata ?? {};
-	const artifacts = (p.artifacts ?? []).map((a) => ({
-		type: typeof a.type === "string" ? (a.type as string) : "unknown",
-		...a,
-	}));
+	const artifacts = p.artifacts ?? [];
 	const idempotencyKey =
 		typeof metadata.client_idempotency_key === "string"
 			? (metadata.client_idempotency_key as string)
 			: null;
 
 	if (p.task_id) {
+		const appendPayload =
+			p.payload ??
+			Object.fromEntries(
+				Object.entries(metadata).filter(([key]) => key !== "client_idempotency_key"),
+			);
 		const result = await appendMessage(ctx.db, {
 			senderId: ctx.agent.id,
 			taskId: p.task_id,
 			body: text,
-			payload: { artifacts },
+			payload: appendPayload,
+			artifacts,
 			idempotencyKey,
 			requestId: ctx.requestId,
 		});
@@ -311,6 +327,7 @@ async function handleMessageSend(params: unknown, ctx: DispatchCtx): Promise<unk
 		summary: text,
 		intent: (p.intent ?? "inform") as Intent,
 		artifacts,
+		initialPayload: p.payload ?? {},
 		proposedAction: p.proposed_action ?? null,
 		metadata,
 		idempotencyKey,
@@ -367,9 +384,18 @@ async function handleTasksGet(params: unknown, ctx: DispatchCtx): Promise<unknow
 		taskId: p.task_id,
 		callerId: ctx.agent.id,
 	});
-	const senderMap = await loadSenders(ctx.db, [handoff.senderId, ...msgs.map((m) => m.author_id)]);
+	const senderMap = await loadSenders(ctx.db, [
+		handoff.senderId,
+		handoff.recipientId,
+		...msgs.map((m) => m.author_id),
+	]);
 	const sender = senderMap.get(handoff.senderId) ?? {
 		handle: handoff.senderId,
+		name: "",
+		role: "",
+	};
+	const recipient = senderMap.get(handoff.recipientId) ?? {
+		handle: handoff.recipientId,
 		name: "",
 		role: "",
 	};
@@ -380,6 +406,7 @@ async function handleTasksGet(params: unknown, ctx: DispatchCtx): Promise<unknow
 		from: senderMap.get(m.author_id)?.handle ?? m.author_id,
 		body: m.body,
 		payload: m.payload,
+		artifacts: m.artifacts,
 		created_at: m.created_at.toISOString(),
 	}));
 	return {
@@ -391,6 +418,7 @@ async function handleTasksGet(params: unknown, ctx: DispatchCtx): Promise<unknow
 		// rich (lld §4.3 — what MCP tools consume)
 		thread_id: handoff.id,
 		sender,
+		recipient,
 		messages: enrichedMessages,
 		// common
 		recipient_id: handoff.recipientId,
@@ -402,6 +430,7 @@ async function handleTasksGet(params: unknown, ctx: DispatchCtx): Promise<unknow
 		accepted_at: handoff.acceptedAt?.toISOString() ?? null,
 		completed_at: handoff.completedAt?.toISOString() ?? null,
 		completed_summary: handoff.completedSummary,
+		completion_artifacts: handoff.completionArtifacts,
 		cancelled_at: handoff.cancelledAt?.toISOString() ?? null,
 		created_at: handoff.createdAt.toISOString(),
 	};
@@ -454,6 +483,7 @@ async function handleTasksUpdate(params: unknown, ctx: DispatchCtx): Promise<unk
 		transition: p.transition,
 		sessionId: p.session_id,
 		resultSummary: p.result_summary,
+		resultArtifacts: p.artifacts ?? [],
 		requestId: ctx.requestId,
 	});
 	await fireTransitionNotification(ctx, handoff, p.transition);
@@ -466,6 +496,7 @@ async function handleTasksUpdate(params: unknown, ctx: DispatchCtx): Promise<unk
 		thread_id: handoff.id,
 		accepted_at: handoff.acceptedAt?.toISOString() ?? null,
 		completed_at: handoff.completedAt?.toISOString() ?? null,
+		completion_artifacts: handoff.completionArtifacts,
 		cancelled_at: handoff.cancelledAt?.toISOString() ?? null,
 		updated_at: handoff.updatedAt.toISOString(),
 	};

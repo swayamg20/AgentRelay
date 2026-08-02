@@ -17,8 +17,13 @@
 
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
-import { wrap } from "../provenance.js";
-import { artifactSchema, proposedActionSchema } from "./schemas.js";
+import {
+	markTeammateMetadata,
+	markTeammateValue,
+	stripRelayMetadata,
+	wrap,
+} from "../provenance.js";
+import { proposedActionSchema, storedArtifactSchema } from "./schemas.js";
 
 const senderSchema = z.object({
 	handle: z.string(),
@@ -33,6 +38,7 @@ const messageSchema = z.object({
 	from: z.string(),
 	body: z.string(),
 	payload: z.record(z.string(), z.unknown()).optional(),
+	artifacts: z.array(storedArtifactSchema).default([]),
 	created_at: z.string(),
 });
 
@@ -40,14 +46,18 @@ const tasksGetResponseSchema = z.object({
 	thread_id: z.string(),
 	intent: z.enum(["inform", "ask_question", "propose_action"]),
 	sender: senderSchema,
+	recipient: senderSchema.optional(),
 	summary: z.string(),
-	artifacts: z.array(artifactSchema).default([]),
+	artifacts: z.array(storedArtifactSchema).default([]),
+	metadata: z.record(z.string(), z.unknown()).default({}),
+	completion_artifacts: z.array(storedArtifactSchema).default([]),
 	proposed_action: proposedActionSchema.nullable().optional(),
 	messages: z.array(messageSchema).default([]),
 	// Lifecycle timestamps so the agent can reason about thread state
 	// without re-fetching.
 	accepted_at: z.string().nullable().optional(),
 	completed_at: z.string().nullable().optional(),
+	completed_summary: z.string().nullable().optional(),
 	cancelled_at: z.string().nullable().optional(),
 });
 
@@ -80,23 +90,56 @@ export async function viewThread(
 		? thread.summary
 		: wrap({ senderHandle, content: thread.summary });
 
-	const wrappedMessages = thread.messages.map((m) =>
-		m.from === input.caller_handle
-			? m
-			: { ...m, body: wrap({ senderHandle: m.from, content: m.body }) },
-	);
+	const wrappedMessages = thread.messages.map((m) => {
+		if (m.from === input.caller_handle) return m;
+		return {
+			...m,
+			body: wrap({ senderHandle: m.from, content: m.body }),
+			...(m.payload ? { payload: markTeammateValue(m.from, m.payload) } : {}),
+			artifacts: m.artifacts.map((artifact) => markTeammateValue(m.from, artifact)),
+		};
+	});
+	const wrappedArtifacts = callerIsSender
+		? thread.artifacts
+		: thread.artifacts.map((artifact) => markTeammateValue(senderHandle, artifact));
+	const wrappedMetadata = callerIsSender
+		? stripRelayMetadata(thread.metadata)
+		: markTeammateMetadata(senderHandle, thread.metadata);
+	const callerIsRecipient = thread.recipient?.handle === input.caller_handle;
+	const completionAuthor = thread.recipient?.handle ?? "unknown-recipient@agentrelay";
+	const wrappedCompletedSummary =
+		thread.completed_summary == null || callerIsRecipient
+			? thread.completed_summary
+			: wrap({ senderHandle: completionAuthor, content: thread.completed_summary });
+	const wrappedCompletionArtifacts = callerIsRecipient
+		? thread.completion_artifacts
+		: thread.completion_artifacts.map((artifact) => markTeammateValue(completionAuthor, artifact));
+	const wrappedSender = callerIsSender
+		? thread.sender
+		: markTeammateValue(senderHandle, thread.sender);
+	const wrappedRecipient = thread.recipient
+		? callerIsRecipient
+			? thread.recipient
+			: markTeammateValue(thread.recipient.handle, thread.recipient)
+		: undefined;
 
 	const wrappedProposed =
 		thread.proposed_action && !callerIsSender
-			? {
+			? markTeammateValue(senderHandle, {
 					...thread.proposed_action,
 					rationale: wrap({ senderHandle, content: thread.proposed_action.rationale }),
-				}
+				})
 			: (thread.proposed_action ?? undefined);
 
 	return {
 		...thread,
+		sender: wrappedSender,
+		...(wrappedRecipient ? { recipient: wrappedRecipient } : {}),
 		summary: wrappedSummary,
+		artifacts: wrappedArtifacts,
+		metadata: wrappedMetadata,
+		completed_summary: wrappedCompletedSummary,
+		completion_artifacts: wrappedCompletionArtifacts,
 		messages: wrappedMessages,
 		...(wrappedProposed ? { proposed_action: wrappedProposed } : {}),
 	};

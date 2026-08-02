@@ -93,6 +93,23 @@ describe("sendMessageInput", () => {
 	it("requires non-empty body", () => {
 		expect(() => sendMessageInput.parse({ thread_id: "t1", body: "" })).toThrow();
 	});
+
+	it("validates appended artifacts", () => {
+		expect(() =>
+			sendMessageInput.parse({
+				thread_id: "t1",
+				body: "reviewed",
+				artifacts: [{ type: "test_command", command: "pnpm test", cwd: "web" }],
+			}),
+		).not.toThrow();
+		expect(() =>
+			sendMessageInput.parse({
+				thread_id: "t1",
+				body: "reviewed",
+				artifacts: [{ type: "test_command" }],
+			}),
+		).toThrow();
+	});
 });
 
 describe("completeHandoffInput", () => {

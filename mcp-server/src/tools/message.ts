@@ -23,8 +23,9 @@ export async function sendMessage(
 			role: "user",
 			parts: [{ type: "text", text: input.body }],
 		},
+		payload: input.payload ?? {},
+		artifacts: input.artifacts ?? [],
 		metadata: {
-			...(input.payload ?? {}),
 			client_idempotency_key: idempotencyKey,
 		},
 	};
