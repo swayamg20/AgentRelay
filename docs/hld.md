@@ -1,6 +1,6 @@
 # High-level design: current mailbox implementation
 
-> **Scope:** Shipped code on `main` as of 2026-08-01.
+> **Scope:** Current repository implementation as of 2026-08-02.
 > This document describes the existing handoff plane, not the autonomous Node target.
 > See [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the next system.
 
@@ -40,9 +40,8 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - API-key rotation and block records.
 - Handoff and ordered-message persistence.
 - Participant authorization and lifecycle transitions.
-- Audit records for invite and handoff/message mutations.
-- An in-process Slack dispatcher whose webhook configuration path is not currently
-  end-to-end operational.
+- Audit records for invite, handoff/message, and block mutations.
+- An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
 
 The HTTP application is stateless with respect to durable domain rows, but the
 notification queue is process-local and not durable.
@@ -54,9 +53,8 @@ notification queue is process-local and not durable.
 - Loads the relay URL and developer credential from local config.
 - Validates tool inputs with Zod.
 - Translates seven tools to relay calls.
-- Wraps teammate-authored summaries and message bodies returned by
-  `accept_handoff` and `view_thread` with provenance markers. Inbox previews remain
-  raw.
+- Wraps or marks every teammate-authored mailbox field returned by its inbox and
+  thread tools, while preserving the shape of structured payloads and artifacts.
 - Loads local `trust.yaml` and returns a computed trust overlay.
 
 The MCP process is not persistent when its host is closed. It does not subscribe to
@@ -88,11 +86,12 @@ Agent 1---1 AgentCard
 - `ApiKey` stores a hash of a bearer credential and revocation metadata.
 - `Handoff` stores sender, recipient, intent, status, summary, artifacts, optional
   proposed action, and lifecycle timestamps.
-- `Message` is append-only and receives a per-handoff sequence number.
-- `AuditLog` records invite and handoff/message mutations, not every relay mutation
-  or any local host action.
-- `AgentBlock` prevents a blocked sender from creating a new handoff for the blocker.
-  Existing-thread appends are not checked today.
+- `Message` is append-only, stores payload and typed artifacts separately, and
+  receives a per-handoff sequence number.
+- `AuditLog` records invite, handoff/message, and block mutations, not every relay
+  mutation or any local host action.
+- `AgentBlock` prevents a blocked sender from creating a new handoff for the blocker
+  or appending another message to an existing thread whose receiver blocked them.
 - `Invite` records signed-token identity, expiry, and one-time redemption.
 
 Exact tables and current route names are summarized in [`lld.md`](lld.md). Source
@@ -137,30 +136,34 @@ pending --accept--> accepted --complete--> completed
    then stores the handoff, first message, and audit entry.
 4. After commit, the relay enqueues a best-effort notification.
 5. The recipient later calls `check_inbox`, then `accept_handoff`.
-6. The MCP server returns the thread with provenance-wrapped summary and messages,
-   plus the local trust decision.
+6. The MCP server returns the thread with provenance-wrapped text, marked structured
+   teammate data, and the local trust decision.
 
 ### Clarify and complete
 
-Either participant can call `send_message` while the handoff is active. The recipient
-eventually calls `complete_handoff`; the relay marks the handoff terminal and records
-the mutation. There is no background loop that ensures the other agent notices the
-new message.
+Either participant can call `send_message` while the handoff is active. Generic
+payload and typed artifacts remain distinct across the round trip. The recipient
+eventually calls `complete_handoff`; the relay persists the summary and completion
+artifacts, marks the handoff terminal, and records the mutation. There is no
+background loop that ensures the other agent notices the new message.
+
+An explicit handoff question and caller metadata also round-trip through both MCP read
+tools. Peer metadata is structurally marked, its known free-form question is wrapped,
+and the relay-owned idempotency key is not exposed to the model.
 
 ## Correctness boundaries
 
 ### Durable today
 
 - Handoffs, messages, lifecycle state, identities, invites, and blocks, plus audit
-  rows for invite and handoff/message mutations.
+  rows for invite, handoff/message, and block mutations.
 - Participant access checks and most state transitions.
 - Idempotent replay for handoff creation and message append.
 
 ### Best effort today
 
-- Slack dispatcher execution. The queue is in memory, has a finite capacity, and can
-  lose jobs across process restart. The supported card-update route does not yet
-  store the encrypted webhook form the dispatcher requires.
+- Slack dispatcher execution. Webhook URLs are encrypted before storage, but the
+  queue is in memory, has a finite capacity, and can lose jobs across process restart.
 - Human or active-session pickup. `check_inbox` is explicit polling.
 
 ### Not implemented today
@@ -176,15 +179,18 @@ new message.
 ## Security boundaries
 
 Implemented protections include hashed keys, participant authorization, block checks
-on new handoffs, scoped relay audit, provenance markers on some inbound fields,
-static host permission recommendations, and local trust parsing.
+on new handoffs, pending acceptance, active-thread appends, and content-bearing
+completion, a shared directed-pair lock between those checks and block-list writes,
+scoped relay audit, provenance wrappers or markers on
+teammate-originated mailbox fields, static host permission recommendations, and
+per-acceptance local trust loading.
 
 They are not yet one end-to-end enforcement system:
 
-- Inbox previews and artifact fields are not all provenance-wrapped.
-- Existing-thread appends do not re-check relay block state.
 - The computed trust overlay has no production consumer that changes host policy.
-- Local block configuration and relay block state can diverge.
+- Block writes local trust first and unblock writes the relay first. Successful
+  commands converge both stores, while partial failure leaves local denial active;
+  the network and filesystem writes are still not one atomic transaction.
 - Several relay mutations have no audit row, and relay audit cannot say which local
   commands or edits happened because of a handoff.
 - Outbound AgentRelay tools are not constrained by a Mission-specific data policy.
@@ -199,9 +205,12 @@ model. See the security section of [`architecture.md`](architecture.md).
 - If a notification fails, the persisted handoff remains available for polling.
 - If the MCP process exits, no work is processed until a host starts it again.
 - If a handoff creation or message append is retried with the same client idempotency
-  key and matching checked fields, the relay returns the recorded result. Complete
-  and cancel do not provide the same replay contract.
+  key and matching checked fields, the relay returns the recorded result even after a
+  later block or terminal transition. Same-key concurrent retries are serialized.
+  Complete and cancel do not provide the same replay contract.
 - Concurrent lifecycle transitions are serialized by row locks and state checks.
+- Block/unblock and content-bearing mutations use the same directed-pair transaction
+  lock, so no new content mutation can commit after a successful block response.
 - A terminal handoff rejects new messages and transitions.
 
 ## Relationship to the next design

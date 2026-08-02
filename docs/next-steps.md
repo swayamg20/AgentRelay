@@ -6,17 +6,27 @@ evaluation gates live in [`roadmap.md`](roadmap.md).
 
 ## 1. Close current mailbox integrity gaps
 
-- [ ] Provenance-wrap every teammate-originated artifact and proposed-action field.
-- [ ] Preserve `send_message.payload` through the relay instead of storing only
+- [x] Provenance-wrap every teammate-originated artifact and proposed-action field.
+- [x] Preserve `send_message.payload` through the relay instead of storing only
   artifacts.
-- [ ] Preserve completion artifacts through `complete_handoff`.
-- [ ] Make `agentrelay block` update both local trust state and relay enforcement, or
+- [x] Preserve completion artifacts through `complete_handoff`.
+- [x] Make `agentrelay block` update both local trust state and relay enforcement, or
   clearly separate the two operations.
-- [ ] Correct webhook storage/dispatch encryption behavior.
-- [ ] Add tests that demonstrate the effective security and payload boundary.
+- [x] Correct webhook storage/dispatch encryption behavior.
+- [x] Add tests that demonstrate the effective security and payload boundary.
 
 These fixes come first because autonomous execution must not amplify known contract
 or trust gaps.
+
+The mailbox now stores generic message payloads separately from typed message
+artifacts, preserves explicit questions and custom handoff metadata, and returns
+completion summary/artifacts without dropping their provenance,
+re-checks the receiving participant's block state on append and content-bearing
+transitions, and serializes those checks with block-list writes. It encrypts allowlisted
+Slack webhook URLs before storage and marks structured teammate data without flattening
+its type.
+CLI block is local-first and unblock is relay-first so partial failures leave local
+denial active; success converges both stores, but it is not a distributed transaction.
 
 ## 2. Write executable Mission schemas
 
