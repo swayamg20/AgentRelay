@@ -18,10 +18,12 @@ application on top of it.
 
 ## Current implementation
 
-The repository currently ships an authenticated asynchronous mailbox:
+The repository currently ships an authenticated asynchronous mailbox plus its first
+durable coordination foundations:
 
 - Postgres-backed developer identities, cards, API keys, invites, blocks, handoffs,
-  and messages, with audit records for invite and handoff/message mutations.
+  and messages, with audit records for invite, handoff/message, block, and
+  Node/workspace mutations.
 - A Hono relay with REST onboarding and an A2A-shaped JSON-RPC endpoint.
 - Seven stdio MCP tools for sending, receiving, replying to, inspecting, and
   completing handoff threads.
@@ -30,8 +32,12 @@ The repository currently ships an authenticated asynchronous mailbox:
 - An internal Postgres Mission-ledger kernel with relay-visible Node and workspace
   identity, immutable Mission context, current reducer projection, append-only
   coordinator events, independent participant acceptance receipts, transactionally
-  derived stored deliveries, and per-Node cursor replay. It is not exposed as a Node
-  API yet.
+  derived stored deliveries, and per-Node cursor replay. The Mission and delivery
+  service remains internal.
+- A public identity surface that lets an authenticated agent enroll and revoke its
+  Nodes, rotate separately scoped Node credentials, and lets an authenticated Node
+  register or revoke relay-visible logical workspace bindings. It never accepts a
+  local checkout path.
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -41,8 +47,8 @@ This is useful groundwork, but it is not yet an autonomous agent network. The cu
 system does not contain:
 
 - A persistent local daemon that consumes work and starts or resumes agent turns.
-- Node-scoped credentials, enrollment/polling routes, processing claims, leases,
-  acknowledgements, retry, or dead-letter operations.
+- Authenticated Node delivery polling, processing claims, leases, acknowledgements,
+  retry, or dead-letter operations.
 - Runtime-session or Mission-lease identity; persisted Node/workspace records are an
   internal routing foundation only.
 - Enforcement of the returned per-teammate trust overlay inside a runtime.
@@ -177,7 +183,8 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 
 ### Implemented safeguards
 
-- Hashed and revocable API keys.
+- Hashed and revocable agent and Node credentials with disjoint bearer formats and
+  route scopes.
 - Participant-only handoff access and role-specific state transitions.
 - Relay-side block checks when creating, accepting, appending to, or completing a
   content-bearing handoff. A shared directed-pair transaction lock makes a committed
@@ -194,8 +201,9 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 
 ### Gaps before autonomous execution
 
-- Registration, card updates, key rotation, and agent disable are not written to the
-  current relay audit log.
+- Agent registration, card updates, agent-key rotation, and agent disable are not
+  written to the current relay audit log. Node enrollment, credential rotation,
+  Node revocation, and workspace registration/revocation are audited.
 - `trust_overlay` is returned as JSON but is not dynamically applied to the host.
 - Relay audit does not record local commands, edits, tests, or policy decisions.
 - The notification queue is process-local and can drop work on overflow or restart.
@@ -221,8 +229,8 @@ push, merge, publish, deploy, arbitrary network effects, and production credenti
 - TLS protects data in transit; Postgres stores relay-visible content.
 - Relay-blind end-to-end encryption is not decided. It would change search,
   notifications, policy inspection, and recovery.
-- Local filesystem paths do not travel in peer messages. Nodes resolve logical
-  workspace aliases locally.
+- Local filesystem paths do not enter relay-visible workspace registrations or peer
+  messages. Nodes resolve logical workspace aliases locally.
 - Agents exchange bounded text, structured contracts, hashes, patches, immutable git
   references, and approved links, not assumed shared filesystem state.
 - Store decisions and observable execution evidence, not hidden chain-of-thought.

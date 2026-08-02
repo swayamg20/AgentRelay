@@ -85,7 +85,9 @@ fly secrets set \
   -a <your-app-name>
 ```
 
-Save these values somewhere safe (1Password, age-encrypted file). `RELAY_PEPPER` and `RELAY_ENCRYPTION_KEY` are sticky - rotating them invalidates every issued API key and every encrypted Slack webhook respectively.
+Save these values somewhere safe (1Password, age-encrypted file). `RELAY_PEPPER` and
+`RELAY_ENCRYPTION_KEY` are sticky - rotating them invalidates every issued agent or
+Node credential and every encrypted Slack webhook respectively.
 
 ### 5. Deploy
 

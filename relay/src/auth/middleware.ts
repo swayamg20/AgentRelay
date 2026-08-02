@@ -1,10 +1,10 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import type { Database } from "../db/client.js";
-import { agents, apiKeys } from "../db/schema.js";
+import { agents, apiKeys, nodeCredentials, nodes } from "../db/schema.js";
 import { RelayError } from "../errors.js";
 import type { AppEnv } from "../types.js";
-import { hashKey, isWellFormedKey } from "./keys.js";
+import { hashKey, isWellFormedKey, isWellFormedNodeKey } from "./keys.js";
 
 export interface AuthenticatedAgent {
 	id: string;
@@ -15,7 +15,16 @@ export interface AuthenticatedAgent {
 	apiKeyId: string;
 }
 
+export interface AuthenticatedNode {
+	id: string;
+	agentId: string;
+	name: string;
+	status: string;
+	credentialId: string;
+}
+
 const lastUsedDebounce = new Map<string, number>();
+const nodeLastUsedDebounce = new Map<string, number>();
 const LAST_USED_DEBOUNCE_MS = 60_000;
 
 function shouldUpdateLastUsed(keyId: string): boolean {
@@ -28,6 +37,18 @@ function shouldUpdateLastUsed(keyId: string): boolean {
 
 export function clearLastUsedDebounce(): void {
 	lastUsedDebounce.clear();
+}
+
+function shouldUpdateNodeLastUsed(credentialId: string): boolean {
+	const now = Date.now();
+	const prev = nodeLastUsedDebounce.get(credentialId);
+	if (prev && now - prev < LAST_USED_DEBOUNCE_MS) return false;
+	nodeLastUsedDebounce.set(credentialId, now);
+	return true;
+}
+
+export function clearNodeLastUsedDebounce(): void {
+	nodeLastUsedDebounce.clear();
 }
 
 export interface BearerAuthOptions {
@@ -90,6 +111,70 @@ export function bearerAuth(opts: BearerAuthOptions): MiddlewareHandler<AppEnv> {
 				.catch((err: unknown) => {
 					c.get("logger")?.warn({ err, keyId: row.keyId }, "last_used_at update failed");
 				});
+		}
+
+		await next();
+	};
+}
+
+/** Resolves a Node-scoped bearer credential without accepting agent API keys. */
+export function nodeBearerAuth(opts: BearerAuthOptions): MiddlewareHandler<AppEnv> {
+	const { db, pepper } = opts;
+	return async (c, next) => {
+		const raw = extractBearer(c.req.header("authorization"));
+		if (!raw || !isWellFormedNodeKey(raw)) {
+			throw new RelayError("unauthenticated", "Missing or malformed Node bearer token");
+		}
+
+		const hash = hashKey(raw, pepper);
+		const rows = await db
+			.select({
+				credentialId: nodeCredentials.id,
+				nodeId: nodes.id,
+				agentId: nodes.agentId,
+				name: nodes.name,
+				status: nodes.status,
+			})
+			.from(nodeCredentials)
+			.innerJoin(nodes, eq(nodes.id, nodeCredentials.nodeId))
+			.innerJoin(agents, eq(agents.id, nodes.agentId))
+			.where(
+				and(
+					eq(nodeCredentials.keyHash, hash),
+					isNull(nodeCredentials.revokedAt),
+					eq(nodes.status, "active"),
+					eq(agents.status, "active"),
+				),
+			)
+			.limit(1);
+		const row = rows[0];
+		if (!row) throw new RelayError("unauthenticated", "Invalid or revoked Node credential");
+
+		const node: AuthenticatedNode = {
+			id: row.nodeId,
+			agentId: row.agentId,
+			name: row.name,
+			status: row.status,
+			credentialId: row.credentialId,
+		};
+		c.set("node", node);
+
+		if (shouldUpdateNodeLastUsed(row.credentialId)) {
+			Promise.all([
+				db
+					.update(nodeCredentials)
+					.set({ lastUsedAt: sql`now()` })
+					.where(and(eq(nodeCredentials.id, row.credentialId), isNull(nodeCredentials.revokedAt))),
+				db
+					.update(nodes)
+					.set({ lastSeenAt: sql`now()`, updatedAt: sql`now()` })
+					.where(and(eq(nodes.id, row.nodeId), eq(nodes.status, "active"))),
+			]).catch((err: unknown) => {
+				c.get("logger")?.warn(
+					{ err, nodeId: row.nodeId, credentialId: row.credentialId },
+					"Node presence update failed",
+				);
+			});
 		}
 
 		await next();

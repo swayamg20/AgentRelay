@@ -18,6 +18,8 @@ export type ErrorSymbol =
 	| "duplicate_idempotency_key"
 	| "invalid_intent_payload"
 	| "teammate_blocked"
+	| "node_not_found"
+	| "workspace_not_found"
 	| "internal";
 
 interface ErrorMapping {
@@ -43,6 +45,8 @@ export const ERROR_MAP: Record<ErrorSymbol, ErrorMapping> = {
 	duplicate_idempotency_key: { rpc: -32011, http: 409 },
 	invalid_intent_payload: { rpc: -32012, http: 400 },
 	teammate_blocked: { rpc: -32013, http: 403 },
+	node_not_found: { rpc: -32014, http: 404 },
+	workspace_not_found: { rpc: -32015, http: 404 },
 	internal: { rpc: -32099, http: 500 },
 };
 

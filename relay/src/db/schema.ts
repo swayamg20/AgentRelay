@@ -19,7 +19,7 @@ import {
 // citext for case-insensitive email uniqueness (extension enabled in 0001 migration).
 const citext = customType<{ data: string }>({ dataType: () => "citext" });
 
-// bytea for hashed API keys + per-row salts.
+// bytea for hashed credentials + per-row salts.
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 // text[] arrays for repos_owned / skills (GIN-indexed below).
@@ -264,6 +264,30 @@ export const nodes = pgTable(
 			"nodes_revoked_at_chk",
 			sql`(${t.status} = 'revoked') = (${t.revokedAt} IS NOT NULL)`,
 		),
+	}),
+);
+
+export const nodeCredentials = pgTable(
+	"node_credentials",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		nodeId: uuid("node_id")
+			.notNull()
+			.references(() => nodes.id, { onDelete: "restrict" }),
+		keyHash: bytea("key_hash").notNull(),
+		salt: bytea("salt").notNull(),
+		label: text("label"),
+		lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		createdAt,
+	},
+	(t) => ({
+		activeNodeIdx: uniqueIndex("idx_node_credentials_active_node")
+			.on(t.nodeId)
+			.where(sql`${t.revokedAt} IS NULL`),
+		activeHashIdx: uniqueIndex("idx_node_credentials_active_hash")
+			.on(t.keyHash)
+			.where(sql`${t.revokedAt} IS NULL`),
 	}),
 );
 
@@ -540,6 +564,7 @@ export type Handoff = typeof handoffs.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
 export type Node = typeof nodes.$inferSelect;
+export type NodeCredential = typeof nodeCredentials.$inferSelect;
 export type WorkspaceBinding = typeof workspaceBindings.$inferSelect;
 export type Mission = typeof missions.$inferSelect;
 export type MissionParticipant = typeof missionParticipants.$inferSelect;

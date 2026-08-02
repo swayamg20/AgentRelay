@@ -2,8 +2,8 @@
 
 > **Scope:** Current repository implementation as of 2026-08-02.
 > This is a compact source-oriented reference, not a promise that planned fields or
-> routes exist. Future Node and Mission contracts belong to
-> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) until implemented.
+> routes exist. Unimplemented Node runtime and Mission HTTP behavior remains in
+> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) until it lands.
 
 ## Repository layout
 
@@ -19,10 +19,11 @@
 └── package.json         pnpm workspace scripts
 ```
 
-There is currently no `node/` daemon, persistent event consumer, Node HTTP surface,
-or real runtime adapter. The executable Mission contracts, deterministic coordinator,
-fake adapter, and backend-Android proof fixture live in `protocol/`; the relay now
-contains an internal durable-ledger service that no route calls yet.
+There is currently no `node/` daemon, persistent event consumer, authenticated
+delivery route, or real runtime adapter. The relay does expose Node enrollment,
+credential, identity, and logical workspace routes. The executable Mission contracts,
+deterministic coordinator, fake adapter, and backend-Android proof fixture live in
+`protocol/`; the durable Mission-ledger service itself remains internal.
 
 ## Protocol workspace
 
@@ -63,19 +64,21 @@ the committed Drizzle migrations.
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
 | `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
-| `audit_log` | Invite, handoff/message, block, and internal Mission create/participant-accept/event mutation records: actor, action, resource, metadata, request ID, timestamp. |
+| `audit_log` | Invite, handoff/message, block, Node/workspace, and internal Mission create/participant-accept/event mutation records: actor, action, resource, metadata, request ID, timestamp. |
 | `agent_blocks` | Blocker/blocked pairs enforced for new handoffs and each existing-thread append. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
-| `nodes` | Internal device identity owned by one agent, with relay-visible capabilities, presence timestamp, and revocation state. No credential is issued yet. |
+| `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
+| `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
 | `missions` | Immutable coordinator config, current reducer projection/status/contract version, sequence, creator, and expiry. |
 | `mission_participants` | The exact agent, Node, and workspace binding selected for each two-party Mission, plus that participant's idempotent contract and opaque local-policy-grant acceptance receipt. |
 | `mission_events` | Append-only type-specific coordinator payload with relay-generated event ID, Mission sequence/time, service-supplied actor, source delivery, idempotency key, and causal parent. |
 | `node_deliveries` | Per-Node opaque cursor pointing to one Mission event, with contract/verification generation, logical settlement, and future lease/fencing state. |
 
-Public mailbox authentication still represents a logical developer/agent. Internal
-Node and workspace identities now exist for deterministic Mission routing, but there
-is no Node credential, local checkout identity, runtime session, or Mission lease.
+Public mailbox authentication still represents a logical developer/agent. Until a
+separate owner/organization identity exists, that agent credential is the enrollment
+authority for its own Nodes. Node credentials now exist for the identity/workspace
+surface, but there is no local checkout identity, runtime session, or Mission lease.
 
 ## Authentication
 
@@ -86,8 +89,18 @@ is no Node credential, local checkout identity, runtime session, or Mission leas
   in a mode-0600 file.
 - Self-rotation revokes all active keys for the caller, writes a replacement, and
   updates local config after the response.
-
-Node-scoped credentials do not exist yet.
+- Node routes accept only `ar_node_live_*` or `ar_node_test_*` credentials; agent
+  credentials cannot authenticate them, and Node credentials cannot authenticate
+  agent or A2A routes.
+- Enrollment and credential rotation return a raw Node token once. The relay stores
+  only its peppered hash and salt. The owner-only Node summary exposes the current
+  credential ID, never its token or hash. Rotation must compare-and-swap that exact
+  ID; stale or concurrent requests return `state_changed` without mutation. A lost
+  response is recovered by listing the current ID and rotating that generation once
+  more.
+- Node authentication requires an active credential, active Node, and active owning
+  agent. Successful requests update credential last-used and Node presence on a
+  best-effort, debounced path.
 
 ## Internal Mission ledger
 
@@ -127,8 +140,9 @@ Node-scoped credentials do not exist yet.
   rolled-back transactions are valid. The future claim operation must also scan
   recoverable expired leases independently of this new-work cursor.
 
-This internal surface is intentionally not mounted under `/agents`, `/a2a`, or a
-temporary agent-authenticated Node route.
+The Mission/event/delivery service remains intentionally unmounted. The public Node
+routes expose only identity and logical workspace registration; they cannot list,
+claim, execute, or acknowledge a Mission delivery.
 
 ## HTTP surface
 
@@ -167,9 +181,27 @@ There is no `/metrics`, `/inbox/:id`, or
 | `GET` | `/agents/me/block` | List caller's server-side blocks. |
 | `POST` | `/agents/me/block` | Add a server-side block by handle. |
 | `DELETE` | `/agents/me/block/:handle` | Remove a server-side block. |
+| `POST` | `/agents/me/nodes` | Enroll a Node and return its raw Node credential once. Duplicate active names return `state_changed`; they never replay a secret. |
+| `GET` | `/agents/me/nodes` | List owner-only summaries for every owned Node, including revoked history and the current active credential ID or `null`. No token or hash is exposed. |
+| `POST` | `/agents/me/nodes/:nodeId/credentials/rotate` | Require `{expected_credential_id}`, atomically replace only that active generation, and return the new raw credential once. A stale generation returns `state_changed`. |
+| `DELETE` | `/agents/me/nodes/:nodeId` | Idempotently revoke an owned Node, its active credentials, and active workspace bindings while retaining Mission history. |
 
 `/agents` is authenticated. The stored card JSON is not currently exposed through an
 A2A well-known discovery URL.
+
+### Authenticated Node routes
+
+| Method | Path | Behavior |
+|---|---|---|
+| `GET` | `/node/v1/me` | Return the active Node's relay-visible descriptor. |
+| `POST` | `/node/v1/workspaces` | Register one logical alias, repository URL, and allowed base-ref set. An exact active replay returns the existing binding; changed input conflicts, and a revoked alias stays retired. |
+| `GET` | `/node/v1/workspaces` | List the Node's active and revoked relay-visible bindings. |
+| `DELETE` | `/node/v1/workspaces/:alias` | Idempotently revoke an existing binding; a never-registered alias returns `workspace_not_found`. |
+
+Workspace registration accepts no checkout path, command, credential-bearing URL,
+or local policy. Node-authenticated workspace mutations re-check the credential under
+the same Node transaction lock used by rotation and revocation, so a completed
+revocation fences later mutations.
 
 ## JSON-RPC surface
 
@@ -347,8 +379,9 @@ Important limits:
 ## Audit and revocation
 
 Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel,
-message append, block/unblock, and internal Mission create/participant accept/event
-append. Registration, card updates, key rotation, and agent disable still write no
+message append, block/unblock, Node enroll/credential-rotate/revoke, workspace
+register/revoke, and internal Mission create/participant accept/event append. Agent
+registration, card updates, agent-key rotation, and agent disable still write no
 audit row. Audit also does not record commands, tool
 arguments/results, file edits, tests, or permission decisions performed by a local
 coding-agent host.
@@ -415,7 +448,8 @@ command.
 ## Boundary with the next design
 
 Do not extend `accepted_by_session` or the four-state handoff table into a distributed
-runtime scheduler. Nodes, workspace bindings, Missions, events, and stored deliveries
-now have a separate internal ledger. The next slice adds Node credentials and a
-fenced claim/renew/complete API with immutable attempt evidence and durable operation
-receipts, while keeping the mailbox API as a compatibility and inspection surface.
+runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
+stored deliveries have a separate model. The next slice exposes authenticated
+delivery polling plus fenced claim/renew/complete operations with immutable attempt
+evidence and durable operation receipts, while keeping the mailbox API as a
+compatibility and inspection surface.

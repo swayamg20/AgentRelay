@@ -18,9 +18,10 @@ repositories is the first proof, not the final product boundary.
 
 ## Honest status
 
-The repository currently ships an **authenticated asynchronous mailbox plus an
-internal durable Mission-ledger kernel**, not the full autonomous runtime described
-above. The ledger has no public Node API or runtime activation path yet.
+The repository currently ships an **authenticated asynchronous mailbox, a durable
+Mission-ledger kernel, and the first Node identity API**, not the full autonomous
+runtime described above. Nodes can be enrolled and bind logical workspaces, but no
+public route can claim Mission work or start a coding-agent runtime yet.
 
 ### Implemented today
 
@@ -38,6 +39,11 @@ above. The ledger has no public Node API or runtime activation path yet.
   deliveries. The internal ledger service records one exact acceptance receipt per
   participant, derives activation only after both receipts exist, binds every result
   to its source work, and supports provenance-preserving cursor replay.
+- Separately revocable Node credentials plus authenticated enrollment, credential
+  rotation, Node revocation, and logical workspace registration routes. Agent and
+  Node credentials are different key types; rotation is generation-fenced, and
+  revoking a Node also revokes its active credential and workspace bindings without
+  deleting Mission history.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
@@ -45,7 +51,7 @@ above. The ledger has no public Node API or runtime activation path yet.
 ### Next architecture, not shipped yet
 
 - A persistent AgentRelay Node on every participating machine.
-- Node-scoped credentials plus public enrollment and cursor-polling routes.
+- Authenticated Mission and cursor-polling routes for enrolled Nodes.
 - Fenced delivery claims, lease renewal/expiry, acknowledgements, retries,
   dead-letter handling, and durable transport-operation receipts. The current kernel
   can settle logical work, but it does not pretend that unclaimed work was executed.
@@ -200,7 +206,7 @@ Cross-agent messages and artifacts are untrusted input. Current safeguards inclu
 bearer authentication, participant authorization, block checks on new and existing
 handoff messages and content-bearing transitions, a shared transaction lock that makes
 a successful block response a commit fence for those mutations, audit for
-invite/handoff/message/block mutations, provenance
+invite/handoff/message/block and Node/workspace mutations, provenance
 wrappers or markers on every teammate-originated mailbox field returned by MCP,
 recommended host settings, and local trust parsing.
 

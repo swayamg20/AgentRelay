@@ -1,8 +1,8 @@
 # High-level design: current relay implementation
 
 > **Scope:** Current repository implementation as of 2026-08-02.
-> This document describes the existing handoff plane and internal durable-ledger
-> kernel, not the autonomous Node target.
+> This document describes the existing handoff plane, durable-ledger kernel, and
+> Node identity/workspace API, not the autonomous Node runtime target.
 > See [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the next system.
 
 ## Purpose
@@ -13,8 +13,8 @@ the conversation and enforces participant access. A local stdio MCP server expos
 the mailbox as tools to Claude Code or Codex.
 
 Humans or active agent sessions still initiate inbox checks and every subsequent
-tool call. There is no daemon, Node credential/API, durable processing claim, or
-runtime activation loop.
+tool call. The relay can enroll a Node and issue its separate credential, but there
+is no daemon, authenticated delivery claim, or runtime activation loop.
 
 ## Components
 
@@ -42,11 +42,15 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - API-key rotation and block records.
 - Handoff and ordered-message persistence.
 - Participant authorization and lifecycle transitions.
-- Audit records for invite, handoff/message, and block mutations.
+- Audit records for invite, handoff/message, block, Node/workspace, and internal
+  Mission mutations.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
 - An internal Mission-ledger service that persists Mission projections and append-only
   events, derives stored per-Node deliveries in the same transaction, and reads them
   through an opaque cursor. No HTTP route invokes this service yet.
+- Agent-authenticated Node enrollment, credential rotation, and revocation routes,
+  plus Node-authenticated logical workspace registration and revocation. These
+  operations are audited in the same transaction as their state changes.
 
 The HTTP application is stateless with respect to durable domain rows, but the
 notification queue is process-local and not durable.
@@ -84,7 +88,8 @@ Agent 1---1 AgentCard
              |
              +----- mutation AuditLog rows
 
-Agent 1---N Node ---N WorkspaceBinding
+Agent 1---N Node ---N NodeCredential
+                 \---N WorkspaceBinding
                  \---N MissionParticipant ---1 Mission ---N MissionEvent
                                                     |
                                                     +---N NodeDelivery
@@ -98,13 +103,15 @@ Agent 1---N Node ---N WorkspaceBinding
   proposed action, and lifecycle timestamps.
 - `Message` is append-only, stores payload and typed artifacts separately, and
   receives a per-handoff sequence number.
-- `AuditLog` records invite, handoff/message, and block mutations, not every relay
-  mutation or any local host action.
+- `AuditLog` records invite, handoff/message, block, Node/workspace, and internal
+  Mission mutations, not every relay mutation or any local host action.
 - `AgentBlock` prevents a blocked sender from creating a new handoff for the blocker
   or appending another message to an existing thread whose receiver blocked them.
 - `Invite` records signed-token identity, expiry, and one-time redemption.
 - `Node` and `WorkspaceBinding` are relay-visible routing identities without a local
   checkout path or executable command authority.
+- `NodeCredential` stores only the hashed, separately revocable credential used by
+  one active Node. Its raw token is returned only when enrolled or rotated.
 - `Mission` stores the immutable coordinator config plus a reducer projection;
   `MissionEvent` is append-only and ordered within that Mission.
 - `NodeDelivery` points one Node cursor to work derived from a committed Mission
@@ -174,7 +181,8 @@ and the relay-owned idempotency key is not exposed to the model.
 ### Durable today
 
 - Handoffs, messages, lifecycle state, identities, invites, and blocks, plus audit
-  rows for invite, handoff/message, and block mutations.
+  rows for invite, handoff/message, block, Node/workspace, and internal Mission
+  mutations.
 - Participant access checks and most state transitions.
 - Idempotent replay for handoff creation and message append.
 - Through the internal ledger service: Mission creation, ordered event append,
@@ -182,6 +190,8 @@ and the relay-owned idempotency key is not exposed to the model.
   source-delivery and causal links, derived stored deliveries, logical settlement,
   audit, stable event/delivery-ID replay, and joined cursor replay. Each mutation and
   its consequences share one Postgres transaction.
+- Node enrollment, credential rotation/revocation, logical workspace registration,
+  exact workspace replay, and atomic Node-to-credential/workspace revocation.
 
 ### Best effort today
 
@@ -191,8 +201,7 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ### Not implemented today
 
-- Node enrollment/credentials or an authenticated polling route over the internal
-  Node/workspace and delivery records.
+- An authenticated polling route over the internal Mission and delivery records.
 - Delivery claim, transport acknowledgement, retry lease, dead-letter transition, or
   general transport-operation receipt.
 - Runtime-session start/resume/cancel.
@@ -202,12 +211,12 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ## Security boundaries
 
-Implemented protections include hashed keys, participant authorization, block checks
-on new handoffs, pending acceptance, active-thread appends, and content-bearing
-completion, a shared directed-pair lock between those checks and block-list writes,
-scoped relay audit, provenance wrappers or markers on
-teammate-originated mailbox fields, static host permission recommendations, and
-per-acceptance local trust loading.
+Implemented protections include type-separated hashed agent and Node credentials,
+participant authorization, block checks on new handoffs, pending acceptance,
+active-thread appends, and content-bearing completion, a shared directed-pair lock
+between those checks and block-list writes, scoped relay audit, provenance wrappers
+or markers on teammate-originated mailbox fields, static host permission
+recommendations, and per-acceptance local trust loading.
 
 They are not yet one end-to-end enforcement system:
 
@@ -242,11 +251,17 @@ model. See the security section of [`architecture.md`](architecture.md).
   acceptance is its own exact receipt; the second receipt atomically derives the
   aggregate activation event and first turn. A failed delivery insert rolls back that
   entire mutation. Cursor reads do not imply claim, execution, or acknowledgement.
+- Node credential rotation is a compare-and-swap against the owner-visible active
+  credential ID and serializes with workspace mutations. Concurrent rotations from
+  one credential generation cannot both succeed. Node revocation atomically disables
+  its credential and active workspace bindings; immutable Mission rows remain for
+  audit and recovery analysis.
 
 ## Relationship to the next design
 
 The current APIs remain a compatibility and inspection surface while Missions are
-proved. The internal kernel now stores Nodes, workspace bindings, Missions, events,
-and unclaimed deliveries without stretching the handoff row into a scheduler. The
-next checkpoint adds separately revocable Node credentials and fenced lease/claim/
-completion APIs before any local runtime is allowed to consume that work.
+proved. The relay now enrolls separately authenticated Nodes and their logical
+workspace bindings, while the internal kernel stores Missions, events, and unclaimed
+deliveries without stretching the handoff row into a scheduler. The next checkpoint
+adds authenticated polling and fenced lease/claim/completion APIs before any local
+runtime is allowed to consume that work.

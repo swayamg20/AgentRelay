@@ -50,7 +50,8 @@ Whichever platform you pick, the relay needs:
 
 ## Migration / rotation notes
 
-- `RELAY_PEPPER` is **sticky** — rotating it invalidates every existing API key (every teammate has to re-register). Pick a stable value at launch and keep it.
+- `RELAY_PEPPER` is **sticky** — rotating it invalidates every existing agent and
+  Node bearer credential. Pick a stable value at launch and keep it.
 - `RELAY_ENCRYPTION_KEY` is sticky for any encrypted-at-rest fields (Slack webhook URLs today). Rotate only with a re-encrypt step.
 - `RELAY_ADMIN_TOKEN` is rotatable freely; existing teammates aren't affected.
 - `RELAY_INVITE_SECRET` is rotatable but invalidates any minted-but-unredeemed invite URLs.

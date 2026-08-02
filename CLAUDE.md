@@ -8,10 +8,11 @@ tool-neutral repository instruction file.
 AgentRelay is intended to let independently owned agents discover, communicate, and
 collaborate across devices, repositories, and runtimes.
 
-The code on `main` currently implements a durable manual handoff mailbox through a
-relay and stdio MCP server. The next target adds a long-running local AgentRelay Node,
-durable delivery processing, runtime adapters, and bounded Missions. Do not present
-planned Node behavior as shipped.
+The repository currently implements a durable manual handoff mailbox, the internal
+Mission ledger, and relay APIs for Node enrollment, Node credential revocation, and
+logical workspace registration. The next target adds authenticated delivery claims,
+a long-running local AgentRelay Node, and real runtime activation. Do not present
+planned execution behavior as shipped.
 
 Read the relevant source before making a non-trivial change:
 

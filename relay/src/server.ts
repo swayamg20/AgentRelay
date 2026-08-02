@@ -9,6 +9,7 @@ import { createA2aRoutes } from "./routes/a2a.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createAgentsRoutes } from "./routes/agents.js";
 import { createInviteRoutes } from "./routes/invites.js";
+import { createNodeRoutes } from "./routes/node.js";
 import type { AppEnv } from "./types.js";
 
 export type { AppEnv };
@@ -75,6 +76,13 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 				pepper: config.RELAY_PEPPER,
 				encryptionKey: config.RELAY_ENCRYPTION_KEY,
 				keyEnvironment,
+			}),
+		);
+		app.route(
+			"/node/v1",
+			createNodeRoutes({
+				db,
+				pepper: config.RELAY_PEPPER,
 			}),
 		);
 		app.route(
