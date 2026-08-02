@@ -1,6 +1,7 @@
 # RFC 001: AgentRelay Node and Missions
 
-- **Status:** Accepted for the next vertical slice
+- **Status:** Accepted; Relay control-plane steps 1-3 are implemented, local Node
+  steps remain pending
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -10,8 +11,9 @@ AgentRelay will have two cooperating planes:
 
 1. A model-free relay that owns identity, Mission state, durable events, routing,
    delivery leases, global limits, audit, and revocation.
-2. A long-running AgentRelay Node on each machine that owns workspace bindings,
-   local runtime activation, hard local policy limits, and execution evidence.
+2. A long-running AgentRelay Node on each machine that maps Relay-visible logical
+   workspace bindings to locally approved checkouts and owns runtime activation, hard
+   local policy limits, and execution evidence.
 
 The first application is a **Mission**: a bounded collaboration in which two agents
 work in separate repositories toward one versioned shared contract.
@@ -22,10 +24,10 @@ coding-agent session.
 
 ## Why
 
-The current repository is an authenticated, durable mailbox. It can store handoffs
-and messages, expose MCP tools, and audit relay mutations. It cannot notice work on a
-developer machine, start or resume a model turn, enforce a collaboration-specific
-local policy, or prove that an agent processed a message.
+The current repository is an authenticated mailbox plus a durable Mission/delivery
+control plane. It can route and fence work for enrolled Nodes, but it cannot notice
+work on a developer machine, start or resume a model turn, enforce a
+collaboration-specific local policy, or prove that a host processed a delivery.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -92,8 +94,10 @@ approval policy. It does not run repository verification itself.
 
 The Node owns:
 
-- A device-scoped revocable credential bound to one logical agent.
-- Local workspace aliases mapped to approved repository checkouts.
+- Safe storage and use of a Relay-issued, device-scoped revocable credential bound to
+  one logical agent.
+- Mapping Relay-visible logical workspace aliases to approved local repository
+  checkouts.
 - A durable delivery cursor and processing journal.
 - Repository URL, base commit, clean-state, and workspace-policy checks.
 - Runtime session and delivery-to-turn mappings.
@@ -282,16 +286,19 @@ stored -> leased -> executing -> acknowledged
    +---------+----------+  retryable failure or lease expiry
    |
    +--------------------> dead_lettered
+
+stored | leased | executing -> cancelled  (Relay-owned revocation/invalidation)
 ```
 
 Delivery is at least once. Each retry increments attempt count and applies bounded
 backoff. A true terminal delivery failure becomes `dead_lettered`; Mission policy then
 moves the Mission to `blocked` or `failed`.
 
-Each new lease also advances a monotonic fencing token. Lease-owned execution,
-acknowledgement, retry, cancellation, and result publication must present the active
-lease ID and token before the lease deadline, so a delayed or expired holder cannot
-mutate a re-leased delivery.
+Each new lease also advances a monotonic fencing token. Node-owned start, renewal,
+release, and result publication must present the active lease ID and token before the
+lease deadline, so a delayed or expired holder cannot mutate a re-leased delivery.
+Relay-owned cancellation instead runs under the same Node-to-Mission lock hierarchy
+as revocation and invalidates any current lease.
 
 "Written to a socket" is not a delivery state. Polling the durable Node cursor is the
 first correct implementation. SSE may later reduce pickup latency without changing
@@ -321,9 +328,12 @@ The relay coordinator reduces typed events; it does not reason about repository 
 The hidden evaluator used to measure the experiment is separate from public Mission
 acceptance. It does not influence the agents' shared contract or runtime completion.
 
-The Stage 1 implementation of these rules is a pure, replayable in-memory reducer.
-Durable receipts, transactional event append, and authenticated relay ingestion are
-part of the delivery-ledger slice, not implied by the fixture.
+Stage 1 remains a pure, replayable in-memory proof of coordinator semantics. The
+separate Relay control-plane implementation now adds durable receipts, transactional
+event append, authenticated ingestion, fenced leases, recovery scans, and revocation
+races. See
+[`Delivery lease control plane`](../research/001-delivery-lease-control-plane.md) for
+the implemented boundary and its remaining nonclaims.
 
 ## Security invariants
 
@@ -393,11 +403,12 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
 
 ## Build order
 
-1. Fix current payload-preservation, provenance, and block-state gaps.
-2. Add Mission, shared-contract, event, delivery, Node, workspace-binding, and run
-   schemas with state-machine tests.
-3. Implement transactional event/delivery append, Node cursor polling, leases,
-   acknowledgement, retry, and duplicate suppression.
+1. **Complete:** fix payload-preservation, provenance, and block-state gaps.
+2. **Complete:** add Mission, shared-contract, event, delivery, Node,
+   workspace-binding, and run schemas with state-machine tests.
+3. **Implemented at the Relay boundary:** transactional event/delivery append, Node
+   cursor polling, leases, acknowledgement, retry, exact replay, and revocation.
+   Process-restart and real-client evidence still belongs to steps 4-5.
 4. Add a foreground `node/` daemon with enrollment, workspace registration, local
    journal, policy profiles, and a fake adapter.
 5. Pass disconnect, crash, duplicate, busy-session, cancellation, and adversarial

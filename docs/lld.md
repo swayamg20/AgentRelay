@@ -2,8 +2,8 @@
 
 > **Scope:** Current repository implementation as of 2026-08-02.
 > This is a compact source-oriented reference, not a promise that planned fields or
-> routes exist. Unimplemented Node runtime and Mission HTTP behavior remains in
-> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) until it lands.
+> routes exist. Unimplemented local Node runtime behavior remains in
+> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
 
 ## Repository layout
 
@@ -19,11 +19,11 @@
 └── package.json         pnpm workspace scripts
 ```
 
-There is currently no `node/` daemon, persistent event consumer, authenticated
-delivery route, or real runtime adapter. The relay does expose Node enrollment,
-credential, identity, and logical workspace routes. The executable Mission contracts,
-deterministic coordinator, fake adapter, and backend-Android proof fixture live in
-`protocol/`; the durable Mission-ledger service itself remains internal.
+There is currently no `node/` daemon, persistent event consumer, or real runtime
+adapter. The relay does expose Node identity/workspace routes plus a public Mission
+and delivery control plane. The executable contracts, deterministic coordinator,
+fake adapter, and backend-Android proof fixture live in `protocol/`; they still do
+not prove execution on two machines.
 
 ## Protocol workspace
 
@@ -32,7 +32,8 @@ deterministic coordinator, fake adapter, and backend-Android proof fixture live 
 - strict Mission, contract, message, artifact, delivery, run, and evidence schemas;
 - relay-visible Node/workspace descriptors, a trusted Mission-event envelope, a
   client append-input contract that excludes relay-owned identity/order fields, and
-  stored-delivery cursor-page contracts;
+  new-work cursor, recovery-page, delivery-operation input/result, lease, fencing,
+  cancellation, and receipt contracts;
 - pure Mission lifecycle and fenced-delivery reducers;
 - a replayable four-event coordinator boundary for participant acceptance, completed
   turns, explicit contract acknowledgement, and local verification evidence;
@@ -64,8 +65,8 @@ the committed Drizzle migrations.
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
 | `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
-| `audit_log` | Invite, handoff/message, block, Node/workspace, and internal Mission create/participant-accept/event mutation records: actor, action, resource, metadata, request ID, timestamp. |
-| `agent_blocks` | Blocker/blocked pairs enforced for new handoffs and each existing-thread append. |
+| `audit_log` | Invite, handoff/message, block, Agent-disable, Node/workspace, Mission, and delivery mutation records: actor kind, nullable Agent actor ID, action, resource, metadata, request ID, timestamp. Admin and relay-system actors never borrow an Agent ID. |
+| `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
 | `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
 | `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
@@ -73,12 +74,14 @@ the committed Drizzle migrations.
 | `missions` | Immutable coordinator config, current reducer projection/status/contract version, sequence, creator, and expiry. |
 | `mission_participants` | The exact agent, Node, and workspace binding selected for each two-party Mission, plus that participant's idempotent contract and opaque local-policy-grant acceptance receipt. |
 | `mission_events` | Append-only type-specific coordinator payload with relay-generated event ID, Mission sequence/time, service-supplied actor, source delivery, idempotency key, and causal parent. |
-| `node_deliveries` | Per-Node opaque cursor pointing to one Mission event, with contract/verification generation, logical settlement, and future lease/fencing state. |
+| `node_deliveries` | Per-Node opaque cursor pointing to one Mission event, with `stored`, `leased`, `executing`, `acknowledged`, `cancelled`, or `dead_lettered` state; attempts, relay lease/fence, retry availability, settlement, and terminal evidence. |
+| `delivery_operation_receipts` | Append-only Node `claim`/`start`/`renew`/`complete`/`release` and relay `lease_expired`/`cancel` evidence, including idempotency identity, attempt, lease/fence, transition, input, output, and database timestamp. |
 
 Public mailbox authentication still represents a logical developer/agent. Until a
 separate owner/organization identity exists, that agent credential is the enrollment
 authority for its own Nodes. Node credentials now exist for the identity/workspace
-surface, but there is no local checkout identity, runtime session, or Mission lease.
+surface and delivery leases, but there is no local checkout identity, runtime
+session, or Mission-wide execution lease.
 
 ## Authentication
 
@@ -102,47 +105,44 @@ surface, but there is no local checkout identity, runtime session, or Mission le
   agent. Successful requests update credential last-used and Node presence on a
   best-effort, debounced path.
 
-## Internal Mission ledger
+## Mission and delivery ledger
 
-`relay/src/services/mission-ledger.ts` is a service boundary, not a public route.
+`relay/src/services/mission-ledger.ts` and `delivery-ledger.ts` back public agent and
+Node routes.
 
-- Mission creation validates the shared protocol config, requires each participant
-  to resolve to exactly one active `agent + Node + workspace alias + repository URL`,
-  stores that routing choice, and treats the manifest Mission ID as the exact
-  creation-replay identity.
+- Mission creation validates the shared protocol config, resolves every participant
+  to exactly one active `agent + Node + workspace alias + repository URL`, stores
+  that routing choice, and uses the manifest Mission ID as exact creation-replay
+  identity.
 - Participant acceptance stores one strict receipt for the immutable Mission ID,
-  exact shared contract, and matching requested local-policy profile plus opaque
-  grant hash. Only the second independent receipt derives aggregate activation.
-- Event append accepts only the strict client input variant. The service supplies
-  event ID, Mission ID, sequence, timestamp, causal parent, and delivery targets, and
-  checks its actor argument against coordinator event ownership. Every Node-produced
-  result must name a still-unsettled source delivery assigned to that actor with the
-  exact work kind, contract version, and verification round. Authentication and
-  lease fencing must be added by the future Node route.
-- A Mission-scoped transaction lock serializes concurrent appends. The service first
-  resolves exact idempotent replay, then reconstructs the reducer from ordered stored
-  events and rejects a divergent snapshot or invalid transition.
-- An event, reducer projection, source-work settlement, every derived delivery, and
-  audit row commit together. An acceptance receipt and its audit commit together;
-  the second receipt also commits aggregate activation and the first turn. A failed
-  derived-delivery insert rolls back the whole triggering mutation.
-- Deliveries are derived for the next turn, both sides of a contract acknowledgement,
-  or both participants' verification phase. Contract acknowledgement work carries
-  the pending contract version; verification work carries its coordinator round.
-  Result submission logically settles source work, and a failed verification settles
-  every outstanding delivery from that round. Transport state remains `stored`; no
-  code can lease, acknowledge, retry, or execute deliveries yet.
-- `listStoredDeliveryEvents` filters by one Node ID argument inside the trusted
-  internal service boundary, reads strictly increasing
-  global-`bigserial` cursors, excludes settled work, joins each delivery to its
-  immutable event plus persisted actor/source/causal provenance, and never mutates
-  delivery state. An empty page retains the caller's checkpoint. Cursor gaps after
-  rolled-back transactions are valid. The future claim operation must also scan
-  recoverable expired leases independently of this new-work cursor.
-
-The Mission/event/delivery service remains intentionally unmounted. The public Node
-routes expose only identity and logical workspace registration; they cannot list,
-claim, execute, or acknowledge a Mission delivery.
+  exact shared contract, requested local-policy profile, and opaque grant hash. Only
+  the second independent receipt derives aggregate activation and first work.
+- A Mission-scoped lock serializes event publication. The service rebuilds the
+  reducer, validates source delivery ownership, work kind, contract version, and
+  verification round, then commits the event, projection, source settlement, derived
+  deliveries, and audit together. Node completion is the authenticated and fenced
+  public path for publishing a runtime result; there is no raw event-append route.
+- New-work polling reads strictly increasing global-`bigserial` cursors and only due,
+  unsettled `stored` work. Recovery is cursorless and returns due stored retries plus
+  `leased` or `executing` work. Both join the Mission and require `active` or
+  `verifying` state with `expires_at` later than the relay database clock.
+- Claim issues a relay-generated lease for 60 seconds or the remaining Mission
+  lifetime, whichever is shorter. It increments `attempt_count`, uses that attempt as
+  the fencing token, and records a receipt. Start, renew, complete, and release
+  require the exact lease and fence; renewal extends only from the database clock.
+- Exact Node-scoped idempotency replay returns the stored operation result and rejects
+  a changed input. New mutations revalidate the active credential, Node owner,
+  participant, workspace, Mission route, trust boundary, state, lease, and fence.
+- Completion atomically publishes the Mission result, settles the source,
+  acknowledges transport, derives later work, and writes its receipt and audit row.
+  Transient release returns work to `stored` with relay-controlled backoff; permanent,
+  policy, exhausted, or Mission-bound failure dead-letters it.
+- Reclaiming an expired lease below the attempt limit records a Relay
+  `lease_expired` receipt and audit row before issuing the next claim. Reclaiming an
+  expired final attempt records the terminal Node `claim` receipt with
+  `claim_outcome: dead_lettered` and no separate expiry receipt. Expired Missions are
+  not advertised, but no background or lazy reconciler changes the Mission row to
+  `expired` or turns one dead letter into Mission-wide failure and cancellation.
 
 ## HTTP surface
 
@@ -166,7 +166,7 @@ There is no `/metrics`, `/inbox/:id`, or
 |---|---|---|
 | `POST` | `/admin/agents` | Register an agent and issue the initial API key. |
 | `POST` | `/admin/agents/:id/keys/rotate` | Admin rotation for an agent ID. |
-| `DELETE` | `/admin/agents/:id` | Disable an agent and revoke its keys. |
+| `DELETE` | `/admin/agents/:id` | In one transaction, disable an Agent, revoke its keys, owned Nodes, active Node credentials and workspace bindings, cancel affected active deliveries, and write admin audit evidence. |
 | `POST` | `/admin/invites` | Mint a signed, expiring, single-use invite URL. |
 
 ### Authenticated agent routes
@@ -184,7 +184,8 @@ There is no `/metrics`, `/inbox/:id`, or
 | `POST` | `/agents/me/nodes` | Enroll a Node and return its raw Node credential once. Duplicate active names return `state_changed`; they never replay a secret. |
 | `GET` | `/agents/me/nodes` | List owner-only summaries for every owned Node, including revoked history and the current active credential ID or `null`. No token or hash is exposed. |
 | `POST` | `/agents/me/nodes/:nodeId/credentials/rotate` | Require `{expected_credential_id}`, atomically replace only that active generation, and return the new raw credential once. A stale generation returns `state_changed`. |
-| `DELETE` | `/agents/me/nodes/:nodeId` | Idempotently revoke an owned Node, its active credentials, and active workspace bindings while retaining Mission history. |
+| `DELETE` | `/agents/me/nodes/:nodeId` | Idempotently revoke an owned Node, its active credentials and bindings, and active deliveries across affected Missions while retaining history. |
+| `POST` | `/agents/me/missions` | Validate and create the exact manifest Mission, resolve both persisted participant routes, and return the Mission state and bindings. Fresh already-expired manifests are rejected using relay database time; exact manifest-ID replay returns the prior result even after expiry. |
 
 `/agents` is authenticated. The stored card JSON is not currently exposed through an
 A2A well-known discovery URL.
@@ -196,12 +197,24 @@ A2A well-known discovery URL.
 | `GET` | `/node/v1/me` | Return the active Node's relay-visible descriptor. |
 | `POST` | `/node/v1/workspaces` | Register one logical alias, repository URL, and allowed base-ref set. An exact active replay returns the existing binding; changed input conflicts, and a revoked alias stays retired. |
 | `GET` | `/node/v1/workspaces` | List the Node's active and revoked relay-visible bindings. |
-| `DELETE` | `/node/v1/workspaces/:alias` | Idempotently revoke an existing binding; a never-registered alias returns `workspace_not_found`. |
+| `DELETE` | `/node/v1/workspaces/:alias` | Idempotently revoke a binding and active deliveries across affected Missions; a never-registered alias returns `workspace_not_found`. |
+| `GET` | `/node/v1/missions` | List assignments for this Node, optionally filtered by Mission lifecycle status. This is assignment history, not delivery discovery. |
+| `GET` | `/node/v1/missions/:missionId` | Return this Node's exact Mission assignment and acceptance state. |
+| `POST` | `/node/v1/missions/:missionId/accept` | Store or exactly replay this participant's contract and local-policy acceptance receipt; the second participant activates the Mission. |
+| `GET` | `/node/v1/deliveries` | Cursor-page newly due, unsettled `stored` work for active/verifying, unexpired Missions. Reading does not claim it. |
+| `GET` | `/node/v1/deliveries/recoverable` | Cursorless scan for due retried `stored` work plus `leased` or `executing` work on active/verifying, unexpired Missions. |
+| `POST` | `/node/v1/deliveries/:deliveryId/claim` | Issue or exactly replay a relay lease, incremented attempt, and fencing token; lazily reconcile an expired lease before reclaim. |
+| `POST` | `/node/v1/deliveries/:deliveryId/start` | Move the exact active lease from `leased` to `executing`. |
+| `POST` | `/node/v1/deliveries/:deliveryId/renew` | Retain lease/fence and extend its deadline from relay database time, bounded by Mission expiry. |
+| `POST` | `/node/v1/deliveries/:deliveryId/complete` | Atomically publish the authenticated result and move transport from `executing` to `acknowledged`. |
+| `POST` | `/node/v1/deliveries/:deliveryId/release` | Retry with relay backoff or dead-letter the exact leased/executing attempt according to the typed disposition. |
 
 Workspace registration accepts no checkout path, command, credential-bearing URL,
 or local policy. Node-authenticated workspace mutations re-check the credential under
 the same Node transaction lock used by rotation and revocation, so a completed
-revocation fences later mutations.
+revocation fences later mutations. Delivery operations use relay-issued authority;
+the wire cannot choose Node identity, server time, lease duration, lease expiry,
+working directory, runtime policy, or command permission.
 
 ## JSON-RPC surface
 
@@ -380,11 +393,14 @@ Important limits:
 
 Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel,
 message append, block/unblock, Node enroll/credential-rotate/revoke, workspace
-register/revoke, and internal Mission create/participant accept/event append. Agent
-registration, card updates, agent-key rotation, and agent disable still write no
-audit row. Audit also does not record commands, tool
-arguments/results, file edits, tests, or permission decisions performed by a local
-coding-agent host.
+register/revoke, Mission create/participant accept/event append, every public Node
+delivery mutation, and relay lease-expiry/cancellation transitions. The matching
+`delivery_operation_receipts` retain exact Node-operation results and relay-owned
+transport history. Audit actors are explicit: authenticated Agent mutations retain an
+Agent ID, while admin and relay-system mutations use a typed actor with no fabricated
+Agent identity. Agent registration, card updates, and agent-key rotation still write
+no audit row. Audit also does not record commands, tool arguments/results, file edits,
+tests, or permission decisions performed by a local coding-agent host.
 
 The relay has authenticated block endpoints. CLI `block`/`unblock` writes the relay
 and local trust file in a fail-safe order. `block` activates the local kill switch
@@ -394,7 +410,11 @@ partial failure therefore leaves local denial active. Every invocation retries t
 relay operation even when local state already matches, and the running MCP reloads
 trust before accepting a handoff. The two stores still cannot commit atomically, so
 retry a reported partial failure and do not claim continuously observed cross-layer
-revocation until the Node verifies it.
+revocation until the Node verifies it. Inside the relay, Mission creation,
+acceptance, event publication, and new delivery mutations use the block-pair trust
+fence. Node, workspace, or owner revocation cancels active deliveries across every
+Mission whose routing authority it invalidates; immutable Mission, delivery,
+receipt, and audit history remains.
 
 ## Error model
 
@@ -449,7 +469,8 @@ command.
 
 Do not extend `accepted_by_session` or the four-state handoff table into a distributed
 runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
-stored deliveries have a separate model. The next slice exposes authenticated
-delivery polling plus fenced claim/renew/complete operations with immutable attempt
-evidence and durable operation receipts, while keeping the mailbox API as a
-compatibility and inspection surface.
+deliveries have a separate model and public control plane. The next slice is a local
+Node consumer with a durable processing journal, worktree/policy enforcement, and
+real runtime adapters, plus a real two-machine proof. Mission-level expiry and
+dead-letter terminal reconciliation is still a separate relay gap; the mailbox API
+remains a compatibility and inspection surface.

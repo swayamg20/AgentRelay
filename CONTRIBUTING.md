@@ -55,10 +55,12 @@ There is no local Node package yet. Its accepted target is
 ## Understand the contract first
 
 Before editing, trace the behavior through its producer, consumer, schema, and tests.
-For cross-package work, inspect both `relay/` and `mcp-server/`.
+For cross-package work, inspect `protocol/`, `relay/`, and `mcp-server/` wherever the
+contract crosses those boundaries.
 
 - [`docs/architecture.md`](docs/architecture.md) defines current and target boundaries.
-- [`docs/hld.md`](docs/hld.md) describes the shipped mailbox flow.
+- [`docs/hld.md`](docs/hld.md) describes the shipped mailbox and Relay control-plane
+  flow.
 - [`docs/lld.md`](docs/lld.md) lists current routes, tables, tools, and known gaps.
 - Accepted RFCs define target behavior until implementation lands.
 
@@ -166,7 +168,8 @@ For docs-only changes, run at least `git diff --check` and check local links.
   command changes.
 - Do not mix unrelated refactoring into a product or bug-fix PR.
 
-Open PRs against `main`. Report security issues privately to the maintainer rather
+Open PRs against `main`, or against the explicit prerequisite branch when recording a
+short-lived stacked change. Report security issues privately to the maintainer rather
 than opening a public issue.
 
 ## License

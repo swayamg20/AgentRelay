@@ -1,8 +1,8 @@
 # High-level design: current relay implementation
 
 > **Scope:** Current repository implementation as of 2026-08-02.
-> This document describes the existing handoff plane, durable-ledger kernel, and
-> Node identity/workspace API, not the autonomous Node runtime target.
+> This document describes the existing handoff plane, public Mission delivery
+> control plane, and Node identity/workspace API, not the autonomous Node runtime.
 > See [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the next system.
 
 ## Purpose
@@ -12,9 +12,10 @@ agents exchange structured handoff threads through a shared relay. The relay per
 the conversation and enforces participant access. A local stdio MCP server exposes
 the mailbox as tools to Claude Code or Codex.
 
-Humans or active agent sessions still initiate inbox checks and every subsequent
-tool call. The relay can enroll a Node and issue its separate credential, but there
-is no daemon, authenticated delivery claim, or runtime activation loop.
+Humans or active agent sessions still initiate mailbox checks. The relay can enroll a
+Node, issue its separate credential, accept a Mission assignment, and durably lease
+delivery work. There is no persistent local consumer or runtime activation loop to
+turn that relay work into repository changes.
 
 ## Components
 
@@ -26,7 +27,7 @@ agentrelay-mcp                                          agentrelay-mcp
       | HTTPS JSON-RPC/REST                                   | HTTPS JSON-RPC/REST
       +------------------- relay -----------------------------+
                          Hono + Postgres
-                    identity, handoffs, audit
+              identity, handoffs, Missions, delivery, audit
                               |
                    best-effort Slack webhook
 ```
@@ -42,12 +43,15 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - API-key rotation and block records.
 - Handoff and ordered-message persistence.
 - Participant authorization and lifecycle transitions.
-- Audit records for invite, handoff/message, block, Node/workspace, and internal
-  Mission mutations.
+- Audit records for invite, handoff/message, block, Node/workspace, Mission, and
+  delivery mutations.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
-- An internal Mission-ledger service that persists Mission projections and append-only
-  events, derives stored per-Node deliveries in the same transaction, and reads them
-  through an opaque cursor. No HTTP route invokes this service yet.
+- Agent-authenticated Mission creation plus Node-authenticated Mission list, detail,
+  and participant acceptance.
+- Node-authenticated cursor polling and recovery discovery, followed by fenced claim,
+  start, renew, complete, and release operations. Completion commits the Mission
+  result, source settlement, acknowledgement, downstream deliveries, receipt, and
+  audit consequences in one transaction.
 - Agent-authenticated Node enrollment, credential rotation, and revocation routes,
   plus Node-authenticated logical workspace registration and revocation. These
   operations are audited in the same transaction as their state changes.
@@ -92,7 +96,7 @@ Agent 1---N Node ---N NodeCredential
                  \---N WorkspaceBinding
                  \---N MissionParticipant ---1 Mission ---N MissionEvent
                                                     |
-                                                    +---N NodeDelivery
+                                                    +---N NodeDelivery ---N DeliveryOperationReceipt
 ```
 
 - `Agent` is the current logical developer identity.
@@ -103,8 +107,10 @@ Agent 1---N Node ---N NodeCredential
   proposed action, and lifecycle timestamps.
 - `Message` is append-only, stores payload and typed artifacts separately, and
   receives a per-handoff sequence number.
-- `AuditLog` records invite, handoff/message, block, Node/workspace, and internal
-  Mission mutations, not every relay mutation or any local host action.
+- `AuditLog` records invite, handoff/message, block, Agent disable, Node/workspace,
+  Mission, and delivery mutations, not every relay mutation or any local host action.
+  Agent-authenticated entries retain an Agent ID; admin and relay-system entries use
+  an explicit actor kind without a fabricated Agent identity.
 - `AgentBlock` prevents a blocked sender from creating a new handoff for the blocker
   or appending another message to an existing thread whose receiver blocked them.
 - `Invite` records signed-token identity, expiry, and one-time redemption.
@@ -115,9 +121,12 @@ Agent 1---N Node ---N NodeCredential
 - `Mission` stores the immutable coordinator config plus a reducer projection;
   `MissionEvent` is append-only and ordered within that Mission.
 - `NodeDelivery` points one Node cursor to work derived from a committed Mission
-  event. Verification work is bound to one coordinator round. This checkpoint can
-  logically settle consumed or invalidated work, but transport state remains
-  `stored`; it cannot claim or run deliveries.
+  event. It moves through `stored`, `leased`, `executing`, `acknowledged`,
+  `cancelled`, or `dead_lettered`, with attempt, fencing, lease, availability, and
+  settlement state.
+- `DeliveryOperationReceipt` is append-only evidence for Node `claim`, `start`,
+  `renew`, `complete`, and `release`, plus relay `lease_expired` and `cancel`
+  operations. Public Node idempotency is scoped through these receipts.
 
 Exact tables and current route names are summarized in [`lld.md`](lld.md). Source
 under `relay/src/db/schema.ts` remains authoritative for column-level behavior.
@@ -181,17 +190,22 @@ and the relay-owned idempotency key is not exposed to the model.
 ### Durable today
 
 - Handoffs, messages, lifecycle state, identities, invites, and blocks, plus audit
-  rows for invite, handoff/message, block, Node/workspace, and internal Mission
+  rows for invite, handoff/message, block, Node/workspace, Mission, and delivery
   mutations.
 - Participant access checks and most state transitions.
 - Idempotent replay for handoff creation and message append.
-- Through the internal ledger service: Mission creation, ordered event append,
-  independent exact participant-acceptance receipts, reducer-projection updates,
-  source-delivery and causal links, derived stored deliveries, logical settlement,
-  audit, stable event/delivery-ID replay, and joined cursor replay. Each mutation and
-  its consequences share one Postgres transaction.
+- Through public agent and Node routes: Mission creation, assignment list/detail,
+  independent exact participant acceptance, ordered event append through completion,
+  reducer-projection updates, source-delivery and causal links, derived deliveries,
+  and joined cursor replay.
+- New-work cursor polling plus a separate recovery scan; relay-issued bounded leases,
+  monotonic attempt fencing, exact operation receipts, retry/dead-letter transitions,
+  relay cancellation, and atomic Mission-result completion.
 - Node enrollment, credential rotation/revocation, logical workspace registration,
-  exact workspace replay, and atomic Node-to-credential/workspace revocation.
+  exact workspace replay, and atomic Node-to-credential/workspace revocation. Node,
+  workspace, and owner revocation also cancel active work across affected Missions.
+- Mission trust checks share the block-pair transaction fence, and every delivery
+  mutation revalidates its active Node, participant, workspace, and Mission route.
 
 ### Best effort today
 
@@ -201,12 +215,15 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ### Not implemented today
 
-- An authenticated polling route over the internal Mission and delivery records.
-- Delivery claim, transport acknowledgement, retry lease, dead-letter transition, or
-  general transport-operation receipt.
+- A persistent local Node that polls or recovers work and maintains a local
+  duplicate-processing journal.
 - Runtime-session start/resume/cancel.
 - Local worktree isolation and per-Mission policy enforcement.
 - Local command, edit, test, and permission-decision audit.
+- Background or lazy Mission-level expiry/dead-letter reconciliation. Expired
+  Missions are filtered from delivery discovery, but their row and all remaining
+  deliveries are not automatically moved to terminal states.
+- A real two-machine, two-repository execution proof.
 - A current A2A compatibility proof.
 
 ## Security boundaries
@@ -214,8 +231,10 @@ and the relay-owned idempotency key is not exposed to the model.
 Implemented protections include type-separated hashed agent and Node credentials,
 participant authorization, block checks on new handoffs, pending acceptance,
 active-thread appends, and content-bearing completion, a shared directed-pair lock
-between those checks and block-list writes, scoped relay audit, provenance wrappers
-or markers on teammate-originated mailbox fields, static host permission
+between those checks and block-list writes, the same trust fence across Mission
+creation, acceptance, event publication, and delivery execution, current routing
+revalidation, revocation-driven delivery cancellation, scoped relay audit, provenance
+wrappers or markers on teammate-originated mailbox fields, static host permission
 recommendations, and per-acceptance local trust loading.
 
 They are not yet one end-to-end enforcement system:
@@ -250,18 +269,34 @@ model. See the security section of [`architecture.md`](architecture.md).
   source-work settlement, derived deliveries, and audit together. Each participant
   acceptance is its own exact receipt; the second receipt atomically derives the
   aggregate activation event and first turn. A failed delivery insert rolls back that
-  entire mutation. Cursor reads do not imply claim, execution, or acknowledgement.
+  entire mutation.
+- Cursor reads discover only newly due stored work; the separate recovery scan finds
+  due retried work and active or expired leases regardless of cursor age. Both hide
+  work for expired or non-runnable Missions, but do not transition the Mission.
+- Claim uses relay database time to issue a 60-second lease bounded by Mission expiry,
+  increments the attempt, and uses that attempt as the fence. A stale holder cannot
+  start, renew, release, or complete after re-lease. New mutations re-check current
+  routing and block state; exact replay still revalidates routing authority and is
+  refused after relay cancellation.
+- Completion atomically records the authenticated result event, source settlement,
+  acknowledgement, derived work, Node receipt, and audit. Transient release returns
+  work to `stored` with relay backoff; permanent, policy, exhausted, or Mission-bound
+  failure dead-letters it. Reclaiming a non-final expired lease records Relay expiry
+  evidence before issuing the next claim; an expired final attempt instead produces
+  one terminal Node claim receipt with `claim_outcome: dead_lettered`. No process
+  promotes that terminal delivery outcome to a Mission-wide terminal state.
 - Node credential rotation is a compare-and-swap against the owner-visible active
   credential ID and serializes with workspace mutations. Concurrent rotations from
   one credential generation cannot both succeed. Node revocation atomically disables
-  its credential and active workspace bindings; immutable Mission rows remain for
-  audit and recovery analysis.
+  its credential and active workspace bindings and cancels affected active Mission
+  deliveries; immutable Mission and operation history remains for audit and recovery
+  analysis.
 
 ## Relationship to the next design
 
-The current APIs remain a compatibility and inspection surface while Missions are
-proved. The relay now enrolls separately authenticated Nodes and their logical
-workspace bindings, while the internal kernel stores Missions, events, and unclaimed
-deliveries without stretching the handoff row into a scheduler. The next checkpoint
-adds authenticated polling and fenced lease/claim/completion APIs before any local
-runtime is allowed to consume that work.
+The mailbox remains a compatibility and inspection surface. The relay now exposes a
+separate, authenticated Mission and delivery control plane without stretching the
+handoff row into a scheduler. The next checkpoint is the local Node that consumes
+this API, enforces repository policy, activates real runtimes, and proves recovery on
+two machines; Mission-level expiry/dead-letter reconciliation remains a separate
+relay gap.

@@ -89,12 +89,14 @@ pnpm --filter @agentrelay/protocol exec vitest run \
 ## What this does not prove
 
 The expected repository results and fake runtime dispositions are pre-authored. This
-does not prove that a coding model can discover or implement the solution, that a
-Postgres relay can transactionally persist and replay it, that receipts survive a
-process restart, that a Node enforces real local policy, that offline machines catch
-up, or that two devices communicate over A2A.
+experiment alone does not prove that a coding model can discover or implement the
+solution, that receipts survive a process restart, that a Node enforces real local
+policy, that offline machines catch up, or that two devices communicate over A2A.
 
-Those are the next evidence gates: durable relay delivery, foreground Nodes with
-local journals and policy, then the pinned real-runtime two-machine pilot. The hidden
-check here measures only the scripted fixture result and never steers Mission
-completion.
+The separate Relay control-plane tests now prove transactional Postgres event and
+delivery persistence, exact operation replay, fenced lease recovery, and revocation
+races. They still run inside a test process without a local Node. The next evidence
+gates are foreground Nodes with local journals and policy, killed-process recovery,
+then the pinned real-runtime two-machine pilot. The hidden check here measures only
+the scripted fixture result and never steers Mission completion. See
+[`Delivery lease control plane`](../research/001-delivery-lease-control-plane.md).

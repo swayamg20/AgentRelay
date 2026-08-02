@@ -62,22 +62,32 @@ in-memory scripted proof, not durable relay or real-runtime evidence.
   and prevent settled or stale verification-round work from advancing a Mission.
 - [x] Add independently revocable Node credentials plus authenticated enrollment,
   credential rotation/revocation, and logical workspace registration routes.
-- [ ] Add authenticated Mission creation/acceptance/result and Node delivery-polling
+- [x] Add authenticated Mission creation/acceptance/result and Node delivery-polling
   routes.
-- [ ] Add claim leases, renewal, expiry, retry, cancellation, and dead-letter policy.
-- [ ] Persist claim/attempt history, runs, acknowledgements, and exact operation
-  receipts for the Mission retention period.
-- [ ] Prove reconnect and recovery through cursor polling; leave SSE out of this slice.
+- [x] Add Relay-issued claim leases, renewal, expiry, retry, cancellation, and
+  dead-letter policy.
+- [x] Persist current attempt/fence state, transport acknowledgement, and exact
+  operation receipts for the Mission retention period.
+- [x] Prove service-level duplicate, expired-lease, retry-scan, stale-fence, lost
+  response, revocation-race, and final-dead-letter behavior against Postgres.
+- [ ] Prove relay-process restart and Node reconnect recovery through cursor polling;
+  leave SSE out of this slice.
+- [ ] Reconcile delivery expiry/dead-letter outcomes into an explicit terminal or
+  blocked Mission transition instead of only hiding expired/terminal Mission work.
+- [ ] Add stable pagination to Node Mission assignment discovery; the first route is
+  newest-first and bounded to 200 assignments.
 
 Agent and Node credentials are type-separated, and Node revocation atomically revokes
 its active credentials and workspace bindings without deleting Mission history. The
-Mission ledger is still internal: no runtime can poll or consume an unfenced delivery.
-Event append replays immutable event and derived-delivery IDs; logical settlement is
-distinct from transport acknowledgement. The next delivery operations need fenced,
-durable operation receipts.
+Mission and delivery control plane is now authenticated and mounted. Cursor polling
+discovers work without claiming it; a Node must claim an exact delivery and present
+the Relay-issued lease ID and fence before execution-related mutations. Completion
+atomically appends Mission output, settles source work, acknowledges transport, and
+stores the exact replay receipt. No local Node consumes these APIs yet.
 
-Required tests: disconnect before claim, after claim, and after host acceptance;
-duplicate signal; relay restart; late output after terminal Mission.
+The remaining Stage 2 evidence requires an actual client journal: disconnect before
+claim, after claim, and after host acceptance; relay process restart; duplicate
+notification; and late output after a terminal Mission.
 
 ## 4. Build the local Node
 

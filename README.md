@@ -18,10 +18,11 @@ repositories is the first proof, not the final product boundary.
 
 ## Honest status
 
-The repository currently ships an **authenticated asynchronous mailbox, a durable
-Mission-ledger kernel, and the first Node identity API**, not the full autonomous
-runtime described above. Nodes can be enrolled and bind logical workspaces, but no
-public route can claim Mission work or start a coding-agent runtime yet.
+The repository currently ships an **authenticated asynchronous mailbox and a public,
+durable Mission delivery control plane**, not the full autonomous runtime described
+above. Enrolled Nodes can accept Missions and move relay deliveries through fenced
+leases, but there is no local Node daemon that consumes that work or starts a
+coding-agent runtime yet.
 
 ### Implemented today
 
@@ -35,15 +36,19 @@ public route can claim Mission work or start a coding-agent runtime yet.
   strict lifecycle and coordinator reducers, a deterministic fake runtime adapter,
   and a reproducible backend-Android transcript fixture.
 - Relay-visible Node/workspace contracts and Postgres persistence for Nodes,
-  workspace bindings, Missions, append-only Mission events, and stored per-Node
-  deliveries. The internal ledger service records one exact acceptance receipt per
-  participant, derives activation only after both receipts exist, binds every result
-  to its source work, and supports provenance-preserving cursor replay.
+  workspace bindings, Missions, append-only Mission events, per-Node deliveries, and
+  append-only delivery-operation receipts. Public agent and Node routes create,
+  list, inspect, and accept Missions; poll new work or scan recovery work; and claim,
+  start, renew, complete, or release a delivery.
+- Relay-issued 60-second leases bounded by Mission expiry, monotonic attempt fencing,
+  exact operation replay, transactional result completion, retries, cancellation,
+  dead-lettering, and audit evidence. Delivery discovery excludes expired or
+  non-runnable Missions; current block and routing state fence later Mission work.
 - Separately revocable Node credentials plus authenticated enrollment, credential
   rotation, Node revocation, and logical workspace registration routes. Agent and
   Node credentials are different key types; rotation is generation-fenced, and
-  revoking a Node also revokes its active credential and workspace bindings without
-  deleting Mission history.
+  revoking a Node also revokes its active credential and workspace bindings, cancels
+  active deliveries across affected Missions, and retains immutable Mission history.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
@@ -51,19 +56,19 @@ public route can claim Mission work or start a coding-agent runtime yet.
 ### Next architecture, not shipped yet
 
 - A persistent AgentRelay Node on every participating machine.
-- Authenticated Mission and cursor-polling routes for enrolled Nodes.
-- Fenced delivery claims, lease renewal/expiry, acknowledgements, retries,
-  dead-letter handling, and durable transport-operation receipts. The current kernel
-  can settle logical work, but it does not pretend that unclaimed work was executed.
 - Isolated worktrees and runtime sessions attached to the persisted device and
   workspace identities.
 - Local policy enforcement outside the model.
-- A live Mission creation/acceptance/result API around the executable Mission
-  contracts and internal ledger.
 - Codex and Claude runtime adapters that start or resume real agent turns.
+- Mission-level expiry and dead-letter reconciliation that transitions the Mission
+  and cancels remaining work instead of only hiding expired work from discovery or
+  terminating one delivery.
+- A real two-machine, two-repository proof using the public control plane.
 
 The design is in
 [`RFC 001: AgentRelay Node and Missions`](docs/rfcs/001-agentrelay-node-and-missions.md).
+The implemented lease and recovery decisions are recorded in
+[`Delivery lease control plane`](docs/research/001-delivery-lease-control-plane.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -205,8 +210,9 @@ pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
 Cross-agent messages and artifacts are untrusted input. Current safeguards include
 bearer authentication, participant authorization, block checks on new and existing
 handoff messages and content-bearing transitions, a shared transaction lock that makes
-a successful block response a commit fence for those mutations, audit for
-invite/handoff/message/block and Node/workspace mutations, provenance
+a successful block response a commit fence for those mutations, Mission trust and
+routing revalidation before activation or delivery work, revocation-driven delivery
+cancellation, audit and durable receipts for delivery mutations, provenance
 wrappers or markers on every teammate-originated mailbox field returned by MCP,
 recommended host settings, and local trust parsing.
 
@@ -251,7 +257,7 @@ this README does not claim full A2A conformance.
 ├── landing/              GitHub Pages landing page
 └── docs/
     ├── architecture.md   current truth and target boundaries
-    ├── hld.md            current mailbox high-level design
+    ├── hld.md            current Relay high-level design
     ├── lld.md            current routes, tables, tools, and gaps
     ├── roadmap.md        evidence-gated implementation order
     ├── next-steps.md     near-term engineering queue
@@ -260,6 +266,8 @@ this README does not claim full A2A conformance.
     ├── deploy-fly.md     relay-only Fly.io example
     ├── auto-mode.md      superseded design decision record
     ├── ambient-agent.md  superseded design decision record
+    ├── research/
+    │   └── 001-delivery-lease-control-plane.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```
@@ -268,6 +276,8 @@ this README does not claim full A2A conformance.
 
 - Code and tests define what is shipped.
 - [`docs/architecture.md`](docs/architecture.md) defines the current/target boundary.
+- [`protocol/README.md`](protocol/README.md) describes the executable protocol package.
+- [`docs/next-steps.md`](docs/next-steps.md) tracks the near-term engineering queue.
 - Accepted RFCs define intended behavior until code lands.
 - Docs must label target behavior instead of presenting it as implemented.
 

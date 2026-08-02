@@ -5,9 +5,9 @@
 > survey. This doc exists for users who already use Fly; the project
 > doesn't recommend Fly over other hosts.
 >
-> This guide deploys only the current relay/mailbox service. The planned
-> AgentRelay Node and coding-agent runtimes remain on developer machines; they are
-> not hosted inside this Fly application. See
+> This guide deploys only the shared relay, including its mailbox and Mission/delivery
+> control plane. The planned AgentRelay Node and coding-agent runtimes remain on
+> developer machines; they are not hosted inside this Fly application. See
 > [`architecture.md`](architecture.md) for that boundary.
 
 ## What this gets you
@@ -142,7 +142,10 @@ fly ssh console -a <your-app-name>
 cd /app/relay && node dist/db/migrate.js
 ```
 
-If you need to roll forward a stuck migration, edit Drizzle metadata in the postgres app directly (`fly postgres connect -a agentrelay-pg`).
+Do not hand-edit Drizzle migration history. Inspect the failing migration and database
+state, take a database backup, then ship a reviewed forward migration that restores
+the expected invariant. Use `fly postgres connect -a agentrelay-pg` for read-only
+inspection unless an exact recovery procedure has been reviewed and rehearsed.
 
 ### Relay rejects a secret as too short
 

@@ -175,9 +175,9 @@ runtime activation.
   the settings are not a substitute for an operating-system sandbox.
 - `trust.yaml` influences the decision returned by `accept_handoff`; the result is
   not dynamically applied to an active runtime.
-- Relay audit covers invite, handoff/message, block, and Node/workspace mutations. It
-  still omits several agent-management mutations and all local commands, edits, and
-  tests.
+- Relay audit covers invite, handoff/message, block, Node/workspace, Mission, and
+  delivery-operation mutations. It still omits several agent-management mutations
+  and every local command, edit, and test because no local Node reports those yet.
 
 For this mailbox release, keep writes and external actions behind the host's normal
 human approval flow. Do not treat a teammate's message as permission to push, deploy,
