@@ -116,6 +116,14 @@ describe("missionManifestSchema", () => {
 		expect(missionManifestSchema.safeParse(duplicate).success).toBe(false);
 	});
 
+	it("rejects non-canonical UUID casing before identity comparison", () => {
+		const mixedCaseDuplicate = clone(manifest);
+		mixedCaseDuplicate.participants[0].agent_id = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+		mixedCaseDuplicate.participants[1].agent_id = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
+
+		expect(missionManifestSchema.safeParse(mixedCaseDuplicate).success).toBe(false);
+	});
+
 	it("rejects local repository paths and credential-bearing URLs", () => {
 		const localPath = clone(manifest);
 		localPath.participants[0].repository_url = "file:///Users/alice/backend";

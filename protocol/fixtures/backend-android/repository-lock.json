@@ -1,0 +1,15 @@
+{
+	"schema_version": 1,
+	"repositories": {
+		"backend": {
+			"repository_url": "https://fixtures.agentrelay.dev/backend-profile.git",
+			"base_commit": "ce242c52841933788bc3b6a0a4e6c32ef38bf149",
+			"expected_commit": "fdbb25c9dec30e47dbfbdeed193005150f1c63d7"
+		},
+		"android": {
+			"repository_url": "https://fixtures.agentrelay.dev/android-profile.git",
+			"base_commit": "a976d7c7967b3ef8e89cbd1b9add606e08dbbbca",
+			"expected_commit": "6b5f8d29b22f4c4767fa7fd0ded01424f6457678"
+		}
+	}
+}

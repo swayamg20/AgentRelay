@@ -1,0 +1,21 @@
+{
+	"schema_version": 1,
+	"contracts": {
+		"v1": {
+			"artifact_id": "10000000-0000-4000-8000-000000000005",
+			"type": "api_contract",
+			"version": 1,
+			"sha256": "ec4721811c959df1b7b2947b307c130104b67ec76adf74bcd00361732372f184",
+			"media_type": "application/schema+json",
+			"byte_size": 371
+		},
+		"v2": {
+			"artifact_id": "10000000-0000-4000-8000-000000000005",
+			"type": "api_contract",
+			"version": 2,
+			"sha256": "d0eac237df4e364624eb5af7372c6beeadb566e939ccae9edec75920dd47ee11",
+			"media_type": "application/schema+json",
+			"byte_size": 542
+		}
+	}
+}
