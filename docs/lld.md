@@ -10,7 +10,7 @@
 ```text
 .
 ├── landing/             GitHub Pages landing page
-├── protocol/            Mission schemas, state machines, and adapter contract
+├── protocol/            Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/               Hono, Drizzle, Postgres relay
 ├── mcp-server/          agentrelay-mcp package and agentrelay CLI
 ├── tests/e2e/           relay plus two-MCP-process integration harness
@@ -20,7 +20,31 @@
 ```
 
 There is currently no `node/` daemon, persistent event consumer, or real runtime
-adapter. The executable Mission contracts and fake adapter live in `protocol/`.
+adapter. The executable Mission contracts, deterministic coordinator, fake adapter,
+and backend-Android proof fixture live in `protocol/`.
+
+## Protocol workspace
+
+`@agentrelay/protocol` currently implements:
+
+- strict Mission, contract, message, artifact, delivery, run, and evidence schemas;
+- pure Mission lifecycle and fenced-delivery reducers;
+- a replayable four-event coordinator boundary for participant acceptance, completed
+  turns, explicit contract acknowledgement, and local verification evidence;
+- one-current-participant routing, consecutive contract revision pause/activation,
+  contract-scoped readiness, required local command IDs, turn limits, terminal-event
+  rejection, verification-round fencing, and exact event/idempotency/delivery replay
+  handling;
+- a runtime-neutral host adapter plus deterministic fake; and
+- reproducible backend and Android fixture repositories, a golden 14-event transcript,
+  executable backend/Android/contract/public checks, and a separate hidden evaluator.
+
+The coordinator is pure and in memory. `applied_events` is test evidence, not a
+durable ledger or receipt store. The fixture uses pre-scripted fake outcomes, an
+explicit pre-kickoff acknowledgement queue, and pre-authored expected repository
+snapshots; it does not show a model writing code, a relay surviving restart, or two
+Nodes collaborating across machines. Exact evidence and nonclaims are recorded in
+[`experiment 001`](experiments/001-backend-android-deterministic-proof.md).
 
 ## Relay tables
 
@@ -315,6 +339,6 @@ command.
 ## Boundary with the next design
 
 Do not extend `accepted_by_session` or the four-state handoff table into a distributed
-runtime scheduler. The next slice introduces explicit Nodes, workspace bindings,
-Missions, events, deliveries, claims, runs, and acknowledgements while keeping the
-mailbox API as a compatibility and inspection surface.
+runtime scheduler. The next slice persists explicit Nodes, workspace bindings,
+Missions, events, deliveries, claims, runs, acknowledgements, and idempotency receipts
+while keeping the mailbox API as a compatibility and inspection surface.

@@ -202,6 +202,11 @@ contract artifact, such as the API schema.
 
 - A participant proposes a new contract only as its turn disposition.
 - The relay pauses new turns while both participants acknowledge the new version.
+- A proposal does not implicitly acknowledge its proposer. Both authenticated
+  participants submit explicit coordinator acknowledgements for the exact revision
+  ID, version, artifact ID, and hash.
+- After both acknowledgements, the accepted version becomes active and the next turn
+  belongs deterministically to the participant opposite the proposer.
 - Revisions happen only between turns, so no host turn runs against two versions.
 - Every subsequent event records the accepted contract version.
 - Refusal or acknowledgement timeout moves the Mission to `blocked`, `cancelled`, or
@@ -307,10 +312,18 @@ The relay coordinator reduces typed events; it does not reason about repository 
   environment allowlist. Peer-provided shell strings are never executable authority.
 - Nodes submit pass/fail evidence. The relay completes only when every required local
   verification record passes for the current contract version.
-- A failed check returns the Mission to `active` if budget remains; otherwise it fails.
+- Every transition into `verifying` increments a verification round. Evidence must
+  name the active round, so a delayed result from an earlier readiness cycle cannot
+  complete a retry.
+- A failed check returns the Mission to `active` only when enough turn budget remains
+  for both participants to establish a fresh readiness cycle; otherwise it fails.
 
 The hidden evaluator used to measure the experiment is separate from public Mission
 acceptance. It does not influence the agents' shared contract or runtime completion.
+
+The Stage 1 implementation of these rules is a pure, replayable in-memory reducer.
+Durable receipts, transactional event append, and authenticated relay ingestion are
+part of the delivery-ledger slice, not implied by the fixture.
 
 ## Security invariants
 

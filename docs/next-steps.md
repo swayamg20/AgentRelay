@@ -23,16 +23,22 @@ or trust gaps.
 - [x] Add Mission, participant, revision, typed message, artifact, policy, delivery,
   and run schemas.
 - [x] Add Mission and delivery state-machine transition tests.
-- [ ] Define one fake backend repository and one fake Android repository at frozen
+- [x] Define one fake backend repository and one fake Android repository at frozen
   commits.
-- [ ] Define a hidden cross-repository acceptance scenario.
+- [x] Define a hidden cross-repository acceptance scenario.
 - [x] Add a fake runtime adapter with duplicate, recovery, and cancellation tests.
-- [ ] Add deterministic transcript fixtures.
+- [x] Add a deterministic coordinator and transcript fixture with one accepted
+  contract revision, duplicate suppression, partial-stream recovery, registered
+  round-fenced verification, and zero scripted human interventions after kickoff.
 - [ ] Publish JSON Schema and OpenAPI bindings before a non-TypeScript Node or public
   A2A gateway consumes this contract.
 
 Keep this layer small. Do not implement multi-party Missions, parallel actors, smart
 routing, or provider-specific fields.
+
+Evidence for this checkpoint is in
+[`experiment 001`](experiments/001-backend-android-deterministic-proof.md). It is an
+in-memory scripted proof, not durable relay or real-runtime evidence.
 
 ## 3. Build durable delivery
 
