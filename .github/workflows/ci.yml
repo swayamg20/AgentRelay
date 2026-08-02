@@ -28,6 +28,10 @@ jobs:
 
       - run: pnpm -r typecheck
 
+      - run: pnpm -r build
+
+      - run: pnpm --filter @agentrelay/protocol test:exports
+
   unit:
     needs: lint-typecheck
     runs-on: ubuntu-latest
@@ -49,7 +53,7 @@ jobs:
 
       # Skip the e2e workspace — it needs Postgres + builds + a real
       # relay subprocess and is covered by the dedicated `e2e` job.
-      - run: pnpm --filter relay --filter agentrelay-mcp test
+      - run: pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
 
   relay-integration:
     needs: lint-typecheck

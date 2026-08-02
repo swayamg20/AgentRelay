@@ -16,8 +16,9 @@ need.
   - `docs/hld.md` for the implemented mailbox flow.
   - `docs/lld.md` for current schemas, routes, tools, and known gaps.
   - `docs/rfcs/001-agentrelay-node-and-missions.md` for the next architecture.
-- Trace cross-package behavior through both `relay/` and `mcp-server/`. A contract
-  is not understood until both producer and consumer have been checked.
+- Trace cross-package behavior through `protocol/`, `relay/`, and `mcp-server/` as
+  applicable. A contract is not understood until its producer and consumer have
+  both been checked.
 - Treat active code and tests as current behavior. Treat an accepted RFC as target
   behavior. If they disagree, state the discrepancy instead of silently choosing.
 

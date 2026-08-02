@@ -41,6 +41,7 @@ pnpm --filter agentrelay-mcp dev
 ## Repository layout
 
 ```text
+protocol/       shared Mission, delivery, and runtime-adapter contracts
 relay/          Hono + Drizzle + Postgres relay
 mcp-server/     agentrelay-mcp package and agentrelay CLI
 tests/e2e/      real relay plus two MCP processes
@@ -119,12 +120,13 @@ pnpm -r build
 Database-free package tests, matching CI's unit job:
 
 ```bash
-pnpm --filter relay --filter agentrelay-mcp test
+pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
 ```
 
 Focused iteration:
 
 ```bash
+pnpm --filter @agentrelay/protocol exec vitest run src/path/file.test.ts
 pnpm --filter relay exec vitest run src/path/file.test.ts
 pnpm --filter agentrelay-mcp exec vitest run src/path/file.test.ts
 ```

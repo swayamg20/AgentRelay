@@ -1,6 +1,6 @@
 # Low-level design: current mailbox contracts
 
-> **Scope:** Implemented code on `main` as of 2026-08-01.
+> **Scope:** Implemented code on `main` as of 2026-08-02.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Future Node and Mission contracts belong to
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) until implemented.
@@ -10,6 +10,7 @@
 ```text
 .
 ├── landing/             GitHub Pages landing page
+├── protocol/            Mission schemas, state machines, and adapter contract
 ├── relay/               Hono, Drizzle, Postgres relay
 ├── mcp-server/          agentrelay-mcp package and agentrelay CLI
 ├── tests/e2e/           relay plus two-MCP-process integration harness
@@ -18,8 +19,8 @@
 └── package.json         pnpm workspace scripts
 ```
 
-There is currently no `node/` package, runtime adapter, persistent event consumer, or
-Mission schema.
+There is currently no `node/` daemon, persistent event consumer, or real runtime
+adapter. The executable Mission contracts and fake adapter live in `protocol/`.
 
 ## Relay tables
 
@@ -293,7 +294,7 @@ From the repository root:
 pnpm lint
 pnpm -r typecheck
 pnpm -r build
-pnpm --filter relay --filter agentrelay-mcp test
+pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
 ```
 
 Database-backed tests require Postgres and migrations:
