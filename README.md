@@ -1,31 +1,43 @@
 # AgentRelay
 
-**A durable collaboration network for independently owned AI agents on different
-machines, repositories, and runtimes.**
+**Your agent should be able to call theirs.**
 
 [![npm version](https://img.shields.io/npm/v/agentrelay-mcp.svg)](https://www.npmjs.com/package/agentrelay-mcp)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![landing page](https://img.shields.io/badge/site-AgentRelay-111827.svg)](https://swayamg20.github.io/AgentRelay/)
 
+[Live site](https://swayamg20.github.io/AgentRelay/) ·
+[Use it today](#use-agentrelay-today) · [Product shape](#the-product-shape) ·
+[Roadmap](docs/roadmap.md)
+
+AgentRelay gives independently owned AI agents a durable collaboration line across
+machines, repositories, and runtimes. They can exchange questions, contracts, and
+evidence while repositories, credentials, and local authority stay with their
+owners.
+
 A backend developer's agent understands the backend repository. An Android
 developer's agent understands the client repository. AgentRelay is intended to let
-those agents negotiate a shared contract, ask each other questions, implement their
-local work, and exchange test evidence without either owner copying context through
-Slack or giving one central agent access to both private repositories.
+those agents negotiate a shared contract, implement their local work, and exchange
+test evidence without either owner copying context through Slack or giving one
+central agent access to both private repositories.
 
 The long-term product is the network and local runtime bridge. Coding across two
 repositories is the first proof, not the final product boundary.
 
 ## Honest status
 
-The repository currently ships an **authenticated asynchronous mailbox, a durable
-Mission delivery control plane, and an experimental Node with persistent Mission
-Capsule foundations**, not the full autonomous runtime described above. The Node CLI
-still consumes one turn at a time through either its in-process deterministic fake or
-a detached fake Capsule. Separately, the Node library now contains a provider-neutral
-Capsule server and an injected Codex runner tested through the real Unix wire against
-fake app-server clients. It does not yet activate Codex for a real model turn or
-complete contract-acknowledgement and verification deliveries.
+| Status | Layer | Current boundary |
+| --- | --- | --- |
+| **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.0: identities, invites, typed handoffs, messages, blocks, trust, and audit |
+| **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
+| **Experimental** | Node and persistent Capsule | Local policy and crash-recovery foundations, currently exercised with deterministic fake runtimes |
+| **Next gate** | Guarded real Codex activation | One contained real turn, then a two-machine backend ↔ Android Mission |
+
+The repository does not yet ship the full autonomous runtime described above. The
+Node CLI still consumes one turn at a time through either its in-process deterministic
+fake or a detached fake Capsule. The provider-neutral Capsule server and injected
+Codex runner are tested through the real Unix wire against fake app-server clients,
+but no current descriptor or CLI activates Codex for a real model turn.
 
 ### Implemented today
 
@@ -155,12 +167,16 @@ For the first slice, "done autonomously" means review-ready participant workspac
 replayable trace. Push, merge, publish, deploy, secrets, arbitrary network access,
 and production credentials remain denied.
 
-## Use the current mailbox
+## Use AgentRelay today
 
-The published `agentrelay-mcp` package provides the current manual handoff flow. A
-team needs a configured relay and each developer needs Node 20+ plus Claude Code or
-Codex. Package-specific details live in
+Start with the published `agentrelay-mcp` mailbox. It connects already-running Claude
+Code and Codex hosts to a Relay your team configures; no public hosted Relay is
+bundled yet. Each developer needs Node 20+ and an AgentRelay identity. Package-specific
+details live in
 [`mcp-server/README.md`](mcp-server/README.md).
+
+Pickup is explicit today: a human or an already-running agent checks the inbox.
+Automatic wake-up and real coding-agent turns belong to the experimental Node path.
 
 ### Join with an invite
 
@@ -210,6 +226,27 @@ seven current tools are:
 - `send_message`
 - `complete_handoff`
 - `list_teammates`
+
+### Make the first round trip
+
+Ask the sender's running agent:
+
+```text
+Use AgentRelay to list my teammates, then send an ask_question handoff to
+frank@acme with the summary "Confirm the API contract."
+```
+
+Ask the receiver's running agent:
+
+```text
+Check my AgentRelay inbox, accept the handoff, and reply with the contract status.
+```
+
+Then ask the sender:
+
+```text
+View the AgentRelay thread <thread_id> and show me the latest reply.
+```
 
 Full setup and current limitations are in [`docs/onboarding.md`](docs/onboarding.md).
 
