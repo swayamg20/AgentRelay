@@ -11,6 +11,7 @@ import { isSlackWebhookUrl } from "../notifications/slack.js";
 import { lockAgentBlockPair } from "../services/agent-block-lock.js";
 import { writeAudit } from "../services/audit.js";
 import type { AppEnv } from "../types.js";
+import { registerNodeOwnerRoutes } from "./node-owner.js";
 
 const updateCardSchema = z
 	.object({
@@ -37,6 +38,7 @@ export interface AgentsRoutesOptions {
 export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 	const router = new Hono<AppEnv>();
 	router.use("*", bearerAuth({ db: opts.db, pepper: opts.pepper }));
+	registerNodeOwnerRoutes(router, opts);
 
 	// GET /agents/me — whoami (lld §5.4 / R7)
 	router.get("/me", async (c) => {

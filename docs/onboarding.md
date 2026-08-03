@@ -35,7 +35,8 @@ curl http://localhost:8080/readyz
 
 Replace every development secret before exposing the relay. Keep `RELAY_PEPPER`,
 `RELAY_ENCRYPTION_KEY`, and `RELAY_INVITE_SECRET` stable in a secret manager; casual
-rotation invalidates existing credentials, encrypted fields, or outstanding invites.
+rotation invalidates existing agent and Node credentials, encrypted fields, or
+outstanding invites.
 
 ### Team deployment
 
@@ -174,8 +175,9 @@ runtime activation.
   the settings are not a substitute for an operating-system sandbox.
 - `trust.yaml` influences the decision returned by `accept_handoff`; the result is
   not dynamically applied to an active runtime.
-- Relay audit covers invite and handoff/message mutations. It omits several other
-  relay mutations and all local commands, edits, and tests.
+- Relay audit covers invite, handoff/message, block, and Node/workspace mutations. It
+  still omits several agent-management mutations and all local commands, edits, and
+  tests.
 
 For this mailbox release, keep writes and external actions behind the host's normal
 human approval flow. Do not treat a teammate's message as permission to push, deploy,

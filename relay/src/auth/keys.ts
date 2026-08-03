@@ -33,18 +33,35 @@ function base32(bytes: Buffer): string {
 }
 
 const KEY_REGEX = /^ah_(live|test)_[a-z2-7]{32}$/;
+const NODE_KEY_REGEX = /^ar_node_(live|test)_[a-z2-7]{32}$/;
 
 export function isWellFormedKey(key: string): boolean {
 	return KEY_REGEX.test(key);
 }
 
-export function generateKey(env: KeyEnvironment, pepper: string): GeneratedKey {
-	const raw = `ah_${env}_${base32(randomBytes(KEY_BYTES))}`;
+export function isWellFormedNodeKey(key: string): boolean {
+	return NODE_KEY_REGEX.test(key);
+}
+
+function generatePrefixedKey(
+	prefix: "ah" | "ar_node",
+	env: KeyEnvironment,
+	pepper: string,
+): GeneratedKey {
+	const raw = `${prefix}_${env}_${base32(randomBytes(KEY_BYTES))}`;
 	return {
 		raw,
 		hash: hashKey(raw, pepper),
 		salt: randomBytes(16),
 	};
+}
+
+export function generateKey(env: KeyEnvironment, pepper: string): GeneratedKey {
+	return generatePrefixedKey("ah", env, pepper);
+}
+
+export function generateNodeKey(env: KeyEnvironment, pepper: string): GeneratedKey {
+	return generatePrefixedKey("ar_node", env, pepper);
 }
 
 export function hashKey(rawKey: string, pepper: string): Buffer {

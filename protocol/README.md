@@ -4,9 +4,10 @@ Executable contracts for AgentRelay's bounded two-participant Mission loop.
 
 The package contains:
 
-- strict Zod schemas for relay-visible Nodes/workspaces, Mission manifests,
-  participant acceptance receipts, contract revisions, typed messages, artifact
-  references, delivery/cursor envelopes, runs, and evidence;
+- strict Zod schemas for Node enrollment, workspace registration, relay-visible
+  Node/workspace descriptors, Mission manifests, participant acceptance receipts,
+  contract revisions, typed messages, artifact references, delivery/cursor
+  envelopes, runs, and evidence;
 - pure Mission, fenced-delivery, and deterministic coordinator reducers that reject
   invalid transitions;
 - a runtime-neutral host adapter contract, with a deterministic fake under
@@ -49,6 +50,11 @@ its immutable Mission event and trusted actor/source/causal provenance. Empty pa
 may retain the caller's cursor checkpoint. `missionParticipantAcceptanceInputSchema`
 records the exact shared contract and an opaque hash for the matching local-policy
 grant without putting local policy details on the relay wire.
+
+Node credential rotation is a generation compare-and-swap: owners read
+`active_credential_id` from `ownedNodeSummarySchema` and submit that exact value with
+`nodeCredentialRotationInputSchema`. Credential identity is deliberately absent from
+the relay-visible `nodeDescriptorSchema`.
 
 The adapter contract makes replay semantics explicit: every event has a stable
 turn-local sequence, available usage is a monotonic cumulative turn snapshot, and

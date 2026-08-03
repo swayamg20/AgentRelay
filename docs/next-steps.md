@@ -60,18 +60,21 @@ in-memory scripted proof, not durable relay or real-runtime evidence.
   replay over joined immutable events.
 - [x] Persist two independent exact acceptance receipts, bind results to source work,
   and prevent settled or stale verification-round work from advancing a Mission.
-- [ ] Add independently revocable Node credentials and authenticated enrollment,
-  Mission, and polling routes.
+- [x] Add independently revocable Node credentials plus authenticated enrollment,
+  credential rotation/revocation, and logical workspace registration routes.
+- [ ] Add authenticated Mission creation/acceptance/result and Node delivery-polling
+  routes.
 - [ ] Add claim leases, renewal, expiry, retry, cancellation, and dead-letter policy.
 - [ ] Persist claim/attempt history, runs, acknowledgements, and exact operation
   receipts for the Mission retention period.
 - [ ] Prove reconnect and recovery through cursor polling; leave SSE out of this slice.
 
-The completed kernel is deliberately internal: no agent credential can impersonate a
-Node, and no runtime can consume an unfenced delivery. Event append replays immutable
-event and derived-delivery IDs; logical settlement is distinct from transport
-acknowledgement. The next state-changing Node operations need fenced, durable
-operation receipts.
+Agent and Node credentials are type-separated, and Node revocation atomically revokes
+its active credentials and workspace bindings without deleting Mission history. The
+Mission ledger is still internal: no runtime can poll or consume an unfenced delivery.
+Event append replays immutable event and derived-delivery IDs; logical settlement is
+distinct from transport acknowledgement. The next delivery operations need fenced,
+durable operation receipts.
 
 Required tests: disconnect before claim, after claim, and after host acceptance;
 duplicate signal; relay restart; late output after terminal Mission.
@@ -115,7 +118,8 @@ as the activation foundation.
 
 - Relay-readable versus relay-blind payloads.
 - Inline patches versus signed artifact storage versus immutable git references.
-- Exact owner/agent/node/workspace credential and revocation UX.
+- Separate owner/organization identity and operator-facing enrollment/recovery UX
+  beyond the current agent-authorized compare-and-swap API.
 - Claude adapter choice.
 - Hosted service and federation.
 

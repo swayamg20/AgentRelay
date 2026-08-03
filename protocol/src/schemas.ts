@@ -142,6 +142,23 @@ export const actorRefSchema = z
 
 export const nodeStatusSchema = z.enum(["active", "revoked"]);
 
+export const nodeEnrollmentInputSchema = z
+	.object({
+		name: aliasSchema,
+		capabilities: z.array(identifierSchema).max(32),
+	})
+	.strict()
+	.refine((input) => hasUniqueValues(input.capabilities), {
+		message: "Node capabilities must be unique",
+		path: ["capabilities"],
+	});
+
+export const nodeCredentialRotationInputSchema = z
+	.object({
+		expected_credential_id: uuidSchema,
+	})
+	.strict();
+
 export const nodeDescriptorSchema = z
 	.object({
 		node_id: uuidSchema,
@@ -201,6 +218,13 @@ export const nodeDescriptorSchema = z
 		}
 	});
 
+export const ownedNodeSummarySchema = z
+	.object({
+		node: nodeDescriptorSchema,
+		active_credential_id: uuidSchema.nullable(),
+	})
+	.strict();
+
 export const workspaceBindingStatusSchema = z.enum(["active", "revoked"]);
 
 export const repositoryUrlSchema = z
@@ -246,6 +270,18 @@ export const repositoryUrlSchema = z
 				message: "Repository URL must not contain query parameters or fragments",
 			});
 		}
+	});
+
+export const workspaceRegistrationInputSchema = z
+	.object({
+		alias: aliasSchema,
+		repository_url: repositoryUrlSchema,
+		allowed_base_refs: z.array(repositoryRefSchema).max(32),
+	})
+	.strict()
+	.refine((input) => hasUniqueValues(input.allowed_base_refs), {
+		message: "Allowed base refs must be unique",
+		path: ["allowed_base_refs"],
 	});
 
 export const workspaceBindingDescriptorSchema = z
@@ -886,8 +922,12 @@ export type PolicyProfileName = z.infer<typeof policyProfileNameSchema>;
 export type PolicyRequest = z.infer<typeof policyRequestSchema>;
 export type ActorRef = z.infer<typeof actorRefSchema>;
 export type NodeStatus = z.infer<typeof nodeStatusSchema>;
+export type NodeEnrollmentInput = z.infer<typeof nodeEnrollmentInputSchema>;
+export type NodeCredentialRotationInput = z.infer<typeof nodeCredentialRotationInputSchema>;
 export type NodeDescriptor = z.infer<typeof nodeDescriptorSchema>;
+export type OwnedNodeSummary = z.infer<typeof ownedNodeSummarySchema>;
 export type WorkspaceBindingStatus = z.infer<typeof workspaceBindingStatusSchema>;
+export type WorkspaceRegistrationInput = z.infer<typeof workspaceRegistrationInputSchema>;
 export type WorkspaceBindingDescriptor = z.infer<typeof workspaceBindingDescriptorSchema>;
 export type Participant = z.infer<typeof participantSchema>;
 export type ArtifactRef = z.infer<typeof artifactRefSchema>;

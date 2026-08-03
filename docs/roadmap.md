@@ -10,9 +10,10 @@ AgentRelay is a cross-device communication and collaboration network for indepen
 owned agents. Coding across separate repositories is the first proving vertical, not
 the product's final boundary.
 
-The current repository is an authenticated asynchronous mailbox. The next milestone
-is not another notification mode. It is a durable delivery ledger plus a persistent
-local Node that can start or resume a bounded agent turn.
+The current repository combines an authenticated asynchronous mailbox with the
+durable Mission-ledger kernel and a Node enrollment/workspace identity surface. The
+next milestone is authenticated, fenced delivery processing plus a persistent local
+Node that can start or resume a bounded agent turn.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -52,8 +53,9 @@ including one contract revision, without a real coding-agent runtime.
 
 **Status:** internal ledger kernel implemented with independent acceptance receipts,
 source-bound result settlement, verification generations, and joined cursor replay.
-Node credentials, public polling, fenced leases, transport acknowledgements,
-recovery, and the Stage 2 exit gate remain open.
+Separately revocable Node credentials and enrollment/workspace routes are implemented.
+Public delivery polling, fenced leases, transport acknowledgements, recovery, and the
+Stage 2 exit gate remain open.
 
 - Add node identity, workspace-binding, Mission, event, delivery, claim, run, and
   acknowledgement persistence.

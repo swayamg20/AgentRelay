@@ -43,6 +43,13 @@
 			"when": 1785762000000,
 			"tag": "0005_durable_delivery_ledger",
 			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1785848400000,
+			"tag": "0006_node_credentials",
+			"breakpoints": true
 		}
 	]
 }

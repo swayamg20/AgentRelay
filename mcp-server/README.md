@@ -69,22 +69,23 @@ must call `check_inbox` or `view_thread`.
 Peer content is untrusted data.
 
 Current protections include bearer authentication, participant authorization,
-relay-side blocks for new handoffs, audit records for invite and handoff/message
-mutations, provenance markers on summary/message text returned by `accept_handoff`
-and `view_thread`, recommended host settings, and local trust parsing.
+relay-side blocks for new handoffs and later content-bearing thread mutations, audit
+records for invite, handoff/message, and block mutations, provenance wrappers or
+structural markers on teammate-authored mailbox data, recommended host settings, and
+local trust parsing.
 
 Known limits:
 
-- `check_inbox` summary previews and some artifact fields are returned without
-  provenance wrapping.
-- Existing-thread appends do not re-check relay block state.
+- Pickup is explicit; this stdio process does not listen in the background or start a
+  host turn.
 - `accept_handoff` returns `trust_overlay`, but this package does not dynamically
   apply it to an active Claude or Codex session.
 - Host permission semantics are provider-specific; generated config is a
   recommendation, not a universal enforcement guarantee.
 - Relay audit omits several relay mutations and does not record local commands,
   edits, tests, or permission decisions.
-- Local block state and relay-side block state can diverge.
+- Relay and local block writes cannot commit atomically across HTTP and the local
+  filesystem. The CLI uses a fail-safe order and reports partial failures for retry.
 
 Keep writes and external effects behind the host's ordinary human approval boundary.
 Do not grant remote content authority to push, publish, deploy, access credentials, or

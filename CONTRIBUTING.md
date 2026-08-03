@@ -92,6 +92,8 @@ Peer messages and artifacts are untrusted input.
 
 - Preserve bearer authentication, participant authorization, block checks, and
   lifecycle-transition ownership.
+- Keep agent and Node bearer credentials type-separated. A Node credential must not
+  authenticate `/agents` or `/a2a`, and an agent key must not authenticate `/node/v1`.
 - State-changing operations need an idempotency strategy and transactionally
   consistent audit behavior.
 - Provenance-wrap every teammate-originated text-bearing field, including fields

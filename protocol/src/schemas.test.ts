@@ -8,7 +8,10 @@ import {
 	missionContextSchema,
 	missionEventEnvelopeSchema,
 	missionManifestSchema,
+	nodeCredentialRotationInputSchema,
 	nodeDescriptorSchema,
+	nodeEnrollmentInputSchema,
+	ownedNodeSummarySchema,
 	policyRequestSchema,
 	runSchema,
 	storedDeliveryCursorPageRequestSchema,
@@ -16,6 +19,7 @@ import {
 	turnDispositionSchema,
 	verificationEvidenceSchema,
 	workspaceBindingDescriptorSchema,
+	workspaceRegistrationInputSchema,
 } from "./schemas.js";
 
 const ids = {
@@ -33,6 +37,7 @@ const ids = {
 	revision: "00000000-0000-4000-8000-000000000012",
 	workspaceBinding: "00000000-0000-4000-8000-000000000013",
 	otherNode: "00000000-0000-4000-8000-000000000014",
+	nodeCredential: "00000000-0000-4000-8000-000000000015",
 } as const;
 
 const artifact = {
@@ -160,6 +165,101 @@ describe("relay-visible Node contracts", () => {
 			workspaceBindingDescriptorSchema.safeParse({
 				...binding,
 				allowed_base_refs: ["../outside"],
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe("Node enrollment inputs", () => {
+	it("accepts only a logical Node name and unique capabilities", () => {
+		const input = {
+			name: "backend-mac",
+			capabilities: ["runtime.codex", "runtime.fake"],
+		};
+
+		expect(nodeEnrollmentInputSchema.parse(input)).toEqual(input);
+		expect(
+			nodeEnrollmentInputSchema.safeParse({
+				...input,
+				capabilities: ["runtime.fake", "runtime.fake"],
+			}).success,
+		).toBe(false);
+		expect(
+			nodeEnrollmentInputSchema.safeParse({
+				...input,
+				local_path: "/Users/alice/backend",
+			}).success,
+		).toBe(false);
+	});
+
+	it("requires an exact credential generation for rotation", () => {
+		const input = { expected_credential_id: ids.nodeCredential };
+
+		expect(nodeCredentialRotationInputSchema.parse(input)).toEqual(input);
+		expect(
+			nodeCredentialRotationInputSchema.safeParse({
+				...input,
+				force: true,
+			}).success,
+		).toBe(false);
+		expect(
+			nodeCredentialRotationInputSchema.safeParse({
+				expected_credential_id: "current",
+			}).success,
+		).toBe(false);
+	});
+
+	it("keeps owner credential identity outside the relay-visible Node descriptor", () => {
+		const node = {
+			node_id: ids.node,
+			agent_id: ids.backendAgent,
+			name: "backend-mac",
+			status: "active" as const,
+			capabilities: ["runtime.fake"],
+			last_seen_at: null,
+			created_at: "2026-08-02T10:00:00.000Z",
+			updated_at: "2026-08-02T10:00:00.000Z",
+			revoked_at: null,
+		};
+		const summary = {
+			node,
+			active_credential_id: ids.nodeCredential,
+		};
+
+		expect(ownedNodeSummarySchema.parse(summary)).toEqual(summary);
+		expect(nodeDescriptorSchema.safeParse(summary).success).toBe(false);
+		expect(
+			ownedNodeSummarySchema.safeParse({
+				...summary,
+				credential_token: "secret",
+			}).success,
+		).toBe(false);
+	});
+
+	it("accepts only safe logical workspace registration data", () => {
+		const input = {
+			alias: "backend-api",
+			repository_url: "https://github.com/acme/backend.git",
+			allowed_base_refs: ["refs/heads/main", "refs/heads/release"],
+		};
+
+		expect(workspaceRegistrationInputSchema.parse(input)).toEqual(input);
+		expect(
+			workspaceRegistrationInputSchema.safeParse({
+				...input,
+				allowed_base_refs: ["refs/heads/main", "refs/heads/main"],
+			}).success,
+		).toBe(false);
+		expect(
+			workspaceRegistrationInputSchema.safeParse({
+				...input,
+				repository_url: "file:///Users/alice/backend",
+			}).success,
+		).toBe(false);
+		expect(
+			workspaceRegistrationInputSchema.safeParse({
+				...input,
+				checkout_path: "/Users/alice/backend",
 			}).success,
 		).toBe(false);
 	});

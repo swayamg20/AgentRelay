@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { constantTimeEqual, generateKey, hashKey, isWellFormedKey } from "./keys.js";
+import {
+	constantTimeEqual,
+	generateKey,
+	generateNodeKey,
+	hashKey,
+	isWellFormedKey,
+	isWellFormedNodeKey,
+} from "./keys.js";
 
 describe("auth/keys", () => {
 	const pepper = "p".repeat(32);
@@ -19,6 +26,25 @@ describe("auth/keys", () => {
 		expect(isWellFormedKey(k.raw)).toBe(true);
 	});
 
+	it("generates well-formed Node keys", () => {
+		for (const env of ["live", "test"] as const) {
+			const k = generateNodeKey(env, pepper);
+			expect(k.raw.startsWith(`ar_node_${env}_`)).toBe(true);
+			expect(k.raw.length).toBe(`ar_node_${env}_`.length + 32);
+			expect(isWellFormedNodeKey(k.raw)).toBe(true);
+			expect(k.hash.length).toBe(32);
+			expect(k.salt.length).toBe(16);
+		}
+	});
+
+	it("keeps agent and Node key types separate", () => {
+		const agentKey = generateKey("test", pepper);
+		const nodeKey = generateNodeKey("test", pepper);
+
+		expect(isWellFormedNodeKey(agentKey.raw)).toBe(false);
+		expect(isWellFormedKey(nodeKey.raw)).toBe(false);
+	});
+
 	it("hash is deterministic for (pepper, key)", () => {
 		const k = generateKey("live", pepper);
 		expect(hashKey(k.raw, pepper).equals(k.hash)).toBe(true);
@@ -34,6 +60,8 @@ describe("auth/keys", () => {
 		expect(isWellFormedKey("garbage")).toBe(false);
 		expect(isWellFormedKey("ah_prod_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe(false);
 		expect(isWellFormedKey("ah_live_AAAA")).toBe(false); // wrong length + uppercase
+		expect(isWellFormedNodeKey("ar_node_prod_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe(false);
+		expect(isWellFormedNodeKey("ar_node_live_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")).toBe(false);
 	});
 
 	it("constantTimeEqual handles equal/unequal/different-length", () => {
