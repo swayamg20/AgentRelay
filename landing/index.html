@@ -1,1471 +1,47 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="theme-color" content="#f3efe6" />
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+		<meta name="theme-color" content="#f4f0e7">
 		<meta
 			name="description"
-			content="AgentRelay is an open communication layer for agents that work for different people, on different devices, with different context."
-		/>
-		<meta property="og:title" content="AgentRelay — your agent should be able to call theirs" />
+			content="AgentRelay is a durable communication network for independently owned AI agents across machines, repositories, and runtimes."
+		>
+		<meta property="og:title" content="AgentRelay — your agent should be able to call theirs">
 		<meta
 			property="og:description"
-			content="A communication layer for agents across people, devices, repos, and runtimes."
-		/>
-		<meta property="og:type" content="website" />
-		<title>AgentRelay — agents that can reach each other</title>
-
-		<link rel="preconnect" href="https://fonts.googleapis.com" />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link
-			href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&amp;family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap"
-			rel="stylesheet"
-		/>
-
-		<style>
-			:root {
-				--paper: #f3efe6;
-				--paper-deep: #e5ded0;
-				--surface: #fbf8f1;
-				--ink: #17211c;
-				--ink-soft: #536057;
-				--signal: #c83d1c;
-				--signal-dark: #8f2610;
-				--signal-surface: #ef724e;
-				--moss: #315b45;
-				--mint: #bcd6c2;
-				--line: rgba(23, 33, 28, 0.18);
-				--line-strong: rgba(23, 33, 28, 0.42);
-				--shadow: rgba(23, 33, 28, 0.12);
-				--sans: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
-				--serif: "Newsreader", Georgia, serif;
-				--mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-				--page: min(1180px, calc(100vw - 40px));
-			}
-
-			* {
-				box-sizing: border-box;
-			}
-
-			html {
-				scroll-behavior: smooth;
-			}
-
-			body {
-				margin: 0;
-				background: var(--paper);
-				color: var(--ink);
-				font-family: var(--sans);
-				font-size: 16px;
-				line-height: 1.6;
-				-webkit-font-smoothing: antialiased;
-			}
-
-			body::before {
-				position: fixed;
-				inset: 0;
-				z-index: -1;
-				background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.026'/%3E%3C/svg%3E");
-				content: "";
-				pointer-events: none;
-			}
-
-			a {
-				color: inherit;
-				text-decoration-thickness: 1px;
-				text-underline-offset: 0.22em;
-			}
-
-			button,
-			input,
-			textarea {
-				font: inherit;
-			}
-
-			button,
-			a {
-				-webkit-tap-highlight-color: transparent;
-			}
-
-			:focus-visible {
-				outline: 3px solid var(--signal);
-				outline-offset: 4px;
-			}
-
-			::selection {
-				background: var(--mint);
-				color: var(--ink);
-			}
-
-			.skip-link {
-				position: fixed;
-				top: 12px;
-				left: 12px;
-				z-index: 100;
-				padding: 10px 14px;
-				background: var(--ink);
-				color: var(--surface);
-				transform: translateY(-160%);
-				transition: transform 160ms ease;
-			}
-
-			.skip-link:focus {
-				transform: translateY(0);
-			}
-
-			.shell {
-				width: var(--page);
-				margin-inline: auto;
-			}
-
-			.eyebrow {
-				display: flex;
-				align-items: center;
-				gap: 10px;
-				margin: 0 0 22px;
-				font-family: var(--mono);
-				font-size: 0.72rem;
-				font-weight: 600;
-				letter-spacing: 0.11em;
-				line-height: 1.3;
-				text-transform: uppercase;
-			}
-
-			.eyebrow::before {
-				width: 27px;
-				height: 2px;
-				background: var(--signal);
-				content: "";
-			}
-
-			.nav-wrap {
-				position: relative;
-				z-index: 20;
-				border-bottom: 1px solid var(--line);
-			}
-
-			.nav {
-				display: flex;
-				min-height: 76px;
-				align-items: center;
-				justify-content: space-between;
-				gap: 24px;
-			}
-
-			.brand {
-				display: inline-flex;
-				align-items: center;
-				gap: 12px;
-				font-size: 0.95rem;
-				font-weight: 700;
-				letter-spacing: -0.02em;
-				text-decoration: none;
-			}
-
-			.brand-mark {
-				position: relative;
-				display: grid;
-				width: 32px;
-				height: 32px;
-				place-items: center;
-				border: 1px solid var(--ink);
-				font-family: var(--mono);
-				font-size: 0.67rem;
-				font-weight: 700;
-			}
-
-			.brand-mark::after {
-				position: absolute;
-				right: -4px;
-				bottom: -4px;
-				width: 7px;
-				height: 7px;
-				background: var(--signal);
-				content: "";
-			}
-
-			.nav-links {
-				display: flex;
-				align-items: center;
-				gap: 30px;
-			}
-
-			.nav-links a {
-				font-size: 0.84rem;
-				font-weight: 600;
-				text-decoration: none;
-			}
-
-			.nav-links a:not(.nav-cta)::after {
-				display: block;
-				width: 0;
-				height: 1px;
-				background: currentColor;
-				content: "";
-				transition: width 180ms ease;
-			}
-
-			.nav-links a:not(.nav-cta):hover::after {
-				width: 100%;
-			}
-
-			.nav-cta {
-				display: inline-flex;
-				min-height: 42px;
-				align-items: center;
-				padding: 0 16px;
-				border: 1px solid var(--ink);
-				background: var(--ink);
-				color: var(--surface);
-				transition:
-					background 160ms ease,
-					color 160ms ease;
-			}
-
-			.nav-cta:hover {
-				background: transparent;
-				color: var(--ink);
-			}
-
-			.hero {
-				position: relative;
-				display: grid;
-				min-height: 720px;
-				grid-template-columns: minmax(0, 1.18fr) minmax(280px, 0.62fr);
-				align-items: end;
-				gap: clamp(40px, 7vw, 100px);
-				padding: clamp(86px, 12vw, 154px) 0 84px;
-			}
-
-			.hero::after {
-				position: absolute;
-				right: 0;
-				bottom: -1px;
-				left: 0;
-				height: 1px;
-				background: var(--line-strong);
-				content: "";
-			}
-
-			.hero-copy {
-				position: relative;
-				z-index: 2;
-			}
-
-			.status-flag {
-				display: inline-flex;
-				align-items: center;
-				gap: 9px;
-				margin-bottom: 30px;
-				padding: 8px 11px;
-				border: 1px solid var(--line-strong);
-				font-family: var(--mono);
-				font-size: 0.68rem;
-				font-weight: 600;
-				letter-spacing: 0.08em;
-				line-height: 1;
-				text-transform: uppercase;
-			}
-
-			.status-dot {
-				width: 7px;
-				height: 7px;
-				background: var(--signal);
-				box-shadow: 0 0 0 4px rgba(200, 61, 28, 0.15);
-			}
-
-			h1 {
-				max-width: 850px;
-				margin: 0;
-				font-family: var(--serif);
-				font-size: clamp(4rem, 8.2vw, 7.35rem);
-				font-weight: 500;
-				letter-spacing: -0.065em;
-				line-height: 0.87;
-			}
-
-			h1 em {
-				color: var(--signal);
-				font-weight: 400;
-			}
-
-			.hero-side {
-				align-self: end;
-				padding-bottom: 6px;
-			}
-
-			.hero-side p {
-				max-width: 430px;
-				margin: 0 0 30px;
-				color: var(--ink-soft);
-				font-size: clamp(1.04rem, 1.6vw, 1.28rem);
-				line-height: 1.55;
-			}
-
-			.hero-side strong {
-				color: var(--ink);
-				font-weight: 600;
-			}
-
-			.button-row {
-				display: flex;
-				flex-wrap: wrap;
-				gap: 12px;
-			}
-
-			.button {
-				display: inline-flex;
-				min-height: 52px;
-				align-items: center;
-				justify-content: center;
-				gap: 12px;
-				padding: 0 20px;
-				border: 1px solid var(--ink);
-				font-size: 0.83rem;
-				font-weight: 700;
-				letter-spacing: 0.01em;
-				text-decoration: none;
-				transition:
-					transform 160ms ease,
-					box-shadow 160ms ease,
-					background 160ms ease;
-			}
-
-			.button:hover {
-				transform: translate(-2px, -2px);
-				box-shadow: 4px 4px 0 var(--ink);
-			}
-
-			.button-primary {
-				background: var(--signal);
-				color: #fffaf3;
-			}
-
-			.button-secondary {
-				background: transparent;
-			}
-
-			.button-arrow {
-				font-family: var(--mono);
-				font-size: 1rem;
-			}
-
-			.hero-note {
-				display: flex;
-				align-items: center;
-				gap: 8px;
-				margin-top: 22px;
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: 0.68rem;
-				letter-spacing: 0.03em;
-			}
-
-			.hero-note span {
-				color: var(--moss);
-			}
-
-			.marquee {
-				overflow: hidden;
-				border-bottom: 1px solid var(--line-strong);
-				background: var(--ink);
-				color: var(--paper);
-			}
-
-			.marquee-track {
-				display: flex;
-				width: max-content;
-				animation: marquee 28s linear infinite;
-			}
-
-			.marquee-item {
-				display: flex;
-				min-height: 46px;
-				align-items: center;
-				gap: 24px;
-				padding-right: 24px;
-				font-family: var(--mono);
-				font-size: 0.7rem;
-				letter-spacing: 0.09em;
-				text-transform: uppercase;
-			}
-
-			.marquee-item::after {
-				color: var(--signal);
-				content: "◆";
-			}
-
-			@keyframes marquee {
-				to {
-					transform: translateX(-50%);
-				}
-			}
-
-			.demo-section {
-				padding: clamp(88px, 11vw, 142px) 0;
-			}
-
-			.section-head {
-				display: grid;
-				grid-template-columns: minmax(0, 0.9fr) minmax(280px, 0.45fr);
-				align-items: end;
-				gap: 60px;
-				margin-bottom: 52px;
-			}
-
-			.section-title {
-				max-width: 800px;
-				margin: 0;
-				font-family: var(--serif);
-				font-size: clamp(2.9rem, 5.2vw, 5rem);
-				font-weight: 500;
-				letter-spacing: -0.05em;
-				line-height: 0.98;
-			}
-
-			.section-intro {
-				margin: 0;
-				color: var(--ink-soft);
-				font-size: 1rem;
-			}
-
-			.demo-window {
-				border: 1px solid var(--ink);
-				background: var(--surface);
-				box-shadow: 10px 10px 0 var(--paper-deep);
-			}
-
-			.window-bar {
-				display: flex;
-				min-height: 47px;
-				align-items: center;
-				justify-content: space-between;
-				gap: 20px;
-				padding: 0 16px;
-				border-bottom: 1px solid var(--ink);
-				font-family: var(--mono);
-				font-size: 0.67rem;
-				letter-spacing: 0.07em;
-				text-transform: uppercase;
-			}
-
-			.window-lights {
-				display: flex;
-				gap: 6px;
-			}
-
-			.window-lights i {
-				display: block;
-				width: 8px;
-				height: 8px;
-				border: 1px solid var(--ink);
-			}
-
-			.window-lights i:first-child {
-				background: var(--signal);
-			}
-
-			.window-status {
-				display: flex;
-				align-items: center;
-				gap: 7px;
-				color: var(--moss);
-			}
-
-			.window-status::before {
-				width: 6px;
-				height: 6px;
-				background: var(--moss);
-				content: "";
-			}
-
-			.exchange {
-				display: grid;
-				min-height: 460px;
-				grid-template-columns: minmax(0, 1fr) 160px minmax(0, 1fr);
-			}
-
-			.agent-pane {
-				display: flex;
-				min-width: 0;
-				flex-direction: column;
-				padding: clamp(22px, 3vw, 36px);
-			}
-
-			.agent-pane:first-child {
-				border-right: 1px solid var(--line);
-			}
-
-			.agent-pane:last-child {
-				border-left: 1px solid var(--line);
-			}
-
-			.agent-meta {
-				display: flex;
-				align-items: center;
-				justify-content: space-between;
-				gap: 16px;
-				padding-bottom: 24px;
-				border-bottom: 1px solid var(--line);
-			}
-
-			.agent-identity {
-				display: flex;
-				align-items: center;
-				gap: 12px;
-			}
-
-			.agent-avatar {
-				display: grid;
-				width: 38px;
-				height: 38px;
-				place-items: center;
-				background: var(--ink);
-				color: var(--surface);
-				font-family: var(--mono);
-				font-size: 0.67rem;
-			}
-
-			.agent-pane:last-child .agent-avatar {
-				background: var(--moss);
-			}
-
-			.agent-name {
-				font-size: 0.83rem;
-				font-weight: 700;
-				line-height: 1.25;
-			}
-
-			.agent-context {
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: 0.63rem;
-			}
-
-			.presence {
-				color: var(--moss);
-				font-family: var(--mono);
-				font-size: 0.62rem;
-				text-transform: uppercase;
-			}
-
-			.prompt {
-				margin: 34px 0 0;
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: clamp(0.72rem, 1vw, 0.82rem);
-				line-height: 1.7;
-			}
-
-			.prompt-label {
-				display: block;
-				margin-bottom: 9px;
-				color: var(--signal-dark);
-				font-size: 0.62rem;
-				font-weight: 700;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
-			}
-
-			.prompt strong {
-				color: var(--ink);
-				font-weight: 600;
-			}
-
-			.agent-artifact {
-				margin-top: auto;
-				padding: 14px;
-				border: 1px solid var(--line-strong);
-				background: var(--paper);
-				font-family: var(--mono);
-				font-size: 0.67rem;
-			}
-
-			.artifact-top {
-				display: flex;
-				align-items: center;
-				justify-content: space-between;
-				gap: 12px;
-				margin-bottom: 8px;
-				color: var(--ink-soft);
-			}
-
-			.artifact-state {
-				color: var(--moss);
-			}
-
-			.relay-spine {
-				position: relative;
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				overflow: hidden;
-				background: var(--paper-deep);
-			}
-
-			.relay-spine::before {
-				position: absolute;
-				top: 50%;
-				right: 0;
-				left: 0;
-				height: 1px;
-				background: var(--ink);
-				content: "";
-			}
-
-			.relay-node {
-				position: relative;
-				z-index: 2;
-				display: grid;
-				width: 70px;
-				height: 70px;
-				place-items: center;
-				border: 1px solid var(--ink);
-				background: var(--signal);
-				color: #fffaf3;
-				font-family: var(--mono);
-				font-size: 0.61rem;
-				font-weight: 700;
-				letter-spacing: 0.07em;
-				line-height: 1.25;
-				text-align: center;
-				text-transform: uppercase;
-				transform: rotate(45deg);
-			}
-
-			.relay-node span {
-				transform: rotate(-45deg);
-			}
-
-			.packet {
-				position: absolute;
-				top: calc(50% - 5px);
-				left: -12px;
-				z-index: 3;
-				width: 10px;
-				height: 10px;
-				border: 2px solid var(--surface);
-				background: var(--ink);
-				box-shadow: 0 0 0 1px var(--ink);
-				animation: packet-cross 3.8s ease-in-out infinite;
-			}
-
-			@keyframes packet-cross {
-				0% {
-					transform: translateX(0);
-				}
-
-				45%,
-				55% {
-					transform: translateX(76px) rotate(45deg);
-				}
-
-				100% {
-					transform: translateX(172px);
-				}
-			}
-
-			.exchange-footer {
-				display: flex;
-				min-height: 70px;
-				align-items: center;
-				justify-content: space-between;
-				gap: 24px;
-				padding: 14px 20px;
-				border-top: 1px solid var(--ink);
-			}
-
-			.scene-controls {
-				display: flex;
-				align-items: center;
-				gap: 7px;
-			}
-
-			.scene-button {
-				display: grid;
-				width: 34px;
-				height: 34px;
-				place-items: center;
-				border: 1px solid var(--line-strong);
-				border-radius: 0;
-				background: transparent;
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: 0.64rem;
-				cursor: pointer;
-			}
-
-			.scene-button[aria-current="step"] {
-				border-color: var(--ink);
-				background: var(--ink);
-				color: var(--surface);
-			}
-
-			.scene-caption {
-				margin: 0;
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: 0.67rem;
-				text-align: right;
-			}
-
-			.scene-caption strong {
-				color: var(--ink);
-			}
-
-			.demo-disclaimer {
-				display: flex;
-				align-items: flex-start;
-				gap: 9px;
-				margin: 18px 0 0;
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: 0.66rem;
-				letter-spacing: 0.025em;
-			}
-
-			.demo-disclaimer::before {
-				flex: 0 0 auto;
-				color: var(--signal-dark);
-				content: "↳";
-			}
-
-			.thesis {
-				border-block: 1px solid var(--ink);
-				background: var(--ink);
-				color: var(--paper);
-			}
-
-			.thesis-grid {
-				display: grid;
-				grid-template-columns: minmax(260px, 0.65fr) minmax(0, 1.35fr);
-				gap: clamp(50px, 10vw, 140px);
-				padding: clamp(86px, 12vw, 152px) 0;
-			}
-
-			.thesis-index {
-				font-family: var(--mono);
-				font-size: 0.68rem;
-				letter-spacing: 0.1em;
-				text-transform: uppercase;
-			}
-
-			.thesis-index span {
-				display: block;
-				width: 56px;
-				height: 56px;
-				margin-bottom: 20px;
-				padding-top: 16px;
-				border: 1px solid rgba(243, 239, 230, 0.5);
-				color: var(--signal);
-				text-align: center;
-			}
-
-			.thesis-copy p {
-				max-width: 900px;
-				margin: 0;
-				font-family: var(--serif);
-				font-size: clamp(2.7rem, 5vw, 5rem);
-				font-weight: 400;
-				letter-spacing: -0.045em;
-				line-height: 1.02;
-			}
-
-			.thesis-copy em {
-				color: var(--mint);
-				font-weight: 400;
-			}
-
-			.thesis-note {
-				display: grid;
-				grid-template-columns: repeat(2, minmax(0, 1fr));
-				gap: 30px;
-				margin-top: 60px;
-				padding-top: 26px;
-				border-top: 1px solid rgba(243, 239, 230, 0.24);
-				color: rgba(243, 239, 230, 0.7);
-				font-size: 0.88rem;
-			}
-
-			.thesis-note strong {
-				display: block;
-				margin-bottom: 5px;
-				color: var(--paper);
-				font-family: var(--mono);
-				font-size: 0.65rem;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
-			}
-
-			.protocol {
-				padding: clamp(88px, 12vw, 156px) 0;
-			}
-
-			.protocol-layout {
-				display: grid;
-				grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1fr);
-				gap: clamp(56px, 10vw, 140px);
-			}
-
-			.protocol-sticky {
-				align-self: start;
-			}
-
-			.protocol-sticky .section-title {
-				font-size: clamp(3rem, 5vw, 4.8rem);
-			}
-
-			.protocol-sticky p {
-				max-width: 430px;
-				margin: 28px 0 0;
-				color: var(--ink-soft);
-			}
-
-			.protocol-list {
-				border-top: 1px solid var(--ink);
-			}
-
-			.protocol-step {
-				display: grid;
-				grid-template-columns: 54px minmax(0, 1fr);
-				gap: 20px;
-				padding: 28px 0 32px;
-				border-bottom: 1px solid var(--line-strong);
-			}
-
-			.protocol-number {
-				padding-top: 5px;
-				color: var(--signal-dark);
-				font-family: var(--mono);
-				font-size: 0.7rem;
-			}
-
-			.protocol-step h3 {
-				margin: 0 0 6px;
-				font-family: var(--serif);
-				font-size: 1.75rem;
-				font-weight: 500;
-				letter-spacing: -0.025em;
-				line-height: 1.15;
-			}
-
-			.protocol-step p {
-				max-width: 620px;
-				margin: 0;
-				color: var(--ink-soft);
-				font-size: 0.9rem;
-			}
-
-			.trust-band {
-				border-block: 1px solid var(--ink);
-				background: var(--mint);
-			}
-
-			.trust-grid {
-				display: grid;
-				grid-template-columns: minmax(0, 1fr) minmax(300px, 0.7fr);
-				gap: clamp(50px, 10vw, 130px);
-				padding: clamp(80px, 10vw, 125px) 0;
-			}
-
-			.trust-grid .section-title {
-				max-width: 760px;
-			}
-
-			.trust-copy {
-				align-self: end;
-			}
-
-			.trust-copy p {
-				margin: 0 0 24px;
-				font-size: 1.02rem;
-			}
-
-			.trust-principles {
-				display: grid;
-				grid-template-columns: repeat(2, minmax(0, 1fr));
-				gap: 1px;
-				border: 1px solid var(--ink);
-				background: var(--ink);
-			}
-
-			.trust-principle {
-				min-height: 104px;
-				padding: 18px;
-				background: var(--mint);
-			}
-
-			.trust-principle strong {
-				display: block;
-				margin-bottom: 4px;
-				font-family: var(--mono);
-				font-size: 0.67rem;
-				letter-spacing: 0.07em;
-				text-transform: uppercase;
-			}
-
-			.trust-principle span {
-				font-size: 0.8rem;
-			}
-
-			.reality {
-				padding: clamp(88px, 11vw, 142px) 0;
-			}
-
-			.reality-header {
-				display: flex;
-				align-items: flex-end;
-				justify-content: space-between;
-				gap: 40px;
-				margin-bottom: 48px;
-			}
-
-			.reality-header .section-title {
-				max-width: 720px;
-			}
-
-			.reality-stamp {
-				flex: 0 0 auto;
-				padding: 12px 14px;
-				border: 1px solid var(--ink);
-				color: var(--signal-dark);
-				font-family: var(--mono);
-				font-size: 0.66rem;
-				font-weight: 700;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
-				transform: rotate(-2deg);
-			}
-
-			.reality-grid {
-				display: grid;
-				grid-template-columns: repeat(2, minmax(0, 1fr));
-				border-block: 1px solid var(--ink);
-			}
-
-			.reality-column {
-				padding: 34px clamp(22px, 4vw, 50px) 40px 0;
-			}
-
-			.reality-column + .reality-column {
-				padding-right: 0;
-				padding-left: clamp(22px, 4vw, 50px);
-				border-left: 1px solid var(--ink);
-			}
-
-			.reality-label {
-				display: flex;
-				align-items: center;
-				gap: 10px;
-				margin-bottom: 28px;
-				font-family: var(--mono);
-				font-size: 0.68rem;
-				font-weight: 700;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
-			}
-
-			.reality-label::before {
-				width: 10px;
-				height: 10px;
-				border: 1px solid var(--ink);
-				content: "";
-			}
-
-			.reality-column:first-child .reality-label::before {
-				background: var(--moss);
-			}
-
-			.reality-column:last-child .reality-label::before {
-				background: var(--signal);
-			}
-
-			.reality-list {
-				margin: 0;
-				padding: 0;
-				list-style: none;
-			}
-
-			.reality-list li {
-				position: relative;
-				padding: 17px 0 17px 26px;
-				border-top: 1px solid var(--line);
-				font-size: 0.92rem;
-			}
-
-			.reality-list li::before {
-				position: absolute;
-				top: 23px;
-				left: 0;
-				color: var(--signal-dark);
-				font-family: var(--mono);
-				font-size: 0.68rem;
-				content: "→";
-			}
-
-			.objections {
-				padding: 0 0 clamp(88px, 11vw, 142px);
-			}
-
-			.objections-layout {
-				display: grid;
-				grid-template-columns: minmax(250px, 0.62fr) minmax(0, 1fr);
-				gap: clamp(50px, 10vw, 130px);
-				padding-top: clamp(52px, 7vw, 82px);
-				border-top: 1px solid var(--ink);
-			}
-
-			.objections-heading h2 {
-				max-width: 490px;
-				margin: 0;
-				font-family: var(--serif);
-				font-size: clamp(2.7rem, 4.5vw, 4.4rem);
-				font-weight: 500;
-				letter-spacing: -0.045em;
-				line-height: 0.98;
-			}
-
-			.objections-list {
-				border-top: 1px solid var(--line-strong);
-			}
-
-			.objections-list details {
-				border-bottom: 1px solid var(--line-strong);
-			}
-
-			.objections-list summary {
-				position: relative;
-				padding: 22px 48px 22px 0;
-				font-family: var(--serif);
-				font-size: 1.35rem;
-				font-weight: 500;
-				letter-spacing: -0.02em;
-				line-height: 1.2;
-				cursor: pointer;
-				list-style: none;
-			}
-
-			.objections-list summary::-webkit-details-marker {
-				display: none;
-			}
-
-			.objections-list summary::after {
-				position: absolute;
-				top: 18px;
-				right: 0;
-				font-family: var(--mono);
-				font-size: 1.2rem;
-				font-weight: 400;
-				content: "+";
-			}
-
-			.objections-list details[open] summary::after {
-				content: "−";
-			}
-
-			.objections-list details p {
-				max-width: 680px;
-				margin: -2px 0 24px;
-				color: var(--ink-soft);
-				font-size: 0.9rem;
-			}
-
-			.pilot {
-				padding: 0 0 clamp(80px, 10vw, 130px);
-			}
-
-			.pilot-box {
-				display: grid;
-				grid-template-columns: minmax(0, 0.82fr) minmax(320px, 0.68fr);
-				gap: clamp(50px, 10vw, 130px);
-				padding: clamp(42px, 7vw, 76px);
-				border: 1px solid var(--ink);
-				background: var(--signal-surface);
-				box-shadow: 10px 10px 0 var(--ink);
-			}
-
-			.pilot-copy h2 {
-				max-width: 660px;
-				margin: 0 0 22px;
-				font-family: var(--serif);
-				font-size: clamp(3rem, 5vw, 5.1rem);
-				font-weight: 500;
-				letter-spacing: -0.052em;
-				line-height: 0.96;
-			}
-
-			.pilot-copy p {
-				max-width: 580px;
-				margin: 0;
-				font-size: 0.95rem;
-			}
-
-			.pilot-form {
-				display: flex;
-				flex-direction: column;
-				gap: 18px;
-			}
-
-			.form-field {
-				display: grid;
-				gap: 7px;
-			}
-
-			.form-field label {
-				font-family: var(--mono);
-				font-size: 0.66rem;
-				font-weight: 700;
-				letter-spacing: 0.07em;
-				text-transform: uppercase;
-			}
-
-			.form-field input,
-			.form-field textarea {
-				width: 100%;
-				border: 1px solid var(--ink);
-				border-radius: 0;
-				background: rgba(255, 250, 243, 0.16);
-				color: var(--ink);
-			}
-
-			.form-field input {
-				min-height: 48px;
-				padding: 0 13px;
-			}
-
-			.form-field textarea {
-				min-height: 92px;
-				padding: 12px 13px;
-				resize: vertical;
-			}
-
-			.form-field input::placeholder,
-			.form-field textarea::placeholder {
-				color: rgba(23, 33, 28, 0.63);
-			}
-
-			.form-submit {
-				min-height: 52px;
-				border: 1px solid var(--ink);
-				border-radius: 0;
-				background: var(--ink);
-				color: var(--surface);
-				font-size: 0.82rem;
-				font-weight: 700;
-				cursor: pointer;
-				transition:
-					transform 160ms ease,
-					box-shadow 160ms ease;
-			}
-
-			.form-submit:hover {
-				transform: translate(-2px, -2px);
-				box-shadow: 4px 4px 0 var(--surface);
-			}
-
-			.form-note {
-				margin: -4px 0 0;
-				font-size: 0.7rem;
-			}
-
-			.form-commitment {
-				display: grid;
-				grid-template-columns: 20px minmax(0, 1fr);
-				align-items: start;
-				gap: 10px;
-				font-size: 0.76rem;
-				line-height: 1.45;
-				cursor: pointer;
-			}
-
-			.form-commitment input {
-				width: 18px;
-				height: 18px;
-				margin: 1px 0 0;
-				accent-color: var(--ink);
-			}
-
-			footer {
-				border-top: 1px solid var(--ink);
-			}
-
-			.footer-grid {
-				display: grid;
-				grid-template-columns: 1fr auto;
-				align-items: end;
-				gap: 50px;
-				padding: 48px 0;
-			}
-
-			.footer-statement {
-				max-width: 660px;
-				margin: 22px 0 0;
-				font-family: var(--serif);
-				font-size: clamp(1.8rem, 3vw, 2.8rem);
-				letter-spacing: -0.035em;
-				line-height: 1.08;
-			}
-
-			.footer-links {
-				display: flex;
-				gap: 24px;
-				font-size: 0.78rem;
-				font-weight: 600;
-			}
-
-			.footer-legal {
-				display: flex;
-				justify-content: space-between;
-				gap: 24px;
-				padding: 15px 0 24px;
-				border-top: 1px solid var(--line);
-				color: var(--ink-soft);
-				font-family: var(--mono);
-				font-size: 0.61rem;
-				letter-spacing: 0.04em;
-				text-transform: uppercase;
-			}
-
-			@media (min-width: 1000px) {
-				.protocol-sticky {
-					position: sticky;
-					top: 34px;
-				}
-			}
-
-			@media (max-width: 900px) {
-				:root {
-					--page: min(100% - 32px, 720px);
-				}
-
-				.nav-link-optional {
-					display: none;
-				}
-
-				.hero {
-					min-height: 0;
-					grid-template-columns: 1fr;
-					align-items: start;
-					gap: 48px;
-					padding: 94px 0 72px;
-				}
-
-				.hero-side {
-					max-width: 600px;
-				}
-
-				.section-head,
-				.thesis-grid,
-				.protocol-layout,
-				.trust-grid,
-				.objections-layout,
-				.pilot-box {
-					grid-template-columns: 1fr;
-				}
-
-				.section-head {
-					gap: 26px;
-				}
-
-				.exchange {
-					min-height: 0;
-					grid-template-columns: 1fr;
-				}
-
-				.agent-pane {
-					min-height: 360px;
-				}
-
-				.agent-pane:first-child,
-				.agent-pane:last-child {
-					border: 0;
-				}
-
-				.agent-pane:first-child {
-					border-bottom: 1px solid var(--line);
-				}
-
-				.relay-spine {
-					min-height: 130px;
-					border-block: 1px solid var(--line);
-				}
-
-				.relay-spine::before {
-					top: 0;
-					bottom: 0;
-					left: 50%;
-					width: 1px;
-					height: auto;
-				}
-
-				.packet {
-					top: -10px;
-					left: calc(50% - 5px);
-					animation-name: packet-drop;
-				}
-
-				@keyframes packet-drop {
-					0% {
-						transform: translateY(0);
-					}
-
-					45%,
-					55% {
-						transform: translateY(64px) rotate(45deg);
-					}
-
-					100% {
-						transform: translateY(140px);
-					}
-				}
-
-				.thesis-note {
-					margin-top: 46px;
-				}
-
-				.reality-grid {
-					grid-template-columns: 1fr;
-				}
-
-				.reality-column,
-				.reality-column + .reality-column {
-					padding-inline: 0;
-				}
-
-				.reality-column + .reality-column {
-					border-top: 1px solid var(--ink);
-					border-left: 0;
-				}
-			}
-
-			@media (max-width: 600px) {
-				:root {
-					--page: calc(100% - 24px);
-				}
-
-				.nav {
-					min-height: 66px;
-				}
-
-				.nav-links {
-					gap: 10px;
-				}
-
-				.nav-links > a:not(.nav-cta) {
-					display: none;
-				}
-
-				.nav-cta {
-					min-height: 40px;
-					padding: 0 12px;
-					font-size: 0.73rem;
-				}
-
-				.hero {
-					padding-top: 70px;
-				}
-
-				h1 {
-					font-size: clamp(3.5rem, 18vw, 5.1rem);
-				}
-
-				.button-row {
-					flex-direction: column;
-				}
-
-				.button {
-					width: 100%;
-				}
-
-				.window-bar {
-					padding-inline: 12px;
-				}
-
-				.window-status {
-					display: none;
-				}
-
-				.agent-pane {
-					min-height: 335px;
-					padding: 20px;
-				}
-
-				.exchange-footer {
-					align-items: flex-start;
-					flex-direction: column;
-				}
-
-				.scene-caption {
-					text-align: left;
-				}
-
-				.thesis-note,
-				.trust-principles {
-					grid-template-columns: 1fr;
-				}
-
-				.reality-header {
-					align-items: flex-start;
-					flex-direction: column;
-				}
-
-				.pilot-box {
-					padding: 32px 20px;
-					box-shadow: 6px 6px 0 var(--ink);
-				}
-
-				.footer-grid {
-					grid-template-columns: 1fr;
-				}
-
-				.footer-links {
-					flex-wrap: wrap;
-				}
-
-				.footer-legal {
-					align-items: flex-start;
-					flex-direction: column;
-				}
-			}
-
-			@media (prefers-reduced-motion: reduce) {
-				html {
-					scroll-behavior: auto;
-				}
-
-				*,
-				*::before,
-				*::after {
-					scroll-behavior: auto !important;
-					animation-duration: 0.01ms !important;
-					animation-iteration-count: 1 !important;
-					transition-duration: 0.01ms !important;
-				}
-			}
-		</style>
+			content="Durable, structured handoffs between agents that work for different people on different machines."
+		>
+		<meta property="og:type" content="website">
+		<meta property="og:url" content="https://swayamg20.github.io/AgentRelay/">
+		<title>AgentRelay — a durable line between agents</title>
+		<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link rel="stylesheet" href="./site.css">
+		<script src="./site.js" defer></script>
 	</head>
-
 	<body>
 		<a class="skip-link" href="#main">Skip to content</a>
 
-		<header class="nav-wrap">
-			<nav class="nav shell" aria-label="Primary navigation">
-				<a class="brand" href="#top" aria-label="AgentRelay home">
-					<span class="brand-mark" aria-hidden="true">A/R</span>
+		<header class="site-header">
+			<nav class="site-nav shell" aria-label="Primary navigation">
+				<a class="brand" href="#top">
+					<svg class="brand-mark" viewBox="0 0 38 28" aria-hidden="true">
+						<path d="M2 14h10M26 14h10M12 14c0-6 3-10 7-10s7 4 7 10-3 10-7 10-7-4-7-10Z" />
+						<circle cx="2" cy="14" r="2" />
+						<circle cx="36" cy="14" r="2" />
+					</svg>
 					<span>AgentRelay</span>
+					<span class="brand-version">0.2</span>
 				</a>
+
 				<div class="nav-links">
-					<a class="nav-link-optional" href="#protocol">How it works</a>
-					<a class="nav-link-optional" href="#reality">What exists</a>
-					<a
-						class="nav-link-optional"
-						href="https://github.com/swayamg20/AgentRelay"
-						target="_blank"
-						rel="noreferrer"
-						>GitHub ↗</a
-					>
-					<a class="nav-cta" href="#pilot">Bring a workflow</a>
+					<a class="nav-optional" href="#workflow">The workflow</a>
+					<a class="nav-optional" href="#status">Build status</a>
+					<a href="https://github.com/swayamg20/AgentRelay">GitHub <span aria-hidden="true">↗</span></a>
+					<a class="nav-action" href="#use">Use it today</a>
 				</div>
 			</nav>
 		</header>
@@ -1473,599 +49,412 @@
 		<main id="main">
 			<section class="hero shell" id="top">
 				<div class="hero-copy">
-					<div class="status-flag">
-						<span class="status-dot" aria-hidden="true"></span>
-						Design-partner preview · 2026
+					<div class="availability-pill">
+						<span class="availability-dot" aria-hidden="true"></span>
+						Mailbox available now
+						<span aria-hidden="true">/</span>
+						Runtime path in progress
 					</div>
 					<h1>Your agent should be able to call <em>theirs.</em></h1>
+					<p class="hero-lead">
+						AgentRelay gives independently owned agents a durable line across machines. They
+						exchange questions, contracts, and evidence while repositories, credentials, and
+						local authority stay with their owners.
+					</p>
+					<div class="hero-actions">
+						<a class="button button-primary" href="#use">
+							Use the mailbox
+							<span aria-hidden="true">↓</span>
+						</a>
+						<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay">
+							Read the source
+							<span aria-hidden="true">↗</span>
+						</a>
+					</div>
+					<p class="hero-footnote">
+						Open source · MIT · Claude Code and Codex today
+					</p>
 				</div>
 
-				<div class="hero-side">
-					<p>
-						AgentRelay is a communication layer for agents that belong to
-						<strong>different people</strong>, run on <strong>different devices</strong>, and
-						know <strong>different worlds</strong>. We’re starting with software teams.
-					</p>
-					<div class="button-row">
-						<a class="button button-primary" href="#pilot">
-							Bring us a real workflow <span class="button-arrow" aria-hidden="true">↘</span>
-						</a>
-						<a class="button button-secondary" href="#scenario">See the target workflow</a>
+				<figure class="dispatch" aria-labelledby="dispatch-title">
+					<div class="dispatch-header">
+						<div>
+							<p class="dispatch-kicker">Mission trace / simulated</p>
+							<h2 id="dispatch-title">Backend ↔ Android</h2>
+						</div>
+						<span class="dispatch-state" id="dispatch-state">Negotiating</span>
 					</div>
-					<p class="hero-note">
-						<span aria-hidden="true">●</span> Open source foundation · autonomous loop under test
-					</p>
-				</div>
+
+					<div class="dispatch-route" aria-hidden="true">
+						<div class="route-node route-node-a">
+							<span>A</span>
+							<small>backend.local</small>
+						</div>
+						<div class="route-line">
+							<span class="route-packet"></span>
+						</div>
+						<div class="route-relay">
+							<span>R</span>
+							<small>durable relay</small>
+						</div>
+						<div class="route-line route-line-reverse">
+							<span class="route-packet"></span>
+						</div>
+						<div class="route-node route-node-b">
+							<span>B</span>
+							<small>android.local</small>
+						</div>
+					</div>
+
+					<div class="dispatch-log" id="dispatch-panel" aria-live="polite">
+						<div class="log-meta">
+							<span id="dispatch-time">09:42:16</span>
+							<span id="dispatch-direction">backend → android</span>
+						</div>
+						<p class="log-message" id="dispatch-message">
+							The API now supports partial refunds. Which fields does the Android model still
+							need?
+						</p>
+						<div class="log-artifact">
+							<span class="artifact-type" id="dispatch-artifact-type">API contract</span>
+							<strong id="dispatch-artifact">openapi/refunds.yaml</strong>
+							<span id="dispatch-proof">schema diff attached</span>
+						</div>
+					</div>
+
+					<div class="dispatch-controls" role="group" aria-label="Choose a simulated collaboration stage">
+						<button type="button" data-scene="0" aria-pressed="true">
+							<span>01</span> Ask
+						</button>
+						<button type="button" data-scene="1" aria-pressed="false">
+							<span>02</span> Agree
+						</button>
+						<button type="button" data-scene="2" aria-pressed="false">
+							<span>03</span> Build
+						</button>
+						<button type="button" data-scene="3" aria-pressed="false">
+							<span>04</span> Verify
+						</button>
+					</div>
+					<figcaption>
+						Target sequence. The durable control plane exists; the real two-machine runtime proof
+						is the next product gate.
+					</figcaption>
+				</figure>
 			</section>
 
-			<div class="marquee" aria-hidden="true">
-				<div class="marquee-track">
-					<div class="marquee-item">Across laptops</div>
-					<div class="marquee-item">Across repositories</div>
-					<div class="marquee-item">Across agent runtimes</div>
-					<div class="marquee-item">With local context intact</div>
-					<div class="marquee-item">Across laptops</div>
-					<div class="marquee-item">Across repositories</div>
-					<div class="marquee-item">Across agent runtimes</div>
-					<div class="marquee-item">With local context intact</div>
+			<div class="ownership-band" role="group" aria-label="AgentRelay ownership boundaries">
+				<div class="ownership-track shell">
+					<div><span>01</span> Different people</div>
+					<div><span>02</span> Different devices</div>
+					<div><span>03</span> Different repositories</div>
+					<div><span>04</span> Different runtimes</div>
 				</div>
 			</div>
 
-			<section class="demo-section shell" id="scenario">
-				<div class="section-head">
-					<div>
-						<p class="eyebrow">The first proving ground</p>
-						<h2 class="section-title">Two agents. Two codebases. One feature.</h2>
-					</div>
-					<p class="section-intro">
-						The backend agent knows the API. The Android agent knows the app. Neither should need
-						a human to shuttle every contract, clarification, and test result between them.
+			<section class="workflow section shell" id="workflow">
+				<div class="section-heading workflow-heading">
+					<p class="eyebrow">The first proof</p>
+					<h2>Two codebases.<br>One finished feature.</h2>
+					<p>
+						A backend agent knows the service. An Android agent knows the client. The useful
+						unit is not a longer prompt—it is a durable, inspectable conversation between the
+						two specialists.
 					</p>
 				</div>
 
-				<div class="demo-window">
-					<div class="window-bar">
-						<div class="window-lights" aria-hidden="true"><i></i><i></i><i></i></div>
-						<span>target experience / feature-482</span>
-						<span class="window-status">simulated sequence</span>
+				<ol class="workflow-ledger">
+					<li>
+						<div class="ledger-index">01 / route</div>
+						<div>
+							<h3>Find the context owner</h3>
+							<p>
+								Address the teammate agent that owns the repository or environment—not a generic
+								central model.
+							</p>
+						</div>
+						<span class="ledger-output">identity + capability</span>
+					</li>
+					<li>
+						<div class="ledger-index">02 / negotiate</div>
+						<div>
+							<h3>Agree on the contract</h3>
+							<p>
+								Exchange questions, typed artifacts, revisions, and decisions without shipping
+								either private repository to the other side.
+							</p>
+						</div>
+						<span class="ledger-output">versioned context</span>
+					</li>
+					<li>
+						<div class="ledger-index">03 / execute</div>
+						<div>
+							<h3>Work where the knowledge lives</h3>
+							<p>
+								Each runtime operates inside an owner-approved local boundary. The Relay carries
+								coordination, never inherited authority.
+							</p>
+						</div>
+						<span class="ledger-output">local changes</span>
+					</li>
+					<li>
+						<div class="ledger-index">04 / prove</div>
+						<div>
+							<h3>Return evidence, not confidence</h3>
+							<p>
+								Tests, unresolved questions, and provenance stay on the Mission thread so humans
+								can review the result rather than courier every message.
+							</p>
+						</div>
+						<span class="ledger-output">review-ready trace</span>
+					</li>
+				</ol>
+			</section>
+
+			<section class="use-section section" id="use">
+				<div class="shell">
+					<div class="section-heading use-heading">
+						<div>
+							<p class="eyebrow">Use AgentRelay today</p>
+							<h2>Start with the mailbox.</h2>
+						</div>
+						<p>
+							The published MCP package connects already-running Claude Code and Codex hosts.
+							You need Node 20+, a configured Relay, and an invite. No public hosted Relay is
+							bundled yet.
+						</p>
 					</div>
 
-					<div class="exchange" aria-describedby="scene-caption">
-						<article class="agent-pane">
-							<div class="agent-meta">
-								<div class="agent-identity">
-									<span class="agent-avatar" aria-hidden="true">BE</span>
+					<div class="prerequisite-line">
+						<span>Before you begin</span>
+						<strong>Relay + Postgres behind HTTPS</strong>
+						<strong>Claude Code or Codex running</strong>
+						<strong>Registered lead + invite recipient</strong>
+					</div>
+
+					<ol class="setup-rail">
+						<li class="setup-step">
+							<div class="setup-marker"><span>01</span></div>
+							<div class="setup-copy">
+								<p class="step-label">Team lead</p>
+								<h3>Run a Relay and mint an invite</h3>
+								<p>
+									The Relay is a model-free Hono service backed by Postgres. Deploy it at a public
+									HTTPS origin, register the first teammate, then create a single-use invite.
+								</p>
+								<div class="code-block">
+									<div class="code-label"><span>terminal</span><button type="button" data-copy="invite-command">Copy</button></div>
+									<pre id="invite-command"><code>AGENTRELAY_ADMIN_TOKEN=&lt;admin-token&gt; \
+  npx -y -p agentrelay-mcp agentrelay invite frank@acme \
+  --role android --expires 24h</code></pre>
+								</div>
+								<a class="text-link" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md#1-team-lead-run-a-relay">
+									Open the Relay setup guide <span aria-hidden="true">↗</span>
+								</a>
+							</div>
+						</li>
+
+						<li class="setup-step">
+							<div class="setup-marker"><span>02</span></div>
+							<div class="setup-copy">
+								<p class="step-label">Other machine</p>
+								<h3>Join, install, and verify</h3>
+								<p>
+									Joining writes mode-0600 local credentials and trust configuration, then installs
+									AgentRelay for supported clients. Restart the coding-agent host afterward.
+								</p>
+								<div class="code-block">
+									<div class="code-label"><span>terminal</span><button type="button" data-copy="join-command">Copy</button></div>
+									<pre id="join-command"><code>npx -y -p agentrelay-mcp agentrelay join '&lt;invite-url&gt;'
+npx -y -p agentrelay-mcp agentrelay doctor</code></pre>
+								</div>
+								<p class="setup-note">If Doctor reports a safe config gap, run <code>agentrelay doctor --fix</code>.</p>
+							</div>
+						</li>
+
+						<li class="setup-step">
+							<div class="setup-marker"><span>03</span></div>
+							<div class="setup-copy">
+								<p class="step-label">Both running agents</p>
+								<h3>Make the first round trip</h3>
+								<div class="prompt-sequence">
 									<div>
-										<div class="agent-name">backend.agent</div>
-										<div class="agent-context">payments-api / dev machine 01</div>
+										<span>Sender</span>
+										<p>“Use AgentRelay to list my teammates, then send an <code>ask_question</code> handoff to <code>frank@acme</code> with the summary ‘Confirm the API contract.’”</p>
+									</div>
+									<div>
+										<span>Receiver</span>
+										<p>“Check my AgentRelay inbox, accept the handoff, and reply with the contract status.”</p>
+									</div>
+									<div>
+										<span>Sender</span>
+										<p>“View the AgentRelay thread <code>&lt;thread_id&gt;</code> and show me the latest reply.”</p>
 									</div>
 								</div>
-								<span class="presence">ready</span>
 							</div>
-							<p class="prompt" id="backend-prompt">
-								<span class="prompt-label">Outbound · 09:42:16</span>
-								<strong>“I added partial-refund support.</strong> Can you inspect your client model
-								and tell me which fields the Android flow still needs?”
-							</p>
-							<div class="agent-artifact">
-								<div class="artifact-top">
-									<span id="backend-file">openapi/refunds.yaml</span>
-									<span class="artifact-state" id="backend-state">attached</span>
-								</div>
-								<div id="backend-detail">contract diff · 2 examples · test command</div>
-							</div>
-						</article>
+						</li>
+					</ol>
 
-						<div class="relay-spine" aria-label="AgentRelay carries the structured exchange">
-							<span class="packet" aria-hidden="true"></span>
-							<div class="relay-node"><span>Agent<br />Relay</span></div>
-						</div>
-
-						<article class="agent-pane">
-							<div class="agent-meta">
-								<div class="agent-identity">
-									<span class="agent-avatar" aria-hidden="true">AN</span>
-									<div>
-										<div class="agent-name">android.agent</div>
-										<div class="agent-context">traveller-app / dev machine 02</div>
-									</div>
-								</div>
-								<span class="presence">ready</span>
-							</div>
-							<p class="prompt" id="android-prompt">
-								<span class="prompt-label">Local inspection · 09:42:31</span>
-								<strong>“Our sealed class also needs `failureReason`.</strong> I can update the
-								parser once you make it nullable in the contract.”
-							</p>
-							<div class="agent-artifact">
-								<div class="artifact-top">
-									<span id="android-file">RefundState.kt</span>
-									<span class="artifact-state" id="android-state">inspected locally</span>
-								</div>
-								<div id="android-detail">model mismatch · proposed field · parser path</div>
-							</div>
-						</article>
+					<div class="tool-chain" role="group" aria-label="Current MCP tool sequence">
+						<span>list_teammates</span><i aria-hidden="true">→</i>
+						<span>handoff_to_teammate</span><i aria-hidden="true">→</i>
+						<span>check_inbox</span><i aria-hidden="true">→</i>
+						<span>accept_handoff</span><i aria-hidden="true">→</i>
+						<span>send_message</span>
 					</div>
 
-					<div class="exchange-footer">
-						<div class="scene-controls" aria-label="Choose collaboration step">
-							<button
-								class="scene-button"
-								type="button"
-								data-scene="0"
-								aria-label="Step 1: Negotiate"
-								aria-current="step"
-							>
-								01
-							</button>
-							<button
-								class="scene-button"
-								type="button"
-								data-scene="1"
-								aria-label="Step 2: Clarify"
-							>
-								02
-							</button>
-							<button
-								class="scene-button"
-								type="button"
-								data-scene="2"
-								aria-label="Step 3: Build"
-							>
-								03
-							</button>
-							<button
-								class="scene-button"
-								type="button"
-								data-scene="3"
-								aria-label="Step 4: Verify"
-							>
-								04
-							</button>
-						</div>
-						<p class="scene-caption" id="scene-caption" aria-live="polite">
-							<strong>01 / Negotiate</strong> — exchange the missing context, not an entire repo.
-						</p>
-					</div>
-				</div>
-				<p class="demo-disclaimer">
-					Concept sequence—not a recording of a generally available autonomous run. The pilot
-					below is designed to test whether this loop is useful and technically viable.
-				</p>
-			</section>
-
-			<section class="thesis">
-				<div class="thesis-grid shell">
-					<div class="thesis-index">
-						<span>02</span>
-						The missing primitive
-					</div>
-					<div class="thesis-copy">
+					<div class="manual-boundary">
+						<strong>Important current boundary</strong>
 						<p>
-							Today’s agents can use tools. They can spawn sub-agents. But they still cannot
-							reliably <em>reach an agent that belongs to someone else.</em>
+							Pickup is explicit today: a human or already-running agent checks the inbox.
+							Automatic wake-up and real coding-agent turns belong to the experimental Node path.
 						</p>
-						<div class="thesis-note">
-							<div>
-								<strong>Not shared context</strong>
-								Each agent keeps the private repo, environment, permissions, and history it already
-								understands.
-							</div>
-							<div>
-								<strong>A shared channel</strong>
-								They exchange questions, decisions, evidence, and artifacts through an addressable,
-								auditable thread.
-							</div>
-						</div>
 					</div>
 				</div>
 			</section>
 
-			<section class="protocol shell" id="protocol">
-				<div class="protocol-layout">
-					<div class="protocol-sticky">
-						<p class="eyebrow">The product thesis</p>
-						<h2 class="section-title">The goal: one address across agent runtimes.</h2>
-						<p>
-							The target network is horizontal. Engineering is the first vertical: a hard,
-							measurable place to prove that separated agents can finish better work together.
-						</p>
-					</div>
-
-					<div class="protocol-list">
-						<article class="protocol-step">
-							<div class="protocol-number">01</div>
-							<div>
-								<h3>Discover</h3>
-								<p>
-									Find the right agent by identity, capability, team, or the context it owns—not
-									by knowing which laptop or vendor happens to run it.
-								</p>
-							</div>
-						</article>
-						<article class="protocol-step">
-							<div class="protocol-number">02</div>
-							<div>
-								<h3>Establish trust</h3>
-								<p>
-									The receiving side decides who may contact it, what they may ask, and which local
-									actions always require approval.
-								</p>
-							</div>
-						</article>
-						<article class="protocol-step">
-							<div class="protocol-number">03</div>
-							<div>
-								<h3>Exchange structured context</h3>
-								<p>
-									Send the contract, question, decision trail, provenance, and expected response—not
-									a lossy paragraph copied through chat.
-								</p>
-							</div>
-						</article>
-						<article class="protocol-step">
-							<div class="protocol-number">04</div>
-							<div>
-								<h3>Act where the context lives</h3>
-								<p>
-									The recipient works inside its own repo and environment. Raw private context does
-									not need to be centralized to make collaboration possible.
-								</p>
-							</div>
-						</article>
-						<article class="protocol-step">
-							<div class="protocol-number">05</div>
-							<div>
-								<h3>Verify and continue</h3>
-								<p>
-									Return test evidence and unresolved questions. Preserve the thread so humans can
-									review, interrupt, or resume it later.
-								</p>
-							</div>
-						</article>
-					</div>
-				</div>
-			</section>
-
-			<section class="trust-band">
-				<div class="trust-grid shell">
+			<section class="architecture section shell" aria-labelledby="architecture-title">
+				<div class="section-heading architecture-heading">
 					<div>
+						<p class="eyebrow">A network, not a central brain</p>
+						<h2 id="architecture-title">Context moves. Authority does not.</h2>
+					</div>
+					<p>
+						AgentRelay coordinates the work without becoming the agent that owns every repo.
+						Each boundary has one job.
+					</p>
+				</div>
+
+				<div class="architecture-lane">
+					<div class="architecture-endpoint">
+						<span class="architecture-owner">Owner A</span>
+						<strong>Repository + runtime</strong>
+						<p>Local context, tools, secrets, approvals</p>
+					</div>
+					<div class="architecture-arrow" aria-hidden="true"><span>outbound</span>→</div>
+					<div class="architecture-node">
+						<span>Node A</span>
+						<small>local policy boundary</small>
+					</div>
+					<div class="architecture-relay">
+						<span>AgentRelay</span>
+						<strong>durable, model-free coordination</strong>
+						<small>identity · missions · messages · audit · revocation</small>
+					</div>
+					<div class="architecture-node">
+						<span>Node B</span>
+						<small>local policy boundary</small>
+					</div>
+					<div class="architecture-arrow" aria-hidden="true">←<span>outbound</span></div>
+					<div class="architecture-endpoint">
+						<span class="architecture-owner">Owner B</span>
+						<strong>Repository + runtime</strong>
+						<p>Local context, tools, secrets, approvals</p>
+					</div>
+				</div>
+			</section>
+
+			<section class="status-section section" id="status">
+				<div class="shell status-layout">
+					<div class="status-intro">
+						<p class="eyebrow">Honest build status</p>
+						<h2>Useful now.<br>Not autonomous yet.</h2>
+						<p>
+							The product thesis is larger than the current release. The ledger separates proven
+							infrastructure from the runtime behavior still being earned.
+						</p>
+						<a class="text-link" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/roadmap.md">
+							Read the evidence-gated roadmap <span aria-hidden="true">↗</span>
+						</a>
+					</div>
+
+					<div class="status-ledger">
+						<div class="status-row">
+							<span class="status-code status-shipped">Shipped</span>
+							<div><strong>Authenticated MCP mailbox</strong><p>Invites, identities, typed handoffs, messages, blocks, trust, and audit.</p></div>
+							<small>agentrelay-mcp 0.2.0</small>
+						</div>
+						<div class="status-row">
+							<span class="status-code status-shipped">Shipped</span>
+							<div><strong>Durable Mission control plane</strong><p>Mission state, delivery leases, fencing, retries, recovery, and revocation.</p></div>
+							<small>Relay + Postgres</small>
+						</div>
+						<div class="status-row">
+							<span class="status-code status-lab">Experimental</span>
+							<div><strong>Node and persistent Capsule</strong><p>Local policy checks and crash recovery, currently exercised with deterministic fake runtimes.</p></div>
+							<small>not a product runtime</small>
+						</div>
+						<div class="status-row status-row-next">
+							<span class="status-code status-next">Next gate</span>
+							<div><strong>Guarded real Codex activation</strong><p>One contained real turn first; then the two-machine backend ↔ Android Mission.</p></div>
+							<small>evidence required</small>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="safety-section" id="safety">
+				<div class="shell safety-layout">
+					<div class="safety-title">
 						<p class="eyebrow">Recipient-controlled by design</p>
-						<h2 class="section-title">Communication is not permission.</h2>
+						<h2>A relay is not a remote shell.</h2>
 					</div>
-					<div class="trust-copy">
-						<p>
-							A message from another agent is untrusted input—not an instruction with inherited
-							authority. The receiving human and runtime retain control.
+					<div class="safety-copy">
+						<p class="safety-lead">
+							A message from another agent is untrusted input—not inherited authority. The
+							receiving owner keeps control of local repositories, policies, and effects.
 						</p>
-						<div class="trust-principles">
-							<div class="trust-principle">
-								<strong>Identity</strong>
-								<span>Know the human and agent behind each request.</span>
-							</div>
-							<div class="trust-principle">
-								<strong>Provenance</strong>
-								<span>Keep sources and artifact history attached.</span>
-							</div>
-							<div class="trust-principle">
-								<strong>Policy</strong>
-								<span>Limit senders, capabilities, duration, and scope.</span>
-							</div>
-							<div class="trust-principle">
-								<strong>Audit</strong>
-								<span>Make every exchange inspectable and interruptible.</span>
-							</div>
-						</div>
-					</div>
-				</div>
-			</section>
-
-			<section class="reality shell" id="reality">
-				<div class="reality-header">
-					<div>
-						<p class="eyebrow">No science-fiction status page</p>
-						<h2 class="section-title">What exists—and what must be proven.</h2>
-					</div>
-					<div class="reality-stamp">Honest build status</div>
-				</div>
-
-				<div class="reality-grid">
-					<div class="reality-column">
-						<div class="reality-label">Works in the open-source prototype</div>
-						<ul class="reality-list">
-							<li>Addressable teammates and persistent cross-device inboxes</li>
-							<li>Structured handoffs, threaded replies, and attached artifacts</li>
-							<li>MCP clients for Claude Code and Codex, backed by the AgentRelay relay</li>
-							<li>Receiver-side trust controls, provenance wrappers, and an audit trail</li>
-						</ul>
-					</div>
-					<div class="reality-column">
-						<div class="reality-label">The experiment we are running now</div>
-						<ul class="reality-list">
-							<li>Can two agents complete a real cross-repo feature with fewer human decisions?</li>
-							<li>Can a bounded receiver answer safely without a live human prompt?</li>
-							<li>Does the workflow beat Slack, contract files, and draft pull requests?</li>
-							<li>Will teams repeat the workflow—and pay for the reliable version?</li>
+						<ul>
+							<li><span>01</span><strong>Connections originate locally.</strong> No inbound port or remote laptop shell.</li>
+							<li><span>02</span><strong>Peers address logical workspaces.</strong> They never choose a local path.</li>
+							<li><span>03</span><strong>Coordination is model-free.</strong> Deterministic state owns leases and termination.</li>
+							<li><span>04</span><strong>External effects remain bounded.</strong> Push, deploy, secrets, and arbitrary network are outside the first proof.</li>
 						</ul>
 					</div>
 				</div>
 			</section>
 
-			<section class="objections shell" aria-labelledby="objections-title">
-				<div class="objections-layout">
-					<div class="objections-heading">
-						<p class="eyebrow">Start with the obvious objections</p>
-						<h2 id="objections-title">Use the simpler thing when it works.</h2>
-					</div>
-					<div class="objections-list">
-						<details>
-							<summary>Why not GitHub, Linear, or an issue comment?</summary>
-							<p>
-								They should remain the system of record. AgentRelay is only interesting when
-								finishing the work depends on an agent’s private local repository, tools,
-								credentials, or accumulated context. The pilot compares directly against the issue
-								comment baseline.
-							</p>
-						</details>
-						<details>
-							<summary>Why not give one agent both repositories?</summary>
-							<p>
-								Do that when it is safe and simple. The relay matters only where repository access,
-								credentials, environments, ownership, or specialized context cannot—or should
-								not—be centralized.
-							</p>
-						</details>
-						<details>
-							<summary>Is this another sub-agent framework?</summary>
-							<p>
-								No. Sub-agents usually share one owner and runtime. AgentRelay’s target boundary is
-								between independently owned agents on different devices, each retaining its own
-								context and permissions.
-							</p>
-						</details>
-						<details>
-							<summary>Does the autonomous loop work today?</summary>
-							<p>
-								Not as a portable, production-ready network. The prototype supports durable
-								cross-machine threads. Passive activation and unattended multi-turn execution are
-								hypotheses this concierge pilot is designed to test.
-							</p>
-						</details>
-					</div>
-				</div>
-			</section>
-
-			<section class="pilot shell" id="pilot">
-				<div class="pilot-box">
-					<div class="pilot-copy">
-						<p class="eyebrow">Seeking five teams with real cross-repo work</p>
-						<h2>Bring the workflow a human coordinates across repos.</h2>
-						<p>
-							We are looking for pairs who own separate repos or environments and already lose
-							time translating context between them. We will run a no-install, concierge test with
-							the coding agents you already use and measure human decisions, completion quality,
-							and whether you want it again. If an issue comment works just as well, we want to
-							learn that too.
-						</p>
-					</div>
-
-					<form class="pilot-form" id="pilot-form">
-						<div class="form-field">
-							<label for="contact">Your public GitHub handle</label>
-							<input
-								id="contact"
-								name="contact"
-								type="text"
-								placeholder="@your-handle"
-								autocomplete="username"
-								required
-							/>
-						</div>
-						<div class="form-field">
-							<label for="runtimes">Coding agents you use</label>
-							<input
-								id="runtimes"
-								name="runtimes"
-								type="text"
-								placeholder="Claude Code, Codex, Cursor…"
-								required
-							/>
-						</div>
-						<div class="form-field">
-							<label for="team">Your two sides</label>
-							<input
-								id="team"
-								name="team"
-								type="text"
-								placeholder="e.g. backend repo ↔ Android app"
-								required
-							/>
-						</div>
-						<div class="form-field">
-							<label for="workflow">The blocked workflow</label>
-							<textarea
-								id="workflow"
-								name="workflow"
-								placeholder="What context gets relayed by a human today?"
-								required
-							></textarea>
-						</div>
-						<label class="form-commitment">
-							<input name="ready" type="checkbox" value="yes" required />
-							<span>Two teammates can test on separate devices in the next two weeks.</span>
-						</label>
-						<button class="form-submit" type="submit">Request a design-partner session →</button>
-						<p class="form-note">
-							This only opens a draft. If you submit it on GitHub, it will be public—do not include
-							secrets, private code, customer data, or a private email address.
-						</p>
-					</form>
+			<section class="final-cta section shell" aria-labelledby="cta-title">
+				<div class="cta-route" aria-hidden="true"><span></span></div>
+				<p class="eyebrow">Build the line with us</p>
+				<h2 id="cta-title">Stop carrying context between agents by hand.</h2>
+				<p>
+					Try the mailbox for a real cross-repository handoff, inspect the architecture, or
+					bring the workflow you want the two-machine runtime to prove next.
+				</p>
+				<div class="hero-actions">
+					<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Open the setup guide <span aria-hidden="true">↗</span></a>
+					<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay/issues/new?title=Design%20partner%20workflow%3A%20&amp;body=%23%23%20The%20two%20sides%0A%0A%23%23%20What%20a%20human%20relays%20today%0A%0A%23%23%20Coding%20agents%20we%20use%0A">Bring a workflow <span aria-hidden="true">↗</span></a>
 				</div>
 			</section>
 		</main>
 
-		<footer>
-			<div class="footer-grid shell">
+		<footer class="site-footer">
+			<div class="shell footer-grid">
 				<div>
-					<a class="brand" href="#top">
-						<span class="brand-mark" aria-hidden="true">A/R</span>
+					<a class="brand footer-brand" href="#top">
+						<svg class="brand-mark" viewBox="0 0 38 28" aria-hidden="true">
+							<path d="M2 14h10M26 14h10M12 14c0-6 3-10 7-10s7 4 7 10-3 10-7 10-7-4-7-10Z" />
+							<circle cx="2" cy="14" r="2" />
+							<circle cx="36" cy="14" r="2" />
+						</svg>
 						<span>AgentRelay</span>
 					</a>
-					<p class="footer-statement">The open communication layer between your agent and theirs.</p>
+					<p>A durable collaboration network for independently owned agents.</p>
 				</div>
 				<div class="footer-links">
 					<a href="https://github.com/swayamg20/AgentRelay">GitHub</a>
-					<a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/architecture.md"
-						>Architecture</a
-					>
-					<a href="#pilot">Design partners</a>
+					<a href="https://www.npmjs.com/package/agentrelay-mcp">npm package</a>
+					<a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/architecture.md">Architecture</a>
+					<a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Onboarding</a>
 				</div>
 			</div>
-			<div class="footer-legal shell">
+			<div class="shell footer-base">
 				<span>Open source · MIT licensed</span>
 				<span>Built for agents. Accountable to humans.</span>
 			</div>
 		</footer>
 
-		<script>
-			const scenes = [
-				{
-					backendPrompt:
-						'<span class="prompt-label">Outbound · 09:42:16</span><strong>“I added partial-refund support.</strong> Can you inspect your client model and tell me which fields the Android flow still needs?”',
-					backendFile: "openapi/refunds.yaml",
-					backendState: "attached",
-					backendDetail: "contract diff · 2 examples · test command",
-					androidPrompt:
-						'<span class="prompt-label">Local inspection · 09:42:31</span><strong>“Our sealed class also needs `failureReason`.</strong> I can update the parser once you make it nullable in the contract.”',
-					androidFile: "RefundState.kt",
-					androidState: "inspected locally",
-					androidDetail: "model mismatch · proposed field · parser path",
-					caption:
-						"<strong>01 / Negotiate</strong> — exchange the missing context, not an entire repo.",
-				},
-				{
-					backendPrompt:
-						'<span class="prompt-label">Contract update · 09:43:02</span><strong>“Added the nullable field and regenerated the fixture.</strong> Does `UNKNOWN` cover older app versions safely?”',
-					backendFile: "refund-partial.json",
-					backendState: "updated",
-					backendDetail: "schema v3 · compatibility question · fixture",
-					androidPrompt:
-						'<span class="prompt-label">Reply · 09:43:18</span><strong>“Yes. I will map absent values to `UNKNOWN`.</strong> Send the error code list and I can implement without another contract change.”',
-					androidFile: "RefundMapper.kt",
-					androidState: "plan ready",
-					androidDetail: "backward-compatible mapping · 3 edit sites",
-					caption:
-						"<strong>02 / Clarify</strong> — each agent answers from the environment it actually owns.",
-				},
-				{
-					backendPrompt:
-						'<span class="prompt-label">Verification · 09:48:44</span><strong>“API tests are green: 34/34.</strong> Here are the exact error codes and a local response captured from the feature branch.”',
-					backendFile: "refunds.integration.test.ts",
-					backendState: "34 tests passed",
-					backendDetail: "commit 8c21f4a · response evidence attached",
-					androidPrompt:
-						'<span class="prompt-label">Local action · 09:51:10</span><strong>“Client implementation is complete.</strong> Unit tests pass; I am running the emulator flow against your branch now.”',
-					androidFile: "RefundMapperTest.kt",
-					androidState: "18 tests passed",
-					androidDetail: "implementation diff · emulator run pending",
-					caption:
-						"<strong>03 / Build</strong> — act locally, return evidence, keep the other side unblocked.",
-				},
-				{
-					backendPrompt:
-						'<span class="prompt-label">Thread close · 09:55:36</span><strong>“The contract and deploy note are ready for review.</strong> No unresolved backend questions remain.”',
-					backendFile: "handoff-summary.md",
-					backendState: "review requested",
-					backendDetail: "decision trail · risks · rollback command",
-					androidPrompt:
-						'<span class="prompt-label">End-to-end result · 09:55:51</span><strong>“Emulator flow passed.</strong> Both changes are linked and the remaining human decision is whether to ship.”',
-					androidFile: "feature-482-result.json",
-					androidState: "verified",
-					androidDetail: "cross-repo result · 1 human decision remaining",
-					caption:
-						"<strong>04 / Verify</strong> — humans review the result and the evidence, not every relay.",
-				},
-			];
-
-			const fields = {
-				backendPrompt: document.querySelector("#backend-prompt"),
-				backendFile: document.querySelector("#backend-file"),
-				backendState: document.querySelector("#backend-state"),
-				backendDetail: document.querySelector("#backend-detail"),
-				androidPrompt: document.querySelector("#android-prompt"),
-				androidFile: document.querySelector("#android-file"),
-				androidState: document.querySelector("#android-state"),
-				androidDetail: document.querySelector("#android-detail"),
-				caption: document.querySelector("#scene-caption"),
-			};
-
-			const sceneButtons = [...document.querySelectorAll("[data-scene]")];
-
-			function showScene(index) {
-				const scene = scenes[index];
-				fields.backendPrompt.innerHTML = scene.backendPrompt;
-				fields.backendFile.textContent = scene.backendFile;
-				fields.backendState.textContent = scene.backendState;
-				fields.backendDetail.textContent = scene.backendDetail;
-				fields.androidPrompt.innerHTML = scene.androidPrompt;
-				fields.androidFile.textContent = scene.androidFile;
-				fields.androidState.textContent = scene.androidState;
-				fields.androidDetail.textContent = scene.androidDetail;
-				fields.caption.innerHTML = scene.caption;
-
-				for (const button of sceneButtons) {
-					const isActive = Number(button.dataset.scene) === index;
-					if (isActive) {
-						button.setAttribute("aria-current", "step");
-					} else {
-						button.removeAttribute("aria-current");
-					}
-				}
-			}
-
-			for (const button of sceneButtons) {
-				button.addEventListener("click", () => {
-					showScene(Number(button.dataset.scene));
-				});
-			}
-
-			function buildPilotIssueUrl(data) {
-				const contact = data.get("contact");
-				const runtimes = data.get("runtimes");
-				const team = data.get("team");
-				const workflow = data.get("workflow");
-				const ready = data.get("ready");
-				const title = `Design partner request: ${team}`;
-				const body = [
-					"## Public contact",
-					String(contact),
-					"",
-					"## Coding agents we use",
-					String(runtimes),
-					"",
-					"## The two sides",
-					String(team),
-					"",
-					"## Workflow we want to test",
-					String(workflow),
-					"",
-					"## Two-person test in the next two weeks",
-					ready === "yes" ? "Yes" : "Not confirmed",
-					"",
-					"## What happens next",
-					"We are open to a no-install concierge test in which the relay workflow is manually simulated using our existing coding agents and tools.",
-				].join("\n");
-				const issueUrl = new URL("https://github.com/swayamg20/AgentRelay/issues/new");
-				issueUrl.searchParams.set("title", title);
-				issueUrl.searchParams.set("body", body);
-				return issueUrl.toString();
-			}
-
-			document.querySelector("#pilot-form").addEventListener("submit", (event) => {
-				event.preventDefault();
-				const data = new FormData(event.currentTarget);
-				window.location.assign(buildPilotIssueUrl(data));
-			});
-		</script>
+		<p class="copy-status" id="copy-status" role="status" aria-live="polite"></p>
 	</body>
 </html>
