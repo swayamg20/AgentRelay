@@ -52,7 +52,7 @@ describe("foreground Node delivery", () => {
 	let temporaryRoot: string;
 
 	beforeAll(async () => {
-		temporaryRoot = await mkdtemp(join(tmpdir(), "agentrelay-node-e2e-"));
+		temporaryRoot = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-node-e2e-")));
 		relay = await TestRelay.boot({ port: 18083 });
 	}, 30_000);
 
@@ -284,7 +284,13 @@ describe("foreground Node delivery", () => {
 				expect((await clientDaemon.runCycle()).acceptedMissions).toBe(1);
 
 				const journalPath = join(backendHome, "state", "journal.json");
-				const acceptedState = await waitForJournalPhase(journalPath, missionId, "host_accepted");
+				const acceptedState = await waitForJournalPhase(
+					journalPath,
+					missionId,
+					"host_accepted",
+					15_000,
+					runningNode,
+				);
 				const acceptedEntry = acceptedState.state.deliveries[acceptedState.deliveryId]!;
 				const acceptedEvent = acceptedEntry.host_events[0];
 				if (acceptedEvent?.kind !== "accepted") {
@@ -555,6 +561,7 @@ interface NodeExit {
 interface TrackedNodeProcess {
 	readonly child: ChildProcess;
 	readonly exited: Promise<NodeExit>;
+	stdout: string;
 	stderr: string;
 }
 
@@ -578,17 +585,22 @@ function startNodeProcess(
 	if (once) args.push("--once");
 	const child = spawn(process.execPath, args, {
 		cwd: REPO_ROOT,
-		env: { ...process.env, AGENTRELAY_NODE_LOG_LEVEL: "fatal" },
-		stdio: ["ignore", "ignore", "pipe"],
+		env: { ...process.env, AGENTRELAY_NODE_LOG_LEVEL: "error" },
+		stdio: ["ignore", "pipe", "pipe"],
 	});
 	const tracked: TrackedNodeProcess = {
 		child,
+		stdout: "",
 		stderr: "",
 		exited: new Promise((resolve, reject) => {
 			child.once("error", reject);
 			child.once("exit", (code, signal) => resolve({ code, signal }));
 		}),
 	};
+	child.stdout?.setEncoding("utf8");
+	child.stdout?.on("data", (chunk: string) => {
+		tracked.stdout += chunk;
+	});
 	child.stderr?.setEncoding("utf8");
 	child.stderr?.on("data", (chunk: string) => {
 		tracked.stderr += chunk;
@@ -615,7 +627,7 @@ async function expectNodeExit(
 	if (exit.code !== expectedCode) {
 		throw new Error(
 			`${context}: Node exited with code ${String(exit.code)} and signal ${String(exit.signal)}` +
-				`\nstderr:\n${processHandle.stderr}`,
+				`\nstdout:\n${processHandle.stdout}\nstderr:\n${processHandle.stderr}`,
 		);
 	}
 	return exit;
@@ -637,22 +649,27 @@ async function waitForJournalPhase(
 	missionId: string,
 	phase: string,
 	timeoutMs = 15_000,
+	processHandle?: TrackedNodeProcess,
 ): Promise<{ readonly state: NodeJournalState; readonly deliveryId: string }> {
 	let found: { readonly state: NodeJournalState; readonly deliveryId: string } | null = null;
-	await waitFor(async () => {
-		try {
-			const state = nodeJournalStateSchema.parse(JSON.parse(await readFile(path, "utf8")));
-			const match = Object.entries(state.deliveries).find(
-				([, entry]) => entry.item.delivery.mission_id === missionId && entry.phase === phase,
-			);
-			if (match === undefined) return false;
-			found = { state, deliveryId: match[0] };
-			return true;
-		} catch (error) {
-			if (errorCode(error) === "ENOENT") return false;
-			throw error;
-		}
-	}, timeoutMs);
+	await waitFor(
+		async () => {
+			try {
+				const state = nodeJournalStateSchema.parse(JSON.parse(await readFile(path, "utf8")));
+				const match = Object.entries(state.deliveries).find(
+					([, entry]) => entry.item.delivery.mission_id === missionId && entry.phase === phase,
+				);
+				if (match === undefined) return false;
+				found = { state, deliveryId: match[0] };
+				return true;
+			} catch (error) {
+				if (errorCode(error) === "ENOENT") return false;
+				throw error;
+			}
+		},
+		timeoutMs,
+		processHandle,
+	);
 	if (found === null) throw new Error(`Mission ${missionId} never reached journal phase ${phase}`);
 	return found;
 }
@@ -670,13 +687,20 @@ async function waitFor(
 		) {
 			throw new Error(
 				`Node exited before the test condition (code=${String(processHandle.child.exitCode)}, ` +
-					`signal=${String(processHandle.child.signalCode)})\nstderr:\n${processHandle.stderr}`,
+					`signal=${String(processHandle.child.signalCode)})\nstdout:\n${processHandle.stdout}` +
+					`\nstderr:\n${processHandle.stderr}`,
 			);
 		}
 		if (await predicate()) return;
 		await delay(25);
 	}
-	throw new Error("Timed out waiting for asynchronous test condition");
+	throw new Error(
+		`Timed out waiting for asynchronous test condition${
+			processHandle === undefined
+				? ""
+				: `\nstdout:\n${processHandle.stdout}\nstderr:\n${processHandle.stderr}`
+		}`,
+	);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
