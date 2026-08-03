@@ -33,6 +33,20 @@ const aliasSchema = z
 	.refine((value) => value !== "." && value !== "..", "Alias cannot be a path segment");
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const baseCommitSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+export const repositoryRefSchema = z
+	.string()
+	.min(1)
+	.max(256)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/)
+	.refine(
+		(value) =>
+			!value.includes("..") &&
+			!value.includes("//") &&
+			!value.endsWith("/") &&
+			!value.endsWith(".") &&
+			!value.endsWith(".lock"),
+		"Repository ref is not a safe canonical ref name",
+	);
 function boundedOpaqueReferenceSchema(maxLength: number) {
 	return z
 		.string()
@@ -84,6 +98,16 @@ export const deliveryStatusSchema = z.enum([
 	"dead_lettered",
 ]);
 
+export const deliveryKindSchema = z.enum(["turn", "verification", "contract_acknowledgement"]);
+
+export const deliveryCursorSchema = z
+	.string()
+	.regex(/^[1-9][0-9]*$/)
+	.max(19)
+	.refine((cursor) => compareDecimalStrings(cursor, "9223372036854775807") <= 0, {
+		message: "Delivery cursor exceeds Postgres bigint range",
+	});
+
 export const runStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 
 export const artifactTypeSchema = z
@@ -115,6 +139,69 @@ export const actorRefSchema = z
 		kind: z.enum(["owner", "agent"]),
 	})
 	.strict();
+
+export const nodeStatusSchema = z.enum(["active", "revoked"]);
+
+export const nodeDescriptorSchema = z
+	.object({
+		node_id: uuidSchema,
+		agent_id: uuidSchema,
+		name: aliasSchema,
+		status: nodeStatusSchema,
+		capabilities: z.array(identifierSchema).max(32),
+		last_seen_at: isoTimestampSchema.nullable(),
+		created_at: isoTimestampSchema,
+		updated_at: isoTimestampSchema,
+		revoked_at: isoTimestampSchema.nullable(),
+	})
+	.strict()
+	.superRefine((node, ctx) => {
+		if ((node.status === "revoked") !== (node.revoked_at !== null)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Node revocation timestamp must match revoked status",
+				path: ["revoked_at"],
+			});
+		}
+		if (
+			node.revoked_at !== null &&
+			(Date.parse(node.revoked_at) < Date.parse(node.created_at) ||
+				Date.parse(node.revoked_at) > Date.parse(node.updated_at))
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Node revocation timestamp must fall within its persisted lifetime",
+				path: ["revoked_at"],
+			});
+		}
+		if (Date.parse(node.updated_at) < Date.parse(node.created_at)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Node update cannot precede enrollment",
+				path: ["updated_at"],
+			});
+		}
+		if (
+			node.last_seen_at !== null &&
+			(Date.parse(node.last_seen_at) < Date.parse(node.created_at) ||
+				Date.parse(node.last_seen_at) > Date.parse(node.updated_at))
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Node last-seen timestamp must fall within its persisted lifetime",
+				path: ["last_seen_at"],
+			});
+		}
+		if (new Set(node.capabilities).size !== node.capabilities.length) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Node capabilities must be unique",
+				path: ["capabilities"],
+			});
+		}
+	});
+
+export const workspaceBindingStatusSchema = z.enum(["active", "revoked"]);
 
 export const repositoryUrlSchema = z
 	.string()
@@ -157,6 +244,55 @@ export const repositoryUrlSchema = z
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
 				message: "Repository URL must not contain query parameters or fragments",
+			});
+		}
+	});
+
+export const workspaceBindingDescriptorSchema = z
+	.object({
+		workspace_binding_id: uuidSchema,
+		node_id: uuidSchema,
+		agent_id: uuidSchema,
+		alias: aliasSchema,
+		repository_url: repositoryUrlSchema,
+		allowed_base_refs: z.array(repositoryRefSchema).max(32),
+		status: workspaceBindingStatusSchema,
+		created_at: isoTimestampSchema,
+		updated_at: isoTimestampSchema,
+		revoked_at: isoTimestampSchema.nullable(),
+	})
+	.strict()
+	.superRefine((binding, ctx) => {
+		if ((binding.status === "revoked") !== (binding.revoked_at !== null)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Workspace-binding revocation timestamp must match revoked status",
+				path: ["revoked_at"],
+			});
+		}
+		if (
+			binding.revoked_at !== null &&
+			(Date.parse(binding.revoked_at) < Date.parse(binding.created_at) ||
+				Date.parse(binding.revoked_at) > Date.parse(binding.updated_at))
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Workspace-binding revocation must fall within its persisted lifetime",
+				path: ["revoked_at"],
+			});
+		}
+		if (Date.parse(binding.updated_at) < Date.parse(binding.created_at)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Workspace-binding update cannot precede creation",
+				path: ["updated_at"],
+			});
+		}
+		if (new Set(binding.allowed_base_refs).size !== binding.allowed_base_refs.length) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Allowed base refs must be unique",
+				path: ["allowed_base_refs"],
 			});
 		}
 	});
@@ -390,6 +526,17 @@ export const missionContextSchema = z
 	})
 	.strict();
 
+/** Persisted common fields; the client supplies idempotency_key and the relay owns the rest. */
+export const missionEventEnvelopeSchema = z
+	.object({
+		event_id: uuidSchema,
+		idempotency_key: identifierSchema,
+		mission_id: uuidSchema,
+		sequence_no: z.number().int().positive().max(2_147_483_647),
+		created_at: isoTimestampSchema,
+	})
+	.strict();
+
 export const deliveryLeaseSchema = z
 	.object({
 		lease_id: uuidSchema,
@@ -406,16 +553,14 @@ export const deliverySchema = z
 		node_id: uuidSchema,
 		mission_id: uuidSchema,
 		mission_event_id: uuidSchema,
-		kind: z.enum(["turn", "verification"]),
-		cursor: z
-			.string()
-			.regex(/^[1-9][0-9]*$/)
-			.max(64),
+		kind: deliveryKindSchema,
+		cursor: deliveryCursorSchema,
 		status: deliveryStatusSchema,
 		attempt_count: z.number().int().nonnegative().max(100),
 		max_attempts: z.number().int().positive().max(100),
 		last_fencing_token: fencingTokenSchema,
 		contract_version: contractVersionSchema,
+		verification_round: z.number().int().positive().max(2_147_483_647).nullable(),
 		lease: deliveryLeaseSchema.nullable(),
 		idempotency_key: identifierSchema,
 		causal_parent_delivery_id: uuidSchema.nullable(),
@@ -428,6 +573,13 @@ export const deliverySchema = z
 	.strict()
 	.superRefine((delivery, ctx) => {
 		const needsLease = delivery.status === "leased" || delivery.status === "executing";
+		if ((delivery.kind === "verification") !== (delivery.verification_round !== null)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Only verification deliveries carry a verification round",
+				path: ["verification_round"],
+			});
+		}
 		if (needsLease && delivery.lease === null) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
@@ -562,6 +714,57 @@ export const deliverySchema = z
 		}
 	});
 
+export const storedDeliverySchema = deliverySchema.refine(
+	(delivery): delivery is Delivery & { status: "stored" } => delivery.status === "stored",
+	{
+		message: "Cursor polling returns only stored deliveries",
+		path: ["status"],
+	},
+);
+
+export const storedDeliveryCursorPageRequestSchema = z
+	.object({
+		after_cursor: deliveryCursorSchema.nullable().default(null),
+		limit: z.number().int().positive().max(200).default(50),
+	})
+	.strict();
+
+export const storedDeliveryCursorPageSchema = z
+	.object({
+		items: z.array(storedDeliverySchema).max(200),
+		next_cursor: deliveryCursorSchema.nullable(),
+	})
+	.strict()
+	.superRefine((page, ctx) => {
+		for (let index = 1; index < page.items.length; index += 1) {
+			if (compareDecimalStrings(page.items[index - 1]!.cursor, page.items[index]!.cursor) >= 0) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Delivery cursors must be strictly increasing",
+					path: ["items", index, "cursor"],
+				});
+			}
+		}
+
+		const nodeIds = new Set(page.items.map((delivery) => delivery.node_id));
+		if (nodeIds.size > 1) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "A delivery cursor page belongs to one Node",
+				path: ["items"],
+			});
+		}
+
+		const finalCursor = page.items.at(-1)?.cursor;
+		if (finalCursor !== undefined && page.next_cursor !== finalCursor) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Next cursor must match the final returned delivery",
+				path: ["next_cursor"],
+			});
+		}
+	});
+
 export const runtimeNameSchema = boundedOpaqueReferenceSchema(128);
 export const runtimeVersionSchema = boundedOpaqueReferenceSchema(128);
 
@@ -671,6 +874,8 @@ export type IsoTimestamp = z.infer<typeof isoTimestampSchema>;
 export type OpaqueReference = z.infer<typeof opaqueReferenceSchema>;
 export type MissionStatus = z.infer<typeof missionStatusSchema>;
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
+export type DeliveryKind = z.infer<typeof deliveryKindSchema>;
+export type DeliveryCursor = z.infer<typeof deliveryCursorSchema>;
 export type DeliveryLease = z.infer<typeof deliveryLeaseSchema>;
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
@@ -680,6 +885,10 @@ export type MessageType = z.infer<typeof messageTypeSchema>;
 export type PolicyProfileName = z.infer<typeof policyProfileNameSchema>;
 export type PolicyRequest = z.infer<typeof policyRequestSchema>;
 export type ActorRef = z.infer<typeof actorRefSchema>;
+export type NodeStatus = z.infer<typeof nodeStatusSchema>;
+export type NodeDescriptor = z.infer<typeof nodeDescriptorSchema>;
+export type WorkspaceBindingStatus = z.infer<typeof workspaceBindingStatusSchema>;
+export type WorkspaceBindingDescriptor = z.infer<typeof workspaceBindingDescriptorSchema>;
 export type Participant = z.infer<typeof participantSchema>;
 export type ArtifactRef = z.infer<typeof artifactRefSchema>;
 export type SharedContractArtifact = z.infer<typeof sharedContractArtifactSchema>;
@@ -689,5 +898,16 @@ export type VerificationEvidence = z.infer<typeof verificationEvidenceSchema>;
 export type TurnDisposition = z.infer<typeof turnDispositionSchema>;
 export type MissionManifest = z.infer<typeof missionManifestSchema>;
 export type MissionContext = z.infer<typeof missionContextSchema>;
+export type MissionEventEnvelope = z.infer<typeof missionEventEnvelopeSchema>;
 export type Delivery = z.infer<typeof deliverySchema>;
+export type StoredDelivery = z.infer<typeof storedDeliverySchema>;
+export type StoredDeliveryCursorPageRequest = z.infer<typeof storedDeliveryCursorPageRequestSchema>;
+export type StoredDeliveryCursorPage = z.infer<typeof storedDeliveryCursorPageSchema>;
 export type Run = z.infer<typeof runSchema>;
+
+function compareDecimalStrings(left: string, right: string): number {
+	if (left.length !== right.length) {
+		return left.length > right.length ? 1 : -1;
+	}
+	return left === right ? 0 : left > right ? 1 : -1;
+}

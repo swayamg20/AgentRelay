@@ -18,8 +18,9 @@ repositories is the first proof, not the final product boundary.
 
 ## Honest status
 
-The repository currently ships an **authenticated asynchronous mailbox**, not the
-full autonomous runtime described above.
+The repository currently ships an **authenticated asynchronous mailbox plus an
+internal durable Mission-ledger kernel**, not the full autonomous runtime described
+above. The ledger has no public Node API or runtime activation path yet.
 
 ### Implemented today
 
@@ -32,6 +33,11 @@ full autonomous runtime described above.
 - An executable `@agentrelay/protocol` workspace with bounded Mission contracts,
   strict lifecycle and coordinator reducers, a deterministic fake runtime adapter,
   and a reproducible backend-Android transcript fixture.
+- Relay-visible Node/workspace contracts and Postgres persistence for Nodes,
+  workspace bindings, Missions, append-only Mission events, and stored per-Node
+  deliveries. The internal ledger service records one exact acceptance receipt per
+  participant, derives activation only after both receipts exist, binds every result
+  to its source work, and supports provenance-preserving cursor replay.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
@@ -39,11 +45,15 @@ full autonomous runtime described above.
 ### Next architecture, not shipped yet
 
 - A persistent AgentRelay Node on every participating machine.
-- Durable delivery events, replay cursors, claims, acknowledgements, and duplicate
-  suppression.
-- Device and workspace identities, isolated worktrees, and runtime sessions.
+- Node-scoped credentials plus public enrollment and cursor-polling routes.
+- Fenced delivery claims, lease renewal/expiry, acknowledgements, retries,
+  dead-letter handling, and durable transport-operation receipts. The current kernel
+  can settle logical work, but it does not pretend that unclaimed work was executed.
+- Isolated worktrees and runtime sessions attached to the persisted device and
+  workspace identities.
 - Local policy enforcement outside the model.
-- Bounded, versioned Missions with acceptance criteria and executable verification.
+- A live Mission creation/acceptance/result API around the executable Mission
+  contracts and internal ledger.
 - Codex and Claude runtime adapters that start or resume real agent turns.
 
 The design is in

@@ -11,12 +11,16 @@
 	"main": "dist/main.js",
 	"files": ["dist"],
 	"scripts": {
+		"prebuild": "pnpm --filter @agentrelay/protocol build",
 		"build": "tsc -p tsconfig.json",
 		"start": "node dist/main.js",
 		"dev": "node --import tsx/esm src/main.ts",
+		"pretest": "pnpm --filter @agentrelay/protocol build",
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"pretest:integration": "pnpm --filter @agentrelay/protocol build",
 		"test:integration": "bash scripts/test-integration.sh",
+		"pretypecheck": "pnpm --filter @agentrelay/protocol build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node --import tsx/esm src/db/migrate.ts",
@@ -24,6 +28,7 @@
 		"db:push": "drizzle-kit push"
 	},
 	"dependencies": {
+		"@agentrelay/protocol": "workspace:*",
 		"@hono/node-server": "^1.13.7",
 		"dotenv": "^16.4.7",
 		"drizzle-orm": "^0.36.4",

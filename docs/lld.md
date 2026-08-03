@@ -1,6 +1,6 @@
-# Low-level design: current mailbox contracts
+# Low-level design: current relay contracts
 
-> **Scope:** Implemented code on `main` as of 2026-08-02.
+> **Scope:** Current repository implementation as of 2026-08-02.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Future Node and Mission contracts belong to
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) until implemented.
@@ -19,15 +19,19 @@
 └── package.json         pnpm workspace scripts
 ```
 
-There is currently no `node/` daemon, persistent event consumer, or real runtime
-adapter. The executable Mission contracts, deterministic coordinator, fake adapter,
-and backend-Android proof fixture live in `protocol/`.
+There is currently no `node/` daemon, persistent event consumer, Node HTTP surface,
+or real runtime adapter. The executable Mission contracts, deterministic coordinator,
+fake adapter, and backend-Android proof fixture live in `protocol/`; the relay now
+contains an internal durable-ledger service that no route calls yet.
 
 ## Protocol workspace
 
 `@agentrelay/protocol` currently implements:
 
 - strict Mission, contract, message, artifact, delivery, run, and evidence schemas;
+- relay-visible Node/workspace descriptors, a trusted Mission-event envelope, a
+  client append-input contract that excludes relay-owned identity/order fields, and
+  stored-delivery cursor-page contracts;
 - pure Mission lifecycle and fenced-delivery reducers;
 - a replayable four-event coordinator boundary for participant acceptance, completed
   turns, explicit contract acknowledgement, and local verification evidence;
@@ -39,11 +43,12 @@ and backend-Android proof fixture live in `protocol/`.
 - reproducible backend and Android fixture repositories, a golden 14-event transcript,
   executable backend/Android/contract/public checks, and a separate hidden evaluator.
 
-The coordinator is pure and in memory. `applied_events` is test evidence, not a
-durable ledger or receipt store. The fixture uses pre-scripted fake outcomes, an
-explicit pre-kickoff acknowledgement queue, and pre-authored expected repository
-snapshots; it does not show a model writing code, a relay surviving restart, or two
-Nodes collaborating across machines. Exact evidence and nonclaims are recorded in
+The coordinator remains a pure reducer. Its `applied_events` projection is test and
+replay state, while the relay ledger persists validated event envelopes and reducer
+snapshots. The fixture still uses pre-scripted fake outcomes, an explicit pre-kickoff
+acknowledgement queue, and pre-authored expected repository snapshots; it does not
+show a model writing code, an authenticated Node consuming work, or two Nodes
+collaborating across machines. Exact evidence and nonclaims are recorded in
 [`experiment 001`](experiments/001-backend-android-deterministic-proof.md).
 
 ## Relay tables
@@ -58,12 +63,19 @@ the committed Drizzle migrations.
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
 | `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
-| `audit_log` | Invite, handoff/message, and block mutation records: actor, action, resource, metadata, request ID, timestamp. |
+| `audit_log` | Invite, handoff/message, block, and internal Mission create/participant-accept/event mutation records: actor, action, resource, metadata, request ID, timestamp. |
 | `agent_blocks` | Blocker/blocked pairs enforced for new handoffs and each existing-thread append. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
+| `nodes` | Internal device identity owned by one agent, with relay-visible capabilities, presence timestamp, and revocation state. No credential is issued yet. |
+| `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
+| `missions` | Immutable coordinator config, current reducer projection/status/contract version, sequence, creator, and expiry. |
+| `mission_participants` | The exact agent, Node, and workspace binding selected for each two-party Mission, plus that participant's idempotent contract and opaque local-policy-grant acceptance receipt. |
+| `mission_events` | Append-only type-specific coordinator payload with relay-generated event ID, Mission sequence/time, service-supplied actor, source delivery, idempotency key, and causal parent. |
+| `node_deliveries` | Per-Node opaque cursor pointing to one Mission event, with contract/verification generation, logical settlement, and future lease/fencing state. |
 
-The current identity represents a logical developer/agent. It does not distinguish
-device, workspace, repository checkout, runtime, or Mission lease.
+Public mailbox authentication still represents a logical developer/agent. Internal
+Node and workspace identities now exist for deterministic Mission routing, but there
+is no Node credential, local checkout identity, runtime session, or Mission lease.
 
 ## Authentication
 
@@ -76,6 +88,47 @@ device, workspace, repository checkout, runtime, or Mission lease.
   updates local config after the response.
 
 Node-scoped credentials do not exist yet.
+
+## Internal Mission ledger
+
+`relay/src/services/mission-ledger.ts` is a service boundary, not a public route.
+
+- Mission creation validates the shared protocol config, requires each participant
+  to resolve to exactly one active `agent + Node + workspace alias + repository URL`,
+  stores that routing choice, and treats the manifest Mission ID as the exact
+  creation-replay identity.
+- Participant acceptance stores one strict receipt for the immutable Mission ID,
+  exact shared contract, and matching requested local-policy profile plus opaque
+  grant hash. Only the second independent receipt derives aggregate activation.
+- Event append accepts only the strict client input variant. The service supplies
+  event ID, Mission ID, sequence, timestamp, causal parent, and delivery targets, and
+  checks its actor argument against coordinator event ownership. Every Node-produced
+  result must name a still-unsettled source delivery assigned to that actor with the
+  exact work kind, contract version, and verification round. Authentication and
+  lease fencing must be added by the future Node route.
+- A Mission-scoped transaction lock serializes concurrent appends. The service first
+  resolves exact idempotent replay, then reconstructs the reducer from ordered stored
+  events and rejects a divergent snapshot or invalid transition.
+- An event, reducer projection, source-work settlement, every derived delivery, and
+  audit row commit together. An acceptance receipt and its audit commit together;
+  the second receipt also commits aggregate activation and the first turn. A failed
+  derived-delivery insert rolls back the whole triggering mutation.
+- Deliveries are derived for the next turn, both sides of a contract acknowledgement,
+  or both participants' verification phase. Contract acknowledgement work carries
+  the pending contract version; verification work carries its coordinator round.
+  Result submission logically settles source work, and a failed verification settles
+  every outstanding delivery from that round. Transport state remains `stored`; no
+  code can lease, acknowledge, retry, or execute deliveries yet.
+- `listStoredDeliveryEvents` filters by one Node ID argument inside the trusted
+  internal service boundary, reads strictly increasing
+  global-`bigserial` cursors, excludes settled work, joins each delivery to its
+  immutable event plus persisted actor/source/causal provenance, and never mutates
+  delivery state. An empty page retains the caller's checkpoint. Cursor gaps after
+  rolled-back transactions are valid. The future claim operation must also scan
+  recoverable expired leases independently of this new-work cursor.
+
+This internal surface is intentionally not mounted under `/agents`, `/a2a`, or a
+temporary agent-authenticated Node route.
 
 ## HTTP surface
 
@@ -294,8 +347,9 @@ Important limits:
 ## Audit and revocation
 
 Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel,
-message append, and block/unblock. Registration, card updates, key rotation, and agent
-disable still write no audit row. Audit also does not record commands, tool
+message append, block/unblock, and internal Mission create/participant accept/event
+append. Registration, card updates, key rotation, and agent disable still write no
+audit row. Audit also does not record commands, tool
 arguments/results, file edits, tests, or permission decisions performed by a local
 coding-agent host.
 
@@ -361,6 +415,7 @@ command.
 ## Boundary with the next design
 
 Do not extend `accepted_by_session` or the four-state handoff table into a distributed
-runtime scheduler. The next slice persists explicit Nodes, workspace bindings,
-Missions, events, deliveries, claims, runs, acknowledgements, and idempotency receipts
-while keeping the mailbox API as a compatibility and inspection surface.
+runtime scheduler. Nodes, workspace bindings, Missions, events, and stored deliveries
+now have a separate internal ledger. The next slice adds Node credentials and a
+fenced claim/renew/complete API with immutable attempt evidence and durable operation
+receipts, while keeping the mailbox API as a compatibility and inspection surface.

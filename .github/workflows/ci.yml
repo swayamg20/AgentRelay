@@ -55,6 +55,25 @@ jobs:
       # relay subprocess and is covered by the dedicated `e2e` job.
       - run: pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
 
+  relay-image:
+    needs: lint-typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build relay image
+        run: docker build --tag agentrelay-relay:ci --file relay/Dockerfile .
+
+      - name: Smoke-test protocol workspace dependency
+        run: >-
+          docker run --rm
+          --entrypoint node
+          --workdir /app/relay
+          agentrelay-relay:ci
+          --input-type=module
+          --eval "await import('@agentrelay/protocol')"
+
   relay-integration:
     needs: lint-typecheck
     runs-on: ubuntu-latest

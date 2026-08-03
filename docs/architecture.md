@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-08-01.
+> **Status:** Canonical system overview as of 2026-08-02.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). The accepted next target lives in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
@@ -27,6 +27,11 @@ The repository currently ships an authenticated asynchronous mailbox:
   completing handoff threads.
 - An executable protocol workspace with Mission/delivery/runtime contracts and an
   in-memory deterministic backend-Android coordination proof.
+- An internal Postgres Mission-ledger kernel with relay-visible Node and workspace
+  identity, immutable Mission context, current reducer projection, append-only
+  coordinator events, independent participant acceptance receipts, transactionally
+  derived stored deliveries, and per-Node cursor replay. It is not exposed as a Node
+  API yet.
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -36,8 +41,10 @@ This is useful groundwork, but it is not yet an autonomous agent network. The cu
 system does not contain:
 
 - A persistent local daemon that consumes work and starts or resumes agent turns.
-- Durable delivery events, replay cursors, processing claims, or acknowledgements.
-- Distinct device, workspace, runtime-session, or mission-lease identity.
+- Node-scoped credentials, enrollment/polling routes, processing claims, leases,
+  acknowledgements, retry, or dead-letter operations.
+- Runtime-session or Mission-lease identity; persisted Node/workspace records are an
+  internal routing foundation only.
 - Enforcement of the returned per-teammate trust overlay inside a runtime.
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
 - End-to-end traces of local commands, edits, policy decisions, and tests.

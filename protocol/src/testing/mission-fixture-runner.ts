@@ -172,6 +172,7 @@ async function runPreparedMissionFixture<TEnvironment extends MissionFixtureEnvi
 				...eventEnvelope(state.sequence_no + 1, context.manifest.mission_id),
 				type: "contract_acknowledged" as const,
 				participant_agent_id: scripted.participantAgentId,
+				delivery_id: fixtureUuid("23000000", state.sequence_no + 1),
 				revision_id: scripted.revisionId,
 				contract_version: scripted.contractVersion,
 				artifact: scripted.artifact,
@@ -276,6 +277,7 @@ async function runPreparedMissionFixture<TEnvironment extends MissionFixtureEnvi
 				...eventEnvelope(sequence, context.manifest.mission_id),
 				type: "verification_recorded",
 				participant_agent_id: participant.agent_id,
+				delivery_id: fixtureUuid("24000000", sequence),
 				contract_version: state.contract_version,
 				verification_round: state.verification_round,
 				evidence: {

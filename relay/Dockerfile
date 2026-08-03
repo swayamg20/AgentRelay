@@ -20,12 +20,14 @@ WORKDIR /app
 # Workspace metadata first — gives us the dependency graph for the install.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY relay/package.json relay/tsconfig.json ./relay/
+COPY protocol/package.json protocol/tsconfig.json ./protocol/
 
 # Install dev deps so we can run tsc during the build. Filtered to just the
 # relay subgraph (no mcp-server deps pulled into the build).
 RUN pnpm install --frozen-lockfile --filter relay...
 
-# Copy source (everything in relay/) and build.
+# Copy source for the relay and its protocol workspace dependency, then build.
+COPY protocol/src/ ./protocol/src/
 COPY relay/ ./relay/
 RUN pnpm --filter relay build
 
@@ -43,6 +45,8 @@ COPY --from=builder --chown=agentrelay:agentrelay /app/package.json /app/pnpm-lo
 COPY --from=builder --chown=agentrelay:agentrelay /app/relay/package.json ./relay/
 COPY --from=builder --chown=agentrelay:agentrelay /app/relay/dist ./relay/dist
 COPY --from=builder --chown=agentrelay:agentrelay /app/relay/drizzle ./relay/drizzle
+COPY --from=builder --chown=agentrelay:agentrelay /app/protocol/package.json ./protocol/
+COPY --from=builder --chown=agentrelay:agentrelay /app/protocol/dist ./protocol/dist
 
 # Production deps only.
 RUN pnpm install --frozen-lockfile --prod --filter relay... && \
