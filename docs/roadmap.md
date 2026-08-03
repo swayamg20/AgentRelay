@@ -10,12 +10,11 @@ AgentRelay is a cross-device communication and collaboration network for indepen
 owned agents. Coding across separate repositories is the first proving vertical, not
 the product's final boundary.
 
-The current repository combines an authenticated asynchronous mailbox with a mounted
-Mission and delivery control plane: Node enrollment, logical workspace routing,
-Mission creation and acceptance, cursor polling, Relay-issued fenced leases,
-completion, retry, dead-lettering, audit, and revocation. The next milestone is a
-persistent local Node that can journal this authority and start or resume a bounded
-agent turn, plus process-restart evidence for the Relay APIs.
+The current repository combines an authenticated asynchronous mailbox, a mounted
+Mission and delivery control plane, and an experimental foreground Node. The Node
+journals Relay authority and starts or resumes a deterministic fake-host turn. The
+next milestone is an independently persistent host capsule and a real Node-process
+restart proof, followed by the first pinned coding-agent adapter.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -38,7 +37,8 @@ and delivery guarantees.
 
 **Status:** deterministic exit gate passed on 2026-08-02. See
 [`experiment 001`](experiments/001-backend-android-deterministic-proof.md). Durable
-relay delivery and real Nodes remain unproved.
+Relay delivery and an experimental fake-runtime Node now exist; real coding-agent
+Nodes remain unproved.
 
 - Add a small shared protocol package or module with Mission, participant, message,
   artifact, delivery, run, and policy schemas.
@@ -58,12 +58,14 @@ receipts, source-bound result settlement, verification generations, joined curso
 recovery scans, separately revocable Node credentials, public Mission routes, and
 fenced claim/start/renew/complete/release operations with exact durable receipts.
 Postgres tests cover concurrent claims, stale fences, expiry after lock waits, lost
-response replay, retry discovery, dead-lettering, blocks, and revocation races. The
-Stage 2 exit gate remains open until a journaled client proves reconnect and Relay
-process restart without a duplicated host effect.
+response replay, retry discovery, dead-lettering, blocks, and revocation races. A
+journaled client now proves runner reconstruction and duplicate polling without a
+second fake-host turn. The Stage 2 exit gate remains open for a real Relay-process
+restart and reconnect proof.
 
-- Add node identity, workspace-binding, Mission, event, delivery, claim, run, and
-  acknowledgement persistence.
+- Add Node identity, workspace-binding, Mission, event, delivery, claim, and
+  acknowledgement persistence. Relay-visible run persistence remains part of the
+  later runtime-evidence work.
 - Commit domain events and delivery rows in the same Postgres transaction.
 - Implement ordered cursor replay, bounded claims, lease expiry, retry, cancellation,
   and duplicate suppression.
@@ -80,6 +82,15 @@ work so stale rows cannot starve runnable work, but filtering is not lifecycle
 reconciliation.
 
 ## Stage 3: AgentRelay Node
+
+**Status:** first turn-delivery checkpoint implemented. The foreground Node has a
+mode-0600 device config, local workspace/policy mapping, atomic journal,
+recovery-before-poll loop, fenced Relay operations, repository preflight, and fake
+adapter replay. Unit fault injection and a real Relay/Postgres E2E prove one host
+turn per processed delivery across duplicate polling, runner reconstruction, and an
+injected in-process failure immediately after host acceptance. Contract
+acknowledgement, verification execution, external fake-host process recovery, and
+the two-machine exit gate remain open.
 
 - Add a `node/` pnpm workspace and daemon CLI.
 - Register device-scoped credentials and capabilities.

@@ -2,8 +2,9 @@
 
 > **Scope:** Current repository implementation as of 2026-08-02.
 > This document describes the existing handoff plane, public Mission delivery
-> control plane, and Node identity/workspace API, not the autonomous Node runtime.
-> See [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the next system.
+> control plane, Node identity/workspace API, and experimental fake-runtime Node.
+> It does not describe a complete autonomous coding runtime. See
+> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the target system.
 
 ## Purpose
 
@@ -12,10 +13,11 @@ agents exchange structured handoff threads through a shared relay. The relay per
 the conversation and enforces participant access. A local stdio MCP server exposes
 the mailbox as tools to Claude Code or Codex.
 
-Humans or active agent sessions still initiate mailbox checks. The relay can enroll a
-Node, issue its separate credential, accept a Mission assignment, and durably lease
-delivery work. There is no persistent local consumer or runtime activation loop to
-turn that relay work into repository changes.
+Humans or active agent sessions still initiate mailbox checks. Separately, the
+foreground `agentrelay-node` command can use a pre-issued Node credential, accept a
+Mission assignment, durably lease one turn, and drive the deterministic fake adapter.
+It does not yet activate a real coding-agent runtime or turn Mission work into
+repository changes.
 
 ## Components
 
@@ -30,6 +32,9 @@ agentrelay-mcp                                          agentrelay-mcp
               identity, handoffs, Missions, delivery, audit
                               |
                    best-effort Slack webhook
+
+Experimental path on each machine:
+agentrelay-node -> atomic local journal -> deterministic fake adapter
 ```
 
 ### Relay
@@ -78,6 +83,21 @@ the relay, start model turns, manage worktrees, or apply a dynamic runtime polic
 The `agentrelay` binary supports registration, invite/join, client installation, key
 rotation, doctor/fix, audit, block/unblock, trust management, and starting the stdio
 MCP server.
+
+### Experimental foreground Node
+
+The private `agentrelay-node` workspace consumes the public Node routes. While its
+foreground command is running, it verifies the configured Node and workspaces,
+scans recoverable work before polling new cursor work, services one delivery, then
+advances one durably cursor-paged batch of eligible Mission acceptances. It journals
+exact operation intents, renews the Relay lease, and reduces fake-host events. Relay
+database time controls retry eligibility; transient host failure advances a journaled
+execution attempt while lease-only recovery keeps the same host turn. Its device
+configuration and local journal are mode 0600; the checkout path never enters the
+Relay payload.
+
+This is a delivery/recovery checkpoint. The in-memory fake host cannot survive an
+operating-system process kill, and the Node has no Codex or Claude adapter.
 
 ## Core data model
 
@@ -215,10 +235,11 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ### Not implemented today
 
-- A persistent local Node that polls or recovers work and maintains a local
-  duplicate-processing journal.
-- Runtime-session start/resume/cancel.
-- Local worktree isolation and per-Mission policy enforcement.
+- A real coding-agent runtime session or external fake-host capsule that survives a
+  Node-process kill. The current foreground Node and in-memory fake adapter prove
+  runner reconstruction, not independent host-process survival.
+- Automatic worktree isolation and complete per-Mission command/network mediation.
+- Contract-acknowledgement and registered verification-command delivery handlers.
 - Local command, edit, test, and permission-decision audit.
 - Background or lazy Mission-level expiry/dead-letter reconciliation. Expired
   Missions are filtered from delivery discovery, but their row and all remaining
@@ -247,15 +268,17 @@ They are not yet one end-to-end enforcement system:
   commands or edits happened because of a handoff.
 - Outbound AgentRelay tools are not constrained by a Mission-specific data policy.
 
-Autonomous execution must wait for the Node to apply a bounded policy outside the
-model. See the security section of [`architecture.md`](architecture.md).
+Autonomous execution must wait for the Node to apply the complete bounded command,
+network, time, path, and side-effect policy outside the model. See the security
+section of [`architecture.md`](architecture.md).
 
 ## Failure behavior
 
 - If Postgres is unavailable, relay requests fail; there is no alternate durable
   store.
 - If a notification fails, the persisted handoff remains available for polling.
-- If the MCP process exits, no work is processed until a host starts it again.
+- If the MCP process exits, no manual mailbox tool call is processed until a host
+  starts it again. A separately running foreground Node can continue Mission polling.
 - If a handoff creation or message append is retried with the same client idempotency
   key and matching checked fields, the relay returns the recorded result even after a
   later block or terminal transition. Same-key concurrent retries are serialized.
@@ -294,9 +317,10 @@ model. See the security section of [`architecture.md`](architecture.md).
 
 ## Relationship to the next design
 
-The mailbox remains a compatibility and inspection surface. The relay now exposes a
+The mailbox remains a compatibility and inspection surface. The relay exposes a
 separate, authenticated Mission and delivery control plane without stretching the
-handoff row into a scheduler. The next checkpoint is the local Node that consumes
-this API, enforces repository policy, activates real runtimes, and proves recovery on
-two machines; Mission-level expiry/dead-letter reconciliation remains a separate
+handoff row into a scheduler. The foreground Node now consumes one turn through that
+API with a fake host. The next checkpoint is an independently persistent host capsule
+and real process-restart proof, followed by a pinned coding-agent adapter and
+two-machine run; Mission-level expiry/dead-letter reconciliation remains a separate
 relay gap.

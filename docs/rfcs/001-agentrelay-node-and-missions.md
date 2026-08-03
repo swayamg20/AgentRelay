@@ -1,7 +1,8 @@
 # RFC 001: AgentRelay Node and Missions
 
-- **Status:** Accepted; Relay control-plane steps 1-3 are implemented, local Node
-  steps remain pending
+- **Status:** Accepted; Relay control-plane steps 1-3 and the first foreground Node
+  turn-delivery checkpoint are implemented; the complete Node/Codex slice remains
+  pending
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -24,14 +25,17 @@ coding-agent session.
 
 ## Why
 
-The current repository is an authenticated mailbox plus a durable Mission/delivery
-control plane. It can route and fence work for enrolled Nodes, but it cannot notice
-work on a developer machine, start or resume a model turn, enforce a
-collaboration-specific local policy, or prove that a host processed a delivery.
+The repository now contains an authenticated mailbox, a durable Mission/delivery
+control plane, and the first foreground Node checkpoint. That Node notices work,
+checks repository identity and a local policy profile, and starts or resumes a
+deterministic fake-host turn. It cannot yet activate a real coding-agent runtime,
+enforce the complete command/network/time/path boundary, or survive an operating-
+system process kill with its host state intact.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
-turn. The missing product primitive is the local Node.
+turn. The remaining product primitive is a production Node with a persistent host
+capsule and real runtime adapter.
 
 ## First-slice boundary
 
@@ -116,20 +120,23 @@ The adapter must make crash recovery and duplicate suppression explicit:
 interface AgentHostAdapter {
 	probe(): Promise<AdapterInfo>;
 	ensureSession(input: SessionInput): Promise<HostSessionRef>;
-	lookupTurn(deliveryId: string): Promise<HostTurnRef | null>;
+	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null>;
 	startTurn(input: StartTurnInput): AsyncIterable<HostEvent>;
 	recoverTurn(ref: HostTurnRef): AsyncIterable<HostEvent>;
 	cancelTurn(ref: HostTurnRef): Promise<void>;
 }
 ```
 
-`startTurn` is idempotent by `deliveryId`: if the host already accepted that delivery,
-the adapter returns or recovers the existing turn rather than starting another one.
-Lease authority does not enter the runtime adapter or `HostTurnRef`. Before starting,
-recovering, cancelling, or publishing a host result, the Node atomically checks the
-delivery's current lease ID, fencing token, and unexpired deadline in durable state. A
-newly leased Node may recover the same delivery's existing host turn; an expired
-holder is rejected before it reaches the adapter.
+`startTurn` is idempotent by `(deliveryId, executionAttempt)`: if the host already
+accepted that execution attempt, the adapter returns or recovers the existing turn
+rather than starting another one. A deliberate retry advances the positive,
+journaled `executionAttempt` and may create a fresh host turn for the same Relay
+delivery. Lease authority does not enter the runtime adapter or `HostTurnRef`; the
+execution attempt is correlation, not a fence. Before starting, recovering,
+cancelling, or publishing a host result, the Node atomically checks the delivery's
+current lease ID, fencing token, and unexpired deadline in durable state. A newly
+leased Node may recover the same journaled execution attempt; an expired holder is
+rejected before it reaches the adapter.
 
 Every normalized host event has one stable, turn-local sequence number so full replay
 can be deduplicated after recovery. Events cover acceptance, bounded output, tool and
@@ -355,8 +362,10 @@ the implemented boundary and its remaining nonclaims.
 - Bound outbound text and artifacts so AgentRelay cannot become an unrestricted data
   exfiltration channel.
 
-The current MCP `trust_overlay` is advisory. Autonomous writes are not safe to claim
-until the Node consumes locally approved policy and enforces it outside the model.
+The current MCP `trust_overlay` is advisory. The foreground Node consumes a locally
+approved profile for repository preflight and reported-event limits, but autonomous
+writes are not safe to claim until it also enforces command, network, time, path, and
+side-effect policy outside the model.
 
 ## Relay-visible versus local data
 
@@ -408,11 +417,18 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    workspace-binding, and run schemas with state-machine tests.
 3. **Implemented at the Relay boundary:** transactional event/delivery append, Node
    cursor polling, leases, acknowledgement, retry, exact replay, and revocation.
-   Process-restart and real-client evidence still belongs to steps 4-5.
-4. Add a foreground `node/` daemon with enrollment, workspace registration, local
-   journal, policy profiles, and a fake adapter.
-5. Pass disconnect, crash, duplicate, busy-session, cancellation, and adversarial
-   tests with the fake adapter.
+   A journaled client now covers runner reconstruction; Relay-process restart and
+   independently persistent host evidence still belong to steps 4-5.
+4. **In progress:** the foreground `node/` daemon now consumes a pre-issued device
+   credential, registers logical workspaces, journals cursor/operation/session/event
+   state, enforces repository and local-profile preflight, and drives the fake adapter
+   for turn deliveries. Contract acknowledgement and registered verification
+   deliveries remain.
+5. **In progress:** duplicate polling, runner reconstruction, an injected in-process
+   failure after host acceptance, lost Relay responses, stale fences, transient
+   retry, cancellation, shutdown, local-policy denial, and paginated assignment
+   starvation are covered. A real process kill requires an external persistent fake
+   host; busy-session and full adversarial coverage remain.
 6. Add and pin the Codex app-server adapter.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.

@@ -70,12 +70,16 @@ in-memory scripted proof, not durable relay or real-runtime evidence.
   operation receipts for the Mission retention period.
 - [x] Prove service-level duplicate, expired-lease, retry-scan, stale-fence, lost
   response, revocation-race, and final-dead-letter behavior against Postgres.
-- [ ] Prove relay-process restart and Node reconnect recovery through cursor polling;
+- [x] Prove journal reopening, runner reconstruction, and duplicate cursor polling
+  without a second fake-host turn.
+- [ ] Prove Relay-process restart plus Node reconnect through cursor/recovery polling;
   leave SSE out of this slice.
 - [ ] Reconcile delivery expiry/dead-letter outcomes into an explicit terminal or
   blocked Mission transition instead of only hiding expired/terminal Mission work.
-- [ ] Add stable pagination to Node Mission assignment discovery; the first route is
-  newest-first and bounded to 200 assignments.
+- [x] Add stable Node-scoped keyset pagination to Mission assignment discovery. The
+  foreground Node persists its continuation and advances one bounded page only after
+  servicing delivery work; it rejects immediate cursor loops, and the Relay excludes
+  expired `awaiting_acceptance` rows using database time.
 
 Agent and Node credentials are type-separated, and Node revocation atomically revokes
 its active credentials and workspace bindings without deleting Mission history. The
@@ -83,22 +87,33 @@ Mission and delivery control plane is now authenticated and mounted. Cursor poll
 discovers work without claiming it; a Node must claim an exact delivery and present
 the Relay-issued lease ID and fence before execution-related mutations. Completion
 atomically appends Mission output, settles source work, acknowledges transport, and
-stores the exact replay receipt. No local Node consumes these APIs yet.
+stores the exact replay receipt. The foreground Node now consumes this boundary for
+turn deliveries; Relay restart and full-Mission recovery evidence remain open.
 
-The remaining Stage 2 evidence requires an actual client journal: disconnect before
-claim, after claim, and after host acceptance; relay process restart; duplicate
-notification; and late output after a terminal Mission.
+The client journal and after-host-acceptance runner reconstruction now exist. Remaining
+Stage 2 evidence includes disconnect before and after claim, an actual Relay-process
+restart, independently persistent host recovery, and rejection of late output after a
+terminal Mission.
 
 ## 4. Build the local Node
 
-- [ ] Add a `node/` workspace with a foreground daemon command first.
-- [ ] Register a device-scoped credential and capabilities.
-- [ ] Configure logical workspace aliases locally.
-- [ ] Persist delivery cursor and processing journal.
-- [ ] Validate repository URL, base commit, and dirty-worktree policy.
-- [ ] Validate a pre-registered clean checkout or operator-created worktree.
+- [x] Add a `node/` workspace with a foreground daemon command first.
+- [ ] Add Node-side enrollment and credential-rotation commands; the Relay already
+  registers device-scoped credentials and capabilities.
+- [x] Consume a pre-issued device credential from a separate mode-0600 Node config.
+- [x] Configure logical workspace aliases locally.
+- [x] Persist delivery cursor, operation intents, Mission sessions, host events, and
+  delivery processing state through atomic local replacement.
+- [x] Validate repository URL, exact base commit, allowed base ref, canonical root,
+  and dirty-worktree policy before each turn.
+- [x] Validate a pre-registered clean checkout.
 - [ ] Enforce local path, command, network, budget, expiry, and revocation policy.
-- [ ] Record normalized runtime and policy events.
+- [x] Reduce and persist normalized fake-runtime events with acceptance-first ordering,
+  replay equality, usage, output, artifact, and token limits.
+- [ ] Add deterministic contract acknowledgement and registered verification-command
+  delivery handlers.
+- [ ] Move the fake host outside the Node process before claiming an OS-process crash
+  proof; the current E2E reconstructs the Node runner while preserving the fake host.
 
 Start with one eligible Node per logical agent and one active turn per Mission.
 

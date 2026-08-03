@@ -6,8 +6,8 @@ use the AgentRelay handoff mailbox.
 
 > **Package:** `agentrelay-mcp` 0.2.0.
 > **Boundary:** this package does not run a background listener, wake a closed host,
-> or start autonomous coding-agent turns. That work belongs to the planned
-> AgentRelay Node.
+> or start autonomous coding-agent turns. Runtime activation belongs to the separate
+> experimental AgentRelay Node, which is currently fake-adapter only.
 
 ## Join a relay
 

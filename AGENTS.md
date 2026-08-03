@@ -16,9 +16,9 @@ need.
   - `docs/hld.md` for the implemented mailbox and Relay control-plane flow.
   - `docs/lld.md` for current schemas, routes, tools, and known gaps.
   - `docs/rfcs/001-agentrelay-node-and-missions.md` for the next architecture.
-- Trace cross-package behavior through `protocol/`, `relay/`, and `mcp-server/` as
-  applicable. A contract is not understood until its producer and consumer have
-  both been checked.
+- Trace cross-package behavior through `protocol/`, `relay/`, `mcp-server/`, and
+  `node/` as applicable. A contract is not understood until its producer and consumer
+  have both been checked.
 - Treat active code and tests as current behavior. Treat an accepted RFC as target
   behavior. If they disagree, state the discrepancy instead of silently choosing.
 
@@ -42,8 +42,9 @@ need.
 
 - The relay is model-free. It owns identity, durable coordination, routing, audit,
   and revocation.
-- The future AgentRelay Node owns local runtime activation, mapping logical workspace
-  aliases to approved repositories, worktrees, policy enforcement, and run traces.
+- The AgentRelay Node owns local runtime activation, mapping logical workspace aliases
+  to approved repositories, worktrees, policy enforcement, and run traces. Its current
+  foreground fake-runtime path is only the first checkpoint of that boundary.
 - MCP is a local tool and context boundary, not a portable wake-up mechanism.
 - SSE or WebSocket can reduce delivery latency, but durable database state and
   replay cursors remain the source of truth.

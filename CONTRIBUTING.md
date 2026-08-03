@@ -44,19 +44,21 @@ pnpm --filter agentrelay-mcp dev
 protocol/       Mission contracts, coordinator, test fixtures, and runtime adapters
 relay/          Hono + Drizzle + Postgres relay
 mcp-server/     agentrelay-mcp package and agentrelay CLI
-tests/e2e/      real relay plus two MCP processes
+node/           foreground Node, local policy, journal, and fake runtime bridge
+tests/e2e/      real relay, MCP processes, and in-process foreground-Node harnesses
 landing/        static GitHub Pages site
 docs/           current design, operations, roadmap, and RFCs
 ```
 
-There is no local Node package yet. Its accepted target is
+The Node package currently proves one fake-adapter turn with durable local journaling
+and in-process runner reconstruction. Its remaining target is
 [`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md).
 
 ## Understand the contract first
 
 Before editing, trace the behavior through its producer, consumer, schema, and tests.
-For cross-package work, inspect `protocol/`, `relay/`, and `mcp-server/` wherever the
-contract crosses those boundaries.
+For cross-package work, inspect `protocol/`, `relay/`, `mcp-server/`, and `node/`
+wherever the contract crosses those boundaries.
 
 - [`docs/architecture.md`](docs/architecture.md) defines current and target boundaries.
 - [`docs/hld.md`](docs/hld.md) describes the shipped mailbox and Relay control-plane
@@ -121,10 +123,15 @@ pnpm -r typecheck
 pnpm -r build
 ```
 
+The repository pins recursive workspace concurrency to one because the Relay and Node
+package hooks both materialize `protocol/dist`; parallel writers can expose a partial
+build to a clean-checkout consumer.
+
 Database-free package tests, matching CI's unit job:
 
 ```bash
-pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
+pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp \
+  --filter agentrelay-node test
 ```
 
 Focused iteration:
@@ -133,6 +140,7 @@ Focused iteration:
 pnpm --filter @agentrelay/protocol exec vitest run src/path/file.test.ts
 pnpm --filter relay exec vitest run src/path/file.test.ts
 pnpm --filter agentrelay-mcp exec vitest run src/path/file.test.ts
+pnpm --filter agentrelay-node exec vitest run src/path/file.test.ts
 ```
 
 Relay integration tests require a migrated Postgres database:

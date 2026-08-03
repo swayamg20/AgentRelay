@@ -6,8 +6,8 @@
 > doesn't recommend Fly over other hosts.
 >
 > This guide deploys only the shared relay, including its mailbox and Mission/delivery
-> control plane. The planned AgentRelay Node and coding-agent runtimes remain on
-> developer machines; they are not hosted inside this Fly application. See
+> control plane. The experimental foreground AgentRelay Node and future coding-agent
+> runtimes run on developer machines; they are not hosted inside this Fly application. See
 > [`architecture.md`](architecture.md) for that boundary.
 
 ## What this gets you
