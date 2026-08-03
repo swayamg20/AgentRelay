@@ -125,19 +125,16 @@ describe("PersistentFakeCapsuleAdapter", () => {
 	it("recovers a crashed Capsule's unchanged stale socket inode", async () => {
 		const { adapter, launcher, rootDirectory } = await openedAdapter();
 		const session = await adapter.ensureSession(sessionInput());
+		const crashedServer = launcher.onlyServer();
 		await launcher.closeAll();
 		const directory = join(rootDirectory, IDS.mission);
 		const descriptor = await readCapsuleLaunchDescriptor(directory);
 		await installStaleSocket(descriptor.socket_path);
-		const stale = await lstat(descriptor.socket_path);
 
 		expect(await adapter.ensureSession(sessionInput())).toEqual(session);
-		const replacement = await lstat(descriptor.socket_path);
-		expect({ dev: replacement.dev, ino: replacement.ino }).not.toEqual({
-			dev: stale.dev,
-			ino: stale.ino,
-		});
 		expect(launcher.startCalls).toBe(2);
+		expect(launcher.liveServers).toBe(1);
+		expect(launcher.onlyServer()).not.toBe(crashedServer);
 	});
 
 	it("converges concurrent stale-socket recovery on one live Capsule", async () => {
