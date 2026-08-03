@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 export default function globalSetup() {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const repoRoot = resolve(here, "../../..");
-	for (const pkg of ["relay", "agentrelay-mcp"]) {
+	for (const pkg of ["relay", "agentrelay-mcp", "agentrelay-node"]) {
 		const r = spawnSync("pnpm", ["--filter", pkg, "build"], {
 			cwd: repoRoot,
 			stdio: "inherit",
