@@ -33,7 +33,39 @@ const REPLY: TurnDisposition = {
 };
 
 describe("FakeAgentHostAdapter", () => {
-	it("suppresses duplicate host turns by deliveryId", async () => {
+	it("repeats its default outcome without a process-wide turn limit", async () => {
+		const adapter = new FakeAgentHostAdapter();
+		const session = await createSession(adapter);
+		adapter.setDefaultOutcome({ kind: "completed", disposition: REPLY });
+
+		for (let index = 1; index <= 201; index += 1) {
+			const deliveryId = `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`;
+			const events = await collect(adapter.startTurn({ ...createTurnInput(session), deliveryId }));
+			expect(events.at(-1)).toMatchObject({ kind: "completed", disposition: REPLY });
+		}
+
+		expect(adapter.counters.turnsCreated).toBe(201);
+	});
+
+	it("uses queued outcomes before returning to the repeatable default", async () => {
+		const adapter = new FakeAgentHostAdapter();
+		const session = await createSession(adapter);
+		adapter.setDefaultOutcome({ kind: "completed", disposition: REPLY });
+		adapter.queueOutcome({
+			kind: "failed",
+			failure: { class: "transient", message: "one queued failure" },
+		});
+
+		const first = await collect(adapter.startTurn(createTurnInput(session)));
+		const second = await collect(
+			adapter.startTurn({ ...createTurnInput(session), executionAttempt: 2 }),
+		);
+
+		expect(first.at(-1)).toMatchObject({ kind: "failed" });
+		expect(second.at(-1)).toMatchObject({ kind: "completed", disposition: REPLY });
+	});
+
+	it("suppresses duplicate host turns by delivery and execution attempt", async () => {
 		const adapter = new FakeAgentHostAdapter();
 		const session = await createSession(adapter);
 		const input = createTurnInput(session);
@@ -46,6 +78,29 @@ describe("FakeAgentHostAdapter", () => {
 		expect(first.map((event) => event.kind)).toEqual(["accepted", "usage", "completed"]);
 		expect(adapter.counters.startTurnCalls).toBe(2);
 		expect(adapter.counters.turnsCreated).toBe(1);
+	});
+
+	it("starts a fresh host turn when the same delivery advances execution attempt", async () => {
+		const adapter = new FakeAgentHostAdapter();
+		const session = await createSession(adapter);
+		const firstInput = createTurnInput(session);
+		const secondInput = { ...firstInput, executionAttempt: 2 };
+		adapter.queueOutcome({
+			kind: "failed",
+			failure: { class: "transient", message: "host temporarily unavailable" },
+		});
+		adapter.queueOutcome({ kind: "completed", disposition: REPLY });
+
+		const first = await collect(adapter.startTurn(firstInput));
+		const second = await collect(adapter.startTurn(secondInput));
+		const secondReplay = await collect(adapter.startTurn(secondInput));
+
+		expect(first[0]?.turn).toMatchObject({ turnId: "fake-turn-1", executionAttempt: 1 });
+		expect(second[0]?.turn).toMatchObject({ turnId: "fake-turn-2", executionAttempt: 2 });
+		expect(secondReplay).toEqual(second);
+		expect(await adapter.lookupTurn(firstInput.deliveryId, 1)).toEqual(first[0]?.turn);
+		expect(await adapter.lookupTurn(firstInput.deliveryId, 2)).toEqual(second[0]?.turn);
+		expect(adapter.counters.turnsCreated).toBe(2);
 	});
 
 	it("rejects changed work or provenance that reuses an accepted deliveryId", async () => {
@@ -65,7 +120,7 @@ describe("FakeAgentHostAdapter", () => {
 					},
 				],
 			}),
-		).toThrow(/deliveryId reused with different turn correlation/);
+		).toThrow(/host execution reused with different turn correlation/);
 		expect(() =>
 			adapter.startTurn({
 				...input,
@@ -79,16 +134,30 @@ describe("FakeAgentHostAdapter", () => {
 					},
 				],
 			}),
-		).toThrow(/deliveryId reused with different turn correlation/);
+		).toThrow(/host execution reused with different turn correlation/);
 		expect(() =>
 			adapter.startTurn({
 				...input,
 				objective: { ...input.objective, authorPrincipalId: IDS.androidAgent },
 			}),
-		).toThrow(/deliveryId reused with different turn correlation/);
+		).toThrow(/host execution reused with different turn correlation/);
 		expect(adapter.counters.startTurnCalls).toBe(4);
 		expect(adapter.counters.turnsCreated).toBe(1);
-		expect((await adapter.lookupTurn(input.deliveryId))?.turnId).toBe("fake-turn-1");
+		expect((await adapter.lookupTurn(input.deliveryId, input.executionAttempt))?.turnId).toBe(
+			"fake-turn-1",
+		);
+	});
+
+	it("rejects invalid execution attempts before creating a host turn", async () => {
+		const adapter = new FakeAgentHostAdapter();
+		const session = await createSession(adapter);
+		const input = createTurnInput(session);
+
+		for (const executionAttempt of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+			expect(() => adapter.startTurn({ ...input, executionAttempt })).toThrow();
+		}
+
+		expect(adapter.counters.turnsCreated).toBe(0);
 	});
 
 	it("snapshots accepted input so caller mutation cannot redefine a delivery", async () => {
@@ -106,7 +175,7 @@ describe("FakeAgentHostAdapter", () => {
 		peerMessage.body = "Replace the accepted work after host invocation.";
 
 		expect(() => adapter.startTurn(input)).toThrow(
-			/deliveryId reused with different turn correlation/,
+			/host execution reused with different turn correlation/,
 		);
 		expect(adapter.counters.turnsCreated).toBe(1);
 	});
@@ -118,13 +187,13 @@ describe("FakeAgentHostAdapter", () => {
 		adapter.queueOutcome({ kind: "pending" });
 
 		const accepted = await collect(adapter.startTurn(input));
-		const ref = await adapter.lookupTurn(input.deliveryId);
+		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 		expect(ref).toEqual(accepted[0]?.turn);
 		expect((await collect(adapter.recoverTurn(ref!))).map((event) => event.kind)).toEqual([
 			"accepted",
 		]);
 
-		adapter.completeTurn(input.deliveryId, REPLY);
+		adapter.completeTurn(input.deliveryId, input.executionAttempt, REPLY);
 		const recovered = await collect(adapter.recoverTurn(ref!));
 
 		expect(recovered.map((event) => event.kind)).toEqual(["accepted", "usage", "completed"]);
@@ -196,7 +265,7 @@ describe("FakeAgentHostAdapter", () => {
 		}
 
 		const recovered = await collect(
-			adapter.recoverTurn((await adapter.lookupTurn(input.deliveryId))!),
+			adapter.recoverTurn((await adapter.lookupTurn(input.deliveryId, input.executionAttempt))!),
 		);
 		expect(recovered[1]).toMatchObject({ kind: "output", sequence: 2, text: "working" });
 		expect(recovered.at(-1)).toMatchObject({
@@ -222,7 +291,7 @@ describe("FakeAgentHostAdapter", () => {
 		expect((await iterator.next()).value).toMatchObject({ kind: "accepted", sequence: 1 });
 		await iterator.return?.();
 
-		const ref = await adapter.lookupTurn(input.deliveryId);
+		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 		const recovered = await collect(adapter.recoverTurn(ref!));
 		expect(recovered.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
 		expect(recovered.map((event) => event.kind)).toEqual([
@@ -256,7 +325,7 @@ describe("FakeAgentHostAdapter", () => {
 		const input = createTurnInput(session);
 		adapter.queueOutcome({ kind: "pending" });
 		await collect(adapter.startTurn(input));
-		const ref = await adapter.lookupTurn(input.deliveryId);
+		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 
 		await adapter.cancelTurn(ref!);
 		await adapter.cancelTurn(ref!);
@@ -273,9 +342,12 @@ describe("FakeAgentHostAdapter", () => {
 		const session = await createSession(adapter);
 		const input = createTurnInput(session);
 		await collect(adapter.startTurn(input));
-		const ref = await adapter.lookupTurn(input.deliveryId);
+		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 
 		expect(() => adapter.recoverTurn({ ...ref!, missionId: IDS.otherMission })).toThrow(
+			/unknown fake host turn/,
+		);
+		expect(() => adapter.recoverTurn({ ...ref!, executionAttempt: 2 })).toThrow(
 			/unknown fake host turn/,
 		);
 		await expect(adapter.cancelTurn({ ...ref!, contractVersion: 2 })).rejects.toThrow(
@@ -328,7 +400,7 @@ describe("FakeAgentHostAdapter", () => {
 
 		expect(() => adapter.startTurn(input)).toThrow();
 		expect(adapter.counters.turnsCreated).toBe(1);
-		expect(await adapter.lookupTurn(input.deliveryId)).not.toBeNull();
+		expect(await adapter.lookupTurn(input.deliveryId, input.executionAttempt)).not.toBeNull();
 		expect((await collect(adapter.startTurn(input))).map((event) => event.kind)).toEqual([
 			"accepted",
 		]);
@@ -416,6 +488,12 @@ describe("acceptHostEvent", () => {
 				accepted,
 			),
 		).toThrow(InvalidHostEventStreamError);
+		expect(() =>
+			acceptHostEvent(
+				createHostEventStreamState({ ...accepted.turn, executionAttempt: 2 }),
+				accepted,
+			),
+		).toThrow(InvalidHostEventStreamError);
 		const first = acceptHostEvent(createHostEventStreamState(accepted.turn), accepted);
 		if (first.event.kind === "accepted") {
 			first.event.turn.deliveryId = IDS.otherMission;
@@ -436,6 +514,14 @@ describe("acceptHostEvent", () => {
 				turn: { ...accepted.turn, turnId: "different-provider-turn" },
 				sequence: 2,
 				text: "wrong turn",
+			}),
+		).toThrow(InvalidHostEventStreamError);
+		expect(() =>
+			acceptHostEvent(first.state, {
+				kind: "output",
+				turn: { ...accepted.turn, executionAttempt: 2 },
+				sequence: 2,
+				text: "wrong execution attempt",
 			}),
 		).toThrow(InvalidHostEventStreamError);
 		expect(() =>
@@ -611,6 +697,7 @@ function createTurnInput(session: HostSessionRef): StartTurnInput {
 		session,
 		missionId: session.missionId,
 		deliveryId: IDS.delivery,
+		executionAttempt: 1,
 		contractVersion: 1,
 		missionSequence: 3,
 		objective: {

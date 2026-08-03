@@ -53,7 +53,9 @@ jobs:
 
       # Skip the e2e workspace — it needs Postgres + builds + a real
       # relay subprocess and is covered by the dedicated `e2e` job.
-      - run: pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
+      - run: >-
+          pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp
+          --filter agentrelay-node test
 
   relay-image:
     needs: lint-typecheck

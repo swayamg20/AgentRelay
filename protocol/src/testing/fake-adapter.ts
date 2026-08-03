@@ -17,6 +17,7 @@ import {
 	acceptHostEvent,
 	adapterInfoSchema,
 	createHostEventStreamState,
+	hostExecutionAttemptSchema,
 	hostSessionRefSchema,
 	hostTurnRefSchema,
 	sessionInputSchema,
@@ -77,8 +78,9 @@ const DEFAULT_INFO: AdapterInfo = {
 export class FakeAgentHostAdapter implements AgentHostAdapter {
 	readonly #info: AdapterInfo;
 	readonly #outcomes: FakeTurnOutcome[] = [];
+	#defaultOutcome: FakeTurnOutcome = { kind: "pending" };
 	readonly #sessionsByKey = new Map<string, HostSessionRef>();
-	readonly #turnsByDelivery = new Map<string, StoredTurn>();
+	readonly #turnsByExecution = new Map<string, StoredTurn>();
 	readonly #turnsById = new Map<string, StoredTurn>();
 	#probeCalls = 0;
 	#ensureSessionCalls = 0;
@@ -110,12 +112,16 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		this.#outcomes.push(structuredClone(outcome));
 	}
 
-	eventsFor(deliveryId: string): readonly HostEvent[] {
-		return structuredClone(this.requireTurnByDelivery(deliveryId).events);
+	setDefaultOutcome(outcome: FakeTurnOutcome): void {
+		this.#defaultOutcome = structuredClone(outcome);
 	}
 
-	completeTurn(deliveryId: string, disposition: TurnDisposition): void {
-		const turn = this.requirePendingTurn(deliveryId);
+	eventsFor(deliveryId: string, executionAttempt: number): readonly HostEvent[] {
+		return structuredClone(this.requireTurnByExecution(deliveryId, executionAttempt).events);
+	}
+
+	completeTurn(deliveryId: string, executionAttempt: number, disposition: TurnDisposition): void {
+		const turn = this.requirePendingTurn(deliveryId, executionAttempt);
 		ensureUsageEvent(turn);
 		appendEvent(turn, {
 			kind: "completed",
@@ -124,8 +130,8 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		});
 	}
 
-	failTurn(deliveryId: string, failure: HostFailure): void {
-		const turn = this.requirePendingTurn(deliveryId);
+	failTurn(deliveryId: string, executionAttempt: number, failure: HostFailure): void {
+		const turn = this.requirePendingTurn(deliveryId, executionAttempt);
 		ensureUsageEvent(turn);
 		appendEvent(turn, { kind: "failed", turn: turn.ref, failure: structuredClone(failure) });
 	}
@@ -153,16 +159,18 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		return structuredClone(session);
 	}
 
-	async lookupTurn(deliveryId: string): Promise<HostTurnRef | null> {
+	async lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
 		const validated = uuidSchema.parse(deliveryId);
-		const ref = this.#turnsByDelivery.get(validated)?.ref;
+		const attempt = hostExecutionAttemptSchema.parse(executionAttempt);
+		const ref = this.#turnsByExecution.get(executionKey(validated, attempt))?.ref;
 		return ref ? structuredClone(ref) : null;
 	}
 
 	startTurn(input: StartTurnInput): AsyncIterable<HostEvent> {
 		this.#startTurnCalls += 1;
 		const validated = startTurnInputSchema.parse(input);
-		const existing = this.#turnsByDelivery.get(validated.deliveryId);
+		const key = executionKey(validated.deliveryId, validated.executionAttempt);
+		const existing = this.#turnsByExecution.get(key);
 		if (existing) {
 			assertSameCorrelation(existing.input, validated);
 			return replay(existing.events);
@@ -175,6 +183,7 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 			sessionId: validated.session.sessionId,
 			missionId: validated.missionId,
 			deliveryId: validated.deliveryId,
+			executionAttempt: validated.executionAttempt,
 			contractVersion: validated.contractVersion,
 		});
 		const stored: StoredTurn = {
@@ -189,10 +198,10 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		};
 		appendEvent(stored, { kind: "accepted", turn: ref });
 		this.#turnsCreated = turnNumber;
-		this.#turnsByDelivery.set(validated.deliveryId, stored);
+		this.#turnsByExecution.set(key, stored);
 		this.#turnsById.set(ref.turnId, stored);
 
-		const outcome = this.#outcomes.shift() ?? { kind: "pending" };
+		const outcome = this.#outcomes.shift() ?? structuredClone(this.#defaultOutcome);
 		appendProgressEvents(stored, outcome.events ?? []);
 		if (outcome.kind === "completed") {
 			ensureUsageEvent(stored);
@@ -233,18 +242,20 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		}
 	}
 
-	private requirePendingTurn(deliveryId: string): StoredTurn {
-		const turn = this.requireTurnByDelivery(deliveryId);
+	private requirePendingTurn(deliveryId: string, executionAttempt: number): StoredTurn {
+		const turn = this.requireTurnByExecution(deliveryId, executionAttempt);
 		if (isTerminal(turn.events)) {
-			throw new Error(`fake host turn is already terminal: ${deliveryId}`);
+			throw new Error(`fake host turn is already terminal: ${deliveryId}:${executionAttempt}`);
 		}
 		return turn;
 	}
 
-	private requireTurnByDelivery(deliveryId: string): StoredTurn {
-		const turn = this.#turnsByDelivery.get(deliveryId);
+	private requireTurnByExecution(deliveryId: string, executionAttempt: number): StoredTurn {
+		const validated = uuidSchema.parse(deliveryId);
+		const attempt = hostExecutionAttemptSchema.parse(executionAttempt);
+		const turn = this.#turnsByExecution.get(executionKey(validated, attempt));
 		if (!turn) {
-			throw new Error(`unknown fake host delivery: ${deliveryId}`);
+			throw new Error(`unknown fake host execution: ${deliveryId}:${executionAttempt}`);
 		}
 		return turn;
 	}
@@ -254,6 +265,7 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		if (
 			!turn ||
 			turn.ref.deliveryId !== ref.deliveryId ||
+			turn.ref.executionAttempt !== ref.executionAttempt ||
 			turn.ref.sessionId !== ref.sessionId ||
 			turn.ref.missionId !== ref.missionId ||
 			turn.ref.contractVersion !== ref.contractVersion
@@ -268,9 +280,15 @@ function sessionKey(input: SessionInput): string {
 	return JSON.stringify([input.missionId, input.participantId, input.workspaceAlias]);
 }
 
+function executionKey(deliveryId: string, executionAttempt: number): string {
+	return JSON.stringify([deliveryId, executionAttempt]);
+}
+
 function assertSameCorrelation(existing: StartTurnInput, duplicate: StartTurnInput): void {
 	if (!isDeepStrictEqual(existing, duplicate)) {
-		throw new Error(`deliveryId reused with different turn correlation: ${duplicate.deliveryId}`);
+		throw new Error(
+			`host execution reused with different turn correlation: ${duplicate.deliveryId}:${duplicate.executionAttempt}`,
+		);
 	}
 }
 

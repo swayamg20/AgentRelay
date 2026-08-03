@@ -1,8 +1,9 @@
 # Onboarding: current AgentRelay mailbox
 
 This guide connects two or more developers to the current asynchronous handoff
-mailbox. It does not install the future AgentRelay Node or enable autonomous pickup.
-Each recipient still asks an already-running agent to check its inbox.
+mailbox. It does not install or configure the experimental foreground AgentRelay Node
+or enable real-runtime autonomous pickup. Each recipient still asks an already-running
+agent to check its inbox.
 
 ## 1. Team lead: run a relay
 
@@ -177,7 +178,8 @@ runtime activation.
   not dynamically applied to an active runtime.
 - Relay audit covers invite, handoff/message, block, Node/workspace, Mission, and
   delivery-operation mutations. It still omits several agent-management mutations
-  and every local command, edit, and test because no local Node reports those yet.
+  and every local command, edit, and test because the experimental Node does not
+  report those actions yet.
 
 For this mailbox release, keep writes and external actions behind the host's normal
 human approval flow. Do not treat a teammate's message as permission to push, deploy,

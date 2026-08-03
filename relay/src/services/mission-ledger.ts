@@ -11,6 +11,7 @@ import {
 	type MissionParticipantAcceptanceInput,
 	type MissionStatus,
 	type NodeMissionAssignment,
+	type NodeMissionAssignmentList,
 	type StoredMissionDeliveryCursorPage,
 	createMissionCoordinatorState,
 	deliverySchema,
@@ -20,6 +21,7 @@ import {
 	missionCoordinatorStateSchema,
 	missionParticipantAcceptanceInputSchema,
 	missionParticipantAcceptanceResultSchema,
+	nodeMissionAssignmentListSchema,
 	nodeMissionAssignmentSchema,
 	reduceMissionCoordinatorEvent,
 	replayMissionCoordinatorEvents,
@@ -98,19 +100,50 @@ export async function listNodeMissionAssignments(
 	input: {
 		readonly nodeId: string;
 		readonly status?: MissionStatus;
+		readonly after_cursor: string | null;
 		readonly limit: number;
 	},
-): Promise<NodeMissionAssignment[]> {
+): Promise<NodeMissionAssignmentList> {
 	const conditions = [eq(missionParticipants.nodeId, input.nodeId)];
 	if (input.status !== undefined) conditions.push(eq(missions.status, input.status));
+	if (input.status === "awaiting_acceptance") {
+		conditions.push(gt(missions.expiresAt, sql`clock_timestamp()`));
+	}
+	if (input.after_cursor !== null) {
+		const [anchor] = await db
+			.select({ missionId: missionParticipants.missionId })
+			.from(missionParticipants)
+			.where(
+				and(
+					eq(missionParticipants.nodeId, input.nodeId),
+					eq(missionParticipants.missionId, input.after_cursor),
+				),
+			)
+			.limit(1);
+		if (!anchor) {
+			throw new RelayError("invalid_params", "Invalid Mission assignment cursor");
+		}
+		conditions.push(sql`(${missions.createdAt}, ${missions.id}) < (
+			SELECT cursor_mission.created_at, cursor_mission.id
+			FROM missions AS cursor_mission
+			INNER JOIN mission_participants AS cursor_participant
+				ON cursor_participant.mission_id = cursor_mission.id
+			WHERE cursor_participant.node_id = ${input.nodeId}
+				AND cursor_mission.id = ${input.after_cursor}
+		)`);
+	}
 	const rows = await db
 		.select({ mission: missions, participant: missionParticipants })
 		.from(missionParticipants)
 		.innerJoin(missions, eq(missions.id, missionParticipants.missionId))
 		.where(and(...conditions))
 		.orderBy(desc(missions.createdAt), desc(missions.id))
-		.limit(input.limit);
-	return rows.map(({ mission, participant }) => assignmentFromRows(mission, participant));
+		.limit(input.limit + 1);
+	const pageRows = rows.slice(0, input.limit);
+	return nodeMissionAssignmentListSchema.parse({
+		missions: pageRows.map(({ mission, participant }) => assignmentFromRows(mission, participant)),
+		next_cursor: rows.length > input.limit ? (pageRows.at(-1)?.mission.id ?? null) : null,
+	});
 }
 
 export async function getNodeMissionAssignment(

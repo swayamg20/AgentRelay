@@ -72,9 +72,11 @@ the relay-authenticated Mission context.
 Delivery lease IDs, deadlines, and monotonically increasing fencing tokens are
 Relay-issued authority. A Node presents the current lease ID and fence on start,
 renew, completion, and release; it never selects the lease duration or server time.
-The future local Node must durably compare that authority with its processing journal
-before runtime start, recovery, cancellation, or result publication. Lease fields are
-not copied into host turn references.
+The foreground Node now durably compares that authority with its processing journal
+before fake-runtime start, recovery, or result publication. After shutdown or
+authority loss, it uses the journaled turn mapping to request bounded cancellation.
+Real runtime adapters must preserve the same boundary. Lease fields are not copied
+into host turn references.
 
 Every state-changing delivery input carries an idempotency key. An exact replay
 returns the stored result with `replayed: true`; reusing the key for different input
@@ -88,7 +90,8 @@ the current durable delivery state before causing a new host effect.
 This package defines data, state transitions, and an in-memory deterministic proof.
 It does not itself persist Missions or idempotency receipts; the sibling `relay/`
 workspace now does. The repository still does not execute production local policy,
-start a real model runtime, prove Node restart recovery, or claim A2A conformance.
+start a real model runtime, prove OS-process host-capsule recovery, or claim A2A
+conformance.
 
 Version 0.1 is the TypeScript/Zod binding used to prove the first Node. Committed
 JSON Schema and OpenAPI bindings remain required before a non-TypeScript Node or

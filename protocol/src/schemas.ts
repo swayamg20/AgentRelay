@@ -241,6 +241,31 @@ export const ownedNodeSummarySchema = z
 	})
 	.strict();
 
+export const issuedNodeCredentialSchema = z
+	.object({
+		id: uuidSchema,
+		token: z.string().regex(/^ar_node_(?:live|test)_[a-z2-7]{32}$/),
+	})
+	.strict();
+
+export const nodeEnrollmentResultSchema = z
+	.object({
+		node: nodeDescriptorSchema,
+		credential: issuedNodeCredentialSchema,
+	})
+	.strict();
+
+export const nodeCredentialRotationResultSchema = z
+	.object({
+		node_id: uuidSchema,
+		credential: issuedNodeCredentialSchema,
+	})
+	.strict();
+
+export const nodeSelfResultSchema = z.object({ node: nodeDescriptorSchema }).strict();
+
+export const ownedNodeListSchema = z.object({ nodes: z.array(ownedNodeSummarySchema) }).strict();
+
 export const workspaceBindingStatusSchema = z.enum(["active", "revoked"]);
 
 export const repositoryUrlSchema = z
@@ -348,6 +373,17 @@ export const workspaceBindingDescriptorSchema = z
 			});
 		}
 	});
+
+export const workspaceRegistrationResultSchema = z
+	.object({
+		workspace: workspaceBindingDescriptorSchema,
+		replayed: z.boolean(),
+	})
+	.strict();
+
+export const workspaceBindingListSchema = z
+	.object({ workspaces: z.array(workspaceBindingDescriptorSchema) })
+	.strict();
 
 export const participantSchema = z
 	.object({
@@ -996,9 +1032,16 @@ export type NodeEnrollmentInput = z.infer<typeof nodeEnrollmentInputSchema>;
 export type NodeCredentialRotationInput = z.infer<typeof nodeCredentialRotationInputSchema>;
 export type NodeDescriptor = z.infer<typeof nodeDescriptorSchema>;
 export type OwnedNodeSummary = z.infer<typeof ownedNodeSummarySchema>;
+export type IssuedNodeCredential = z.infer<typeof issuedNodeCredentialSchema>;
+export type NodeEnrollmentResult = z.infer<typeof nodeEnrollmentResultSchema>;
+export type NodeCredentialRotationResult = z.infer<typeof nodeCredentialRotationResultSchema>;
+export type NodeSelfResult = z.infer<typeof nodeSelfResultSchema>;
+export type OwnedNodeList = z.infer<typeof ownedNodeListSchema>;
 export type WorkspaceBindingStatus = z.infer<typeof workspaceBindingStatusSchema>;
 export type WorkspaceRegistrationInput = z.infer<typeof workspaceRegistrationInputSchema>;
 export type WorkspaceBindingDescriptor = z.infer<typeof workspaceBindingDescriptorSchema>;
+export type WorkspaceRegistrationResult = z.infer<typeof workspaceRegistrationResultSchema>;
+export type WorkspaceBindingList = z.infer<typeof workspaceBindingListSchema>;
 export type Participant = z.infer<typeof participantSchema>;
 export type ArtifactRef = z.infer<typeof artifactRefSchema>;
 export type SharedContractArtifact = z.infer<typeof sharedContractArtifactSchema>;

@@ -6,10 +6,13 @@
 	"scripts": {
 		"test": "vitest run",
 		"test:watch": "vitest",
+		"pretypecheck": "pnpm --filter agentrelay-node build",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
+		"@agentrelay/protocol": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.0.4",
+		"agentrelay-node": "workspace:*",
 		"undici": "^7.0.0"
 	},
 	"devDependencies": {

@@ -22,4 +22,4 @@ The protocol test materializes each snapshot as a real Git repository with fixed
 author, timestamps, messages, file modes, and configuration, then checks the
 resulting commits against the lock file. The scripted result is evidence about
 deterministic coordination and replay, not evidence that a model wrote the changes
-or that relay persistence and cross-device Nodes already exist.
+or of Relay persistence, real-runtime activation, or cross-device Node execution.

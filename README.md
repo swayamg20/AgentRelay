@@ -18,11 +18,12 @@ repositories is the first proof, not the final product boundary.
 
 ## Honest status
 
-The repository currently ships an **authenticated asynchronous mailbox and a public,
-durable Mission delivery control plane**, not the full autonomous runtime described
-above. Enrolled Nodes can accept Missions and move relay deliveries through fenced
-leases, but there is no local Node daemon that consumes that work or starts a
-coding-agent runtime yet.
+The repository currently ships an **authenticated asynchronous mailbox, a durable
+Mission delivery control plane, and an experimental foreground Node**, not the full
+autonomous runtime described above. The Node can consume one turn at a time through
+the deterministic fake adapter with an atomically replaced durable local journal. It
+does not yet start a real coding-agent runtime or complete contract-acknowledgement
+and verification deliveries.
 
 ### Implemented today
 
@@ -49,16 +50,25 @@ coding-agent runtime yet.
   Node credentials are different key types; rotation is generation-fenced, and
   revoking a Node also revokes its active credential and workspace bindings, cancels
   active deliveries across affected Missions, and retains immutable Mission history.
+- A private `agentrelay-node` workspace with strict mode-0600 device configuration,
+  local alias-to-checkout mapping, canonical policy grants, repository URL/base/clean
+  preflight, durable bounded Mission-assignment pagination, atomic cursor and
+  operation journaling, recovery-first polling, fenced lease renewal, exact host-event
+  replay, and a foreground fake-adapter CLI. Each cycle services delivery work before
+  advancing one assignment page. A real Relay/Postgres E2E test proves duplicate
+  polling after reopening a completed journal, plus in-process processor
+  reconstruction after an injected failure immediately after host acceptance,
+  without a second host turn.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
 
 ### Next architecture, not shipped yet
 
-- A persistent AgentRelay Node on every participating machine.
-- Isolated worktrees and runtime sessions attached to the persisted device and
-  workspace identities.
-- Local policy enforcement outside the model.
+- Isolated worktrees and persistent real-runtime sessions attached to the persisted
+  device and workspace identities.
+- Complete local verification, contract-artifact carriage, and policy/evidence
+  enforcement outside the model.
 - Codex and Claude runtime adapters that start or resume real agent turns.
 - Mission-level expiry and dead-letter reconciliation that transitions the Mission
   and cancels remaining work instead of only hiding expired work from discovery or
@@ -69,6 +79,8 @@ The design is in
 [`RFC 001: AgentRelay Node and Missions`](docs/rfcs/001-agentrelay-node-and-missions.md).
 The implemented lease and recovery decisions are recorded in
 [`Delivery lease control plane`](docs/research/001-delivery-lease-control-plane.md).
+The current local checkpoint is recorded in
+[`Foreground Node runtime`](docs/research/002-foreground-node-runtime.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -200,7 +212,8 @@ Use [`CONTRIBUTING.md`](CONTRIBUTING.md) for exact test tiers. The database-free
 unit command is:
 
 ```bash
-pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
+pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp \
+  --filter agentrelay-node test
 ```
 
 `pnpm -r test` also includes the Postgres-backed E2E workspace.
@@ -228,9 +241,12 @@ They are not yet a complete autonomous security boundary:
 - Block is local-first and unblock is relay-first; a reported partial failure keeps
   local denial active and can be repaired by retrying the command.
 
-The future Node must enforce the effective repository, command, network, budget, and
-revocation policy outside the model. See [`docs/architecture.md`](docs/architecture.md)
-for the boundary and the RFC for the acceptance tests.
+The current Node enforces repository preflight, accepted local-policy identity, and
+reported host-event bounds outside the model. It must still enforce the effective
+command, network, time, path, side-effect, budget, and revocation policy before real
+autonomous writes are safe to claim. See
+[`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
+acceptance tests.
 
 ## Protocol position
 
@@ -253,7 +269,8 @@ this README does not claim full A2A conformance.
 ├── protocol/             Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/                current Hono + Drizzle + Postgres relay
 ├── mcp-server/           current MCP server and agentrelay CLI
-├── tests/e2e/            relay + two-MCP-process test harness
+├── node/                 experimental foreground Node and durable local journal
+├── tests/e2e/            relay + MCP and foreground-Node test harnesses
 ├── landing/              GitHub Pages landing page
 └── docs/
     ├── architecture.md   current truth and target boundaries
@@ -267,7 +284,8 @@ this README does not claim full A2A conformance.
     ├── auto-mode.md      superseded design decision record
     ├── ambient-agent.md  superseded design decision record
     ├── research/
-    │   └── 001-delivery-lease-control-plane.md
+    │   ├── 001-delivery-lease-control-plane.md
+    │   └── 002-foreground-node-runtime.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```

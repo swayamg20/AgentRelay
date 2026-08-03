@@ -13,17 +13,19 @@
 ├── protocol/            Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/               Hono, Drizzle, Postgres relay
 ├── mcp-server/          agentrelay-mcp package and agentrelay CLI
-├── tests/e2e/           relay plus two-MCP-process integration harness
+├── node/                foreground Node, local journal, policy, and fake adapter
+├── tests/e2e/           relay plus MCP and foreground-Node integration harnesses
 ├── docs/                product, implementation, operations, and RFC docs
 ├── docker-compose.yml   Postgres dev service and self-host relay profile
 └── package.json         pnpm workspace scripts
 ```
 
-There is currently no `node/` daemon, persistent event consumer, or real runtime
-adapter. The relay does expose Node identity/workspace routes plus a public Mission
-and delivery control plane. The executable contracts, deterministic coordinator,
-fake adapter, and backend-Android proof fixture live in `protocol/`; they still do
-not prove execution on two machines.
+The private `agentrelay-node` workspace now provides a foreground daemon and durable
+consumer for fake-adapter turn deliveries. It validates local workspace/policy state,
+journals discovery and operation intent, and recovers exact host events. There is no
+real coding-agent adapter, external host capsule, contract-acknowledgement handler,
+or verification-delivery handler yet, so this still does not prove execution on two
+machines.
 
 ## Protocol workspace
 
@@ -80,8 +82,10 @@ the committed Drizzle migrations.
 Public mailbox authentication still represents a logical developer/agent. Until a
 separate owner/organization identity exists, that agent credential is the enrollment
 authority for its own Nodes. Node credentials now exist for the identity/workspace
-surface and delivery leases, but there is no local checkout identity, runtime
-session, or Mission-wide execution lease.
+surface and delivery leases. The Relay deliberately stores no local checkout path or
+runtime-session row and has no Mission-wide execution lease; the experimental Node
+keeps its checkout mapping and host-session references in local configuration and its
+journal.
 
 ## Authentication
 
@@ -129,7 +133,9 @@ Node routes.
 - Claim issues a relay-generated lease for 60 seconds or the remaining Mission
   lifetime, whichever is shorter. It increments `attempt_count`, uses that attempt as
   the fencing token, and records a receipt. Start, renew, complete, and release
-  require the exact lease and fence; renewal extends only from the database clock.
+  require the exact lease and fence. Renewal extends only from the database clock; if
+  Mission expiry already caps the active deadline, it records a fresh authority-
+  confirming receipt without shortening that deadline.
 - Exact Node-scoped idempotency replay returns the stored operation result and rejects
   a changed input. New mutations revalidate the active credential, Node owner,
   participant, workspace, Mission route, trust boundary, state, lease, and fence.
@@ -198,14 +204,14 @@ A2A well-known discovery URL.
 | `POST` | `/node/v1/workspaces` | Register one logical alias, repository URL, and allowed base-ref set. An exact active replay returns the existing binding; changed input conflicts, and a revoked alias stays retired. |
 | `GET` | `/node/v1/workspaces` | List the Node's active and revoked relay-visible bindings. |
 | `DELETE` | `/node/v1/workspaces/:alias` | Idempotently revoke a binding and active deliveries across affected Missions; a never-registered alias returns `workspace_not_found`. |
-| `GET` | `/node/v1/missions` | List assignments for this Node, optionally filtered by Mission lifecycle status. This is assignment history, not delivery discovery. |
+| `GET` | `/node/v1/missions` | List assignments for this Node with newest-first `after_cursor`/`next_cursor` keyset pagination. An unfiltered list is assignment history; `status=awaiting_acceptance` is the live acceptance view and excludes expired Missions using Relay database time. This is not delivery discovery. |
 | `GET` | `/node/v1/missions/:missionId` | Return this Node's exact Mission assignment and acceptance state. |
 | `POST` | `/node/v1/missions/:missionId/accept` | Store or exactly replay this participant's contract and local-policy acceptance receipt; the second participant activates the Mission. |
 | `GET` | `/node/v1/deliveries` | Cursor-page newly due, unsettled `stored` work for active/verifying, unexpired Missions. Reading does not claim it. |
 | `GET` | `/node/v1/deliveries/recoverable` | Cursorless scan for due retried `stored` work plus `leased` or `executing` work on active/verifying, unexpired Missions. |
 | `POST` | `/node/v1/deliveries/:deliveryId/claim` | Issue or exactly replay a relay lease, incremented attempt, and fencing token; lazily reconcile an expired lease before reclaim. |
 | `POST` | `/node/v1/deliveries/:deliveryId/start` | Move the exact active lease from `leased` to `executing`. |
-| `POST` | `/node/v1/deliveries/:deliveryId/renew` | Retain lease/fence and extend its deadline from relay database time, bounded by Mission expiry. |
+| `POST` | `/node/v1/deliveries/:deliveryId/renew` | Retain lease/fence and extend its deadline from relay database time, bounded by Mission expiry; at that cap, confirm current authority with a fresh receipt without shortening the deadline. |
 | `POST` | `/node/v1/deliveries/:deliveryId/complete` | Atomically publish the authenticated result and move transport from `executing` to `acknowledged`. |
 | `POST` | `/node/v1/deliveries/:deliveryId/release` | Retry with relay backoff or dead-letter the exact leased/executing attempt according to the typed disposition. |
 
@@ -447,7 +453,8 @@ From the repository root:
 pnpm lint
 pnpm -r typecheck
 pnpm -r build
-pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
+pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp \
+  --filter agentrelay-node test
 ```
 
 Database-backed tests require Postgres and migrations:
@@ -469,8 +476,9 @@ command.
 
 Do not extend `accepted_by_session` or the four-state handoff table into a distributed
 runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
-deliveries have a separate model and public control plane. The next slice is a local
-Node consumer with a durable processing journal, worktree/policy enforcement, and
-real runtime adapters, plus a real two-machine proof. Mission-level expiry and
-dead-letter terminal reconciliation is still a separate relay gap; the mailbox API
-remains a compatibility and inspection surface.
+deliveries have a separate model and public control plane. The local Node now proves
+the journaled fake-turn boundary; the next slices are deterministic verification and
+contract handling, an external persistent host capsule, a pinned real adapter, and a
+two-machine proof. Mission-level expiry and dead-letter terminal reconciliation is
+still a separate relay gap; the mailbox API remains a compatibility and inspection
+surface.

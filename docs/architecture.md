@@ -5,7 +5,9 @@
 > [`lld.md`](lld.md). The accepted next target lives in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
 > and the shipped lease design is recorded in
-> [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md).
+> [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md). The
+> first local checkpoint is recorded in
+> [`Foreground Node runtime`](research/002-foreground-node-runtime.md).
 
 ## Product thesis
 
@@ -44,6 +46,11 @@ durable coordination foundations:
   Nodes, rotate separately scoped Node credentials, and lets an authenticated Node
   register or revoke relay-visible logical workspace bindings. It never accepts a
   local checkout path.
+- An experimental foreground Node that stores a separate device credential, maps
+  logical aliases to local checkouts, validates repository identity/base/clean state,
+  accepts Missions under a canonical local policy grant, journals cursor and
+  operation intent before side effects, renews fenced leases, and drives the
+  deterministic fake adapter for turn deliveries.
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -52,9 +59,9 @@ durable coordination foundations:
 This is useful groundwork, but it is not yet an autonomous agent network. The current
 system does not contain:
 
-- A persistent local daemon that consumes work and starts or resumes agent turns.
-- Runtime sessions, local processing journals, or local worktree and policy
-  enforcement; relay-visible Node/workspace records remain logical routing identity.
+- A real coding-agent adapter or a host capsule that survives Node-process death.
+- Automatic worktree isolation, complete command/network mediation, or local
+  verification and contract-acknowledgement handlers.
 - Mission-level expiry or dead-letter reconciliation that moves the Mission to a
   terminal state and cancels its remaining work. Discovery hides expired Missions,
   while delivery expiry is reconciled only when that delivery is reclaimed.
@@ -152,23 +159,26 @@ The current mailbox stores a two-party handoff with `pending`, `accepted`,
 MCP tools to advance it. This API remains a compatibility and inspection surface
 while the Node slice is built.
 
-### Missions today, execution next
+### Missions and fake execution today
 
 A Mission is a bounded collaborative objective with:
 
 - Explicit participants and logical workspace bindings.
 - Repository URL and frozen base commit per participant.
-- Objective, constraints, and executable acceptance criteria.
+- Objective, initial assignments, and public acceptance criteria.
 - A versioned shared contract acknowledged by every participant.
-- Allowed paths, commands, artifact types, and denied external effects.
-- Turn, wall-time, token, cost, expiry, and cancellation limits.
+- Allowed artifact types, required local verification-command IDs, and configured
+  turn, wall-time, token, and expiry bounds.
 - Typed questions, answers, proposals, decisions, artifacts, progress, blockers, and
   readiness evidence.
 
-The relay already stores this contract, applies the deterministic state machine,
-routes typed work, and tracks accepted revisions and verification rounds. The future
-local Node must enforce hard local limits because the relay cannot trust usage it has
-not received. The system does not add a manager LLM with global access to every
+The relay stores this contract, applies the deterministic state machine, routes typed
+work, and tracks accepted revisions and verification rounds. The foreground Node now
+checks repository identity and local policy and bounds reported host-event usage, but
+it does not yet execute registered verification commands or enforce the complete
+wall-time, token-budget, network, path, and side-effect policy. Those hard limits must
+remain outside the model because the relay cannot trust usage or effects it has not
+observed. The system does not add a manager LLM with global access to every
 repository.
 
 ## Delivery semantics
@@ -199,10 +209,16 @@ lose a retry. Both discovery paths require an active or verifying, unexpired Mis
 They do not lazily transition an expired Mission or reconcile a dead-lettered
 delivery into Mission-wide failure.
 
-Delivery is at least once. Exact receipts make relay mutations retry-safe; a future
-Node still needs a durable local processing journal to suppress duplicate host
-effects. Ordering is causal within one Mission; no global ordering is required.
-Presence is advisory, and an SSE write or open connection never counts as processed.
+Delivery is at least once. Exact receipts make relay mutations retry-safe; the
+foreground Node's atomic journal suppresses duplicate fake-host effects across runner
+reconstruction and exact event replay. Host turns are idempotent per journaled
+`(deliveryId, executionAttempt)`: a lease reclaim recovers the same attempt, while a
+Relay-backed transient release archives it and advances to a fresh attempt. Retry
+eligibility comes from Relay database time rather than the laptop clock. A real host
+adapter must preserve `lookupTurn`/`recoverTurn` state across process failure before
+the same claim extends to an OS-level crash. Ordering is causal within one Mission;
+no global ordering is required. Presence is advisory, and an SSE write or open
+connection never counts as processed.
 
 ## Security model
 
@@ -272,10 +288,11 @@ push, merge, publish, deploy, arbitrary network effects, and production credenti
 
 ## Deployment topology
 
-The relay can run anywhere that supports the relay container image and Postgres. Teams may
-self-host it or use a future hosted service. Every developer machine runs its own
-MCP process for interactive tools; the future AgentRelay Node is a separate persistent
-process.
+The relay can run anywhere that supports the relay container image and Postgres. Teams
+may self-host it or use a future hosted service. Every developer machine can run its
+own MCP process for interactive tools. The experimental AgentRelay Node is a separate
+foreground process today; the target is a persistent managed process with an
+independently recoverable host capsule.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.
@@ -289,6 +306,8 @@ processes it after reconnecting.
 - [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): next build contract.
 - [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md):
   implemented lease, recovery, fencing, and receipt decisions.
+- [`Foreground Node runtime`](research/002-foreground-node-runtime.md): current local
+  journal, fake-adapter, and recovery checkpoint.
 - [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.
@@ -299,10 +318,10 @@ they disagree, document the gap; do not present the target as already shipped.
 ## Glossary
 
 - **Agent:** a logical network identity owned by a person or organization.
-- **Node:** today, a separately authenticated relay device identity; in the target,
-  the persistent per-device AgentRelay daemon that owns it.
-- **Workspace binding:** today, a relay-visible logical alias and repository/base-ref
-  constraint; in the target, a local mapping from that alias to an approved checkout.
+- **Node:** a separately authenticated relay device identity plus an experimental
+  foreground daemon; in the target, a persistent per-device execution boundary.
+- **Workspace binding:** a relay-visible logical alias and repository/base-ref
+  constraint that the current Node maps locally to an approved checkout.
 - **Runtime adapter:** host-specific control of a coding-agent session.
 - **Handoff:** the current manually consumed two-party mailbox thread.
 - **Mission:** a bounded, versioned collaborative objective coordinated by the relay

@@ -1,0 +1,41 @@
+{
+	"name": "agentrelay-node",
+	"version": "0.0.1",
+	"private": true,
+	"description": "Owner-controlled local execution boundary for AgentRelay Missions.",
+	"license": "MIT",
+	"type": "module",
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"bin": {
+		"agentrelay-node": "dist/bin/agentrelay-node.js"
+	},
+	"files": ["dist"],
+	"scripts": {
+		"prebuild": "pnpm --filter @agentrelay/protocol build",
+		"build": "tsc -p tsconfig.json",
+		"start": "node dist/bin/agentrelay-node.js run",
+		"dev": "node --import tsx/esm src/bin/agentrelay-node.ts",
+		"pretest": "pnpm --filter @agentrelay/protocol build",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"pretypecheck": "pnpm --filter @agentrelay/protocol build",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@agentrelay/protocol": "workspace:*",
+		"cac": "^6.7.14",
+		"pino": "^9.5.0",
+		"undici": "^7.0.0",
+		"zod": "^3.23.8"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"tsx": "^4.19.2",
+		"typescript": "^5.7.2",
+		"vitest": "^2.1.8"
+	}
+}

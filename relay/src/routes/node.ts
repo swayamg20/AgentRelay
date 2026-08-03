@@ -7,11 +7,14 @@ import {
 	missionParticipantAcceptanceInputSchema,
 	nodeMissionAssignmentListRequestSchema,
 	nodeMissionAssignmentListSchema,
-	nodeMissionAssignmentSchema,
+	nodeMissionAssignmentResultSchema,
+	nodeSelfResultSchema,
 	recoverableMissionDeliveryPageRequestSchema,
 	storedDeliveryCursorPageRequestSchema,
 	uuidSchema,
+	workspaceBindingListSchema,
 	workspaceRegistrationInputSchema,
+	workspaceRegistrationResultSchema,
 } from "@agentrelay/protocol";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -59,7 +62,9 @@ export function createNodeRoutes(opts: NodeRoutesOptions): Hono<AppEnv> {
 
 	router.get("/me", async (c) => {
 		const node = requireNode(c.get("node"));
-		return c.json({ node: await getNode(opts.db, node.id, node.agentId) });
+		return c.json(
+			nodeSelfResultSchema.parse({ node: await getNode(opts.db, node.id, node.agentId) }),
+		);
 	});
 
 	router.post("/workspaces", async (c) => {
@@ -82,12 +87,17 @@ export function createNodeRoutes(opts: NodeRoutesOptions): Hono<AppEnv> {
 			},
 			parsed.data,
 		);
-		return c.json(result, result.replayed ? 200 : 201);
+		const response = workspaceRegistrationResultSchema.parse(result);
+		return c.json(response, response.replayed ? 200 : 201);
 	});
 
 	router.get("/workspaces", async (c) => {
 		const node = requireNode(c.get("node"));
-		return c.json({ workspaces: await listWorkspaces(opts.db, node.id, node.agentId) });
+		return c.json(
+			workspaceBindingListSchema.parse({
+				workspaces: await listWorkspaces(opts.db, node.id, node.agentId),
+			}),
+		);
 	});
 
 	router.delete("/workspaces/:alias", async (c) => {
@@ -224,15 +234,16 @@ export function createNodeRoutes(opts: NodeRoutesOptions): Hono<AppEnv> {
 			nodeMissionAssignmentListRequestSchema,
 			{
 				status: c.req.query("status"),
+				after_cursor: c.req.query("after_cursor"),
 				limit: queryNumber(c.req.query("limit")),
 			},
 			"Invalid Mission list query",
 		);
-		const assignments = await listNodeMissionAssignments(opts.db, {
+		const page = await listNodeMissionAssignments(opts.db, {
 			nodeId: node.id,
 			...parsed,
 		});
-		return c.json(nodeMissionAssignmentListSchema.parse({ missions: assignments }));
+		return c.json(nodeMissionAssignmentListSchema.parse(page));
 	});
 
 	router.get("/missions/:missionId", async (c) => {
@@ -242,7 +253,7 @@ export function createNodeRoutes(opts: NodeRoutesOptions): Hono<AppEnv> {
 			nodeId: node.id,
 			missionId,
 		});
-		return c.json({ mission: nodeMissionAssignmentSchema.parse(assignment) });
+		return c.json(nodeMissionAssignmentResultSchema.parse({ mission: assignment }));
 	});
 
 	router.post("/missions/:missionId/accept", async (c) => {

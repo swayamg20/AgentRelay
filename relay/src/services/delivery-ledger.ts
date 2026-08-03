@@ -274,9 +274,9 @@ export async function renewDelivery(
 			const leaseExpiresAt = boundedLeaseExpiry(now, context.mission.expiresAt);
 			if (
 				context.delivery.leaseExpiresAt === null ||
-				leaseExpiresAt.getTime() <= context.delivery.leaseExpiresAt.getTime()
+				leaseExpiresAt.getTime() < context.delivery.leaseExpiresAt.getTime()
 			) {
-				throw new RelayError("invalid_transition", "Delivery lease cannot be extended further");
+				throw new RelayError("invalid_transition", "Delivery lease deadline cannot move backwards");
 			}
 			const [renewed] = await tx
 				.update(nodeDeliveries)

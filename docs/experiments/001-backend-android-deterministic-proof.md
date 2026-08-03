@@ -95,8 +95,11 @@ policy, that offline machines catch up, or that two devices communicate over A2A
 
 The separate Relay control-plane tests now prove transactional Postgres event and
 delivery persistence, exact operation replay, fenced lease recovery, and revocation
-races. They still run inside a test process without a local Node. The next evidence
-gates are foreground Nodes with local journals and policy, killed-process recovery,
-then the pinned real-runtime two-machine pilot. The hidden check here measures only
-the scripted fixture result and never steers Mission completion. See
-[`Delivery lease control plane`](../research/001-delivery-lease-control-plane.md).
+races. They still run inside a test process without invoking a local Node. A separate
+foreground-Node checkpoint now proves in-process runner reconstruction while retaining
+the same in-memory fake host. The next evidence gates are a persistent external host
+with OS-process kill/restart recovery, Relay-process restart, and then the pinned
+real-runtime two-machine pilot. The hidden check here measures only the scripted
+fixture result and never steers Mission completion. See
+[`Delivery lease control plane`](../research/001-delivery-lease-control-plane.md) and
+[`Foreground Node runtime`](../research/002-foreground-node-runtime.md).

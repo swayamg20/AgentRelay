@@ -1,6 +1,9 @@
 import {
 	nodeCredentialRotationInputSchema,
+	nodeCredentialRotationResultSchema,
 	nodeEnrollmentInputSchema,
+	nodeEnrollmentResultSchema,
+	ownedNodeListSchema,
 	uuidSchema,
 } from "@agentrelay/protocol";
 import type { Hono } from "hono";
@@ -40,12 +43,12 @@ export function registerNodeOwnerRoutes(router: Hono<AppEnv>, opts: NodeOwnerRou
 			opts.pepper,
 			{ requestId: c.get("requestId") },
 		);
-		return c.json(result, 201);
+		return c.json(nodeEnrollmentResultSchema.parse(result), 201);
 	});
 
 	router.get("/me/nodes", async (c) => {
 		const agent = requireAgent(c.get("agent"));
-		return c.json({ nodes: await listNodes(opts.db, agent.id) });
+		return c.json(ownedNodeListSchema.parse({ nodes: await listNodes(opts.db, agent.id) }));
 	});
 
 	router.post("/me/nodes/:nodeId/credentials/rotate", async (c) => {
@@ -67,7 +70,7 @@ export function registerNodeOwnerRoutes(router: Hono<AppEnv>, opts: NodeOwnerRou
 			opts.pepper,
 			{ requestId: c.get("requestId") },
 		);
-		return c.json({ node_id: nodeId, credential });
+		return c.json(nodeCredentialRotationResultSchema.parse({ node_id: nodeId, credential }));
 	});
 
 	router.delete("/me/nodes/:nodeId", async (c) => {

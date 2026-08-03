@@ -87,6 +87,9 @@ describe("backend-Android deterministic Mission", () => {
 			expect(result.hostTurns.map((turn) => turn.input.contractVersion)).toEqual([
 				1, 1, 1, 2, 2, 2, 2,
 			]);
+			expect(result.hostTurns.map((turn) => turn.input.executionAttempt)).toEqual([
+				1, 1, 1, 1, 1, 1, 1,
+			]);
 			for (const turn of result.hostTurns) {
 				expect(turn.input.objective).toMatchObject({
 					authorPrincipalId: backendAndroidIds.owner,

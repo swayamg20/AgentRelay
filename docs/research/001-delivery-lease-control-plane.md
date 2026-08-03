@@ -1,8 +1,9 @@
 # Delivery lease control plane
 
 - **Date:** 2026-08-02
-- **Status:** Implemented and covered at the Relay service/HTTP boundary; local Node
-  and process-restart proof remain pending.
+- **Status:** Implemented and covered at the Relay service/HTTP boundary; the first
+  foreground Node checkpoint is implemented, while Relay restart, OS-process host
+  recovery, and two-machine proof remain pending.
 - **Decision:** Build a database-backed Node delivery API before starting a local
   runtime.
 - **Scope:** Poll, claim, start, renew, complete, release, retry discovery, and
@@ -25,7 +26,8 @@ receipts for every state-changing delivery operation.
   that attempt number as the monotonically increasing fencing token.
 - `start` records the boundary between a durable claim and host execution.
 - `renew` retains the lease identity and fence while extending only from the relay's
-  current database time.
+  current database time. If Mission expiry already caps the active deadline, a
+  renewal records a fresh authority-confirming receipt without shortening it.
 - `complete` atomically appends the authenticated Mission result, derives subsequent
   deliveries, logically settles the source, and marks its transport acknowledged.
 - `release` returns transient work to stored state with relay-controlled backoff or
@@ -133,11 +135,18 @@ real Node journal, a killed Relay process, or two-machine execution.
   cannot consume a bounded recovery page. The Relay does not yet append an explicit
   `expired`, `blocked`, or `failed` Mission transition when expiry or dead-lettering
   makes progress impossible.
-- Mission assignment discovery is newest-first with a bounded limit and no stable
-  page cursor yet.
-- No local Node persists the cursor, operation receipt, lease, or host-turn mapping,
-  so restart correctness and the no-duplicated-host-effect invariant remain unproved
-  end to end.
+- Mission assignment discovery is newest-first with a stable Node-scoped keyset
+  cursor. The foreground Node durably advances one bounded page after servicing
+  delivery work, while the Relay uses database time to exclude expired
+  `awaiting_acceptance` rows so poison pages cannot hide live work or delay lease
+  recovery at the start of a cycle.
+- The foreground Node now persists its cursor, exact operation intent, lease/fence,
+  Mission session, and host-turn mapping in an atomic local journal. Its in-process
+  runner reconstruction proves no duplicate fake-host turn, but Relay restart,
+  OS-process host recovery, and two-machine correctness remain unproved end to end.
+
+The local checkpoint and its deliberate nonclaims are recorded in
+[`002-foreground-node-runtime.md`](002-foreground-node-runtime.md).
 
 ## Alternatives rejected for this slice
 

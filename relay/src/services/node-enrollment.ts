@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import {
+	type IssuedNodeCredential,
 	type NodeCredentialRotationInput,
 	type NodeDescriptor,
 	type NodeEnrollmentInput,
@@ -36,11 +37,6 @@ export interface NodeCredentialContext {
 	agentId: string;
 	credentialId: string;
 	requestId?: string;
-}
-
-export interface IssuedNodeCredential {
-	id: string;
-	token: string;
 }
 
 export interface EnrollNodeResult {

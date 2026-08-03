@@ -299,15 +299,33 @@ describe("Mission and delivery routes", () => {
 
 	it("returns protocol-validated Mission list and detail responses", async () => {
 		const app = buildApp();
-		testState.missionServices.listNodeMissionAssignments.mockResolvedValue([MISSION_ASSIGNMENT]);
+		testState.missionServices.listNodeMissionAssignments.mockResolvedValue({
+			missions: [MISSION_ASSIGNMENT],
+			next_cursor: MISSION_ID,
+		});
 		testState.missionServices.getNodeMissionAssignment.mockResolvedValue(MISSION_ASSIGNMENT);
 
 		const list = await app.request("/missions?status=awaiting_acceptance&limit=7");
 		expect(list.status).toBe(200);
-		expect(await list.json()).toEqual({ missions: [MISSION_ASSIGNMENT] });
+		expect(await list.json()).toEqual({
+			missions: [MISSION_ASSIGNMENT],
+			next_cursor: MISSION_ID,
+		});
 		expect(testState.missionServices.listNodeMissionAssignments).toHaveBeenCalledWith(db, {
 			nodeId: testState.node.id,
 			status: "awaiting_acceptance",
+			after_cursor: null,
+			limit: 7,
+		});
+
+		const next = await app.request(
+			`/missions?status=awaiting_acceptance&after_cursor=${MISSION_ID}&limit=7`,
+		);
+		expect(next.status).toBe(200);
+		expect(testState.missionServices.listNodeMissionAssignments).toHaveBeenLastCalledWith(db, {
+			nodeId: testState.node.id,
+			status: "awaiting_acceptance",
+			after_cursor: MISSION_ID,
 			limit: 7,
 		});
 
@@ -349,12 +367,13 @@ describe("Mission and delivery routes", () => {
 		const badAcceptId = await post(app, "/missions/not-a-uuid/accept", ACCEPTANCE);
 		const badStatus = await app.request("/missions?status=not-a-status");
 		const badLimit = await app.request("/missions?limit=not-a-number");
+		const badCursor = await app.request("/missions?after_cursor=not-a-uuid");
 		const badBody = await post(app, `/missions/${MISSION_ID}/accept`, {
 			...ACCEPTANCE,
 			participant_agent_id: testState.node.agentId,
 		});
 
-		for (const response of [badDetailId, badAcceptId, badStatus, badLimit, badBody]) {
+		for (const response of [badDetailId, badAcceptId, badStatus, badLimit, badCursor, badBody]) {
 			expect(response.status).toBe(400);
 			expect(await response.json()).toMatchObject({ code: "invalid_params" });
 		}
