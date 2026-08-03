@@ -1,8 +1,10 @@
 # Foreground Node runtime
 
 - **Date:** 2026-08-02
-- **Status:** First turn-delivery checkpoint implemented; real host-process and
-  two-machine recovery remain open.
+- **Status:** Historical first turn-delivery checkpoint. Its external fake-host
+  follow-up is now implemented in
+  [`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md); real-runtime
+  and two-machine recovery remain open.
 - **Decision:** Prove the Node's durable execution boundary with an atomic local
   journal and deterministic fake adapter before integrating a coding-agent runtime.
 - **Scope:** One foreground Node process, one configured checkout, and one active
@@ -119,10 +121,14 @@ adapter's host state remains in memory inside the test process.
 
 ## Deliberate non-claims
 
+For this checkpoint, the following were deliberate non-claims. The later persistent
+fake-Capsule checkpoint closes the host-process item only; the other items remain.
+
 This checkpoint does not yet provide:
 
 - a Codex, Claude, or other real agent-host adapter;
-- a host capsule whose turn survives Node-process death;
+- at this checkpoint, a host capsule whose turn survives Node-process death (closed
+  by [`003`](003-persistent-mission-capsule.md));
 - contract-artifact payload carriage or contract-acknowledgement handling;
 - registered verification-command execution and Relay-visible evidence;
 - enforced turn-time/token budgets, arbitrary command mediation, worktree isolation,
@@ -137,12 +143,14 @@ The Node therefore remains private and experimental. The public product claim is
 durable cross-device collaboration architecture with a tested fake-runtime
 checkpoint, not autonomous coding completion.
 
-## Next gate
+## Follow-on gate
 
-Move the fake host behind a separately persistent capsule, then kill and restart the
-Node process after host acceptance. The recovered Node must discover the same turn,
-consume the same event history, and publish one Relay completion. Only after that
-gate should the first pinned coding-agent adapter be added.
+The follow-on gate moved the fake host behind a separately persistent Capsule, killed
+and restarted the Node process after host acceptance, recovered the same turn and
+event history, and published one Relay completion. Its implementation and remaining
+operator boundary are recorded in
+[`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md). The next
+runtime gate is the first pinned coding-agent adapter.
 
 This decision builds on the Relay lease contract in
 [`001-delivery-lease-control-plane.md`](001-delivery-lease-control-plane.md). It is an

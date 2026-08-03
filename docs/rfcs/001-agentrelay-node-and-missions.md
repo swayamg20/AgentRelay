@@ -1,8 +1,8 @@
 # RFC 001: AgentRelay Node and Missions
 
-- **Status:** Accepted; Relay control-plane steps 1-3 and the first foreground Node
-  turn-delivery checkpoint are implemented; the complete Node/Codex slice remains
-  pending
+- **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, and the
+  persistent fake-Capsule process-recovery checkpoint are implemented; the complete
+  Node/Codex slice remains pending
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -26,16 +26,16 @@ coding-agent session.
 ## Why
 
 The repository now contains an authenticated mailbox, a durable Mission/delivery
-control plane, and the first foreground Node checkpoint. That Node notices work,
-checks repository identity and a local policy profile, and starts or resumes a
-deterministic fake-host turn. It cannot yet activate a real coding-agent runtime,
-enforce the complete command/network/time/path boundary, or survive an operating-
-system process kill with its host state intact.
+control plane, and a foreground Node with an independently persistent fake Mission
+Capsule. That Node notices work, checks repository identity and a local policy
+profile, and starts or resumes a deterministic fake-host turn. Its Capsule retains
+host state across Node-process death. It cannot yet activate a real coding-agent
+runtime or enforce the complete command/network/time/path boundary.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
-turn. The remaining product primitive is a production Node with a persistent host
-capsule and real runtime adapter.
+turn. The remaining product primitive is a supervised production Node with a
+persistent real-runtime Capsule and adapter.
 
 ## First-slice boundary
 
@@ -122,7 +122,7 @@ interface AgentHostAdapter {
 	ensureSession(input: SessionInput): Promise<HostSessionRef>;
 	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null>;
 	startTurn(input: StartTurnInput): AsyncIterable<HostEvent>;
-	recoverTurn(ref: HostTurnRef): AsyncIterable<HostEvent>;
+	recoverTurn(ref: HostTurnRef, expectedInput: StartTurnInput): AsyncIterable<HostEvent>;
 	cancelTurn(ref: HostTurnRef): Promise<void>;
 }
 ```
@@ -137,6 +137,13 @@ cancelling, or publishing a host result, the Node atomically checks the delivery
 current lease ID, fencing token, and unexpired deadline in durable state. A newly
 leased Node may recover the same journaled execution attempt; an expired holder is
 rejected before it reaches the adapter.
+
+Before host lookup/start, the Node checkpoints the complete validated
+`StartTurnInput`. `recoverTurn` must compare that journaled object with the durable
+start intent for the turn rather than reconstructing it from newer Relay state.
+Matching IDs are insufficient: changed Mission text, session scope, contract version,
+peer messages, or artifacts must fail closed instead of replaying output under
+different input.
 
 Every normalized host event has one stable, turn-local sequence number so full replay
 can be deduplicated after recovery. Events cover acceptance, bounded output, tool and
@@ -363,9 +370,10 @@ the implemented boundary and its remaining nonclaims.
   exfiltration channel.
 
 The current MCP `trust_overlay` is advisory. The foreground Node consumes a locally
-approved profile for repository preflight and reported-event limits, but autonomous
-writes are not safe to claim until it also enforces command, network, time, path, and
-side-effect policy outside the model.
+approved profile for repository preflight and reported-event limits, and its fake
+Capsule receives neither the Relay/Node credentials nor unrelated owner secrets.
+Autonomous writes are not safe to claim until the Node also enforces command,
+network, time, path, and side-effect policy outside the model.
 
 ## Relay-visible versus local data
 
@@ -417,8 +425,8 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    workspace-binding, and run schemas with state-machine tests.
 3. **Implemented at the Relay boundary:** transactional event/delivery append, Node
    cursor polling, leases, acknowledgement, retry, exact replay, and revocation.
-   A journaled client now covers runner reconstruction; Relay-process restart and
-   independently persistent host evidence still belong to steps 4-5.
+   A journaled client now covers runner reconstruction; Relay-process restart still
+   belongs to later control-plane evidence.
 4. **In progress:** the foreground `node/` daemon now consumes a pre-issued device
    credential, registers logical workspaces, journals cursor/operation/session/event
    state, enforces repository and local-profile preflight, and drives the fake adapter
@@ -427,8 +435,9 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
 5. **In progress:** duplicate polling, runner reconstruction, an injected in-process
    failure after host acceptance, lost Relay responses, stale fences, transient
    retry, cancellation, shutdown, local-policy denial, and paginated assignment
-   starvation are covered. A real process kill requires an external persistent fake
-   host; busy-session and full adversarial coverage remain.
+   starvation are covered. A detached fake Capsule now proves exact-turn recovery
+   after the Node is killed following host acceptance. Pre-claim/after-claim process
+   cuts, unattended Node restart, busy-session, and full adversarial coverage remain.
 6. Add and pin the Codex app-server adapter.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.

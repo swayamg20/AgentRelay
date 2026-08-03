@@ -90,10 +90,10 @@ atomically appends Mission output, settles source work, acknowledges transport, 
 stores the exact replay receipt. The foreground Node now consumes this boundary for
 turn deliveries; Relay restart and full-Mission recovery evidence remain open.
 
-The client journal and after-host-acceptance runner reconstruction now exist. Remaining
-Stage 2 evidence includes disconnect before and after claim, an actual Relay-process
-restart, independently persistent host recovery, and rejection of late output after a
-terminal Mission.
+The client journal, after-host-acceptance runner reconstruction, and independently
+persistent fake-host recovery now exist. Remaining Stage 2 evidence includes
+disconnect before and after claim, an actual Relay-process restart, and rejection of
+late output after a terminal Mission.
 
 ## 4. Build the local Node
 
@@ -112,10 +112,16 @@ terminal Mission.
   replay equality, usage, output, artifact, and token limits.
 - [ ] Add deterministic contract acknowledgement and registered verification-command
   delivery handlers.
-- [ ] Move the fake host outside the Node process before claiming an OS-process crash
-  proof; the current E2E reconstructs the Node runner while preserving the fake host.
+- [x] Move the fake host into a detached, Mission-scoped Capsule with a strict private
+  Unix-socket capability protocol and exact-input durable recovery.
+- [x] Kill the Node after Capsule acceptance, prove the same Capsule remains live,
+  safely reclaim the exact stale Node lock, and recover one turn/result on restart.
+- [ ] Add automatic Node supervision or a crash-releasable ownership design; the
+  current `SIGKILL` proof intentionally requires verified operator cleanup.
 
-Start with one eligible Node per logical agent and one active turn per Mission.
+Start with one eligible Node per logical agent and one active turn per Mission. The
+Capsule path is experimental and Unix-only; it is not yet an installed background
+service.
 
 ## 5. Add the first real adapter
 

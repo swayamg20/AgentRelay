@@ -1,13 +1,15 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-08-02.
+> **Status:** Canonical system overview as of 2026-08-03.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). The accepted next target lives in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
 > and the shipped lease design is recorded in
 > [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md). The
 > first local checkpoint is recorded in
-> [`Foreground Node runtime`](research/002-foreground-node-runtime.md).
+> [`Foreground Node runtime`](research/002-foreground-node-runtime.md), and the
+> process-survival checkpoint is recorded in
+> [`Persistent Mission Capsule`](research/003-persistent-mission-capsule.md).
 
 ## Product thesis
 
@@ -50,7 +52,9 @@ durable coordination foundations:
   logical aliases to local checkouts, validates repository identity/base/clean state,
   accepts Missions under a canonical local policy grant, journals cursor and
   operation intent before side effects, renews fenced leases, and drives the
-  deterministic fake adapter for turn deliveries.
+  deterministic fake adapter for turn deliveries. Its optional persistent path
+  launches a detached, Mission-scoped fake Capsule and recovers it through a private
+  capability-authenticated Unix socket after the Node process dies.
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -59,7 +63,8 @@ durable coordination foundations:
 This is useful groundwork, but it is not yet an autonomous agent network. The current
 system does not contain:
 
-- A real coding-agent adapter or a host capsule that survives Node-process death.
+- A real coding-agent adapter. The persistent Capsule currently hosts only the
+  deterministic fake runtime and has no service supervisor or installer.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
 - Mission-level expiry or dead-letter reconciliation that moves the Mission to a
@@ -131,6 +136,11 @@ normalizes each host's actual lifecycle:
 - Stream output, tool, artifact, permission, and completion events.
 - Cancel or recover a turn after interruption.
 
+Recovery is bound to the full expected start input, not only a host turn reference.
+The Node checkpoints the validated `StartTurnInput` before host lookup/start and
+reuses that object after restart, even if newer peer state exists. An adapter must
+reject recovery when the durable turn and this journaled input differ.
+
 The first adapter targets Codex app-server over local stdio or a Unix socket. Claude
 follows through its Agent SDK or headless CLI. Experimental remote transports are not
 part of the correctness boundary.
@@ -173,13 +183,13 @@ A Mission is a bounded collaborative objective with:
   readiness evidence.
 
 The relay stores this contract, applies the deterministic state machine, routes typed
-work, and tracks accepted revisions and verification rounds. The foreground Node now
-checks repository identity and local policy and bounds reported host-event usage, but
-it does not yet execute registered verification commands or enforce the complete
-wall-time, token-budget, network, path, and side-effect policy. Those hard limits must
-remain outside the model because the relay cannot trust usage or effects it has not
-observed. The system does not add a manager LLM with global access to every
-repository.
+work, and tracks accepted revisions and verification rounds. The foreground Node can
+drive either its in-process fake or a detached persistent fake Capsule. It checks
+repository identity and local policy and bounds reported host events, but it does not
+yet execute registered verification commands or enforce the complete wall-time,
+token-budget, network, path, and side-effect policy. Those hard limits must remain
+outside the model because the relay cannot trust usage or effects it has not
+observed. The system does not add a manager LLM with global access to every repository.
 
 ## Delivery semantics
 
@@ -209,16 +219,17 @@ lose a retry. Both discovery paths require an active or verifying, unexpired Mis
 They do not lazily transition an expired Mission or reconcile a dead-lettered
 delivery into Mission-wide failure.
 
-Delivery is at least once. Exact receipts make relay mutations retry-safe; the
-foreground Node's atomic journal suppresses duplicate fake-host effects across runner
-reconstruction and exact event replay. Host turns are idempotent per journaled
+Delivery is at least once. Exact receipts make relay mutations retry-safe; the Node's
+atomic journal suppresses duplicate fake-host effects across runner reconstruction
+and exact event replay. Host turns are idempotent per journaled
 `(deliveryId, executionAttempt)`: a lease reclaim recovers the same attempt, while a
-Relay-backed transient release archives it and advances to a fresh attempt. Retry
+Relay-backed transient release archives it and advances to a fresh attempt. The
+persistent fake Capsule extends this proof across Node-process death by durably
+binding the full start input, turn reference, and event history before replay. Retry
 eligibility comes from Relay database time rather than the laptop clock. A real host
-adapter must preserve `lookupTurn`/`recoverTurn` state across process failure before
-the same claim extends to an OS-level crash. Ordering is causal within one Mission;
-no global ordering is required. Presence is advisory, and an SSE write or open
-connection never counts as processed.
+adapter must preserve the same `lookupTurn` and exact-input `recoverTurn` contract.
+Ordering is causal within one Mission; no global ordering is required. Presence is
+advisory, and an SSE write or open connection never counts as processed.
 
 ## Security model
 
@@ -291,8 +302,9 @@ push, merge, publish, deploy, arbitrary network effects, and production credenti
 The relay can run anywhere that supports the relay container image and Postgres. Teams
 may self-host it or use a future hosted service. Every developer machine can run its
 own MCP process for interactive tools. The experimental AgentRelay Node is a separate
-foreground process today; the target is a persistent managed process with an
-independently recoverable host capsule.
+foreground process today. It can launch detached fake Mission Capsules that outlive a
+normal Node exit or `SIGKILL`, but automatic Node supervision and real-runtime
+Capsules remain target behavior.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.
@@ -306,8 +318,10 @@ processes it after reconnecting.
 - [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): next build contract.
 - [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md):
   implemented lease, recovery, fencing, and receipt decisions.
-- [`Foreground Node runtime`](research/002-foreground-node-runtime.md): current local
-  journal, fake-adapter, and recovery checkpoint.
+- [`Foreground Node runtime`](research/002-foreground-node-runtime.md): initial local
+  journal, in-process fake-adapter, and runner-reconstruction checkpoint.
+- [`Persistent Mission Capsule`](research/003-persistent-mission-capsule.md): detached
+  fake-host persistence and Node-process recovery checkpoint.
 - [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.
@@ -319,7 +333,8 @@ they disagree, document the gap; do not present the target as already shipped.
 
 - **Agent:** a logical network identity owned by a person or organization.
 - **Node:** a separately authenticated relay device identity plus an experimental
-  foreground daemon; in the target, a persistent per-device execution boundary.
+  foreground daemon that can launch detached fake Mission Capsules; in the target, a
+  supervised persistent per-device execution boundary.
 - **Workspace binding:** a relay-visible logical alias and repository/base-ref
   constraint that the current Node maps locally to an approved checkout.
 - **Runtime adapter:** host-specific control of a coding-agent session.

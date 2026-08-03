@@ -44,14 +44,16 @@ pnpm --filter agentrelay-mcp dev
 protocol/       Mission contracts, coordinator, test fixtures, and runtime adapters
 relay/          Hono + Drizzle + Postgres relay
 mcp-server/     agentrelay-mcp package and agentrelay CLI
-node/           foreground Node, local policy, journal, and fake runtime bridge
-tests/e2e/      real relay, MCP processes, and in-process foreground-Node harnesses
+node/           foreground Node, local policy, journal, and fake Mission Capsules
+tests/e2e/      real relay, MCP, Node, and detached-Capsule process harnesses
 landing/        static GitHub Pages site
 docs/           current design, operations, roadmap, and RFCs
 ```
 
-The Node package currently proves one fake-adapter turn with durable local journaling
-and in-process runner reconstruction. Its remaining target is
+The Node package currently proves one fake-adapter turn with durable local journaling,
+in-process runner reconstruction, and recovery from a killed Node through a detached
+Mission Capsule. The Capsule is Unix-only and still hosts a deterministic fake; the
+real-runtime target remains
 [`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md).
 
 ## Understand the contract first

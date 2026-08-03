@@ -1,6 +1,6 @@
 # Low-level design: current relay contracts
 
-> **Scope:** Current repository implementation as of 2026-08-02.
+> **Scope:** Current repository implementation as of 2026-08-03.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Unimplemented local Node runtime behavior remains in
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
@@ -13,8 +13,8 @@
 ├── protocol/            Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/               Hono, Drizzle, Postgres relay
 ├── mcp-server/          agentrelay-mcp package and agentrelay CLI
-├── node/                foreground Node, local journal, policy, and fake adapter
-├── tests/e2e/           relay plus MCP and foreground-Node integration harnesses
+├── node/                foreground Node, local journal, policy, and fake Capsules
+├── tests/e2e/           relay, MCP, Node, and detached-Capsule process harnesses
 ├── docs/                product, implementation, operations, and RFC docs
 ├── docker-compose.yml   Postgres dev service and self-host relay profile
 └── package.json         pnpm workspace scripts
@@ -22,10 +22,10 @@
 
 The private `agentrelay-node` workspace now provides a foreground daemon and durable
 consumer for fake-adapter turn deliveries. It validates local workspace/policy state,
-journals discovery and operation intent, and recovers exact host events. There is no
-real coding-agent adapter, external host capsule, contract-acknowledgement handler,
-or verification-delivery handler yet, so this still does not prove execution on two
-machines.
+journals discovery and operation intent, and can recover exact host events from an
+independently persistent fake Mission Capsule after the Node process is killed. There
+is no real coding-agent adapter, contract-acknowledgement handler, or verification-
+delivery handler yet, so this still does not prove execution on two machines.
 
 ## Protocol workspace
 
@@ -354,6 +354,41 @@ overlay for the sender, and returns it to the agent. No production code applies
 `auto_write_paths` dynamically to a Codex or Claude runtime; `isPathAutoWritable` is
 currently exercised only by tests and exports.
 
+## Node and Capsule process surface
+
+The private `agentrelay-node` binary has two fake-runtime commands:
+
+- `run` keeps `FakeAgentHostAdapter` inside the foreground Node process.
+- `run-capsule` launches or reconnects to one detached fake Capsule per Mission. Its
+  state defaults to `state/capsules/<mission-id>/` beside the Node config and can be
+  moved with `--capsule-root`.
+
+`agentrelay-capsule serve --directory <path>` is the internal child-process entry
+point. It exposes `probe`, `ensure_session`, `lookup_turn`, `start_turn`,
+`recover_turn`, `cancel_turn`, and `shutdown` over a versioned newline-delimited JSON
+protocol. Each request carries the exact Capsule ID, a random local capability, and a
+request ID; responses repeat Capsule and request identity. Capsule directories are
+mode 0700, and descriptor/state files plus the Unix socket are mode 0600. The detached
+child receives a small environment allowlist, not the Node credential, Relay
+credential, `HOME`, or coding-runtime secrets.
+
+The wire has separate bounded frames: 128 MiB for requests, which covers the maximum
+protocol-valid input after worst-case JSON escaping, and 4 MiB for responses. The
+Node journal checkpoints the full validated start input before host lookup/start; its
+registry binds `(deliveryId, executionAttempt)` to one Mission, Capsule, and canonical
+input hash. Capsule state retains the same parsed input, hash, host turn, stable event
+stream, and completion deadline. `recoverTurn(ref, expectedInput)` must match that
+durable intent and the Mission/session scope. The Capsule permits one active turn per
+Mission.
+
+This process path is experimental and Unix-only. A normal Node exit leaves detached
+Capsules running. A Node killed with `SIGKILL` cannot remove `run.lock`; the current
+restart proof verifies the recorded PID is dead and removes only that unchanged lock
+before restarting. There is no unattended supervisor or automatic stale-lock
+reclamation. Capsule restart is automatic only after repeated failed authenticated probes
+and ownership-safe removal of the same unchanged stale socket inode. The server binds
+through a private alias so closing an old process cannot unlink a replacement socket.
+
 ## CLI surface
 
 The `agentrelay` binary currently provides:
@@ -477,8 +512,8 @@ command.
 Do not extend `accepted_by_session` or the four-state handoff table into a distributed
 runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
 deliveries have a separate model and public control plane. The local Node now proves
-the journaled fake-turn boundary; the next slices are deterministic verification and
-contract handling, an external persistent host capsule, a pinned real adapter, and a
-two-machine proof. Mission-level expiry and dead-letter terminal reconciliation is
-still a separate relay gap; the mailbox API remains a compatibility and inspection
-surface.
+both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
+after Node-process death. The next slices are deterministic verification and contract
+handling, a pinned real adapter, and a two-machine proof. Mission-level expiry and
+dead-letter terminal reconciliation is still a separate relay gap; the mailbox API
+remains a compatibility and inspection surface.
