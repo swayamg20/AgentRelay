@@ -1,6 +1,10 @@
 import {
+	type DeliveryCancellationReason,
+	type DeliveryReleaseClassification,
 	type DeliveryStatus,
 	type MissionStatus,
+	deliveryCancellationReasonSchema,
+	deliveryReleaseClassificationSchema,
 	isoTimestampSchema,
 	uuidSchema,
 } from "./schemas.js";
@@ -23,11 +27,12 @@ export type MissionTransitionEvent = {
 
 export const deliveryTransitionEventTypes = [
 	"lease",
+	"renew_lease",
 	"start_execution",
 	"acknowledge",
-	"retry",
+	"release",
 	"lease_expired",
-	"terminal_failure",
+	"cancel",
 ] as const;
 
 export interface DeliveryClaim {
@@ -38,11 +43,12 @@ export interface DeliveryClaim {
 
 export type DeliveryTransitionEvent =
 	| ({ type: "lease"; expiresAt: string } & DeliveryClaim)
+	| ({ type: "renew_lease"; expiresAt: string } & DeliveryClaim)
 	| ({ type: "start_execution" } & DeliveryClaim)
 	| ({ type: "acknowledge" } & DeliveryClaim)
-	| ({ type: "retry" } & DeliveryClaim)
+	| ({ type: "release"; classification: DeliveryReleaseClassification } & DeliveryClaim)
 	| ({ type: "lease_expired" } & DeliveryClaim)
-	| ({ type: "terminal_failure" } & Partial<DeliveryClaim>);
+	| { type: "cancel"; reason: DeliveryCancellationReason; now: string };
 
 export interface DeliveryTransitionState {
 	readonly status: DeliveryStatus;
@@ -52,6 +58,7 @@ export interface DeliveryTransitionState {
 	readonly activeLeaseId: string | null;
 	readonly activeFencingToken: string | null;
 	readonly leaseExpiresAt: string | null;
+	readonly logicallySettled: boolean;
 }
 
 type StateMachine = "mission" | "delivery";
@@ -132,19 +139,21 @@ const deliveryTransitions: Partial<
 > = {
 	stored: {
 		lease: "leased",
-		terminal_failure: "dead_lettered",
+		cancel: "cancelled",
 	},
 	leased: {
+		renew_lease: "leased",
 		start_execution: "executing",
-		retry: "stored",
+		release: "stored",
 		lease_expired: "stored",
-		terminal_failure: "dead_lettered",
+		cancel: "cancelled",
 	},
 	executing: {
+		renew_lease: "executing",
 		acknowledge: "acknowledged",
-		retry: "stored",
+		release: "stored",
 		lease_expired: "stored",
-		terminal_failure: "dead_lettered",
+		cancel: "cancelled",
 	},
 };
 
@@ -170,8 +179,9 @@ export function transitionDeliveryState(
 
 	if (event.type === "lease") {
 		if (
+			current.logicallySettled ||
 			current.attemptCount >= current.maxAttempts ||
-			compareFencingTokens(event.fencingToken, current.lastFencingToken) <= 0
+			event.fencingToken !== String(current.attemptCount + 1)
 		) {
 			throw new InvalidTransitionError("delivery", current.status, event.type);
 		}
@@ -192,6 +202,26 @@ export function transitionDeliveryState(
 		};
 	}
 
+	if (event.type === "cancel") {
+		if (
+			!isoTimestampSchema.safeParse(event.now).success ||
+			!deliveryCancellationReasonSchema.safeParse(event.reason).success
+		) {
+			throw new InvalidTransitionError("delivery", current.status, event.type);
+		}
+		return {
+			...current,
+			status: next,
+			activeLeaseId: null,
+			activeFencingToken: null,
+			leaseExpiresAt: null,
+		};
+	}
+
+	if (current.logicallySettled && event.type !== "acknowledge") {
+		throw new InvalidTransitionError("delivery", current.status, event.type);
+	}
+
 	if (current.status === "leased" || current.status === "executing") {
 		if (event.type === "lease_expired") {
 			assertMatchingDeliveryClaim(current, event, event.type);
@@ -203,13 +233,37 @@ export function transitionDeliveryState(
 		}
 	}
 
+	if (event.type === "renew_lease") {
+		if (
+			!isTimestampBefore(event.now, event.expiresAt) ||
+			!isTimestamp(current.leaseExpiresAt) ||
+			!isTimestampBefore(current.leaseExpiresAt, event.expiresAt)
+		) {
+			throw new InvalidLeaseClaimError(current.status, event.type, "invalid_time");
+		}
+		return { ...current, leaseExpiresAt: event.expiresAt };
+	}
+
+	if (event.type === "acknowledge" && !current.logicallySettled) {
+		throw new InvalidTransitionError("delivery", current.status, event.type);
+	}
+
 	const attemptsExhausted =
-		(event.type === "retry" || event.type === "lease_expired") &&
+		(event.type === "release" || event.type === "lease_expired") &&
 		current.attemptCount >= current.maxAttempts;
+	const terminalRelease =
+		event.type === "release" &&
+		(event.classification === "permanent" || event.classification === "policy_denied");
+	if (
+		event.type === "release" &&
+		!deliveryReleaseClassificationSchema.safeParse(event.classification).success
+	) {
+		throw new InvalidTransitionError("delivery", current.status, event.type);
+	}
 
 	return {
 		...current,
-		status: attemptsExhausted ? "dead_lettered" : next,
+		status: attemptsExhausted || terminalRelease ? "dead_lettered" : next,
 		activeLeaseId: next === "executing" ? current.activeLeaseId : null,
 		activeFencingToken: next === "executing" ? current.activeFencingToken : null,
 		leaseExpiresAt: next === "executing" ? current.leaseExpiresAt : null,
@@ -253,16 +307,6 @@ function assertMatchingDeliveryClaim(
 	) {
 		throw new InvalidLeaseClaimError(current.status, eventType, "invalid_time");
 	}
-}
-
-function compareFencingTokens(left: string, right: string): number {
-	if (!/^(?:0|[1-9][0-9]{0,63})$/.test(left) || !/^(?:0|[1-9][0-9]{0,63})$/.test(right)) {
-		return -1;
-	}
-	if (left.length !== right.length) {
-		return left.length > right.length ? 1 : -1;
-	}
-	return left === right ? 0 : left > right ? 1 : -1;
 }
 
 function isTimestamp(value: string | null): value is string {

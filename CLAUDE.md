@@ -8,16 +8,16 @@ tool-neutral repository instruction file.
 AgentRelay is intended to let independently owned agents discover, communicate, and
 collaborate across devices, repositories, and runtimes.
 
-The repository currently implements a durable manual handoff mailbox, the internal
-Mission ledger, and relay APIs for Node enrollment, Node credential revocation, and
-logical workspace registration. The next target adds authenticated delivery claims,
-a long-running local AgentRelay Node, and real runtime activation. Do not present
-planned execution behavior as shipped.
+The repository currently implements a durable manual handoff mailbox and an
+authenticated Relay control plane for Node enrollment, logical workspace routing,
+Missions, cursor discovery, fenced delivery operations, exact replay, retry, audit,
+and revocation. The next target is a long-running local AgentRelay Node and real
+runtime activation. Do not present planned local execution behavior as shipped.
 
 Read the relevant source before making a non-trivial change:
 
 - [`docs/architecture.md`](docs/architecture.md): current and target boundaries.
-- [`docs/hld.md`](docs/hld.md): current mailbox flow.
+- [`docs/hld.md`](docs/hld.md): current mailbox and Relay control-plane flow.
 - [`docs/lld.md`](docs/lld.md): current tables, routes, tools, and known gaps.
 - [`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md):
   next implementation contract.
@@ -40,7 +40,6 @@ document is more convenient.
 - Do not use temporary subagent-role names or ownership tables as architectural
   boundaries. Follow the actual package and contract boundaries.
 
-Use the canonical validation commands in `AGENTS.md`. Database-backed integration
-and E2E setup is also documented in `CONTRIBUTING.md`.
+Use the canonical validation commands in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Do not commit, push, publish, or deploy unless the user explicitly requests it.

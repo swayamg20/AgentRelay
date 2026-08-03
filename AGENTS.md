@@ -13,7 +13,7 @@ need.
 - Preserve unrelated work, including untracked files and stashes.
 - Read the relevant design source:
   - `docs/architecture.md` for current and target component boundaries.
-  - `docs/hld.md` for the implemented mailbox flow.
+  - `docs/hld.md` for the implemented mailbox and Relay control-plane flow.
   - `docs/lld.md` for current schemas, routes, tools, and known gaps.
   - `docs/rfcs/001-agentrelay-node-and-missions.md` for the next architecture.
 - Trace cross-package behavior through `protocol/`, `relay/`, and `mcp-server/` as
@@ -42,8 +42,8 @@ need.
 
 - The relay is model-free. It owns identity, durable coordination, routing, audit,
   and revocation.
-- The future AgentRelay Node owns local runtime activation, repository bindings,
-  worktrees, policy enforcement, and run traces.
+- The future AgentRelay Node owns local runtime activation, mapping logical workspace
+  aliases to approved repositories, worktrees, policy enforcement, and run traces.
 - MCP is a local tool and context boundary, not a portable wake-up mechanism.
 - SSE or WebSocket can reduce delivery latency, but durable database state and
   replay cursors remain the source of truth.

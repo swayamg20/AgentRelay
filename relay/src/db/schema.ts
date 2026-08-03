@@ -178,9 +178,8 @@ export const auditLog = pgTable(
 	"audit_log",
 	{
 		id: bigserial("id", { mode: "bigint" }).primaryKey(),
-		actorId: uuid("actor_id")
-			.notNull()
-			.references(() => agents.id, { onDelete: "restrict" }),
+		actorKind: text("actor_kind").notNull().default("agent"),
+		actorId: uuid("actor_id").references(() => agents.id, { onDelete: "restrict" }),
 		action: text("action").notNull(),
 		resourceType: text("resource_type").notNull(),
 		resourceId: uuid("resource_id").notNull(),
@@ -191,6 +190,17 @@ export const auditLog = pgTable(
 	(t) => ({
 		resourceIdx: index("idx_audit_resource").on(t.resourceType, t.resourceId, t.createdAt.desc()),
 		actorIdx: index("idx_audit_actor").on(t.actorId, t.createdAt.desc()),
+		actorKindCheck: check(
+			"audit_log_actor_kind_chk",
+			sql`${t.actorKind} IN ('agent','admin','system')`,
+		),
+		actorIdentityCheck: check(
+			"audit_log_actor_identity_chk",
+			sql`(
+				(${t.actorKind} = 'agent' AND ${t.actorId} IS NOT NULL)
+				OR (${t.actorKind} IN ('admin','system') AND ${t.actorId} IS NULL)
+			)`,
+		),
 	}),
 );
 
@@ -282,6 +292,7 @@ export const nodeCredentials = pgTable(
 		createdAt,
 	},
 	(t) => ({
+		identityNodeIdx: uniqueIndex("idx_node_credentials_identity_node").on(t.id, t.nodeId),
 		activeNodeIdx: uniqueIndex("idx_node_credentials_active_node")
 			.on(t.nodeId)
 			.where(sql`${t.revokedAt} IS NULL`),
@@ -470,6 +481,8 @@ export const nodeDeliveries = pgTable(
 		settledAt: timestamp("settled_at", { withTimezone: true }),
 		availableAt: timestamp("available_at", { withTimezone: true }).notNull().default(sql`now()`),
 		acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+		cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+		cancellationReason: text("cancellation_reason"),
 		deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
 		createdAt,
 		updatedAt,
@@ -477,6 +490,15 @@ export const nodeDeliveries = pgTable(
 	(t) => ({
 		cursorIdx: uniqueIndex("idx_node_deliveries_cursor").on(t.cursor),
 		nodeCursorIdx: index("idx_node_deliveries_node_cursor").on(t.nodeId, t.cursor),
+		dueIdx: index("idx_node_deliveries_due")
+			.on(t.nodeId, t.availableAt, t.cursor)
+			.where(sql`${t.status} = 'stored' AND ${t.settledByEventId} IS NULL`),
+		recoveryIdx: index("idx_node_deliveries_recovery")
+			.on(t.nodeId, t.leaseExpiresAt, t.cursor)
+			.where(sql`${t.status} IN ('leased','executing') AND ${t.settledByEventId} IS NULL`),
+		activeLeaseIdx: uniqueIndex("idx_node_deliveries_active_lease")
+			.on(t.activeLeaseId)
+			.where(sql`${t.activeLeaseId} IS NOT NULL`),
 		identityScopeIdx: uniqueIndex("idx_node_deliveries_identity_scope").on(
 			t.nodeId,
 			t.missionId,
@@ -515,7 +537,7 @@ export const nodeDeliveries = pgTable(
 		),
 		statusCheck: check(
 			"node_deliveries_status_chk",
-			sql`${t.status} IN ('stored','leased','executing','acknowledged','dead_lettered')`,
+			sql`${t.status} IN ('stored','leased','executing','acknowledged','cancelled','dead_lettered')`,
 		),
 		verificationRoundCheck: check(
 			"node_deliveries_verification_round_chk",
@@ -524,15 +546,19 @@ export const nodeDeliveries = pgTable(
 		),
 		attemptCheck: check(
 			"node_deliveries_attempt_chk",
-			sql`${t.attemptCount} >= 0 AND ${t.maxAttempts} > 0 AND ${t.attemptCount} <= ${t.maxAttempts}`,
+			sql`${t.attemptCount} >= 0
+				AND ${t.maxAttempts} BETWEEN 1 AND 100
+				AND ${t.attemptCount} <= ${t.maxAttempts}`,
 		),
 		fencingTokenCheck: check(
 			"node_deliveries_fencing_token_chk",
-			sql`${t.lastFencingToken} ~ '^(0|[1-9][0-9]*)$'`,
+			sql`${t.lastFencingToken} = ${t.attemptCount}::text`,
 		),
-		initialFenceCheck: check(
-			"node_deliveries_initial_fence_chk",
-			sql`(${t.attemptCount} = 0) = (${t.lastFencingToken} = '0')`,
+		storedCapacityCheck: check(
+			"node_deliveries_stored_capacity_chk",
+			sql`${t.status} != 'stored'
+				OR ${t.settledByEventId} IS NOT NULL
+				OR ${t.attemptCount} < ${t.maxAttempts}`,
 		),
 		leaseCheck: check(
 			"node_deliveries_lease_chk",
@@ -543,7 +569,17 @@ export const nodeDeliveries = pgTable(
 		acknowledgedAtCheck: check(
 			"node_deliveries_acknowledged_at_chk",
 			sql`(${t.status} = 'acknowledged') = (${t.acknowledgedAt} IS NOT NULL)
-				AND (${t.status} != 'acknowledged' OR ${t.attemptCount} > 0)`,
+				AND (${t.status} != 'acknowledged'
+					OR (${t.attemptCount} > 0 AND ${t.settledByEventId} IS NOT NULL))`,
+		),
+		cancelledAtCheck: check(
+			"node_deliveries_cancelled_at_chk",
+			sql`(${t.status} = 'cancelled') = (${t.cancelledAt} IS NOT NULL)
+				AND (${t.status} = 'cancelled') = (${t.cancellationReason} IS NOT NULL)
+				AND (${t.cancellationReason} IS NULL OR ${t.cancellationReason} IN (
+					'mission_cancelled','mission_expired','mission_failed','work_superseded',
+					'node_revoked','workspace_revoked'
+				))`,
 		),
 		deadLetteredAtCheck: check(
 			"node_deliveries_dead_lettered_at_chk",
@@ -552,6 +588,161 @@ export const nodeDeliveries = pgTable(
 		settlementCheck: check(
 			"node_deliveries_settlement_chk",
 			sql`(${t.settledByEventId} IS NOT NULL) = (${t.settledAt} IS NOT NULL)`,
+		),
+	}),
+);
+
+export const deliveryOperationReceipts = pgTable(
+	"delivery_operation_receipts",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		origin: text("origin").notNull(),
+		nodeId: uuid("node_id")
+			.notNull()
+			.references(() => nodes.id, { onDelete: "restrict" }),
+		missionId: uuid("mission_id")
+			.notNull()
+			.references(() => missions.id, { onDelete: "restrict" }),
+		deliveryId: uuid("delivery_id").notNull(),
+		operation: text("operation").notNull(),
+		idempotencyKey: text("idempotency_key").notNull(),
+		credentialId: uuid("credential_id"),
+		attemptCount: integer("attempt_count").notNull(),
+		leaseId: uuid("lease_id"),
+		fencingToken: text("fencing_token"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+		statusBefore: text("status_before").notNull(),
+		statusAfter: text("status_after").notNull(),
+		cancellationReason: text("cancellation_reason"),
+		input: jsonb("input").notNull(),
+		output: jsonb("output").notNull(),
+		recordedAt: timestamp("recorded_at", { withTimezone: true })
+			.notNull()
+			.default(sql`clock_timestamp()`),
+	},
+	(t) => ({
+		nodeIdempotencyIdx: uniqueIndex("idx_delivery_operation_receipts_node_idempotency").on(
+			t.origin,
+			t.nodeId,
+			t.idempotencyKey,
+		),
+		deliveryHistoryIdx: index("idx_delivery_operation_receipts_delivery_history").on(
+			t.deliveryId,
+			t.recordedAt,
+			t.id,
+		),
+		claimAttemptIdx: uniqueIndex("idx_delivery_operation_receipts_claim_attempt")
+			.on(t.deliveryId, t.attemptCount)
+			.where(sql`${t.operation} = 'claim' AND ${t.statusAfter} = 'leased'`),
+		claimLeaseIdx: uniqueIndex("idx_delivery_operation_receipts_claim_lease")
+			.on(t.leaseId)
+			.where(sql`${t.operation} = 'claim' AND ${t.leaseId} IS NOT NULL`),
+		deliveryOwnerFk: foreignKey({
+			columns: [t.nodeId, t.missionId, t.deliveryId],
+			foreignColumns: [nodeDeliveries.nodeId, nodeDeliveries.missionId, nodeDeliveries.id],
+			name: "delivery_operation_receipts_delivery_owner_fk",
+		}),
+		credentialNodeFk: foreignKey({
+			columns: [t.credentialId, t.nodeId],
+			foreignColumns: [nodeCredentials.id, nodeCredentials.nodeId],
+			name: "delivery_operation_receipts_credential_node_fk",
+		}),
+		originCheck: check(
+			"delivery_operation_receipts_origin_chk",
+			sql`${t.origin} IN ('node','relay')`,
+		),
+		operationCheck: check(
+			"delivery_operation_receipts_operation_chk",
+			sql`${t.operation} IN (
+				'claim','start','renew','complete','release','lease_expired','cancel'
+			)`,
+		),
+		statusCheck: check(
+			"delivery_operation_receipts_status_chk",
+			sql`${t.statusBefore} IN (
+				'stored','leased','executing','acknowledged','cancelled','dead_lettered'
+			) AND ${t.statusAfter} IN (
+				'stored','leased','executing','acknowledged','cancelled','dead_lettered'
+			)`,
+		),
+		idempotencyKeyCheck: check(
+			"delivery_operation_receipts_idempotency_key_chk",
+			sql`octet_length(${t.idempotencyKey}) BETWEEN 1 AND 128`,
+		),
+		attemptCheck: check(
+			"delivery_operation_receipts_attempt_chk",
+			sql`${t.attemptCount} BETWEEN 0 AND 100
+				AND (${t.operation} = 'cancel' OR ${t.attemptCount} > 0)`,
+		),
+		fencingTokenCheck: check(
+			"delivery_operation_receipts_fencing_token_chk",
+			sql`${t.fencingToken} IS NULL OR ${t.fencingToken} = ${t.attemptCount}::text`,
+		),
+		leaseCheck: check(
+			"delivery_operation_receipts_lease_chk",
+			sql`(${t.leaseId} IS NULL) = (${t.fencingToken} IS NULL)
+				AND (${t.leaseId} IS NULL) = (${t.leaseExpiresAt} IS NULL)
+				AND (${t.origin} != 'node'
+					OR ${t.leaseId} IS NOT NULL
+					OR (${t.operation} = 'claim' AND ${t.statusAfter} = 'dead_lettered'))`,
+		),
+		originCredentialCheck: check(
+			"delivery_operation_receipts_origin_credential_chk",
+			sql`(${t.origin} = 'node') = (${t.credentialId} IS NOT NULL)`,
+		),
+		originOperationCheck: check(
+			"delivery_operation_receipts_origin_operation_chk",
+			sql`(${t.origin} = 'node' AND ${t.operation} IN (
+					'claim','start','renew','complete','release'
+				)) OR (${t.origin} = 'relay' AND ${t.operation} IN ('lease_expired','cancel'))`,
+		),
+		transitionCheck: check(
+			"delivery_operation_receipts_transition_chk",
+			sql`(${t.operation} = 'claim' AND (
+					(${t.statusBefore} = 'stored' AND ${t.statusAfter} = 'leased')
+					OR (${t.statusBefore} IN ('leased','executing')
+						AND ${t.statusAfter} = 'dead_lettered')
+				))
+				OR (${t.operation} = 'start'
+					AND ${t.statusBefore} = 'leased' AND ${t.statusAfter} = 'executing')
+				OR (${t.operation} = 'renew'
+					AND ${t.statusBefore} IN ('leased','executing')
+					AND ${t.statusAfter} = ${t.statusBefore})
+				OR (${t.operation} = 'complete'
+					AND ${t.statusBefore} = 'executing'
+					AND ${t.statusAfter} = 'acknowledged')
+				OR (${t.operation} IN ('release','lease_expired')
+					AND ${t.statusBefore} IN ('leased','executing')
+					AND ${t.statusAfter} IN ('stored','dead_lettered'))
+				OR (${t.operation} = 'cancel'
+					AND ${t.statusBefore} IN ('stored','leased','executing')
+					AND ${t.statusAfter} = 'cancelled')`,
+		),
+		cancellationCheck: check(
+			"delivery_operation_receipts_cancellation_chk",
+			sql`(${t.operation} = 'cancel') = (${t.cancellationReason} IS NOT NULL)
+				AND (${t.cancellationReason} IS NULL OR ${t.cancellationReason} IN (
+					'mission_cancelled','mission_expired','mission_failed','work_superseded',
+					'node_revoked','workspace_revoked'
+				))`,
+		),
+		deadlineCheck: check(
+			"delivery_operation_receipts_deadline_chk",
+			sql`(${t.operation} NOT IN ('claim','start','renew','complete','release')
+					OR (${t.operation} = 'claim' AND ${t.statusAfter} = 'dead_lettered')
+					OR ${t.recordedAt} < ${t.leaseExpiresAt})
+				AND (${t.operation} != 'lease_expired'
+					OR ${t.leaseExpiresAt} IS NULL OR ${t.recordedAt} >= ${t.leaseExpiresAt})`,
+		),
+		inputCheck: check(
+			"delivery_operation_receipts_input_chk",
+			sql`jsonb_typeof(${t.input}) = 'object'
+				AND octet_length(${t.input}::text) <= 1048576`,
+		),
+		outputCheck: check(
+			"delivery_operation_receipts_output_chk",
+			sql`jsonb_typeof(${t.output}) = 'object'
+				AND octet_length(${t.output}::text) <= 1048576`,
 		),
 	}),
 );
@@ -570,3 +761,5 @@ export type Mission = typeof missions.$inferSelect;
 export type MissionParticipant = typeof missionParticipants.$inferSelect;
 export type MissionEvent = typeof missionEvents.$inferSelect;
 export type NodeDelivery = typeof nodeDeliveries.$inferSelect;
+export type DeliveryOperationReceipt = typeof deliveryOperationReceipts.$inferSelect;
+export type NewDeliveryOperationReceipt = typeof deliveryOperationReceipts.$inferInsert;

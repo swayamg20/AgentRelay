@@ -20,6 +20,8 @@ export type ErrorSymbol =
 	| "teammate_blocked"
 	| "node_not_found"
 	| "workspace_not_found"
+	| "mission_not_found"
+	| "delivery_not_found"
 	| "internal";
 
 interface ErrorMapping {
@@ -47,6 +49,8 @@ export const ERROR_MAP: Record<ErrorSymbol, ErrorMapping> = {
 	teammate_blocked: { rpc: -32013, http: 403 },
 	node_not_found: { rpc: -32014, http: 404 },
 	workspace_not_found: { rpc: -32015, http: 404 },
+	mission_not_found: { rpc: -32016, http: 404 },
+	delivery_not_found: { rpc: -32017, http: 404 },
 	internal: { rpc: -32099, http: 500 },
 };
 

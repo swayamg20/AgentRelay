@@ -7,7 +7,7 @@ The package contains:
 - strict Zod schemas for Node enrollment, workspace registration, relay-visible
   Node/workspace descriptors, Mission manifests, participant acceptance receipts,
   contract revisions, typed messages, artifact references, delivery/cursor
-  envelopes, runs, and evidence;
+  envelopes, delivery operations and receipts, runs, and evidence;
 - pure Mission, fenced-delivery, and deterministic coordinator reducers that reject
   invalid transitions;
 - a runtime-neutral host adapter contract, with a deterministic fake under
@@ -43,7 +43,9 @@ a new verification round, so delayed evidence from an older cycle is rejected.
 Required verification command IDs come from local coordinator configuration, never
 peer text. Every participant result carries its source delivery ID, and verification
 deliveries/results carry one exact coordinator round. Authenticated event ingestion,
-source-work ownership, settlement, and lease fencing remain relay responsibilities.
+source-work ownership, settlement, and lease fencing are Relay responsibilities; the
+`relay/` workspace implements those responsibilities over Postgres and authenticated
+Node routes.
 
 `storedMissionDeliveryCursorPageSchema` carries each stored delivery together with
 its immutable Mission event and trusted actor/source/causal provenance. Empty pages
@@ -67,14 +69,26 @@ the requested host-turn correlation so the first acceptance cannot bind a differ
 delivery. Mission prompt fields should be built with `deriveHostMissionInputs` from
 the relay-authenticated Mission context.
 
-Delivery lease IDs and fencing tokens are intentionally Node-owned. They are checked
-with the lease deadline against durable delivery state before runtime
-start/recovery/cancellation and result publication; they are not copied into host turn
-references.
+Delivery lease IDs, deadlines, and monotonically increasing fencing tokens are
+Relay-issued authority. A Node presents the current lease ID and fence on start,
+renew, completion, and release; it never selects the lease duration or server time.
+The future local Node must durably compare that authority with its processing journal
+before runtime start, recovery, cancellation, or result publication. Lease fields are
+not copied into host turn references.
+
+Every state-changing delivery input carries an idempotency key. An exact replay
+returns the stored result with `replayed: true`; reusing the key for different input
+is rejected. Claim, start, and renew replays still require current Mission trust and
+routing authority because they expose or prolong execution authority. Exact complete
+and release replays are historical responses and may survive a later teammate block,
+but revocation or cancelled routing prevents any delivery receipt from being used as
+authority. A replay response proves what previously committed; a Node must inspect
+the current durable delivery state before causing a new host effect.
 
 This package defines data, state transitions, and an in-memory deterministic proof.
-It does not persist Missions or idempotency receipts, execute production policy,
-start a real model runtime, prove offline/restart recovery, or claim A2A conformance.
+It does not itself persist Missions or idempotency receipts; the sibling `relay/`
+workspace now does. The repository still does not execute production local policy,
+start a real model runtime, prove Node restart recovery, or claim A2A conformance.
 
 Version 0.1 is the TypeScript/Zod binding used to prove the first Node. Committed
 JSON Schema and OpenAPI bindings remain required before a non-TypeScript Node or

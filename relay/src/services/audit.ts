@@ -6,8 +6,7 @@ import { auditLog } from "../db/schema.js";
 // shape so callers can pass `tx` from `db.transaction(async tx => ...)`.
 export type AuditWritable = Pick<Database, "insert"> | PgTransaction<never, never, never>;
 
-export interface AuditEntry {
-	actorId: string;
+interface AuditEntryDetails {
 	action: string;
 	resourceType: string;
 	resourceId: string;
@@ -15,13 +14,21 @@ export interface AuditEntry {
 	requestId?: string;
 }
 
+export type AuditActor =
+	| { actorKind: "agent"; actorId: string }
+	| { actorKind: "admin" | "system"; actorId: null };
+
+export type AuditEntry = AuditEntryDetails &
+	(AuditActor | { actorKind?: undefined; actorId: string });
+
 export async function writeAudit(
 	// biome-ignore lint/suspicious/noExplicitAny: drizzle's Database/transaction share the structural insert API
 	writer: any,
 	entry: AuditEntry,
 ): Promise<void> {
 	await writer.insert(auditLog).values({
-		actorId: entry.actorId,
+		actorKind: entry.actorKind ?? "agent",
+		actorId: entry.actorId ?? null,
 		action: entry.action,
 		resourceType: entry.resourceType,
 		resourceId: entry.resourceId,

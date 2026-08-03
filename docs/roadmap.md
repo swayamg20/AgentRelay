@@ -10,10 +10,12 @@ AgentRelay is a cross-device communication and collaboration network for indepen
 owned agents. Coding across separate repositories is the first proving vertical, not
 the product's final boundary.
 
-The current repository combines an authenticated asynchronous mailbox with the
-durable Mission-ledger kernel and a Node enrollment/workspace identity surface. The
-next milestone is authenticated, fenced delivery processing plus a persistent local
-Node that can start or resume a bounded agent turn.
+The current repository combines an authenticated asynchronous mailbox with a mounted
+Mission and delivery control plane: Node enrollment, logical workspace routing,
+Mission creation and acceptance, cursor polling, Relay-issued fenced leases,
+completion, retry, dead-lettering, audit, and revocation. The next milestone is a
+persistent local Node that can journal this authority and start or resume a bounded
+agent turn, plus process-restart evidence for the Relay APIs.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -51,11 +53,14 @@ including one contract revision, without a real coding-agent runtime.
 
 ## Stage 2: durable delivery ledger
 
-**Status:** internal ledger kernel implemented with independent acceptance receipts,
-source-bound result settlement, verification generations, and joined cursor replay.
-Separately revocable Node credentials and enrollment/workspace routes are implemented.
-Public delivery polling, fenced leases, transport acknowledgements, recovery, and the
-Stage 2 exit gate remain open.
+**Status:** Relay control plane implemented. It includes independent acceptance
+receipts, source-bound result settlement, verification generations, joined cursor and
+recovery scans, separately revocable Node credentials, public Mission routes, and
+fenced claim/start/renew/complete/release operations with exact durable receipts.
+Postgres tests cover concurrent claims, stale fences, expiry after lock waits, lost
+response replay, retry discovery, dead-lettering, blocks, and revocation races. The
+Stage 2 exit gate remains open until a journaled client proves reconnect and Relay
+process restart without a duplicated host effect.
 
 - Add node identity, workspace-binding, Mission, event, delivery, claim, run, and
   acknowledgement persistence.
@@ -67,6 +72,12 @@ Stage 2 exit gate remain open.
 
 **Exit gate:** forced disconnects, relay restarts, expired leases, and duplicate
 notifications cause no lost event and no duplicated effect.
+
+Before declaring the control plane complete, also add stable Mission-assignment
+pagination and reconcile Mission state when delivery expiry or dead-lettering makes
+further progress impossible. Current discovery excludes expired and terminal Mission
+work so stale rows cannot starve runnable work, but filtering is not lifecycle
+reconciliation.
 
 ## Stage 3: AgentRelay Node
 

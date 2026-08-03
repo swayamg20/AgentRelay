@@ -23,14 +23,15 @@ import {
 } from "../db/schema.js";
 import { RelayError } from "../errors.js";
 import { writeAudit } from "./audit.js";
+import { cancelDeliveriesForRevocation } from "./delivery-revocation.js";
 
-type NodeTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+export type NodeTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 interface MutationContext {
 	requestId?: string;
 }
 
-interface NodeCredentialContext {
+export interface NodeCredentialContext {
 	nodeId: string;
 	agentId: string;
 	credentialId: string;
@@ -64,7 +65,16 @@ export async function enrollNode(
 	const generated = generateNodeKey(keyEnvironment, pepper);
 
 	return db.transaction(async (tx) => {
+		await lockAgentLifecycle(tx, agentId);
 		await lock(tx, `node-enroll:${agentId}:${input.name}`);
+		const [owner] = await tx
+			.select({ id: agents.id })
+			.from(agents)
+			.where(and(eq(agents.id, agentId), eq(agents.status, "active")))
+			.limit(1);
+		if (!owner) {
+			throw new RelayError("unauthenticated", "Only an active agent can enroll a Node");
+		}
 
 		const [existing] = await tx
 			.select({ id: nodes.id })
@@ -243,6 +253,12 @@ export async function revokeNode(
 		if (!node) throw new RelayError("node_not_found", "Node not found");
 		if (node.status === "revoked") return;
 
+		await cancelDeliveriesForRevocation(tx, {
+			nodeId,
+			actorId: agentId,
+			requestId: context.requestId,
+			scope: { reason: "node_revoked" },
+		});
 		await tx
 			.update(nodes)
 			.set({ status: "revoked", revokedAt: sql`clock_timestamp()` })
@@ -372,6 +388,15 @@ export async function revokeWorkspace(
 		if (!workspace) throw new RelayError("workspace_not_found", "Workspace not found");
 		if (workspace.status === "revoked") return;
 
+		await cancelDeliveriesForRevocation(tx, {
+			nodeId: auth.nodeId,
+			actorId: auth.agentId,
+			requestId: auth.requestId,
+			scope: {
+				reason: "workspace_revoked",
+				workspaceBindingId: workspace.id,
+			},
+		});
 		const [revoked] = await tx
 			.update(workspaceBindings)
 			.set({ status: "revoked", revokedAt: sql`clock_timestamp()` })
@@ -426,7 +451,7 @@ function toWorkspaceDescriptor(
 	});
 }
 
-async function assertActiveNodeCredential(
+export async function assertActiveNodeCredential(
 	tx: NodeTransaction,
 	auth: NodeCredentialContext,
 ): Promise<void> {
@@ -449,6 +474,16 @@ async function assertActiveNodeCredential(
 	if (!authorized) {
 		throw new RelayError("unauthenticated", "Node credential no longer authorizes this operation");
 	}
+}
+
+/** Serializes Node-authorized mutations with credential rotation and revocation. */
+export async function lockNodeMutation(tx: NodeTransaction, nodeId: string): Promise<void> {
+	await lock(tx, `node:${nodeId}`);
+}
+
+/** Serializes agent-owned authority issuance with owner disablement. */
+export async function lockAgentLifecycle(tx: NodeTransaction, agentId: string): Promise<void> {
+	await lock(tx, `agent-lifecycle:${agentId}`);
 }
 
 async function loadActiveCredentialIds(

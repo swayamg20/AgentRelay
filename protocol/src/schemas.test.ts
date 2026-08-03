@@ -613,12 +613,15 @@ describe("deliverySchema", () => {
 			fencing_token: "1",
 			expires_at: "2026-08-02T10:06:00.000Z",
 		},
+		logical_settlement: null,
 		idempotency_key: "delivery:1",
 		causal_parent_delivery_id: null,
 		available_at: "2026-08-02T10:03:00.000Z",
 		created_at: "2026-08-02T10:03:00.000Z",
 		updated_at: "2026-08-02T10:04:00.000Z",
 		acknowledged_at: null,
+		cancelled_at: null,
+		cancellation_reason: null,
 		dead_lettered_at: null,
 	};
 	const storedDelivery = {
@@ -707,11 +710,39 @@ describe("deliverySchema", () => {
 	});
 
 	it("requires active leases and matching terminal timestamps", () => {
+		const settlement = {
+			settled_by_event_id: ids.event,
+			settled_at: leasedDelivery.updated_at,
+		};
+		expect(
+			deliverySchema.parse({
+				...leasedDelivery,
+				status: "acknowledged",
+				lease: null,
+				logical_settlement: settlement,
+				acknowledged_at: leasedDelivery.updated_at,
+			}),
+		).toMatchObject({ status: "acknowledged", logical_settlement: settlement });
+		expect(
+			deliverySchema.parse({
+				...storedDelivery,
+				status: "cancelled",
+				cancelled_at: storedDelivery.updated_at,
+				cancellation_reason: "work_superseded",
+			}),
+		).toMatchObject({ status: "cancelled", cancellation_reason: "work_superseded" });
 		expect(deliverySchema.safeParse({ ...leasedDelivery, lease: null }).success).toBe(false);
 		expect(
 			deliverySchema.safeParse({
 				...leasedDelivery,
 				lease: { ...leasedDelivery.lease, fencing_token: "0" },
+			}).success,
+		).toBe(false);
+		expect(
+			deliverySchema.safeParse({
+				...leasedDelivery,
+				attempt_count: 2,
+				lease: { ...leasedDelivery.lease, fencing_token: "1" },
 			}).success,
 		).toBe(false);
 		expect(
@@ -769,6 +800,18 @@ describe("deliverySchema", () => {
 				status: "stored",
 				attempt_count: 3,
 				lease: null,
+			}).success,
+		).toBe(false);
+		expect(
+			deliverySchema.safeParse({
+				...storedDelivery,
+				logical_settlement: settlement,
+			}).success,
+		).toBe(false);
+		expect(
+			deliverySchema.safeParse({
+				...storedDelivery,
+				cancellation_reason: "mission_cancelled",
 			}).success,
 		).toBe(false);
 	});

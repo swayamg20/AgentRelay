@@ -3,7 +3,9 @@
 > **Status:** Canonical system overview as of 2026-08-02.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). The accepted next target lives in
-> [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
+> [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
+> and the shipped lease design is recorded in
+> [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md).
 
 ## Product thesis
 
@@ -22,18 +24,22 @@ The repository currently ships an authenticated asynchronous mailbox plus its fi
 durable coordination foundations:
 
 - Postgres-backed developer identities, cards, API keys, invites, blocks, handoffs,
-  and messages, with audit records for invite, handoff/message, block, and
-  Node/workspace mutations.
+  and messages, with audit records for invite, handoff/message, block,
+  Node/workspace, Mission, and delivery mutations.
 - A Hono relay with REST onboarding and an A2A-shaped JSON-RPC endpoint.
 - Seven stdio MCP tools for sending, receiving, replying to, inspecting, and
   completing handoff threads.
 - An executable protocol workspace with Mission/delivery/runtime contracts and an
   in-memory deterministic backend-Android coordination proof.
-- An internal Postgres Mission-ledger kernel with relay-visible Node and workspace
-  identity, immutable Mission context, current reducer projection, append-only
-  coordinator events, independent participant acceptance receipts, transactionally
-  derived stored deliveries, and per-Node cursor replay. The Mission and delivery
-  service remains internal.
+- A public Postgres Mission and delivery control plane with relay-visible Node and
+  workspace identity, immutable Mission context, current reducer projection,
+  append-only coordinator events, independent participant acceptance receipts, and
+  transactionally derived per-Node deliveries. Agent-authenticated callers can
+  create Missions; assigned Nodes can list, inspect, and accept them.
+- Node-authenticated new-work polling and recovery discovery, plus claim, start,
+  renew, complete, and release operations. The relay issues bounded leases and
+  monotonic fencing tokens, persists exact operation receipts and audit rows, and
+  commits a completion with its Mission result and downstream work atomically.
 - A public identity surface that lets an authenticated agent enroll and revoke its
   Nodes, rotate separately scoped Node credentials, and lets an authenticated Node
   register or revoke relay-visible logical workspace bindings. It never accepts a
@@ -47,10 +53,12 @@ This is useful groundwork, but it is not yet an autonomous agent network. The cu
 system does not contain:
 
 - A persistent local daemon that consumes work and starts or resumes agent turns.
-- Authenticated Node delivery polling, processing claims, leases, acknowledgements,
-  retry, or dead-letter operations.
-- Runtime-session or Mission-lease identity; persisted Node/workspace records are an
-  internal routing foundation only.
+- Runtime sessions, local processing journals, or local worktree and policy
+  enforcement; relay-visible Node/workspace records remain logical routing identity.
+- Mission-level expiry or dead-letter reconciliation that moves the Mission to a
+  terminal state and cancels its remaining work. Discovery hides expired Missions,
+  while delivery expiry is reconciled only when that delivery is reclaimed.
+- A real two-machine execution proof through the public control plane.
 - Enforcement of the returned per-teammate trust overlay inside a runtime.
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
 - End-to-end traces of local commands, edits, policy decisions, and tests.
@@ -144,7 +152,7 @@ The current mailbox stores a two-party handoff with `pending`, `accepted`,
 MCP tools to advance it. This API remains a compatibility and inspection surface
 while the Node slice is built.
 
-### Missions next
+### Missions today, execution next
 
 A Mission is a bounded collaborative objective with:
 
@@ -157,25 +165,44 @@ A Mission is a bounded collaborative objective with:
 - Typed questions, answers, proposals, decisions, artifacts, progress, blockers, and
   readiness evidence.
 
-The relay uses a deterministic state machine. It routes work, tracks global counters,
-and decides completion from typed readiness and verification records. Each Node
-enforces hard local limits because the relay cannot trust usage it has not received.
-The system does not add a manager LLM with global access to every repository.
+The relay already stores this contract, applies the deterministic state machine,
+routes typed work, and tracks accepted revisions and verification rounds. The future
+local Node must enforce hard local limits because the relay cannot trust usage it has
+not received. The system does not add a manager LLM with global access to every
+repository.
 
 ## Delivery semantics
 
 Message persistence and agent processing are separate facts:
 
 ```text
-stored -> node_claimed -> host_turn_started -> response_recorded
+stored --claim--> leased --start--> executing --complete--> acknowledged
+  ^                  |                 |
+  +-------- transient release --------+
+leased | executing --expired claim/re-lease--> leased (next attempt)
+leased | executing --terminal/exhausted------> dead_lettered
+stored | leased | executing --relay cancel---> cancelled
 ```
 
-Delivery is at least once. A lease may expire and cause redelivery. Nodes suppress
-duplicate effects with the durable event ID and local processing journal. An SSE
-write, notification webhook, or open TCP connection never counts as processed.
+Claim creates a relay-issued 60-second lease bounded by Mission expiry, increments the
+attempt, and uses that attempt as the fencing token. Start, renew, complete, and
+release require the exact lease and fence. Each public delivery mutation has an
+exact Node-scoped idempotency receipt and audit row; relay lease-expiry and
+cancellation also leave receipts and audit evidence when represented as their own
+transition. An expired final attempt is represented by its terminal claim receipt,
+not an additional expiry receipt. Completion atomically commits the Mission result,
+source settlement, acknowledgement, downstream deliveries, receipt, and audit.
 
-Ordering is causal within one Mission; no global ordering is required. Presence is
-advisory. Offline nodes catch up from the durable event cursor.
+Cursor polling discovers only newly due stored work. A separate cursorless recovery
+scan returns due retries plus leased or executing work, so advancing a cursor cannot
+lose a retry. Both discovery paths require an active or verifying, unexpired Mission.
+They do not lazily transition an expired Mission or reconcile a dead-lettered
+delivery into Mission-wide failure.
+
+Delivery is at least once. Exact receipts make relay mutations retry-safe; a future
+Node still needs a durable local processing journal to suppress duplicate host
+effects. Ordering is causal within one Mission; no global ordering is required.
+Presence is advisory, and an SSE write or open connection never counts as processed.
 
 ## Security model
 
@@ -188,8 +215,12 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 - Participant-only handoff access and role-specific state transitions.
 - Relay-side block checks when creating, accepting, appending to, or completing a
   content-bearing handoff. A shared directed-pair transaction lock makes a committed
-  block a fence for those mutations. Invite, handoff/message, and block mutations are
-  audited.
+  block a fence for those mutations. Mission creation, acceptance, event publication,
+  and delivery operations re-check the same participant trust boundary, so a
+  committed block fences later Mission activation and execution.
+- Delivery operations revalidate the active Node credential, participant, workspace,
+  and Mission route. Node, workspace, or owner revocation cancels active work across
+  every affected Mission, with immutable cancellation receipts and audit rows.
 - Provenance wrappers on teammate text and non-spoofable structural markers on
   teammate payloads, proposals, and artifacts returned by mailbox MCP tools.
 - Fail-safe CLI synchronization: block writes local trust first; unblock clears the
@@ -201,11 +232,15 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 
 ### Gaps before autonomous execution
 
-- Agent registration, card updates, agent-key rotation, and agent disable are not
-  written to the current relay audit log. Node enrollment, credential rotation,
-  Node revocation, and workspace registration/revocation are audited.
+- Agent registration, card updates, and agent-key rotation are not written to the
+  current relay audit log. Agent disable, Node enrollment, credential rotation, Node
+  revocation, and workspace registration/revocation are audited. Agent-authenticated
+  rows retain the actor Agent ID; admin and relay-system rows use an explicit actor
+  kind without inventing an Agent identity.
 - `trust_overlay` is returned as JSON but is not dynamically applied to the host.
 - Relay audit does not record local commands, edits, tests, or policy decisions.
+- Expired Missions and dead-lettered deliveries have no background or lazy
+  Mission-terminal reconciler.
 - The notification queue is process-local and can drop work on overflow or restart.
 - Local and relay revocation behavior is not one atomic, continuously observed policy;
   successful CLI block/unblock converges both stores but cannot transactionally commit
@@ -249,9 +284,11 @@ processes it after reconnecting.
 
 - [`README.md`](../README.md): product entry point and honest current status.
 - [`architecture.md`](architecture.md): canonical current/target boundary overview.
-- [`hld.md`](hld.md): high-level reference for the mailbox implementation on `main`.
+- [`hld.md`](hld.md): high-level reference for the current relay implementation.
 - [`lld.md`](lld.md): concrete current routes, tables, tools, and known gaps.
 - [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): next build contract.
+- [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md):
+  implemented lease, recovery, fencing, and receipt decisions.
 - [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.
@@ -262,11 +299,14 @@ they disagree, document the gap; do not present the target as already shipped.
 ## Glossary
 
 - **Agent:** a logical network identity owned by a person or organization.
-- **Node:** the persistent per-device AgentRelay daemon.
-- **Workspace binding:** a local mapping from a stable alias to an approved checkout.
+- **Node:** today, a separately authenticated relay device identity; in the target,
+  the persistent per-device AgentRelay daemon that owns it.
+- **Workspace binding:** today, a relay-visible logical alias and repository/base-ref
+  constraint; in the target, a local mapping from that alias to an approved checkout.
 - **Runtime adapter:** host-specific control of a coding-agent session.
 - **Handoff:** the current manually consumed two-party mailbox thread.
-- **Mission:** a bounded, versioned collaborative objective executed by Nodes.
+- **Mission:** a bounded, versioned collaborative objective coordinated by the relay
+  and intended for execution by Nodes.
 - **Delivery:** transport and processing state for one durable event.
 - **Run:** one participant's local runtime session, worktree, policy, usage, and
   evidence for a Mission.

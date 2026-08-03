@@ -51,15 +51,17 @@ const deliveryEvents: DeliveryTransitionEvent[] = deliveryTransitionEventTypes.m
 
 const allowedDeliveryTransitions = new Map<string, DeliveryStatus>([
 	["stored:lease", "leased"],
-	["stored:terminal_failure", "dead_lettered"],
+	["stored:cancel", "cancelled"],
+	["leased:renew_lease", "leased"],
 	["leased:start_execution", "executing"],
-	["leased:retry", "stored"],
+	["leased:release", "stored"],
 	["leased:lease_expired", "stored"],
-	["leased:terminal_failure", "dead_lettered"],
+	["leased:cancel", "cancelled"],
+	["executing:renew_lease", "executing"],
 	["executing:acknowledge", "acknowledged"],
-	["executing:retry", "stored"],
+	["executing:release", "stored"],
 	["executing:lease_expired", "stored"],
-	["executing:terminal_failure", "dead_lettered"],
+	["executing:cancel", "cancelled"],
 ]);
 
 describe("transitionMissionStatus", () => {
@@ -105,18 +107,19 @@ describe("transitionDeliveryState", () => {
 		for (const status of deliveryStatuses) {
 			for (const event of deliveryEvents) {
 				const expected = allowedDeliveryTransitions.get(`${status}:${event.type}`);
+				const state = deliveryState(status, {
+					logicallySettled: event.type === "acknowledge",
+				});
 				if (expected !== undefined) {
-					expect(transitionDeliveryState(deliveryState(status), event).status).toBe(expected);
+					expect(transitionDeliveryState(state, event).status).toBe(expected);
 				} else {
-					expect(() => transitionDeliveryState(deliveryState(status), event)).toThrow(
-						InvalidTransitionError,
-					);
+					expect(() => transitionDeliveryState(state, event)).toThrow(InvalidTransitionError);
 				}
 			}
 		}
 	});
 
-	it.each(["acknowledged", "dead_lettered"] as const)(
+	it.each(["acknowledged", "cancelled", "dead_lettered"] as const)(
 		"rejects delayed events after terminal status %s",
 		(status) => {
 			for (const event of deliveryEvents) {
@@ -144,6 +147,7 @@ describe("transitionDeliveryState", () => {
 			activeLeaseId: "00000000-0000-4000-8000-000000000002",
 			activeFencingToken: "2",
 			leaseExpiresAt: "2026-08-02T10:10:00.000Z",
+			logicallySettled: false,
 		});
 		expect(() =>
 			transitionDeliveryState(deliveryState("stored"), {
@@ -224,11 +228,49 @@ describe("transitionDeliveryState", () => {
 		).toThrow(InvalidLeaseClaimError);
 	});
 
-	it("dead-letters retryable work when the attempt budget is exhausted", () => {
+	it("renews only the current unexpired authority without consuming an attempt", () => {
+		const renewed = transitionDeliveryState(deliveryState("executing"), {
+			type: "renew_lease",
+			leaseId: "00000000-0000-4000-8000-000000000001",
+			fencingToken: "1",
+			now: "2026-08-02T10:02:00.000Z",
+			expiresAt: "2026-08-02T10:10:00.000Z",
+		});
+
+		expect(renewed).toMatchObject({
+			status: "executing",
+			attemptCount: 1,
+			lastFencingToken: "1",
+			leaseExpiresAt: "2026-08-02T10:10:00.000Z",
+		});
+	});
+
+	it("acknowledges only atomically settled executing work", () => {
+		const authority = {
+			leaseId: "00000000-0000-4000-8000-000000000001",
+			fencingToken: "1",
+			now: "2026-08-02T10:02:00.000Z",
+		};
+		expect(() =>
+			transitionDeliveryState(deliveryState("executing"), {
+				type: "acknowledge",
+				...authority,
+			}),
+		).toThrow(InvalidTransitionError);
+		expect(
+			transitionDeliveryState(deliveryState("executing", { logicallySettled: true }), {
+				type: "acknowledge",
+				...authority,
+			}),
+		).toMatchObject({ status: "acknowledged", activeLeaseId: null });
+	});
+
+	it("dead-letters transient releases when the attempt budget is exhausted", () => {
 		const exhausted = { ...deliveryState("executing"), attemptCount: 3 };
 		expect(
 			transitionDeliveryState(exhausted, {
-				type: "retry",
+				type: "release",
+				classification: "transient",
 				leaseId: "00000000-0000-4000-8000-000000000001",
 				fencingToken: "1",
 				now: "2026-08-02T10:02:00.000Z",
@@ -240,9 +282,45 @@ describe("transitionDeliveryState", () => {
 			leaseExpiresAt: null,
 		});
 	});
+
+	it.each(["permanent", "policy_denied"] as const)(
+		"dead-letters a %s release immediately",
+		(classification) => {
+			expect(
+				transitionDeliveryState(deliveryState("leased"), {
+					type: "release",
+					classification,
+					leaseId: "00000000-0000-4000-8000-000000000001",
+					fencingToken: "1",
+					now: "2026-08-02T10:02:00.000Z",
+				}),
+			).toMatchObject({ status: "dead_lettered", activeLeaseId: null });
+		},
+	);
+
+	it("dead-letters an expired final attempt and lets the relay cancel active work", () => {
+		expect(
+			transitionDeliveryState(deliveryState("leased", { attemptCount: 3 }), {
+				type: "lease_expired",
+				leaseId: "00000000-0000-4000-8000-000000000001",
+				fencingToken: "1",
+				now: "2026-08-02T10:05:00.000Z",
+			}),
+		).toMatchObject({ status: "dead_lettered", activeLeaseId: null });
+		expect(
+			transitionDeliveryState(deliveryState("executing"), {
+				type: "cancel",
+				reason: "mission_cancelled",
+				now: "2026-08-02T10:02:00.000Z",
+			}),
+		).toMatchObject({ status: "cancelled", activeLeaseId: null });
+	});
 });
 
-function deliveryState(status: DeliveryStatus): DeliveryTransitionState {
+function deliveryState(
+	status: DeliveryStatus,
+	overrides: Partial<DeliveryTransitionState> = {},
+): DeliveryTransitionState {
 	const active = status === "leased" || status === "executing";
 	return {
 		status,
@@ -252,6 +330,8 @@ function deliveryState(status: DeliveryStatus): DeliveryTransitionState {
 		activeLeaseId: active ? "00000000-0000-4000-8000-000000000001" : null,
 		activeFencingToken: active ? "1" : null,
 		leaseExpiresAt: active ? "2026-08-02T10:05:00.000Z" : null,
+		logicallySettled: false,
+		...overrides,
 	};
 }
 
@@ -265,6 +345,31 @@ function deliveryEvent(
 			fencingToken: "2",
 			now: "2026-08-02T10:00:00.000Z",
 			expiresAt: "2026-08-02T10:10:00.000Z",
+		};
+	}
+	if (type === "renew_lease") {
+		return {
+			type,
+			leaseId: "00000000-0000-4000-8000-000000000001",
+			fencingToken: "1",
+			now: "2026-08-02T10:01:00.000Z",
+			expiresAt: "2026-08-02T10:10:00.000Z",
+		};
+	}
+	if (type === "release") {
+		return {
+			type,
+			classification: "transient",
+			leaseId: "00000000-0000-4000-8000-000000000001",
+			fencingToken: "1",
+			now: "2026-08-02T10:01:00.000Z",
+		};
+	}
+	if (type === "cancel") {
+		return {
+			type,
+			reason: "mission_cancelled",
+			now: "2026-08-02T10:01:00.000Z",
 		};
 	}
 	return {

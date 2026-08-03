@@ -10,7 +10,9 @@ import { encryptWebhook } from "../notifications/crypto.js";
 import { isSlackWebhookUrl } from "../notifications/slack.js";
 import { lockAgentBlockPair } from "../services/agent-block-lock.js";
 import { writeAudit } from "../services/audit.js";
+import { lockAgentLifecycle } from "../services/node-enrollment.js";
 import type { AppEnv } from "../types.js";
+import { registerMissionOwnerRoutes } from "./mission-owner.js";
 import { registerNodeOwnerRoutes } from "./node-owner.js";
 
 const updateCardSchema = z
@@ -39,6 +41,7 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 	const router = new Hono<AppEnv>();
 	router.use("*", bearerAuth({ db: opts.db, pepper: opts.pepper }));
 	registerNodeOwnerRoutes(router, opts);
+	registerMissionOwnerRoutes(router, opts);
 
 	// GET /agents/me — whoami (lld §5.4 / R7)
 	router.get("/me", async (c) => {
@@ -77,6 +80,15 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 		if (!me) throw new RelayError("unauthenticated", "Auth required");
 		const generated = generateKey(opts.keyEnvironment, opts.pepper);
 		const newKey = await opts.db.transaction(async (tx) => {
+			await lockAgentLifecycle(tx, me.id);
+			const [activeAgent] = await tx
+				.select({ id: agents.id })
+				.from(agents)
+				.where(and(eq(agents.id, me.id), eq(agents.status, "active")))
+				.limit(1);
+			if (!activeAgent) {
+				throw new RelayError("unauthenticated", "Only an active agent can rotate API keys");
+			}
 			// revoke ALL of caller's currently-active keys (including the one used to call us)
 			await tx.update(apiKeys).set({ revokedAt: new Date() }).where(eq(apiKeys.agentId, me.id));
 			const [created] = await tx
