@@ -354,7 +354,7 @@ async function executeHostTurn(
 		if (ref === null) {
 			throw new Error(`Accepted host turn was not recoverable: ${input.deliveryId}`);
 		}
-		const recovered = await collect(adapter.recoverTurn(ref));
+		const recovered = await collect(adapter.recoverTurn(ref, input));
 		events = mergeReplay(partial, recovered);
 	} else {
 		events = await collect(adapter.startTurn(input));

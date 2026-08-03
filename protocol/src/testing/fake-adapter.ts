@@ -214,9 +214,10 @@ export class FakeAgentHostAdapter implements AgentHostAdapter {
 		return replay(stored.events);
 	}
 
-	recoverTurn(ref: HostTurnRef): AsyncIterable<HostEvent> {
+	recoverTurn(ref: HostTurnRef, expectedInput: StartTurnInput): AsyncIterable<HostEvent> {
 		this.#recoverTurnCalls += 1;
 		const stored = this.requireTurnByRef(hostTurnRefSchema.parse(ref));
+		assertSameCorrelation(stored.input, startTurnInputSchema.parse(expectedInput));
 		return replay(stored.events);
 	}
 

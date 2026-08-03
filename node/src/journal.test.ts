@@ -1,4 +1,8 @@
-import type { MissionDeliveryItem, MissionParticipantAcceptanceInput } from "@agentrelay/protocol";
+import type {
+	MissionDeliveryItem,
+	MissionParticipantAcceptanceInput,
+	StartTurnInput,
+} from "@agentrelay/protocol";
 import { describe, expect, it } from "vitest";
 import { type JournalStorage, NodeJournal, type NodeJournalState } from "./journal.js";
 
@@ -13,7 +17,7 @@ const IDS = {
 } as const;
 
 describe("NodeJournal", () => {
-	it("migrates an older v1 journal with a null Mission assignment cursor", async () => {
+	it("migrates an empty v1 journal to schema 2 with a null Mission assignment cursor", async () => {
 		const storage = new MemoryStorage();
 		storage.state = {
 			schema_version: 1,
@@ -25,9 +29,24 @@ describe("NodeJournal", () => {
 
 		const journal = await NodeJournal.open(storage);
 
+		expect(journal.snapshot().schema_version).toBe(2);
 		expect(journal.snapshot().mission_assignment_cursor).toBeNull();
 		expect(storage.saved).toHaveLength(1);
+		expect(storage.saved[0]?.schema_version).toBe(2);
 		expect(storage.saved[0]?.mission_assignment_cursor).toBeNull();
+	});
+
+	it("fails closed instead of inventing start inputs for v1 delivery state", async () => {
+		const storage = new MemoryStorage();
+		const current = await NodeJournal.open(storage);
+		await current.ingestCursorPage([storedItem()], "7");
+		const legacy = structuredClone(storage.state) as Record<string, unknown>;
+		legacy.schema_version = 1;
+		storage.state = legacy;
+
+		await expect(NodeJournal.open(storage)).rejects.toThrow(
+			"schema 1 with deliveries cannot be migrated safely",
+		);
 	});
 
 	it("reopens the durable Mission assignment continuation cursor", async () => {
@@ -82,6 +101,22 @@ describe("NodeJournal", () => {
 			kind: "claim",
 			input: { idempotency_key: `claim:${IDS.delivery}:1` },
 		});
+	});
+
+	it("reopens the exact checkpointed start input", async () => {
+		const storage = new MemoryStorage();
+		const journal = await NodeJournal.open(storage);
+		await journal.ingestCursorPage([storedItem()], "7");
+		const input = hostStartInput();
+		await journal.setMissionSession(input.session);
+		await journal.updateDelivery(IDS.delivery, (entry) => {
+			entry.host_session = structuredClone(input.session);
+		});
+		await journal.checkpointStartTurnInput(IDS.delivery, input);
+
+		const reopened = await NodeJournal.open(storage);
+
+		expect(reopened.snapshot().deliveries[IDS.delivery]?.start_turn_input).toEqual(input);
 	});
 
 	it("persists terminal Mission acceptance quarantine and forbids resubmission", async () => {
@@ -183,5 +218,31 @@ function missionAcceptanceInput(): MissionParticipantAcceptanceInput {
 			profile_name: "restricted",
 			grant_sha256: "b".repeat(64),
 		},
+	};
+}
+
+function hostStartInput(): StartTurnInput {
+	const fromManifest = (text: string) => ({
+		text,
+		authorPrincipalId: IDS.actor,
+		provenance: "mission_manifest" as const,
+	});
+	return {
+		session: {
+			sessionId: "session-1",
+			missionId: IDS.mission,
+			participantId: IDS.actor,
+			workspaceAlias: "backend",
+		},
+		missionId: IDS.mission,
+		deliveryId: IDS.delivery,
+		executionAttempt: 1,
+		contractVersion: 1,
+		missionSequence: 2,
+		objective: fromManifest("Ship a compatible backend and client."),
+		assignment: fromManifest("Implement the backend."),
+		acceptanceCriteria: [fromManifest("Both repositories pass.")],
+		peerMessages: [],
+		artifacts: [],
 	};
 }

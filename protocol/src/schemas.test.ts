@@ -4,6 +4,7 @@ import {
 	artifactRefSchema,
 	contractRevisionSchema,
 	deliverySchema,
+	isoTimestampSchema,
 	messageSchema,
 	missionContextSchema,
 	missionEventEnvelopeSchema,
@@ -481,6 +482,15 @@ describe("missionContextSchema", () => {
 });
 
 describe("message and artifact schemas", () => {
+	it("bounds ISO timestamps as well as validating their shape", () => {
+		expect(isoTimestampSchema.parse("2026-08-02T10:02:00.000+05:30")).toBe(
+			"2026-08-02T10:02:00.000+05:30",
+		);
+		expect(isoTimestampSchema.safeParse(`2026-08-02T10:02:00.${"0".repeat(65)}Z`).success).toBe(
+			false,
+		);
+	});
+
 	it("accepts a bounded message with artifact references", () => {
 		const message = {
 			message_id: ids.message,

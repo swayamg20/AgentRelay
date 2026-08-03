@@ -11,14 +11,15 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"bin": {
-		"agentrelay-node": "dist/bin/agentrelay-node.js"
+		"agentrelay-node": "dist/bin/agentrelay-node.js",
+		"agentrelay-capsule": "dist/bin/agentrelay-capsule.js"
 	},
 	"files": ["dist"],
 	"scripts": {
 		"prebuild": "pnpm --filter @agentrelay/protocol build",
 		"build": "tsc -p tsconfig.json",
 		"start": "node dist/bin/agentrelay-node.js run",
-		"dev": "node --import tsx/esm src/bin/agentrelay-node.ts",
+		"dev": "tsx src/bin/agentrelay-node.ts",
 		"pretest": "pnpm --filter @agentrelay/protocol build",
 		"test": "vitest run",
 		"test:watch": "vitest",
@@ -34,7 +35,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.0",
-		"tsx": "^4.19.2",
+		"tsx": "4.19.2",
 		"typescript": "^5.7.2",
 		"vitest": "^2.1.8"
 	}
