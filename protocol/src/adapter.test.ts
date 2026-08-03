@@ -189,12 +189,12 @@ describe("FakeAgentHostAdapter", () => {
 		const accepted = await collect(adapter.startTurn(input));
 		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 		expect(ref).toEqual(accepted[0]?.turn);
-		expect((await collect(adapter.recoverTurn(ref!))).map((event) => event.kind)).toEqual([
+		expect((await collect(adapter.recoverTurn(ref!, input))).map((event) => event.kind)).toEqual([
 			"accepted",
 		]);
 
 		adapter.completeTurn(input.deliveryId, input.executionAttempt, REPLY);
-		const recovered = await collect(adapter.recoverTurn(ref!));
+		const recovered = await collect(adapter.recoverTurn(ref!, input));
 
 		expect(recovered.map((event) => event.kind)).toEqual(["accepted", "usage", "completed"]);
 		expect(recovered[2]).toMatchObject({ kind: "completed", disposition: REPLY });
@@ -265,7 +265,10 @@ describe("FakeAgentHostAdapter", () => {
 		}
 
 		const recovered = await collect(
-			adapter.recoverTurn((await adapter.lookupTurn(input.deliveryId, input.executionAttempt))!),
+			adapter.recoverTurn(
+				(await adapter.lookupTurn(input.deliveryId, input.executionAttempt))!,
+				input,
+			),
 		);
 		expect(recovered[1]).toMatchObject({ kind: "output", sequence: 2, text: "working" });
 		expect(recovered.at(-1)).toMatchObject({
@@ -292,7 +295,7 @@ describe("FakeAgentHostAdapter", () => {
 		await iterator.return?.();
 
 		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
-		const recovered = await collect(adapter.recoverTurn(ref!));
+		const recovered = await collect(adapter.recoverTurn(ref!, input));
 		expect(recovered.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
 		expect(recovered.map((event) => event.kind)).toEqual([
 			"accepted",
@@ -329,7 +332,7 @@ describe("FakeAgentHostAdapter", () => {
 
 		await adapter.cancelTurn(ref!);
 		await adapter.cancelTurn(ref!);
-		const recovered = await collect(adapter.recoverTurn(ref!));
+		const recovered = await collect(adapter.recoverTurn(ref!, input));
 
 		expect(recovered.map((event) => event.kind)).toEqual(["accepted", "usage", "cancelled"]);
 		expect(adapter.counters.cancelTurnCalls).toBe(2);
@@ -344,12 +347,18 @@ describe("FakeAgentHostAdapter", () => {
 		await collect(adapter.startTurn(input));
 		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 
-		expect(() => adapter.recoverTurn({ ...ref!, missionId: IDS.otherMission })).toThrow(
+		expect(() => adapter.recoverTurn({ ...ref!, missionId: IDS.otherMission }, input)).toThrow(
 			/unknown fake host turn/,
 		);
-		expect(() => adapter.recoverTurn({ ...ref!, executionAttempt: 2 })).toThrow(
+		expect(() => adapter.recoverTurn({ ...ref!, executionAttempt: 2 }, input)).toThrow(
 			/unknown fake host turn/,
 		);
+		expect(() =>
+			adapter.recoverTurn(ref!, {
+				...input,
+				assignment: { ...input.assignment, text: "Changed recovery assignment" },
+			}),
+		).toThrow(/host execution reused with different turn correlation/);
 		await expect(adapter.cancelTurn({ ...ref!, contractVersion: 2 })).rejects.toThrow(
 			/unknown fake host turn/,
 		);

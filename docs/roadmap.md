@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-02. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-03. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -12,9 +12,10 @@ the product's final boundary.
 
 The current repository combines an authenticated asynchronous mailbox, a mounted
 Mission and delivery control plane, and an experimental foreground Node. The Node
-journals Relay authority and starts or resumes a deterministic fake-host turn. The
-next milestone is an independently persistent host capsule and a real Node-process
-restart proof, followed by the first pinned coding-agent adapter.
+journals Relay authority and starts or resumes either an in-process fake-host turn or
+an independently persistent fake Mission Capsule. The detached Capsule and Node-
+process restart proof are implemented. The next runtime milestone is the first pinned
+coding-agent adapter.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -83,13 +84,15 @@ reconciliation.
 
 ## Stage 3: AgentRelay Node
 
-**Status:** first turn-delivery checkpoint implemented. The foreground Node has a
+**Status:** persistent fake-Capsule checkpoint implemented. The foreground Node has a
 mode-0600 device config, local workspace/policy mapping, atomic journal,
 recovery-before-poll loop, fenced Relay operations, repository preflight, and fake
-adapter replay. Unit fault injection and a real Relay/Postgres E2E prove one host
-turn per processed delivery across duplicate polling, runner reconstruction, and an
-injected in-process failure immediately after host acceptance. Contract
-acknowledgement, verification execution, external fake-host process recovery, and
+adapter replay. It can launch a detached, Mission-scoped fake Capsule through a
+private capability-authenticated Unix socket. Unit fault injection and real
+Relay/Postgres E2E coverage prove one host turn per processed delivery across
+duplicate polling, runner reconstruction, and `SIGKILL` after host acceptance. The
+restart proof still requires operator-safe cleanup of the killed Node's stale process
+lock. Contract acknowledgement, verification execution, a real runtime adapter, and
 the two-machine exit gate remain open.
 
 - Add a `node/` pnpm workspace and daemon CLI.

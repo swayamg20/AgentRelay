@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { AgentHostAdapter } from "@agentrelay/protocol";
 import { FakeAgentHostAdapter } from "@agentrelay/protocol/testing";
 import { cac } from "cac";
 import pino from "pino";
@@ -9,6 +12,10 @@ import { ForegroundNode } from "../daemon.js";
 import { assertFakeRuntimeCredential } from "../fake-runtime.js";
 import { createFileJournalStorage } from "../file-journal.js";
 import { NodeJournal } from "../journal.js";
+import {
+	PersistentFakeCapsuleAdapter,
+	createDetachedCapsuleLauncher,
+} from "../persistent-capsule-adapter.js";
 import { acquireProcessLock } from "../process-lock.js";
 import { createNodeRelayClient } from "../relay-client.js";
 
@@ -22,44 +29,37 @@ cli
 	.option("--fake-outcome <outcome>", "Fake turn disposition: ready or reply", {
 		default: "ready",
 	})
-	.action(async (options) => {
-		const configPath = options.config ?? resolveNodeConfigPath();
-		const config = await loadNodeConfig(configPath);
-		assertFakeRuntimeCredential(config.node.token);
-		const stateDirectory = join(dirname(configPath), "state");
-		const lock = await acquireProcessLock(join(dirname(configPath), "run.lock"));
-		const controller = new AbortController();
-		const stop = () => controller.abort();
-		process.once("SIGINT", stop);
-		process.once("SIGTERM", stop);
+	.action((options) => runNode(options, () => fakeAdapter(options.fakeOutcome)));
 
-		try {
-			const journal = await NodeJournal.open(
-				createFileJournalStorage(join(stateDirectory, "journal.json")),
-			);
-			const adapter = fakeAdapter(options.fakeOutcome);
-			const node = new ForegroundNode({
-				config,
-				client: createNodeRelayClient({
-					relayUrl: config.relay_url,
-					credential: config.node.token,
-				}),
-				journal,
-				adapter,
-				pollIntervalMs: Number(options.pollMs),
-				logger: pino({ level: process.env.AGENTRELAY_NODE_LOG_LEVEL ?? "info" }),
+cli
+	.command(
+		"run-capsule",
+		"Run the foreground Node with independently persistent fake Mission capsules",
+	)
+	.option("--config <path>", "Path to the mode-0600 Node config")
+	.option("--poll-ms <milliseconds>", "Polling interval", { default: 1_000 })
+	.option("--once", "Run one recovery/poll/processing cycle and exit")
+	.option("--capsule-root <path>", "Private directory containing Mission capsules")
+	.option("--fake-outcome <outcome>", "Fake turn disposition: ready or reply", {
+		default: "ready",
+	})
+	.option("--completion-delay-ms <milliseconds>", "Delay before the fake capsule completes", {
+		default: 0,
+	})
+	.action((options) =>
+		runNode(options, async ({ stateDirectory }) => {
+			const capsuleRoot =
+				typeof options.capsuleRoot === "string"
+					? resolve(options.capsuleRoot)
+					: join(stateDirectory, "capsules");
+			return PersistentFakeCapsuleAdapter.open({
+				rootDirectory: capsuleRoot,
+				launcher: createDetachedCapsuleLauncher(capsuleProcessCommand()),
+				outcome: options.fakeOutcome,
+				completionDelayMs: Number(options.completionDelayMs),
 			});
-			if (options.once) {
-				await node.runCycle(controller.signal);
-			} else {
-				await node.run(controller.signal);
-			}
-		} finally {
-			process.removeListener("SIGINT", stop);
-			process.removeListener("SIGTERM", stop);
-			await lock.release();
-		}
-	});
+		}),
+	);
 
 cli.help();
 cli.version("0.0.1");
@@ -93,4 +93,65 @@ function fakeAdapter(outcome: unknown): FakeAgentHostAdapter {
 					},
 	});
 	return adapter;
+}
+
+interface RunContext {
+	readonly stateDirectory: string;
+}
+
+async function runNode(
+	options: Record<string, unknown>,
+	createAdapter: (context: RunContext) => AgentHostAdapter | Promise<AgentHostAdapter>,
+): Promise<void> {
+	const configPath = resolve(
+		typeof options.config === "string" ? options.config : resolveNodeConfigPath(),
+	);
+	const config = await loadNodeConfig(configPath);
+	assertFakeRuntimeCredential(config.node.token);
+	const stateDirectory = join(dirname(configPath), "state");
+	const lock = await acquireProcessLock(join(dirname(configPath), "run.lock"));
+	const controller = new AbortController();
+	const stop = () => controller.abort();
+	process.once("SIGINT", stop);
+	process.once("SIGTERM", stop);
+
+	try {
+		const journal = await NodeJournal.open(
+			createFileJournalStorage(join(stateDirectory, "journal.json")),
+		);
+		const adapter = await createAdapter({ stateDirectory });
+		const node = new ForegroundNode({
+			config,
+			client: createNodeRelayClient({
+				relayUrl: config.relay_url,
+				credential: config.node.token,
+			}),
+			journal,
+			adapter,
+			pollIntervalMs: Number(options.pollMs),
+			logger: pino({ level: process.env.AGENTRELAY_NODE_LOG_LEVEL ?? "info" }),
+		});
+		if (options.once) {
+			await node.runCycle(controller.signal);
+		} else {
+			await node.run(controller.signal);
+		}
+	} finally {
+		process.removeListener("SIGINT", stop);
+		process.removeListener("SIGTERM", stop);
+		await lock.release();
+	}
+}
+
+function capsuleProcessCommand() {
+	const currentEntrypoint = fileURLToPath(import.meta.url);
+	const extension = extname(currentEntrypoint);
+	const capsuleEntrypoint = join(dirname(currentEntrypoint), `agentrelay-capsule${extension}`);
+	return {
+		executable: process.execPath,
+		args:
+			extension === ".ts"
+				? [createRequire(import.meta.url).resolve("tsx/cli"), capsuleEntrypoint]
+				: [capsuleEntrypoint],
+	};
 }

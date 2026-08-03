@@ -1,9 +1,9 @@
 # Delivery lease control plane
 
 - **Date:** 2026-08-02
-- **Status:** Implemented and covered at the Relay service/HTTP boundary; the first
-  foreground Node checkpoint is implemented, while Relay restart, OS-process host
-  recovery, and two-machine proof remain pending.
+- **Status:** Implemented and covered at the Relay service/HTTP boundary; foreground
+  Node journaling and detached fake-Capsule recovery are implemented, while Relay
+  restart, a real runtime, and two-machine proof remain pending.
 - **Decision:** Build a database-backed Node delivery API before starting a local
   runtime.
 - **Scope:** Poll, claim, start, renew, complete, release, retry discovery, and
@@ -141,12 +141,15 @@ real Node journal, a killed Relay process, or two-machine execution.
   `awaiting_acceptance` rows so poison pages cannot hide live work or delay lease
   recovery at the start of a cycle.
 - The foreground Node now persists its cursor, exact operation intent, lease/fence,
-  Mission session, and host-turn mapping in an atomic local journal. Its in-process
-  runner reconstruction proves no duplicate fake-host turn, but Relay restart,
-  OS-process host recovery, and two-machine correctness remain unproved end to end.
+  Mission session, and host-turn mapping in an atomic local journal. Its detached
+  fake Capsule persists the exact start input, turn, and event stream independently;
+  the Node-process kill/restart test proves one recovered fake-host result. Relay
+  restart, real-runtime recovery, and two-machine correctness remain unproved end to
+  end.
 
 The local checkpoint and its deliberate nonclaims are recorded in
-[`002-foreground-node-runtime.md`](002-foreground-node-runtime.md).
+[`002-foreground-node-runtime.md`](002-foreground-node-runtime.md) and
+[`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md).
 
 ## Alternatives rejected for this slice
 

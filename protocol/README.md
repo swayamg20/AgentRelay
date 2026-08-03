@@ -61,7 +61,9 @@ the relay-visible `nodeDescriptorSchema`.
 The adapter contract makes replay semantics explicit: every event has a stable
 turn-local sequence, available usage is a monotonic cumulative turn snapshot, and
 artifact input retains its version, source actor, exact hashed UTF-8 text, and a
-validated typed value derived from that text. `acceptHostEvent` enforces
+validated typed value derived from that text. `recoverTurn` receives both the host
+turn reference and the complete expected `StartTurnInput`; an adapter must reject a
+changed recovery input. `acceptHostEvent` enforces
 acceptance-first sequencing, one terminal event, and aggregate event/output/artifact
 and reported-token limits across live delivery and full replay. A terminal event
 requires a usage snapshot or explicit unavailability first. Initialize its state with
@@ -89,9 +91,10 @@ the current durable delivery state before causing a new host effect.
 
 This package defines data, state transitions, and an in-memory deterministic proof.
 It does not itself persist Missions or idempotency receipts; the sibling `relay/`
-workspace now does. The repository still does not execute production local policy,
-start a real model runtime, prove OS-process host-capsule recovery, or claim A2A
-conformance.
+workspace now does. The sibling `node/` workspace implements a persistent fake
+Capsule and proves recovery after Node-process death. The repository still does not
+execute production local policy, start a real model runtime, prove a two-machine
+Mission, or claim A2A conformance.
 
 Version 0.1 is the TypeScript/Zod binding used to prove the first Node. Committed
 JSON Schema and OpenAPI bindings remain required before a non-TypeScript Node or

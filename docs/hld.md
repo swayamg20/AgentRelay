@@ -1,6 +1,6 @@
 # High-level design: current relay implementation
 
-> **Scope:** Current repository implementation as of 2026-08-02.
+> **Scope:** Current repository implementation as of 2026-08-03.
 > This document describes the existing handoff plane, public Mission delivery
 > control plane, Node identity/workspace API, and experimental fake-runtime Node.
 > It does not describe a complete autonomous coding runtime. See
@@ -15,9 +15,9 @@ the mailbox as tools to Claude Code or Codex.
 
 Humans or active agent sessions still initiate mailbox checks. Separately, the
 foreground `agentrelay-node` command can use a pre-issued Node credential, accept a
-Mission assignment, durably lease one turn, and drive the deterministic fake adapter.
-It does not yet activate a real coding-agent runtime or turn Mission work into
-repository changes.
+Mission assignment, durably lease one turn, and drive either an in-process fake
+adapter or a detached persistent fake Mission Capsule. It does not yet activate a
+real coding-agent runtime or turn Mission work into repository changes.
 
 ## Components
 
@@ -34,7 +34,9 @@ agentrelay-mcp                                          agentrelay-mcp
                    best-effort Slack webhook
 
 Experimental path on each machine:
-agentrelay-node -> atomic local journal -> deterministic fake adapter
+agentrelay-node -> atomic local journal
+        |-- in-process deterministic fake adapter
+        `-- private Unix socket -> detached fake Mission Capsule
 ```
 
 ### Relay
@@ -96,8 +98,11 @@ execution attempt while lease-only recovery keeps the same host turn. Its device
 configuration and local journal are mode 0600; the checkout path never enters the
 Relay payload.
 
-This is a delivery/recovery checkpoint. The in-memory fake host cannot survive an
-operating-system process kill, and the Node has no Codex or Claude adapter.
+The original `run` path remains in memory. The `run-capsule` path instead persists
+one fake host process per Mission, authenticates every request with a local capability,
+and binds recovery to the exact original start input checkpointed before host start.
+That Capsule can remain alive when the Node is killed. The Node still has no Codex or
+Claude adapter.
 
 ## Core data model
 
@@ -235,9 +240,11 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ### Not implemented today
 
-- A real coding-agent runtime session or external fake-host capsule that survives a
-  Node-process kill. The current foreground Node and in-memory fake adapter prove
-  runner reconstruction, not independent host-process survival.
+- A real coding-agent runtime session. The external Capsule and Node-process recovery
+  proof currently exercise only the deterministic fake runtime.
+- Automatic Node supervision or safe unattended reclamation of a `run.lock` left by
+  `SIGKILL`; restart currently requires an operator to verify the recorded process is
+  dead before removing that exact lock.
 - Automatic worktree isolation and complete per-Mission command/network mediation.
 - Contract-acknowledgement and registered verification-command delivery handlers.
 - Local command, edit, test, and permission-decision audit.
@@ -279,6 +286,10 @@ section of [`architecture.md`](architecture.md).
 - If a notification fails, the persisted handoff remains available for polling.
 - If the MCP process exits, no manual mailbox tool call is processed until a host
   starts it again. A separately running foreground Node can continue Mission polling.
+- A normal Node exit releases its singleton lock and leaves detached Capsules alive.
+  During `SIGINT` or `SIGTERM`, an in-flight turn is first asked to cancel. A
+  `SIGKILL` cannot release the Node lock; after operator-safe lock cleanup, the
+  restarted Node can recover the Capsule's exact persisted turn and event history.
 - If a handoff creation or message append is retried with the same client idempotency
   key and matching checked fields, the relay returns the recorded result even after a
   later block or terminal transition. Same-key concurrent retries are serialized.
@@ -320,7 +331,6 @@ section of [`architecture.md`](architecture.md).
 The mailbox remains a compatibility and inspection surface. The relay exposes a
 separate, authenticated Mission and delivery control plane without stretching the
 handoff row into a scheduler. The foreground Node now consumes one turn through that
-API with a fake host. The next checkpoint is an independently persistent host capsule
-and real process-restart proof, followed by a pinned coding-agent adapter and
-two-machine run; Mission-level expiry/dead-letter reconciliation remains a separate
-relay gap.
+API with either an in-process fake or a detached persistent fake Capsule. The next
+runtime checkpoint is a pinned coding-agent adapter, followed by a two-machine run;
+Mission-level expiry/dead-letter reconciliation remains a separate relay gap.

@@ -24,6 +24,7 @@ import {
 	type JournalDelivery,
 	type NodeJournal,
 	type OperationIntent,
+	startTurnInputDigest,
 	terminalResultFromEvents,
 } from "./journal.js";
 import { PolicyError, resolvePolicyProfile } from "./policy.js";
@@ -263,19 +264,20 @@ export class DeliveryProcessor {
 			);
 			leaseKeeper.assertHealthy();
 			const existingSession = this.#journal.snapshot().mission_sessions[assignment.mission_id];
-			const session =
-				existingSession ??
-				(await waitForHostOperation(
-					() =>
-						this.#adapter.ensureSession({
-							missionId: assignment.mission_id,
-							participantId: assignment.participant_agent_id,
-							workspaceAlias: participant.workspace_alias,
-						}),
-					signal,
-					cancelActiveTurn,
-					authorityFailure,
-				));
+			const session = await waitForHostOperation(
+				() =>
+					this.#adapter.ensureSession({
+						missionId: assignment.mission_id,
+						participantId: assignment.participant_agent_id,
+						workspaceAlias: participant.workspace_alias,
+					}),
+				signal,
+				cancelActiveTurn,
+				authorityFailure,
+			);
+			if (existingSession !== undefined && !isDeepStrictEqual(existingSession, session)) {
+				throw new Error("Host session identity changed during durable Mission recovery");
+			}
 			leaseKeeper.assertHealthy();
 			await this.#journal.setMissionSession(session);
 			leaseKeeper.assertHealthy();
@@ -286,7 +288,13 @@ export class DeliveryProcessor {
 			leaseKeeper.assertHealthy();
 
 			const currentEntry = requireEntry(this.#journal, deliveryId);
-			const turnInput = startTurnInput(currentEntry.item, assignment, session, executionAttempt);
+			const turnInput =
+				currentEntry.start_turn_input ??
+				(await this.#journal.checkpointStartTurnInput(
+					deliveryId,
+					startTurnInput(currentEntry.item, assignment, session, executionAttempt),
+					this.#now(),
+				));
 			hostTurn = await waitForHostOperation(
 				() => this.#adapter.lookupTurn(deliveryId, executionAttempt),
 				signal,
@@ -298,7 +306,7 @@ export class DeliveryProcessor {
 			const stream =
 				hostTurn === null
 					? this.#adapter.startTurn(turnInput)
-					: this.#adapter.recoverTurn(hostTurn);
+					: this.#adapter.recoverTurn(hostTurn, turnInput);
 			const events = await consumeHostEvents({
 				deliveryId,
 				stream,
@@ -948,15 +956,20 @@ function startTurnInput(
 }
 
 function archiveHostExecution(entry: JournalDelivery, now: Date): void {
-	if (entry.host_events.length > 0 || entry.result !== null) {
+	if (entry.start_turn_input !== null || entry.host_events.length > 0 || entry.result !== null) {
+		if (entry.start_turn_input === null) {
+			throw new Error("Cannot archive host execution without its exact start input");
+		}
 		entry.host_attempt_history.push({
 			execution_attempt: entry.execution_attempt,
+			start_input_sha256: startTurnInputDigest(entry.start_turn_input),
 			host_events: structuredClone(entry.host_events),
 			result: entry.result === null ? null : structuredClone(entry.result),
 			archived_at: now.toISOString(),
 		});
 	}
 	entry.execution_attempt += 1;
+	entry.start_turn_input = null;
 	entry.host_events = [];
 	entry.result = null;
 }

@@ -138,6 +138,84 @@ describe("DeliveryProcessor", () => {
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
+	it("recovers with the journaled start input after the Relay assignment advances", async () => {
+		let crash = true;
+		const harness = await createHarness({
+			mission: assignment({ peerMessageCount: 1 }),
+			onCheckpoint(checkpoint) {
+				if (crash && checkpoint === "host_accepted") {
+					crash = false;
+					throw new Error("injected crash after host acceptance");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow("injected crash");
+		const originalInput = harness.journal.snapshot().deliveries[IDS.delivery]!.start_turn_input!;
+		expect(originalInput.peerMessages.map((message) => message.messageId)).toEqual([
+			peerMessageId(1),
+		]);
+
+		harness.client.mission = assignment({ peerMessageCount: 2 });
+		expect(harness.client.mission.coordinator_state.messages).toHaveLength(2);
+		let recoveredInput: StartTurnInput | undefined;
+		const adapter: AgentHostAdapter = {
+			...adapterDelegates(harness.adapter),
+			recoverTurn(ref, expectedInput) {
+				recoveredInput = structuredClone(expectedInput);
+				return harness.adapter.recoverTurn(ref, expectedInput);
+			},
+		};
+		const restarted = new DeliveryProcessor({
+			config: harness.config,
+			client: harness.client,
+			journal: harness.journal,
+			adapter,
+			now: () => new Date(TIMES.renewed),
+			preflight: successfulPreflight,
+		});
+
+		await restarted.process(IDS.delivery);
+
+		expect(recoveredInput).toEqual(originalInput);
+		expect(recoveredInput?.peerMessages).toHaveLength(1);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("fails closed when a recovered Mission session changes host identity", async () => {
+		let crash = true;
+		const harness = await createHarness({
+			onCheckpoint(checkpoint) {
+				if (crash && checkpoint === "host_accepted") {
+					crash = false;
+					throw new Error("injected crash after host acceptance");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow("injected crash");
+		const changedSessionAdapter: AgentHostAdapter = {
+			...adapterDelegates(harness.adapter),
+			async ensureSession(input) {
+				const session = await harness.adapter.ensureSession(input);
+				return { ...session, sessionId: `${session.sessionId}-different` };
+			},
+		};
+
+		const restarted = new DeliveryProcessor({
+			config: harness.config,
+			client: harness.client,
+			journal: harness.journal,
+			adapter: changedSessionAdapter,
+			now: () => new Date(TIMES.renewed),
+			preflight: successfulPreflight,
+		});
+		await expect(restarted.process(IDS.delivery)).rejects.toThrow(
+			"Host session identity changed during durable Mission recovery",
+		);
+
+		expect(harness.adapter.counters.recoverTurnCalls).toBe(0);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("host_accepted");
+	});
+
 	it("accepts an identical duplicate event within one live host stream", async () => {
 		const harness = await createHarness();
 		const processor = new DeliveryProcessor({
@@ -513,7 +591,9 @@ describe("DeliveryProcessor", () => {
 		const released = harness.journal.snapshot().deliveries[IDS.delivery]!;
 		expect(released.phase).toBe("ingested");
 		expect(released.execution_attempt).toBe(2);
+		expect(released.start_turn_input).toBeNull();
 		expect(released.host_attempt_history).toHaveLength(1);
+		expect(released.host_attempt_history[0]?.start_input_sha256).toMatch(/^[a-f0-9]{64}$/);
 
 		await processorFor(harness).process(
 			IDS.delivery,
@@ -522,7 +602,9 @@ describe("DeliveryProcessor", () => {
 		);
 
 		expect(harness.adapter.counters.turnsCreated).toBe(2);
-		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+		const completed = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(completed.phase).toBe("acknowledged");
+		expect(completed.start_turn_input?.executionAttempt).toBe(2);
 	});
 
 	it("recovers after release authority is lost instead of replaying a poison intent forever", async () => {
@@ -734,7 +816,7 @@ function duplicateAcceptedEvent(delegate: AgentHostAdapter): AgentHostAdapter {
 		ensureSession: (input) => delegate.ensureSession(input),
 		lookupTurn: (deliveryId, executionAttempt) => delegate.lookupTurn(deliveryId, executionAttempt),
 		startTurn: (input) => duplicateAccepted(delegate.startTurn(input)),
-		recoverTurn: (ref) => delegate.recoverTurn(ref),
+		recoverTurn: (ref, expectedInput) => delegate.recoverTurn(ref, expectedInput),
 		cancelTurn: (ref) => delegate.cancelTurn(ref),
 	};
 }
@@ -757,7 +839,7 @@ function stallHostStream(delegate: AgentHostAdapter): AgentHostAdapter {
 	return {
 		...adapterDelegates(delegate),
 		startTurn: (input) => stallAfterReplay(delegate.startTurn(input)),
-		recoverTurn: (ref) => stallAfterReplay(delegate.recoverTurn(ref)),
+		recoverTurn: (ref, expectedInput) => stallAfterReplay(delegate.recoverTurn(ref, expectedInput)),
 	};
 }
 
@@ -767,7 +849,7 @@ function adapterDelegates(delegate: AgentHostAdapter): AgentHostAdapter {
 		ensureSession: (input) => delegate.ensureSession(input),
 		lookupTurn: (deliveryId, executionAttempt) => delegate.lookupTurn(deliveryId, executionAttempt),
 		startTurn: (input) => delegate.startTurn(input),
-		recoverTurn: (ref) => delegate.recoverTurn(ref),
+		recoverTurn: (ref, expectedInput) => delegate.recoverTurn(ref, expectedInput),
 		cancelTurn: (ref) => delegate.cancelTurn(ref),
 	};
 }

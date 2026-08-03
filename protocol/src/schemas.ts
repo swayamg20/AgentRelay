@@ -77,7 +77,7 @@ function hasUniqueValues(values: string[]): boolean {
 	return new Set(values).size === values.length;
 }
 
-export const isoTimestampSchema = z.string().datetime({ offset: true });
+export const isoTimestampSchema = z.string().max(64).datetime({ offset: true });
 
 export const missionStatusSchema = z.enum([
 	"awaiting_acceptance",

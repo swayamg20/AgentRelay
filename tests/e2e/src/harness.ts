@@ -99,6 +99,7 @@ export class TestRelay {
 			RELAY_METRICS_TOKEN: randomBytes(32).toString("hex"),
 			RELAY_PUBLIC_URL: baseUrl,
 			RELAY_PORT: String(port),
+			RELAY_ENV: "dev",
 			RELAY_LOG_LEVEL: "fatal",
 		});
 

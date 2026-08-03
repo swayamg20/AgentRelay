@@ -576,7 +576,7 @@ export interface AgentHostAdapter {
 	ensureSession(input: SessionInput): Promise<HostSessionRef>;
 	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null>;
 	startTurn(input: StartTurnInput): AsyncIterable<HostEvent>;
-	recoverTurn(ref: HostTurnRef): AsyncIterable<HostEvent>;
+	recoverTurn(ref: HostTurnRef, expectedInput: StartTurnInput): AsyncIterable<HostEvent>;
 	cancelTurn(ref: HostTurnRef): Promise<void>;
 }
 

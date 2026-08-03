@@ -19,11 +19,11 @@ repositories is the first proof, not the final product boundary.
 ## Honest status
 
 The repository currently ships an **authenticated asynchronous mailbox, a durable
-Mission delivery control plane, and an experimental foreground Node**, not the full
-autonomous runtime described above. The Node can consume one turn at a time through
-the deterministic fake adapter with an atomically replaced durable local journal. It
-does not yet start a real coding-agent runtime or complete contract-acknowledgement
-and verification deliveries.
+Mission delivery control plane, and an experimental Node with persistent fake Mission
+Capsules**, not the full autonomous runtime described above. The Node can consume one
+turn at a time through either its in-process deterministic fake or a detached fake
+Capsule backed by durable local state. It does not yet start a real coding-agent
+runtime or complete contract-acknowledgement and verification deliveries.
 
 ### Implemented today
 
@@ -54,11 +54,12 @@ and verification deliveries.
   local alias-to-checkout mapping, canonical policy grants, repository URL/base/clean
   preflight, durable bounded Mission-assignment pagination, atomic cursor and
   operation journaling, recovery-first polling, fenced lease renewal, exact host-event
-  replay, and a foreground fake-adapter CLI. Each cycle services delivery work before
-  advancing one assignment page. A real Relay/Postgres E2E test proves duplicate
-  polling after reopening a completed journal, plus in-process processor
-  reconstruction after an injected failure immediately after host acceptance,
-  without a second host turn.
+  replay, and foreground fake-adapter CLIs. Its `run-capsule` path launches one
+  detached, Mission-scoped fake Capsule behind a private capability-authenticated
+  Unix-socket protocol. The Capsule durably binds the exact start input before
+  exposing acceptance. Real Relay/Postgres E2E coverage kills the Node after host
+  acceptance, proves the Capsule remains reachable, then recovers the same turn and
+  commits exactly one Mission result after an operator-safe stale-lock cleanup.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
@@ -66,7 +67,8 @@ and verification deliveries.
 ### Next architecture, not shipped yet
 
 - Isolated worktrees and persistent real-runtime sessions attached to the persisted
-  device and workspace identities.
+  device and workspace identities. The current persistent Capsule hosts only the
+  deterministic fake runtime.
 - Complete local verification, contract-artifact carriage, and policy/evidence
   enforcement outside the model.
 - Codex and Claude runtime adapters that start or resume real agent turns.
@@ -79,8 +81,10 @@ The design is in
 [`RFC 001: AgentRelay Node and Missions`](docs/rfcs/001-agentrelay-node-and-missions.md).
 The implemented lease and recovery decisions are recorded in
 [`Delivery lease control plane`](docs/research/001-delivery-lease-control-plane.md).
-The current local checkpoint is recorded in
+The initial local checkpoint is recorded in
 [`Foreground Node runtime`](docs/research/002-foreground-node-runtime.md).
+The detached-process recovery checkpoint is recorded in
+[`Persistent Mission Capsule`](docs/research/003-persistent-mission-capsule.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -269,8 +273,8 @@ this README does not claim full A2A conformance.
 ├── protocol/             Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/                current Hono + Drizzle + Postgres relay
 ├── mcp-server/           current MCP server and agentrelay CLI
-├── node/                 experimental foreground Node and durable local journal
-├── tests/e2e/            relay + MCP and foreground-Node test harnesses
+├── node/                 experimental Node, local journal, and fake Mission Capsules
+├── tests/e2e/            relay + MCP and Node/Capsule process test harnesses
 ├── landing/              GitHub Pages landing page
 └── docs/
     ├── architecture.md   current truth and target boundaries
@@ -285,7 +289,8 @@ this README does not claim full A2A conformance.
     ├── ambient-agent.md  superseded design decision record
     ├── research/
     │   ├── 001-delivery-lease-control-plane.md
-    │   └── 002-foreground-node-runtime.md
+    │   ├── 002-foreground-node-runtime.md
+    │   └── 003-persistent-mission-capsule.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```

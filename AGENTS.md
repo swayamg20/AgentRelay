@@ -44,7 +44,8 @@ need.
   and revocation.
 - The AgentRelay Node owns local runtime activation, mapping logical workspace aliases
   to approved repositories, worktrees, policy enforcement, and run traces. Its current
-  foreground fake-runtime path is only the first checkpoint of that boundary.
+  fake-runtime paths, including the detached Mission Capsule, are checkpoints of that
+  boundary rather than a production coding-agent runtime.
 - MCP is a local tool and context boundary, not a portable wake-up mechanism.
 - SSE or WebSocket can reduce delivery latency, but durable database state and
   replay cursors remain the source of truth.

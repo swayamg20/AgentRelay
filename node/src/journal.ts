@@ -7,6 +7,7 @@ import {
 	type MissionDeliveryItem,
 	type MissionParticipantAcceptanceInput,
 	type NodeDeliveryResultPayload,
+	type StartTurnInput,
 	deliveryClaimInputSchema,
 	deliveryCompleteInputSchema,
 	deliveryReleaseInputSchema,
@@ -17,6 +18,7 @@ import {
 	missionDeliveryItemSchema,
 	missionParticipantAcceptanceInputSchema,
 	nodeDeliveryResultPayloadSchema,
+	startTurnInputSchema,
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
@@ -48,6 +50,7 @@ const operationIntentSchema = z.discriminatedUnion("kind", [
 const archivedHostExecutionSchema = z
 	.object({
 		execution_attempt: z.number().int().positive().max(100),
+		start_input_sha256: z.string().regex(/^[a-f0-9]{64}$/),
 		host_events: z.array(hostEventSchema).max(4_096),
 		result: nodeDeliveryResultPayloadSchema.nullable(),
 		archived_at: z.string().datetime(),
@@ -64,6 +67,7 @@ const journalDeliverySchema = z
 		operation: operationIntentSchema.nullable(),
 		host_session: hostSessionRefSchema.nullable(),
 		execution_attempt: z.number().int().positive().max(100),
+		start_turn_input: startTurnInputSchema.nullable(),
 		host_attempt_history: z.array(archivedHostExecutionSchema).max(99),
 		host_events: z.array(hostEventSchema).max(4_096),
 		result: nodeDeliveryResultPayloadSchema.nullable(),
@@ -78,6 +82,17 @@ const journalDeliverySchema = z
 				message: "Delivery identity digest does not match the journaled item",
 				path: ["identity_sha256"],
 			});
+		}
+		if (entry.start_turn_input === null) {
+			if (entry.host_events.length > 0 || entry.result !== null) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Host evidence requires the exact journaled start input",
+					path: ["start_turn_input"],
+				});
+			}
+		} else {
+			validateStartTurnInput(entry, entry.start_turn_input, ctx, ["start_turn_input"]);
 		}
 		const accepted = entry.host_events.find((event) => event.kind === "accepted");
 		if (accepted && entry.host_session?.sessionId !== accepted.turn.sessionId) {
@@ -138,7 +153,7 @@ const missionAcceptanceJournalSchema = z
 
 export const nodeJournalStateSchema = z
 	.object({
-		schema_version: z.literal(1),
+		schema_version: z.literal(2),
 		cursor: z
 			.string()
 			.regex(/^[1-9][0-9]*$/)
@@ -180,6 +195,11 @@ export interface JournalStorage {
 	save(state: NodeJournalState): Promise<void>;
 }
 
+interface JournalMigration {
+	readonly state: unknown;
+	readonly changed: boolean;
+}
+
 export class NodeJournal {
 	readonly #storage: JournalStorage;
 	#state: NodeJournalState;
@@ -192,22 +212,9 @@ export class NodeJournal {
 
 	static async open(storage: JournalStorage): Promise<NodeJournal> {
 		const stored = await storage.load();
-		const state = nodeJournalStateSchema.parse(
-			stored ?? {
-				schema_version: 1,
-				cursor: null,
-				mission_assignment_cursor: null,
-				deliveries: {},
-				mission_sessions: {},
-				mission_acceptances: {},
-			},
-		);
-		if (
-			stored === null ||
-			(typeof stored === "object" &&
-				stored !== null &&
-				!Object.hasOwn(stored, "mission_assignment_cursor"))
-		) {
+		const migrated = migrateJournalState(stored);
+		const state = nodeJournalStateSchema.parse(migrated.state);
+		if (migrated.changed) {
 			await storage.save(state);
 		}
 		return new NodeJournal(storage, state);
@@ -267,6 +274,30 @@ export class NodeJournal {
 			}
 			state.mission_sessions[session.missionId] = structuredClone(session);
 		});
+	}
+
+	async checkpointStartTurnInput(
+		deliveryId: string,
+		inputValue: StartTurnInput,
+		now = new Date(),
+	): Promise<StartTurnInput> {
+		const input = startTurnInputSchema.parse(inputValue);
+		const entry = await this.updateDelivery(deliveryId, (current) => {
+			if (current.host_events.length > 0 || current.result !== null) {
+				throw new Error(
+					`Host start input must be checkpointed before host evidence: ${deliveryId}`,
+				);
+			}
+			if (
+				current.start_turn_input !== null &&
+				!isDeepStrictEqual(current.start_turn_input, input)
+			) {
+				throw new Error(`Host start input changed within execution attempt: ${deliveryId}`);
+			}
+			current.start_turn_input = structuredClone(input);
+			current.updated_at = now.toISOString();
+		});
+		return structuredClone(entry.start_turn_input!);
 	}
 
 	async recordMissionAcceptance(
@@ -358,6 +389,7 @@ function upsertDelivery(state: NodeJournalState, itemInput: MissionDeliveryItem,
 			operation: null,
 			host_session: null,
 			execution_attempt: 1,
+			start_turn_input: null,
 			host_attempt_history: [],
 			host_events: [],
 			result: null,
@@ -372,6 +404,75 @@ function upsertDelivery(state: NodeJournalState, itemInput: MissionDeliveryItem,
 	assertSameDeliveryIdentity(existing.item.delivery, item.delivery);
 	existing.item.delivery = structuredClone(item.delivery);
 	existing.updated_at = now.toISOString();
+}
+
+function migrateJournalState(stored: unknown | null): JournalMigration {
+	if (stored === null) {
+		return {
+			state: {
+				schema_version: 2,
+				cursor: null,
+				mission_assignment_cursor: null,
+				deliveries: {},
+				mission_sessions: {},
+				mission_acceptances: {},
+			},
+			changed: true,
+		};
+	}
+	if (typeof stored !== "object" || stored === null || Array.isArray(stored)) {
+		return { state: stored, changed: false };
+	}
+	const record = stored as Record<string, unknown>;
+	if (record.schema_version !== 1) return { state: stored, changed: false };
+	if (
+		typeof record.deliveries === "object" &&
+		record.deliveries !== null &&
+		!Array.isArray(record.deliveries) &&
+		Object.keys(record.deliveries).length > 0
+	) {
+		throw new Error(
+			"Node journal schema 1 with deliveries cannot be migrated safely because exact host start inputs were not persisted",
+		);
+	}
+	const migrated = structuredClone(record);
+	migrated.schema_version = 2;
+	if (!Object.hasOwn(migrated, "mission_assignment_cursor")) {
+		migrated.mission_assignment_cursor = null;
+	}
+	return { state: migrated, changed: true };
+}
+
+function validateStartTurnInput(
+	entry: JournalDelivery,
+	input: StartTurnInput,
+	ctx: z.RefinementCtx,
+	path: readonly (string | number)[],
+): void {
+	for (const [field, actual, expected] of [
+		["deliveryId", input.deliveryId, entry.item.delivery.delivery_id],
+		["missionId", input.missionId, entry.item.delivery.mission_id],
+		["contractVersion", input.contractVersion, entry.item.delivery.contract_version],
+		["executionAttempt", input.executionAttempt, entry.execution_attempt],
+	] as const) {
+		if (actual === expected) continue;
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: `Host start input ${field} does not match its journal execution`,
+			path: [...path, field],
+		});
+	}
+	if (entry.host_session !== null && isDeepStrictEqual(input.session, entry.host_session)) return;
+	ctx.addIssue({
+		code: z.ZodIssueCode.custom,
+		message: "Host start input session does not match the journaled Mission session",
+		path: [...path, "session"],
+	});
+}
+
+export function startTurnInputDigest(inputValue: StartTurnInput): string {
+	const input = startTurnInputSchema.parse(inputValue);
+	return createHash("sha256").update(canonicalJson(input), "utf8").digest("hex");
 }
 
 function deliveryIdentityDigest(item: MissionDeliveryItem): string {

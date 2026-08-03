@@ -27,25 +27,40 @@ fake adapter before a real coding-agent adapter is introduced.
   streams, and lease renewal while the host turn runs. Lease-only reclaims preserve
   the execution attempt; a Relay-backed transient retry archives it and advances to a
   fresh host turn.
+- An optional `run-capsule` path that launches one detached fake-runtime process per
+  Mission and communicates through a private, versioned Unix-socket protocol.
+- Durable Capsule descriptors, exact start inputs and hashes, host-session/turn
+  references, stable event history, completion deadlines, and a Node-side execution
+  registry. Recovery must present both the original turn reference and the exact
+  `StartTurnInput`.
+- Capability authentication on every Capsule request, strict request/response
+  correlation, separately bounded 128 MiB request and 4 MiB response frames,
+  mode-0700 directories, mode-0600 files and sockets, and an allowlisted child
+  environment that excludes Relay, Node, and coding-runtime credentials.
 
-The real Relay/Postgres E2E test reconstructs a Node runner after host acceptance and
-proves that the surviving fake host produces one turn and one Mission result.
+The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
+and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
+same live Capsule while the Node is absent, restarts the Node after safe stale-lock
+cleanup, and proves one turn reference, one result message, and one completion audit.
 
 ## Current boundary
 
-The foreground command uses only `FakeAgentHostAdapter`. The delivery processor can
-publish `reply`, `propose_contract`, or `ready` turn results, while the current CLI
-only generates deterministic `ready` or `reply` outcomes. It deliberately fails
-closed for contract acknowledgement and verification deliveries because the required
-artifact-payload and command-result paths are not complete.
+Both foreground commands remain fake-runtime paths. `run` uses
+`FakeAgentHostAdapter` in the Node process; `run-capsule` uses an independently
+persistent fake Capsule. The delivery processor can publish `reply`,
+`propose_contract`, or `ready` turn results, while the current CLIs only generate
+deterministic `ready` or `reply` outcomes. They deliberately fail closed for contract
+acknowledgement and verification deliveries because the required artifact-payload and
+command-result paths are not complete.
 
 Git submodules are intentionally unsupported at this checkpoint. Supporting them
 requires a separate, explicit preflight for every nested repository and its local Git
 configuration.
 
-The current fake host lives in the Node process. Reusing it across a runner
-reconstruction proves the journal/reducer boundary, not recovery after an OS-level
-process kill. A persistent host capsule and the pinned Codex adapter are later gates.
+The Capsule checkpoint is experimental and Unix-only because its transport is a Unix
+domain socket. It is not a general local daemon manager: there is no installer,
+service supervisor, automatic Node stale-lock reclamation, or real Codex/Claude
+adapter yet.
 
 ## Configuration
 
@@ -108,13 +123,40 @@ pnpm --filter agentrelay-node build
 pnpm --filter agentrelay-node start --fake-outcome ready
 ```
 
+The built persistent-Capsule path is:
+
+```bash
+node node/dist/bin/agentrelay-node.js run-capsule \
+  --config ~/.agentrelay/node/config.json \
+  --fake-outcome ready
+```
+
+Use `--capsule-root <absolute-path>` to override the default
+`state/capsules` directory beside the Node config, and
+`--completion-delay-ms <milliseconds>` to delay the deterministic fake result.
+
 Use `--once` for one recovery/poll/processing cycle. `SIGINT` and `SIGTERM` stop new
 work, request cancellation of an in-flight fake-host turn, and release the singleton
-process lock after the cycle returns. Adapter cancellation is bounded to five
-seconds; an already-running Relay request still has its own bounded client timeout.
+process lock after the cycle returns. A normal Node exit does not terminate detached
+Capsule processes. Adapter cancellation is bounded to five seconds; an already-running
+Relay request still has its own bounded client timeout.
 
-The local state is stored beside the config under `state/journal.json`. Do not run two
-Node processes against the same directory; `run.lock` enforces the single-writer
-assumption. A hard kill can leave a stale lock. The Node refuses to remove it
-automatically, so confirm that no Node process is alive before deleting that exact
-`run.lock` file and restarting.
+The Node journal is stored beside the config under `state/journal.json`; Capsule state
+defaults to `state/capsules/<mission-id>/`. Do not run two Node processes against the
+same directory; `run.lock` enforces the single-writer assumption. A `SIGKILL` can
+leave that lock behind even though the detached Capsule continues. The Node refuses
+to remove it automatically. Confirm the recorded process is dead and the file has
+not changed before deleting that exact `run.lock` and restarting. This operator step
+is part of the current crash-recovery proof, not automatic supervision.
+
+The current Node journal uses schema 2 to retain the active attempt's exact validated
+start input. Empty schema-1 journals migrate automatically. A schema-1 journal with
+deliveries is rejected because its missing start inputs cannot be reconstructed
+safely; preserve and reconcile that state before replacing it.
+
+Each `launch.json` retains its original short private socket path, even if the
+restarted Node has a different `TMPDIR`. A direct Capsule server start refuses any
+existing socket path. The Node adapter can recover a crashed Capsule automatically,
+but only after repeated failed authenticated probes and device/inode-checked removal
+of the unchanged stale socket. An old server closes through a private bind alias and
+therefore cannot unlink a replacement pathname.
