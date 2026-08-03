@@ -55,6 +55,37 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.17)
 
+  node:
+    dependencies:
+      '@agentrelay/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      cac:
+        specifier: ^6.7.14
+        version: 6.7.14
+      pino:
+        specifier: ^9.5.0
+        version: 9.14.0
+      undici:
+        specifier: ^7.0.0
+        version: 7.25.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.17
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.17)
+
   protocol:
     dependencies:
       zod:
@@ -116,9 +147,15 @@ importers:
 
   tests/e2e:
     dependencies:
+      '@agentrelay/protocol':
+        specifier: workspace:*
+        version: link:../../protocol
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.4
         version: 1.29.0(zod@3.25.76)
+      agentrelay-node:
+        specifier: workspace:*
+        version: link:../../node
       undici:
         specifier: ^7.0.0
         version: 7.25.0

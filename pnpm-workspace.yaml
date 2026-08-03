@@ -2,4 +2,5 @@ packages:
   - 'protocol'
   - 'relay'
   - 'mcp-server'
+  - 'node'
   - 'tests/e2e'
