@@ -18,6 +18,7 @@ import {
 
 const MAX_HOST_TEXT_LENGTH = 16_000;
 const MAX_HOST_ITEMS = 64;
+export const MAX_HOST_PEER_MESSAGES = 64;
 const MAX_PROVIDER_TOKENS = 100_000_000;
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_NODES = 4_096;
@@ -33,6 +34,7 @@ const hostTextSchema = z
 	.refine((value) => value.trim().length > 0, "Host text cannot be blank");
 const hostOutputChunkSchema = z.string().min(1).max(MAX_HOST_TEXT_LENGTH);
 const hostArtifactTextSchema = z.string().max(MAX_ARTIFACT_BYTES);
+export const hostExecutionAttemptSchema = z.number().int().safe().positive();
 
 export type JsonValue =
 	| null
@@ -195,7 +197,7 @@ const turnInputObjectSchema = z
 		objective: hostMissionTextInputSchema,
 		assignment: hostMissionTextInputSchema,
 		acceptanceCriteria: z.array(hostMissionTextInputSchema).min(1).max(32),
-		peerMessages: z.array(hostPeerMessageInputSchema).max(MAX_HOST_ITEMS),
+		peerMessages: z.array(hostPeerMessageInputSchema).max(MAX_HOST_PEER_MESSAGES),
 		artifacts: z.array(hostInputArtifactSchema).max(16),
 	})
 	.strict();
@@ -211,6 +213,7 @@ export const turnInputSchema = turnInputObjectSchema.refine(
 export const startTurnInputSchema = turnInputObjectSchema
 	.extend({
 		deliveryId: uuidSchema,
+		executionAttempt: hostExecutionAttemptSchema,
 	})
 	.refine((input) => input.missionId === input.session.missionId, {
 		message: "Turn Mission must match its host session",
@@ -223,6 +226,7 @@ export const hostTurnRefSchema = z
 		sessionId: opaqueReferenceSchema,
 		missionId: uuidSchema,
 		deliveryId: uuidSchema,
+		executionAttempt: hostExecutionAttemptSchema,
 		contractVersion: contractVersionSchema,
 	})
 	.strict();
@@ -570,7 +574,7 @@ export function acceptHostEvent(
 export interface AgentHostAdapter {
 	probe(): Promise<AdapterInfo>;
 	ensureSession(input: SessionInput): Promise<HostSessionRef>;
-	lookupTurn(deliveryId: string): Promise<HostTurnRef | null>;
+	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null>;
 	startTurn(input: StartTurnInput): AsyncIterable<HostEvent>;
 	recoverTurn(ref: HostTurnRef): AsyncIterable<HostEvent>;
 	cancelTurn(ref: HostTurnRef): Promise<void>;
@@ -664,6 +668,7 @@ function sameHostTurnRef(left: HostTurnRef, right: HostTurnRef): boolean {
 		left.sessionId === right.sessionId &&
 		left.missionId === right.missionId &&
 		left.deliveryId === right.deliveryId &&
+		left.executionAttempt === right.executionAttempt &&
 		left.contractVersion === right.contractVersion
 	);
 }
@@ -674,6 +679,7 @@ function matchesExpectedHostTurn(expected: HostTurnCorrelation, received: HostTu
 		expected.sessionId === received.sessionId &&
 		expected.missionId === received.missionId &&
 		expected.deliveryId === received.deliveryId &&
+		expected.executionAttempt === received.executionAttempt &&
 		expected.contractVersion === received.contractVersion
 	);
 }

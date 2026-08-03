@@ -317,9 +317,14 @@ export const nodeMissionAssignmentSchema = rawNodeMissionAssignmentSchema.superR
 	validateNodeMissionAssignment,
 );
 
+export const nodeMissionAssignmentResultSchema = z
+	.object({ mission: nodeMissionAssignmentSchema })
+	.strict();
+
 export const nodeMissionAssignmentListRequestSchema = z
 	.object({
 		status: missionStatusSchema.optional(),
+		after_cursor: uuidSchema.nullable().default(null),
 		limit: z.number().int().positive().max(200).default(50),
 	})
 	.strict();
@@ -327,8 +332,25 @@ export const nodeMissionAssignmentListRequestSchema = z
 export const nodeMissionAssignmentListSchema = z
 	.object({
 		missions: z.array(nodeMissionAssignmentSchema).max(200),
+		next_cursor: uuidSchema.nullable(),
 	})
-	.strict();
+	.strict()
+	.superRefine((page, ctx) => {
+		const finalMissionId = page.missions.at(-1)?.mission_id;
+		if (page.next_cursor !== null && finalMissionId === undefined) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "An empty Mission page cannot have a next cursor",
+				path: ["next_cursor"],
+			});
+		} else if (page.next_cursor !== null && page.next_cursor !== finalMissionId) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Next cursor must match the final returned Mission",
+				path: ["next_cursor"],
+			});
+		}
+	});
 
 const missionDeliveryItemFields = {
 	event: missionCoordinatorEventSchema,
@@ -459,6 +481,7 @@ export type MissionParticipantAcceptanceResult = z.infer<
 export type MissionParticipantAcceptanceStatus = z.infer<
 	typeof missionParticipantAcceptanceStatusSchema
 >;
+export type NodeMissionAssignmentResult = z.infer<typeof nodeMissionAssignmentResultSchema>;
 export type NodeMissionAssignmentListRequest = z.infer<
 	typeof nodeMissionAssignmentListRequestSchema
 >;

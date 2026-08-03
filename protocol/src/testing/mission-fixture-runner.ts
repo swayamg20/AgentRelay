@@ -205,6 +205,7 @@ async function runPreparedMissionFixture<TEnvironment extends MissionFixtureEnvi
 			session,
 			missionId: context.manifest.mission_id,
 			deliveryId: turn.deliveryId,
+			executionAttempt: 1,
 			contractVersion: state.contract_version,
 			missionSequence: state.sequence_no + 1,
 			objective: missionInputs.objective,
@@ -349,7 +350,7 @@ async function executeHostTurn(
 			partial.push(next.value);
 		}
 		await iterator.return?.();
-		const ref = await adapter.lookupTurn(input.deliveryId);
+		const ref = await adapter.lookupTurn(input.deliveryId, input.executionAttempt);
 		if (ref === null) {
 			throw new Error(`Accepted host turn was not recoverable: ${input.deliveryId}`);
 		}
@@ -372,6 +373,7 @@ function validateHostEvents(input: StartTurnInput, events: readonly HostEvent[])
 		sessionId: input.session.sessionId,
 		missionId: input.missionId,
 		deliveryId: input.deliveryId,
+		executionAttempt: input.executionAttempt,
 		contractVersion: input.contractVersion,
 	});
 	for (const event of events) {

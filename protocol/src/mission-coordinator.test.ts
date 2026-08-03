@@ -11,6 +11,7 @@ import {
 	nodeDeliveryResultPayloadSchema,
 	nodeMissionAssignmentListRequestSchema,
 	nodeMissionAssignmentListSchema,
+	nodeMissionAssignmentResultSchema,
 	nodeMissionAssignmentSchema,
 	recoverableMissionDeliveryPageRequestSchema,
 	recoverableMissionDeliveryPageSchema,
@@ -205,12 +206,47 @@ describe("Mission coordinator", () => {
 			replayed: true,
 		});
 		expect(nodeMissionAssignmentSchema.parse(assignment)).toEqual(assignment);
-		expect(nodeMissionAssignmentListRequestSchema.parse({ status: "awaiting_acceptance" })).toEqual(
-			{ status: "awaiting_acceptance", limit: 50 },
-		);
-		expect(nodeMissionAssignmentListSchema.parse({ missions: [assignment] })).toEqual({
-			missions: [assignment],
+		expect(nodeMissionAssignmentResultSchema.parse({ mission: assignment })).toEqual({
+			mission: assignment,
 		});
+		expect(nodeMissionAssignmentListRequestSchema.parse({ status: "awaiting_acceptance" })).toEqual(
+			{ status: "awaiting_acceptance", after_cursor: null, limit: 50 },
+		);
+		expect(
+			nodeMissionAssignmentListRequestSchema.parse({
+				status: "awaiting_acceptance",
+				after_cursor: IDS.mission,
+				limit: 7,
+			}),
+		).toEqual({ status: "awaiting_acceptance", after_cursor: IDS.mission, limit: 7 });
+		expect(
+			nodeMissionAssignmentListSchema.parse({
+				missions: [assignment],
+				next_cursor: IDS.mission,
+			}),
+		).toEqual({
+			missions: [assignment],
+			next_cursor: IDS.mission,
+		});
+		expect(nodeMissionAssignmentListSchema.parse({ missions: [], next_cursor: null })).toEqual({
+			missions: [],
+			next_cursor: null,
+		});
+		expect(
+			nodeMissionAssignmentListRequestSchema.safeParse({ after_cursor: "not-a-uuid" }).success,
+		).toBe(false);
+		expect(
+			nodeMissionAssignmentListSchema.safeParse({
+				missions: [assignment],
+				next_cursor: IDS.outsider,
+			}).success,
+		).toBe(false);
+		expect(
+			nodeMissionAssignmentListSchema.safeParse({
+				missions: [],
+				next_cursor: IDS.mission,
+			}).success,
+		).toBe(false);
 
 		expect(
 			missionCreationResultSchema.safeParse({
@@ -220,6 +256,12 @@ describe("Mission coordinator", () => {
 		).toBe(false);
 		expect(
 			nodeMissionAssignmentSchema.safeParse({ ...assignment, local_path: "/tmp/backend" }).success,
+		).toBe(false);
+		expect(
+			nodeMissionAssignmentResultSchema.safeParse({
+				mission: assignment,
+				local_path: "/tmp/backend",
+			}).success,
 		).toBe(false);
 		expect(
 			nodeMissionAssignmentSchema.safeParse({

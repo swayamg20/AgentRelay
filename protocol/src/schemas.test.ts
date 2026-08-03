@@ -9,8 +9,12 @@ import {
 	missionEventEnvelopeSchema,
 	missionManifestSchema,
 	nodeCredentialRotationInputSchema,
+	nodeCredentialRotationResultSchema,
 	nodeDescriptorSchema,
 	nodeEnrollmentInputSchema,
+	nodeEnrollmentResultSchema,
+	nodeSelfResultSchema,
+	ownedNodeListSchema,
 	ownedNodeSummarySchema,
 	policyRequestSchema,
 	runSchema,
@@ -19,7 +23,9 @@ import {
 	turnDispositionSchema,
 	verificationEvidenceSchema,
 	workspaceBindingDescriptorSchema,
+	workspaceBindingListSchema,
 	workspaceRegistrationInputSchema,
+	workspaceRegistrationResultSchema,
 } from "./schemas.js";
 
 const ids = {
@@ -165,6 +171,60 @@ describe("relay-visible Node contracts", () => {
 			workspaceBindingDescriptorSchema.safeParse({
 				...binding,
 				allowed_base_refs: ["../outside"],
+			}).success,
+		).toBe(false);
+	});
+
+	it("publishes strict Node enrollment, self, owner-list, and workspace responses", () => {
+		const credential = {
+			id: ids.nodeCredential,
+			token: `ar_node_test_${"a".repeat(32)}`,
+		};
+		const enrollment = { node, credential };
+		const rotation = { node_id: node.node_id, credential };
+		const self = { node };
+		const nodeList = {
+			nodes: [{ node, active_credential_id: credential.id }],
+		};
+		const registration = { workspace: binding, replayed: false };
+		const workspaceList = { workspaces: [binding] };
+
+		expect(nodeEnrollmentResultSchema.parse(enrollment)).toEqual(enrollment);
+		expect(nodeCredentialRotationResultSchema.parse(rotation)).toEqual(rotation);
+		expect(nodeSelfResultSchema.parse(self)).toEqual(self);
+		expect(ownedNodeListSchema.parse(nodeList)).toEqual(nodeList);
+		expect(workspaceRegistrationResultSchema.parse(registration)).toEqual(registration);
+		expect(workspaceBindingListSchema.parse(workspaceList)).toEqual(workspaceList);
+
+		expect(
+			nodeEnrollmentResultSchema.safeParse({ ...enrollment, credential_token: credential.token })
+				.success,
+		).toBe(false);
+		expect(
+			nodeCredentialRotationResultSchema.safeParse({
+				...rotation,
+				credential: { ...credential, token: "not-a-node-token" },
+			}).success,
+		).toBe(false);
+		expect(nodeSelfResultSchema.safeParse({ ...self, local_path: "/tmp/backend" }).success).toBe(
+			false,
+		);
+		expect(
+			ownedNodeListSchema.safeParse({
+				...nodeList,
+				nodes: [{ ...nodeList.nodes[0], credential_token: credential.token }],
+			}).success,
+		).toBe(false);
+		expect(
+			workspaceRegistrationResultSchema.safeParse({
+				...registration,
+				local_path: "/tmp/backend",
+			}).success,
+		).toBe(false);
+		expect(
+			workspaceBindingListSchema.safeParse({
+				...workspaceList,
+				workspaces: [{ ...binding, checkout_path: "/tmp/backend" }],
 			}).success,
 		).toBe(false);
 	});
