@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { MissionCoordinatorConfig } from "@agentrelay/protocol";
+import { type MissionCoordinatorConfig, createMissionCoordinatorState } from "@agentrelay/protocol";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import postgres, { type Sql } from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,7 @@ import {
 	acceptMissionParticipant,
 	appendMissionEvent,
 	createMissionLedger,
+	listNodeMissionAssignments,
 	listStoredDeliveryEvents,
 } from "./mission-ledger.js";
 import { revokeNode, revokeWorkspace } from "./node-enrollment.js";
@@ -94,6 +95,237 @@ d("durable Mission ledger", () => {
 			coordinatorConfig: structuredClone(fixture.config),
 		});
 		expect(replayAfterRevocation).toEqual({ ...first, replayed: true });
+	});
+
+	it("keyset-paginates every live pending assignment without expired-row starvation", async () => {
+		const fixture = await seedFixture(handle);
+		const activeMissionIds = Array.from({ length: 55 }, () => randomUUID());
+		const expiredMissionId = randomUUID();
+		const now = Date.now();
+		const activeCreatedAt = new Date(now - 300_000);
+		const expiredCreatedAt = new Date(now - 120_000);
+		const activeExpiresAt = new Date(now + 86_400_000);
+		const expiredAt = new Date(now - 60_000);
+
+		const missionRow = (missionId: string, createdAt: Date, expiresAt: Date) => {
+			const config = structuredClone(fixture.config);
+			config.mission_context.manifest.mission_id = missionId;
+			config.mission_context.manifest.created_at = createdAt.toISOString();
+			config.mission_context.manifest.expires_at = expiresAt.toISOString();
+			const state = createMissionCoordinatorState(config);
+			return {
+				id: missionId,
+				createdByAgentId: fixture.backendAgentId,
+				coordinatorConfig: config,
+				state,
+				status: state.status,
+				lastEventSequence: state.sequence_no,
+				contractVersion: state.contract_version,
+				expiresAt,
+				createdAt,
+			};
+		};
+
+		await handle.db
+			.insert(missions)
+			.values([
+				...activeMissionIds.map((missionId) =>
+					missionRow(missionId, activeCreatedAt, activeExpiresAt),
+				),
+				missionRow(expiredMissionId, expiredCreatedAt, expiredAt),
+			]);
+		await handle.db.insert(missionParticipants).values(
+			[...activeMissionIds, expiredMissionId].map((missionId) => ({
+				missionId,
+				agentId: fixture.backendAgentId,
+				nodeId: fixture.backendNodeId,
+				workspaceBindingId: fixture.backendBindingId,
+				role: "backend",
+			})),
+		);
+
+		const first = await listNodeMissionAssignments(handle.db, {
+			nodeId: fixture.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: null,
+			limit: 50,
+		});
+		expect(first.missions).toHaveLength(50);
+		expect(first.next_cursor).toBe(first.missions.at(-1)?.mission_id);
+		expect(first.missions.map((mission) => mission.mission_id)).not.toContain(expiredMissionId);
+
+		const fromExpiredAnchor = await listNodeMissionAssignments(handle.db, {
+			nodeId: fixture.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: expiredMissionId,
+			limit: 50,
+		});
+		expect(fromExpiredAnchor).toEqual(first);
+
+		const second = await listNodeMissionAssignments(handle.db, {
+			nodeId: fixture.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: first.next_cursor,
+			limit: 50,
+		});
+		expect(second.missions).toHaveLength(5);
+		expect(second.next_cursor).toBeNull();
+		const returnedIds = [...first.missions, ...second.missions].map(
+			(mission) => mission.mission_id,
+		);
+		expect(new Set(returnedIds)).toEqual(new Set(activeMissionIds));
+		expect(returnedIds).toHaveLength(activeMissionIds.length);
+
+		await expect(
+			listNodeMissionAssignments(handle.db, {
+				nodeId: fixture.backendNodeId,
+				status: "awaiting_acceptance",
+				after_cursor: randomUUID(),
+				limit: 50,
+			}),
+		).rejects.toMatchObject({ code: "invalid_params" });
+		await expect(
+			listNodeMissionAssignments(handle.db, {
+				nodeId: fixture.androidNodeId,
+				status: "awaiting_acceptance",
+				after_cursor: activeMissionIds[0]!,
+				limit: 50,
+			}),
+		).rejects.toMatchObject({ code: "invalid_params" });
+	});
+
+	it("does not skip assignments separated only by PostgreSQL microseconds", async () => {
+		const base = await seedFixture(handle);
+		const oldest = await createPendingMissionForFixture(handle, base);
+		const middle = await createPendingMissionForFixture(handle, base);
+		const newest = await createPendingMissionForFixture(handle, base);
+		const [clock] = await handle.sql<Array<{ base: string }>>`
+			SELECT date_trunc('milliseconds', clock_timestamp())::text AS base
+		`;
+		if (!clock) throw new Error("expected database clock");
+		await handle.sql`
+			UPDATE missions
+			SET created_at = CASE id
+				WHEN ${oldest.missionId}::uuid THEN ${clock.base}::timestamptz + interval '100 microseconds'
+				WHEN ${middle.missionId}::uuid THEN ${clock.base}::timestamptz + interval '500 microseconds'
+				WHEN ${newest.missionId}::uuid THEN ${clock.base}::timestamptz + interval '900 microseconds'
+			END
+			WHERE id IN (${oldest.missionId}::uuid, ${middle.missionId}::uuid, ${newest.missionId}::uuid)
+		`;
+
+		const first = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: null,
+			limit: 1,
+		});
+		const second = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: first.next_cursor,
+			limit: 1,
+		});
+		const third = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: second.next_cursor,
+			limit: 1,
+		});
+
+		expect(first).toMatchObject({
+			missions: [{ mission_id: newest.missionId }],
+			next_cursor: newest.missionId,
+		});
+		expect(second).toMatchObject({
+			missions: [{ mission_id: middle.missionId }],
+			next_cursor: middle.missionId,
+		});
+		expect(third).toMatchObject({
+			missions: [{ mission_id: oldest.missionId }],
+			next_cursor: null,
+		});
+	});
+
+	it("continues after the anchor leaves the requested Mission state", async () => {
+		const base = await seedFixture(handle);
+		const older = await createPendingMissionForFixture(handle, base);
+		const anchor = await createPendingMissionForFixture(handle, base);
+		await handle.sql`
+			UPDATE missions
+			SET created_at = CASE id
+				WHEN ${older.missionId}::uuid THEN clock_timestamp() - interval '2 minutes'
+				WHEN ${anchor.missionId}::uuid THEN clock_timestamp() - interval '1 minute'
+			END
+			WHERE id IN (${older.missionId}::uuid, ${anchor.missionId}::uuid)
+		`;
+
+		const first = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: null,
+			limit: 1,
+		});
+		expect(first).toMatchObject({
+			missions: [{ mission_id: anchor.missionId, acceptance_status: "pending" }],
+			next_cursor: anchor.missionId,
+		});
+
+		await activateMission(handle, anchor);
+		const second = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: first.next_cursor,
+			limit: 1,
+		});
+		expect(second).toMatchObject({
+			missions: [{ mission_id: older.missionId }],
+			next_cursor: null,
+		});
+	});
+
+	it("keeps a continuation behind its anchor while fresh scans see newer assignments", async () => {
+		const base = await seedFixture(handle);
+		const older = await createPendingMissionForFixture(handle, base);
+		const anchor = await createPendingMissionForFixture(handle, base);
+		await handle.sql`
+			UPDATE missions
+			SET created_at = CASE id
+				WHEN ${older.missionId}::uuid THEN clock_timestamp() - interval '2 minutes'
+				WHEN ${anchor.missionId}::uuid THEN clock_timestamp() - interval '1 minute'
+			END
+			WHERE id IN (${older.missionId}::uuid, ${anchor.missionId}::uuid)
+		`;
+
+		const first = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: null,
+			limit: 1,
+		});
+		expect(first.missions[0]?.mission_id).toBe(anchor.missionId);
+
+		const inserted = await createPendingMissionForFixture(handle, base);
+		await handle.sql`
+			UPDATE missions
+			SET created_at = clock_timestamp()
+			WHERE id = ${inserted.missionId}::uuid
+		`;
+		const continuation = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: first.next_cursor,
+			limit: 1,
+		});
+		const fresh = await listNodeMissionAssignments(handle.db, {
+			nodeId: base.backendNodeId,
+			status: "awaiting_acceptance",
+			after_cursor: null,
+			limit: 1,
+		});
+
+		expect(continuation.missions[0]?.mission_id).toBe(older.missionId);
+		expect(continuation.missions[0]?.mission_id).not.toBe(inserted.missionId);
+		expect(fresh.missions[0]?.mission_id).toBe(inserted.missionId);
 	});
 
 	it("uses the database clock for fresh Mission expiry when the relay host clock is skewed", async () => {
@@ -1325,6 +1557,18 @@ async function seedFixture(handle: TestDb): Promise<Fixture> {
 
 async function createFixtureMission(handle: TestDb): Promise<Fixture> {
 	const fixture = await seedFixture(handle);
+	await createMissionLedger(handle.db, {
+		createdByAgentId: fixture.backendAgentId,
+		coordinatorConfig: fixture.config,
+	});
+	return fixture;
+}
+
+async function createPendingMissionForFixture(handle: TestDb, base: Fixture): Promise<Fixture> {
+	const missionId = randomUUID();
+	const config = structuredClone(base.config);
+	config.mission_context.manifest.mission_id = missionId;
+	const fixture = { ...base, missionId, config };
 	await createMissionLedger(handle.db, {
 		createdByAgentId: fixture.backendAgentId,
 		coordinatorConfig: fixture.config,

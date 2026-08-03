@@ -336,6 +336,83 @@ d("delivery claim and execution ledger", () => {
 		expect(renewReceipts).toHaveLength(1);
 	});
 
+	it("records a fresh renewal when Mission expiry already caps the active lease", async () => {
+		const fixture = await createActivatedFixture(handle, { missionLifetimeMs: 30_000 });
+		const claim = requireClaimed(
+			await claimDelivery(handle.db, fixture.backend.auth, fixture.initialDeliveryId, {
+				idempotency_key: "claim:mission-capped-renewal",
+			}),
+		);
+		const lease = requireLease(claim);
+		const missionExpiresAt = fixture.config.mission_context.manifest.expires_at;
+		const claimWindowMs = Date.parse(lease.expires_at) - Date.parse(claim.receipt.recorded_at);
+		expect(claimWindowMs).toBeGreaterThan(0);
+		expect(claimWindowMs).toBeLessThan(60_000);
+		expect(lease.expires_at).toBe(missionExpiresAt);
+
+		await startDelivery(handle.db, fixture.backend.auth, fixture.initialDeliveryId, {
+			idempotency_key: "start:mission-capped-renewal",
+			lease_id: lease.lease_id,
+			fencing_token: lease.fencing_token,
+		});
+		const renewInput = {
+			idempotency_key: "renew:mission-capped",
+			lease_id: lease.lease_id,
+			fencing_token: lease.fencing_token,
+		};
+		const renewed = await renewDelivery(
+			handle.db,
+			fixture.backend.auth,
+			fixture.initialDeliveryId,
+			renewInput,
+		);
+
+		expect(renewed).toMatchObject({
+			replayed: false,
+			delivery: {
+				status: "executing",
+				lease: {
+					lease_id: lease.lease_id,
+					fencing_token: lease.fencing_token,
+					expires_at: missionExpiresAt,
+				},
+			},
+			receipt: {
+				operation: "renew",
+				status_before: "executing",
+				status_after: "executing",
+				lease_expires_at: missionExpiresAt,
+			},
+		});
+		expect(renewed.receipt.receipt_id).not.toBe(claim.receipt.receipt_id);
+		await expect(
+			renewDelivery(handle.db, fixture.backend.auth, fixture.initialDeliveryId, renewInput),
+		).resolves.toEqual({ ...renewed, replayed: true });
+
+		await handle.db
+			.update(nodeDeliveries)
+			.set({ leaseExpiresAt: new Date(Date.parse(missionExpiresAt) + 1_000) })
+			.where(eq(nodeDeliveries.id, fixture.initialDeliveryId));
+		await expect(
+			renewDelivery(handle.db, fixture.backend.auth, fixture.initialDeliveryId, {
+				...renewInput,
+				idempotency_key: "renew:deadline-regression",
+			}),
+		).rejects.toMatchObject({ code: "invalid_transition" });
+
+		const renewReceipts = await handle.db
+			.select()
+			.from(deliveryOperationReceipts)
+			.where(
+				and(
+					eq(deliveryOperationReceipts.deliveryId, fixture.initialDeliveryId),
+					eq(deliveryOperationReceipts.operation, "renew"),
+				),
+			);
+		expect(renewReceipts).toHaveLength(1);
+		expect(renewReceipts[0]?.leaseExpiresAt?.toISOString()).toBe(missionExpiresAt);
+	});
+
 	it("continues and exactly replays an existing lease with a rotated active credential", async () => {
 		const fixture = await createActivatedFixture(handle);
 		const claimInput = { idempotency_key: "claim:before-rotation" };
@@ -1128,7 +1205,10 @@ interface DeliveryFixture {
 
 async function createActivatedFixture(
 	handle: TestDb,
-	options: { readonly backendCommands?: readonly string[] } = {},
+	options: {
+		readonly backendCommands?: readonly string[];
+		readonly missionLifetimeMs?: number;
+	} = {},
 ): Promise<DeliveryFixture> {
 	const backend = await registerParticipant(handle, {
 		role: "backend",
@@ -1183,7 +1263,9 @@ async function createActivatedFixture(
 				max_turns: 20,
 				max_wall_time_seconds: 3_600,
 				token_budget: 100_000,
-				expires_at: new Date(now.getTime() + 3_600_000).toISOString(),
+				expires_at: new Date(
+					now.getTime() + (options.missionLifetimeMs ?? 3_600_000),
+				).toISOString(),
 				allowed_artifact_types: ["api_contract"],
 				created_at: new Date(now.getTime() - 1_000).toISOString(),
 			},
