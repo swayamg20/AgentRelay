@@ -20,12 +20,13 @@ import {
 	startTurnInputSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
-import {
-	type CapsuleErrorCode,
-	type CapsuleLaunchDescriptor,
-	capsuleLaunchDescriptorSchema,
-} from "./capsule-protocol.js";
+import { digestStartTurnInput, executionKey } from "./capsule-correlation.js";
+import { CapsuleOperationError } from "./capsule-operation-error.js";
+import { type CapsuleLaunchDescriptor, capsuleLaunchDescriptorSchema } from "./capsule-protocol.js";
 import { writeDurableJson } from "./durable-file.js";
+
+export { digestStartTurnInput, executionKey } from "./capsule-correlation.js";
+export { CapsuleOperationError } from "./capsule-operation-error.js";
 
 export const CAPSULE_DESCRIPTOR_FILE = "launch.json";
 export const CAPSULE_STATE_FILE = "state.json";
@@ -52,16 +53,6 @@ const fakeCapsuleStateSchema = z
 
 type FakeCapsuleState = z.infer<typeof fakeCapsuleStateSchema>;
 type StoredTurn = z.infer<typeof storedTurnSchema>;
-
-export class CapsuleOperationError extends Error {
-	constructor(
-		readonly code: CapsuleErrorCode,
-		message: string,
-	) {
-		super(message);
-		this.name = "CapsuleOperationError";
-	}
-}
 
 export async function readCapsuleLaunchDescriptor(
 	directory: string,
@@ -357,15 +348,6 @@ export class FakeCapsuleStore {
 	}
 }
 
-export function digestStartTurnInput(inputValue: StartTurnInput): string {
-	const input = startTurnInputSchema.parse(inputValue);
-	return createHash("sha256").update(canonicalJson(input), "utf8").digest("hex");
-}
-
-export function executionKey(deliveryId: string, executionAttempt: number): string {
-	return `${deliveryId}:${executionAttempt}`;
-}
-
 async function readSecureJson(path: string): Promise<unknown> {
 	let handle: FileHandle;
 	try {
@@ -470,16 +452,6 @@ function appendUsageUnavailable(stored: StoredTurn): void {
 function isTerminal(events: readonly HostEvent[]): boolean {
 	const last = events.at(-1);
 	return last?.kind === "completed" || last?.kind === "failed" || last?.kind === "cancelled";
-}
-
-function canonicalJson(value: unknown): string {
-	if (value === null || typeof value !== "object") return JSON.stringify(value);
-	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-	const object = value as Record<string, unknown>;
-	return `{${Object.keys(object)
-		.sort()
-		.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`)
-		.join(",")}}`;
 }
 
 function errorCode(error: unknown): string | undefined {

@@ -1,8 +1,8 @@
 # RFC 001: AgentRelay Node and Missions
 
-- **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, and the
-  persistent fake-Capsule process-recovery checkpoint are implemented; the complete
-  Node/Codex slice remains pending
+- **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
+  persistent fake-Capsule recovery checkpoint, and an unactivated guarded Codex
+  client/journal are implemented; runtime integration and the two-machine proof remain
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -30,7 +30,9 @@ control plane, and a foreground Node with an independently persistent fake Missi
 Capsule. That Node notices work, checks repository identity and a local policy
 profile, and starts or resumes a deterministic fake-host turn. Its Capsule retains
 host state across Node-process death. It cannot yet activate a real coding-agent
-runtime or enforce the complete command/network/time/path boundary.
+runtime or enforce the complete command/network/time/path boundary. The repository now
+also has a version-pinned read-only app-server client and a pure durable Codex Capsule
+journal, but neither is reachable from the Node or Capsule CLI.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -438,7 +440,10 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    starvation are covered. A detached fake Capsule now proves exact-turn recovery
    after the Node is killed following host acceptance. Pre-claim/after-claim process
    cuts, unattended Node restart, busy-session, and full adversarial coverage remain.
-6. Add and pin the Codex app-server adapter.
+6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned and the
+   unactivated Capsule journal proves local at-most-once barriers, exact-input replay,
+   redacted terminal normalization, and cancellation intent. Runtime/server/CLI
+   integration and ambiguous-start recovery remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or

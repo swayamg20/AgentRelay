@@ -125,10 +125,19 @@ service.
 
 ## 5. Add the first real adapter
 
-- [ ] Pin a supported Codex app-server version.
-- [ ] Generate and test the matching protocol schema.
+- [x] Pin Codex app-server `0.146.0` and fail closed on a different runtime identity.
+- [x] Validate the bounded request/response/notification subset consumed from the
+  matching generated protocol and reject malformed or oversized frames.
+- [x] Add a guarded read-only client with one event consumer, correlated responses,
+  denied server-initiated authority, and process-group cleanup.
+- [x] Add an unactivated durable Capsule journal and deterministic normalizer with
+  exact input/provider-intent persistence, at-most-once start barriers, one active
+  turn, private bounded storage, terminal replay, and provider-payload redaction.
 - [ ] Implement probe, session start/resume, turn start, event stream, cancellation,
-  and recovery.
+  and recovery behind the persistent Capsule wire boundary.
+- [ ] Reconcile an ambiguous `turn/start` by exact `clientUserMessageId` and input,
+  including cancellation before provider-ID binding and a durable zero-match outcome
+  after proven provider-process quiescence. Never retry an uncertain start blindly.
 - [ ] Require the RFC's structured turn dispositions: `reply`, `propose_contract`,
   `ready`, `blocked` (with optional requested input), or `failed`.
 - [ ] Run the two-machine backend-and-Android Mission.

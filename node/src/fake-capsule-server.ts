@@ -4,6 +4,7 @@ import { type Server, type Socket, createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ZodError } from "zod";
+import { CapsuleOperationError } from "./capsule-operation-error.js";
 import {
 	CAPSULE_ADAPTER_INFO,
 	type CapsuleRequest,
@@ -14,11 +15,7 @@ import {
 	capsuleRequestSchema,
 } from "./capsule-protocol.js";
 import { syncDirectory } from "./durable-file.js";
-import {
-	CapsuleOperationError,
-	FakeCapsuleStore,
-	readCapsuleLaunchDescriptor,
-} from "./fake-capsule-store.js";
+import { FakeCapsuleStore, readCapsuleLaunchDescriptor } from "./fake-capsule-store.js";
 
 const STREAM_POLL_MS = 20;
 const REQUEST_FRAME_TIMEOUT_MS = 5_000;

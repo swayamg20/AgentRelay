@@ -15,8 +15,8 @@ import type {
 
 export const CODEX_APP_SERVER_CLIENT_VERSION = "0.0.1";
 
-const MAX_TURN_INPUT_BYTES = 1_048_576;
-const MAX_OUTPUT_SCHEMA_BYTES = 256 * 1_024;
+export const MAX_CODEX_TURN_INPUT_BYTES = 1_048_576;
+export const MAX_CODEX_OUTPUT_SCHEMA_BYTES = 256 * 1_024;
 const opaqueReferenceSchema = z.string().min(1).max(1_024);
 export const codexEmptyResultSchema = z.object({}).strict();
 const outputSchema = jsonValueSchema.refine(
@@ -27,7 +27,7 @@ const startCodexTurnInputSchema = z
 	.object({
 		threadId: opaqueReferenceSchema,
 		clientUserMessageId: opaqueReferenceSchema,
-		text: z.string().min(1).max(MAX_TURN_INPUT_BYTES),
+		text: z.string().min(1).max(MAX_CODEX_TURN_INPUT_BYTES),
 		cwd: z.string().min(1).max(4_096),
 		outputSchema,
 	})
@@ -62,13 +62,15 @@ export function parseStartCodexTurnInput(
 	expectedCwd: string,
 ): z.output<typeof startCodexTurnInputSchema> {
 	const input = startCodexTurnInputSchema.parse(value);
-	if (Buffer.byteLength(input.text, "utf8") > MAX_TURN_INPUT_BYTES) {
+	if (Buffer.byteLength(input.text, "utf8") > MAX_CODEX_TURN_INPUT_BYTES) {
 		throw new CodexAppServerError("policy", "Codex turn input exceeds the byte limit");
 	}
 	if (input.cwd !== expectedCwd) {
 		throw new CodexAppServerError("policy", "Codex turn cannot change the Capsule workspace");
 	}
-	if (Buffer.byteLength(JSON.stringify(input.outputSchema), "utf8") > MAX_OUTPUT_SCHEMA_BYTES) {
+	if (
+		Buffer.byteLength(JSON.stringify(input.outputSchema), "utf8") > MAX_CODEX_OUTPUT_SCHEMA_BYTES
+	) {
 		throw new CodexAppServerError("policy", "Codex output schema exceeds the byte limit");
 	}
 	return input;
