@@ -1,0 +1,269 @@
+import { buildCodexChildEnvironment, prepareCodexHome } from "./capsule-environment.js";
+import {
+	CODEX_APP_SERVER_CLIENT_VERSION,
+	QUIET_CODEX_NOTIFICATION_METHODS,
+	type StartCodexTurnInput,
+	assertCodexIdentity,
+	assertReadOnlyThread,
+	assertThreadVersionAndScope,
+	codexEmptyResultSchema,
+	denyCodexServerRequest,
+	parseCodexProviderResult,
+	parseCodexReference,
+	parseStartCodexTurnInput,
+} from "./codex-app-server-policy.js";
+import { type CodexAppServerCommand, CodexAppServerError } from "./codex-app-server-process.js";
+import {
+	CODEX_APP_SERVER_CLIENT_NAME,
+	type CodexInitializeResponse,
+	type CodexRelevantNotification,
+	type CodexThread,
+	type CodexThreadStartResult,
+	type CodexTurn,
+	codexInitializeResponseSchema,
+	codexRelevantNotificationSchema,
+	codexThreadReadResultSchema,
+	codexThreadStartResultSchema,
+	codexTurnStartResultSchema,
+	isCodexRelevantNotificationMethod,
+} from "./codex-app-server-protocol.js";
+import { CodexAppServerTransport } from "./codex-app-server-transport.js";
+
+export { CodexAppServerError } from "./codex-app-server-process.js";
+export type { CodexAppServerCommand } from "./codex-app-server-process.js";
+export { CodexAppServerResponseError } from "./codex-app-server-transport.js";
+export type { StartCodexTurnInput } from "./codex-app-server-policy.js";
+
+export interface CodexAppServerClientOptions {
+	readonly command: CodexAppServerCommand;
+	readonly cwd: string;
+	readonly capsuleDirectory: string;
+	readonly env: NodeJS.ProcessEnv;
+	readonly requestTimeoutMs?: number;
+}
+
+export interface CodexAppServerClientEvent {
+	readonly kind: "notification";
+	readonly notification: CodexRelevantNotification;
+}
+
+/** Policy-limited app-server facade used by one read-only Mission Capsule. */
+export class CodexAppServerClient {
+	readonly #transport: CodexAppServerTransport;
+	readonly #codexHome: string;
+	#identity: CodexInitializeResponse | null = null;
+	#failure: CodexAppServerError | null = null;
+	#closed = false;
+	#eventsClaimed = false;
+
+	private constructor(transport: CodexAppServerTransport, codexHome: string) {
+		this.#transport = transport;
+		this.#codexHome = codexHome;
+	}
+
+	static async start(options: CodexAppServerClientOptions): Promise<CodexAppServerClient> {
+		let codexHome: string;
+		try {
+			codexHome = await prepareCodexHome(options.capsuleDirectory);
+		} catch (error) {
+			throw new CodexAppServerError(
+				"policy",
+				"Codex home must be a canonical, current-user-owned mode-0700 directory",
+				{ cause: error },
+			);
+		}
+		const env = buildCodexChildEnvironment(options.env, codexHome);
+		const transport = await CodexAppServerTransport.start({
+			command: options.command,
+			cwd: options.cwd,
+			env,
+			requestTimeoutMs: options.requestTimeoutMs,
+			handleServerRequest: denyCodexServerRequest,
+		});
+		const client = new CodexAppServerClient(transport, codexHome);
+		try {
+			await client.initialize();
+			return client;
+		} catch (error) {
+			await client.close().catch(() => undefined);
+			throw error;
+		}
+	}
+
+	get identity(): CodexInitializeResponse {
+		if (this.#identity === null)
+			throw new CodexAppServerError("closed", "Client is not initialized");
+		return structuredClone(this.#identity);
+	}
+
+	async startThread(): Promise<CodexThreadStartResult> {
+		return this.runProviderCall(async () => {
+			const result = parseCodexProviderResult(
+				codexThreadStartResultSchema,
+				await this.#transport.request("thread/start", {
+					cwd: this.#transport.cwd,
+					approvalPolicy: "never",
+					approvalsReviewer: "user",
+					sandbox: "read-only",
+					serviceName: "agentrelay_node",
+					ephemeral: false,
+				}),
+				"thread/start",
+			);
+			assertReadOnlyThread(result, this.#transport.cwd);
+			return result;
+		});
+	}
+
+	async resumeThread(threadIdValue: string): Promise<CodexThreadStartResult> {
+		this.assertUsable();
+		const threadId = parseCodexReference(threadIdValue);
+		return this.runProviderCall(async () => {
+			const result = parseCodexProviderResult(
+				codexThreadStartResultSchema,
+				await this.#transport.request("thread/resume", {
+					threadId,
+					cwd: this.#transport.cwd,
+					approvalPolicy: "never",
+					approvalsReviewer: "user",
+					sandbox: "read-only",
+				}),
+				"thread/resume",
+			);
+			assertReadOnlyThread(result, this.#transport.cwd, threadId);
+			return result;
+		});
+	}
+
+	async readThread(threadIdValue: string): Promise<CodexThread> {
+		this.assertUsable();
+		const threadId = parseCodexReference(threadIdValue);
+		return this.runProviderCall(async () => {
+			const result = parseCodexProviderResult(
+				codexThreadReadResultSchema,
+				await this.#transport.request("thread/read", { threadId, includeTurns: true }),
+				"thread/read",
+			);
+			assertThreadVersionAndScope(result.thread, this.#transport.cwd, threadId);
+			return result.thread;
+		});
+	}
+
+	async startReadOnlyTurn(inputValue: StartCodexTurnInput): Promise<CodexTurn> {
+		this.assertUsable();
+		const input = parseStartCodexTurnInput(inputValue, this.#transport.cwd);
+		return this.runProviderCall(async () => {
+			const result = parseCodexProviderResult(
+				codexTurnStartResultSchema,
+				await this.#transport.request("turn/start", {
+					threadId: input.threadId,
+					clientUserMessageId: input.clientUserMessageId,
+					input: [{ type: "text", text: input.text, text_elements: [] }],
+					cwd: this.#transport.cwd,
+					approvalPolicy: "never",
+					approvalsReviewer: "user",
+					sandboxPolicy: { type: "readOnly", networkAccess: false },
+					outputSchema: input.outputSchema,
+				}),
+				"turn/start",
+			);
+			if (result.turn.status !== "inProgress") {
+				throw new CodexAppServerError("protocol", "Codex accepted a turn in a terminal state");
+			}
+			return result.turn;
+		});
+	}
+
+	async interruptTurn(threadIdValue: string, turnIdValue: string): Promise<void> {
+		this.assertUsable();
+		const threadId = parseCodexReference(threadIdValue);
+		const turnId = parseCodexReference(turnIdValue);
+		await this.runProviderCall(async () => {
+			parseCodexProviderResult(
+				codexEmptyResultSchema,
+				await this.#transport.request("turn/interrupt", { threadId, turnId }),
+				"turn/interrupt",
+			);
+		});
+	}
+
+	async *events(): AsyncIterable<CodexAppServerClientEvent> {
+		this.assertUsable();
+		if (this.#eventsClaimed) {
+			throw new CodexAppServerError("policy", "Codex event stream already has a consumer");
+		}
+		this.#eventsClaimed = true;
+		try {
+			for await (const event of this.#transport.events()) {
+				if (!isCodexRelevantNotificationMethod(event.method)) continue;
+				yield {
+					kind: "notification",
+					notification: parseCodexProviderResult(
+						codexRelevantNotificationSchema,
+						{ method: event.method, params: event.params },
+						`notification ${event.method}`,
+					),
+				};
+			}
+		} catch (error) {
+			throw await this.poison(error);
+		}
+	}
+
+	async close(): Promise<void> {
+		this.#closed = true;
+		await this.#transport.close();
+	}
+
+	private async initialize(): Promise<void> {
+		await this.runProviderCall(async () => {
+			const response = parseCodexProviderResult(
+				codexInitializeResponseSchema,
+				await this.#transport.request("initialize", {
+					clientInfo: {
+						name: CODEX_APP_SERVER_CLIENT_NAME,
+						title: "AgentRelay Mission Capsule",
+						version: CODEX_APP_SERVER_CLIENT_VERSION,
+					},
+					capabilities: {
+						experimentalApi: false,
+						requestAttestation: false,
+						mcpServerOpenaiFormElicitation: false,
+						optOutNotificationMethods: QUIET_CODEX_NOTIFICATION_METHODS,
+					},
+				}),
+				"initialize",
+			);
+			assertCodexIdentity(response, this.#codexHome);
+			this.#identity = response;
+			await this.#transport.sendNotification("initialized");
+		});
+	}
+
+	private async runProviderCall<T>(operation: () => Promise<T>): Promise<T> {
+		this.assertUsable();
+		try {
+			return await operation();
+		} catch (error) {
+			if (error instanceof CodexAppServerError && error.reason === "provider") throw error;
+			throw await this.poison(error);
+		}
+	}
+
+	private async poison(error: unknown): Promise<CodexAppServerError> {
+		const failure =
+			error instanceof CodexAppServerError
+				? error
+				: new CodexAppServerError("protocol", "Codex app-server violated its client contract", {
+						cause: error,
+					});
+		this.#failure ??= failure;
+		await this.#transport.close().catch(() => undefined);
+		return this.#failure;
+	}
+
+	private assertUsable(): void {
+		if (this.#failure !== null) throw this.#failure;
+		if (this.#closed) throw new CodexAppServerError("closed", "Codex app-server client is closed");
+	}
+}

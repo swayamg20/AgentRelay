@@ -125,13 +125,46 @@ service.
 
 ## 5. Add the first real adapter
 
-- [ ] Pin a supported Codex app-server version.
-- [ ] Generate and test the matching protocol schema.
-- [ ] Implement probe, session start/resume, turn start, event stream, cancellation,
-  and recovery.
+- [x] Pin Codex app-server `0.146.0` and fail closed on a different runtime identity.
+- [x] Validate the bounded request/response/notification subset consumed from the
+  matching generated protocol and reject malformed or oversized frames.
+- [x] Add a guarded read-only client with one event consumer, correlated responses,
+  denied server-initiated authority, and process-group cleanup.
+- [x] Add an unactivated schema-v2 Capsule journal and deterministic normalizer with
+  exact input/provider-intent persistence, at-most-once start barriers, a stable
+  logical turn and acceptance event before provider binding, one active turn, private
+  bounded storage, terminal replay, and provider-payload redaction.
+- [x] Extract a provider-neutral persistent Capsule server while preserving the fake
+  descriptor, CLI, and versioned Unix wire. Authenticate before runtime calls, keep
+  one socket owner, close the runtime concurrently while admitted handlers drain, and
+  let unexpected request or detached background failures retire the generation.
+- [x] Implement an injected Codex runner for probe, session start/resume, turn start,
+  one event consumer, cancellation, and recovery. Exercise it through the real
+  Capsule Unix wire using fake app-server clients; this is not production activation.
+- [x] Reconcile an ambiguous `turn/start` by exact `clientUserMessageId` and text only
+  in a fresh provider generation after a mandatory injected quiescence proof. Carry
+  cancellation across pre-binding recovery, durably terminalize a bounded zero match,
+  and never resend an uncertain start.
+- [x] Resolve an inherited `interrupt_maybe_sent` barrier only in the fresh provider
+  generation: read the exact intent once, persist an authoritative terminal provider
+  outcome when present, otherwise record a transient failure, and never reissue it.
+- [x] Allowlist the Codex child environment and derive its home locally beneath the
+  Capsule as a canonical, current-user-owned exact-mode-0700 directory.
+- [ ] Add a production guardian that owns quiescence proof and provider spawn as one
+  lifecycle. The current recovery authority is only an injected assertion seam.
+- [ ] Wire a locally selected Codex descriptor/runtime factory into the Capsule and
+  Node CLI, then execute a real model turn. Current commands still select the fake.
+- [ ] Add heartbeat/liveness ownership and close deadline, revocation, and
+  process-death races against a real provider.
+- [ ] Enforce OS-level workspace/read-root and secret isolation; environment filtering
+  and output redaction are not filesystem containment.
 - [ ] Require the RFC's structured turn dispositions: `reply`, `propose_contract`,
   `ready`, `blocked` (with optional requested input), or `failed`.
 - [ ] Run the two-machine backend-and-Android Mission.
+
+Schema v2 has no migration from the earlier unactivated schema-v1 development
+checkpoint. No production path writes either format, so compatibility must be decided
+before descriptor or CLI activation.
 
 Do not use Codex remote control, generic MCP notifications, or preview host channels
 as the activation foundation.

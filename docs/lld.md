@@ -13,7 +13,7 @@
 ├── protocol/            Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/               Hono, Drizzle, Postgres relay
 ├── mcp-server/          agentrelay-mcp package and agentrelay CLI
-├── node/                foreground Node, local journal, policy, and fake Capsules
+├── node/                Node, Capsule wire, fake runtime, and unactivated Codex path
 ├── tests/e2e/           relay, MCP, Node, and detached-Capsule process harnesses
 ├── docs/                product, implementation, operations, and RFC docs
 ├── docker-compose.yml   Postgres dev service and self-host relay profile
@@ -24,8 +24,10 @@ The private `agentrelay-node` workspace now provides a foreground daemon and dur
 consumer for fake-adapter turn deliveries. It validates local workspace/policy state,
 journals discovery and operation intent, and can recover exact host events from an
 independently persistent fake Mission Capsule after the Node process is killed. There
-is no real coding-agent adapter, contract-acknowledgement handler, or verification-
-delivery handler yet, so this still does not prove execution on two machines.
+is now a provider-neutral Capsule server and injected Codex runner library, but no
+descriptor or CLI activates it and no test executes a real model turn. There is also
+no contract-acknowledgement or verification-delivery handler, so this still does not
+prove execution on two machines.
 
 ## Protocol workspace
 
@@ -364,13 +366,25 @@ The private `agentrelay-node` binary has two fake-runtime commands:
   moved with `--capsule-root`.
 
 `agentrelay-capsule serve --directory <path>` is the internal child-process entry
-point. It exposes `probe`, `ensure_session`, `lookup_turn`, `start_turn`,
-`recover_turn`, `cancel_turn`, and `shutdown` over a versioned newline-delimited JSON
-protocol. Each request carries the exact Capsule ID, a random local capability, and a
-request ID; responses repeat Capsule and request identity. Capsule directories are
-mode 0700, and descriptor/state files plus the Unix socket are mode 0600. The detached
-child receives a small environment allowlist, not the Node credential, Relay
-credential, `HOME`, or coding-runtime secrets.
+point and still reads only the fake launch descriptor. The concrete server behind it
+is now provider-neutral: `PersistentFakeCapsuleServer` opens the existing fake store
+through `FakeCapsuleRuntime` and delegates to `PersistentCapsuleServer`. This preserves
+the descriptor, CLI, and versioned newline-delimited JSON wire. No current descriptor
+selects Codex.
+
+The wire exposes `probe`, `ensure_session`, `lookup_turn`, `start_turn`,
+`recover_turn`, `cancel_turn`, and `shutdown`. Each request carries the exact Capsule
+ID, a random local capability, and a request ID; responses repeat Capsule and request
+identity. Capsule directories are mode 0700, and descriptor/state files plus the Unix
+socket are mode 0600. The detached child receives a small environment allowlist, not
+the Node credential, Relay credential, inherited `HOME`, provider credentials, proxy
+settings, or process-loader injection variables. Authentication happens before any
+runtime call. Unexpected internal runtime errors are returned as the fixed public
+message `Capsule runtime failed`; the server then removes its owned socket and closes
+that running generation. `PersistentCapsuleServer.close()` starts runtime close while
+socket handlers drain, and the `CapsuleRuntime.close()` contract must release and
+fence admitted work before resolving. Detached background work can call the injected
+`lifecycle.retire()` hook to trigger the same teardown.
 
 The wire has separate bounded frames: 128 MiB for requests, which covers the maximum
 protocol-valid input after worst-case JSON escaping, and 4 MiB for responses. The
@@ -388,6 +402,49 @@ before restarting. There is no unattended supervisor or automatic stale-lock
 reclamation. Capsule restart is automatic only after repeated failed authenticated probes
 and ownership-safe removal of the same unchanged stale socket inode. The server binds
 through a private alias so closing an old process cannot unlink a replacement socket.
+
+### Unactivated Codex Capsule library
+
+`CodexCapsuleRunner` implements the same runtime-neutral server contract with an
+injected `CodexCapsuleClient` and `CodexRecoveryAuthority`. It implements probe,
+session start/resume, turn start/recovery, one provider-notification consumer,
+cancellation, and durable event streaming. Tests open it through the real private
+Unix wire using fake app-server clients. `agentrelay-node` and `agentrelay-capsule` do
+not construct it.
+
+`CodexCapsuleStore` schema v2 records a stable AgentRelay turn reference and its first
+`accepted` event during `prepareTurn`, before `turn/start` or a provider turn ID. The
+exact validated `StartTurnInput`, derived prompt/schema, hashes, and deterministic
+`clientUserMessageId` remain bound to `(deliveryId, executionAttempt)`. A duplicate
+start coalesces on that logical turn; a changed duplicate conflicts. Schema-v1
+development state has no migration and is rejected.
+
+`CodexCapsuleRunner.open` requires the injected recovery authority to assert
+`provider_generation_start` quiescence before it calls the client factory. Therefore
+an unresolved start is inspected only from a fresh provider generation. Reconciliation
+reads the bound thread and accepts exactly one turn whose client ID and text match the
+persisted intent. A bounded zero match is durably terminalized as `failed`, or
+`cancelled` when cancellation was already requested; it never resends. Cancellation
+before provider binding survives reconciliation and produces one interrupt after the
+provider turn is found. If a later fresh generation inherits
+`interrupt_maybe_sent`, it does not repeat the interrupt. It reads the exact intent
+once: an exact terminal turn is normalized and persisted authoritatively, while an
+absent or still-`inProgress` turn becomes a redacted transient failure because the
+prior provider generation is already proven quiescent. Public events contain no
+provider IDs. If the first interrupt RPC rejects, the driver calls
+`lifecycle.retire()`; only the replacement generation performs this one-read
+resolution.
+
+The guarded app-server client derives `codex-home` locally beneath the Capsule,
+requires the Capsule and home to be real canonical current-user-owned directories
+with exact mode 0700, and supplies that path as both `HOME` and `CODEX_HOME` inside an
+otherwise allowlisted child environment. This does not provide OS-enforced workspace
+read-root or secret isolation.
+
+The recovery authority is only an interface supplied by tests. There is no production
+guardian that atomically owns quiescence proof and provider spawn, no durable provider
+generation owner or heartbeat, no descriptor/CLI wiring, and no real model-turn
+evidence.
 
 ## CLI surface
 
@@ -513,7 +570,9 @@ Do not extend `accepted_by_session` or the four-state handoff table into a distr
 runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
 deliveries have a separate model and public control plane. The local Node now proves
 both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
-after Node-process death. The next slices are deterministic verification and contract
-handling, a pinned real adapter, and a two-machine proof. Mission-level expiry and
-dead-letter terminal reconciliation is still a separate relay gap; the mailbox API
-remains a compatibility and inspection surface.
+after Node-process death. The provider-neutral server and injected Codex runner add an
+unactivated wire-level checkpoint. The next slices are deterministic verification and
+contract handling, guardian-owned and OS-contained Codex CLI activation, a real model
+turn, and a two-machine proof. Mission-level expiry and dead-letter terminal
+reconciliation is still a separate relay gap; the mailbox API remains a compatibility
+and inspection surface.
