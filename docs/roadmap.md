@@ -14,8 +14,10 @@ The current repository combines an authenticated asynchronous mailbox, a mounted
 Mission and delivery control plane, and an experimental foreground Node. The Node
 journals Relay authority and starts or resumes either an in-process fake-host turn or
 an independently persistent fake Mission Capsule. The detached Capsule and Node-
-process restart proof are implemented. The next runtime milestone is the first pinned
-coding-agent adapter.
+process restart proof are implemented. The first pinned Codex client, durable journal,
+provider-neutral Capsule server, and injected runner now exist as an unactivated
+library checkpoint. The next runtime milestone is guarded production activation, not
+another protocol abstraction.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -92,8 +94,12 @@ private capability-authenticated Unix socket. Unit fault injection and real
 Relay/Postgres E2E coverage prove one host turn per processed delivery across
 duplicate polling, runner reconstruction, and `SIGKILL` after host acceptance. The
 restart proof still requires operator-safe cleanup of the killed Node's stale process
-lock. Contract acknowledgement, verification execution, a real runtime adapter, and
-the two-machine exit gate remain open.
+lock. The Capsule server is now provider-neutral while the existing descriptor, CLI,
+and wire remain fake-compatible. An injected Codex runner is tested through that real
+Unix wire. Runtime shutdown concurrently fences admitted work, and background runtime
+failures can retire their server generation, but no production path selects Codex.
+Contract acknowledgement, verification execution, guarded real-runtime activation,
+and the two-machine exit gate remain open.
 
 - Add a `node/` pnpm workspace and daemon CLI.
 - Register device-scoped credentials and capabilities.
@@ -110,9 +116,25 @@ one Node is killed and restarted mid-run.
 
 ## Stage 4: Codex vertical slice
 
-- Implement one pinned Codex app-server adapter over local stdio or a Unix socket.
-- Start or resume a dedicated thread per Mission.
-- Serialize turns, normalize lifecycle events, handle busy sessions, and cancel
+**Status:** unactivated runner checkpoint implemented. The pinned read-only client and
+schema-v2 journal now sit behind a provider-neutral Capsule server. The injected
+runner publishes a stable logical turn before provider binding, consumes one provider
+event stream, and reconciles an uncertain start only in a fresh provider generation
+after a mandatory injected quiescence proof. Tests exercise the real Capsule Unix
+wire with fake app-server clients. For an inherited uncertain interrupt, the fresh
+generation reads the exact intent once, persists a terminal provider outcome when
+available, or records a transient failure, without issuing another interrupt. Tests
+do not execute a model turn. The current descriptor and CLI still select the fake
+runtime, and no production guardian supplies the quiescence proof.
+
+- Activate the pinned Codex app-server adapter through a locally selected Capsule
+  descriptor without exposing Relay or Node credentials.
+- Add guardian-owned provider generations, liveness/heartbeat handling, and closed
+  owner-death, deadline, and revocation races.
+- Enforce OS-level workspace/read-root and secret containment in addition to the
+  implemented child-environment allowlist and locally derived private Codex home.
+- Start or resume a dedicated thread per Mission through the production path,
+  serialize turns, normalize lifecycle events, handle busy sessions, and cancel
   safely.
 - Run the backend-and-Android scenario with each agent limited to its own repository.
 - Deny push, merge, publish, deploy, arbitrary network access, and secrets.

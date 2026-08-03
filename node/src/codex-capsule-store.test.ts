@@ -25,6 +25,9 @@ afterEach(async () => {
 describe("CodexCapsuleStore", () => {
 	it("persists an at-most-once session start barrier and stable local session identity", async () => {
 		const { directory, store } = await openStore();
+		expect(
+			JSON.parse(await readFile(join(directory, CODEX_CAPSULE_STATE_FILE), "utf8")),
+		).toMatchObject({ schema_version: 2 });
 		expect(await store.claimSessionStart()).toEqual({ kind: "send" });
 		await store.close();
 
@@ -75,6 +78,60 @@ describe("CodexCapsuleStore", () => {
 		expect(await reopened.eventsForTurn(turn, input)).toEqual([
 			{ kind: "accepted", turn, sequence: 1 },
 		]);
+	});
+
+	it("publishes a stable logical turn before provider binding and cancels before send", async () => {
+		const { store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input);
+		expect(await store.lookupTurn(IDS.delivery, 1)).toEqual(turn);
+		expect(await store.eventsForTurn(turn, input)).toEqual([
+			{ kind: "accepted", turn, sequence: 1 },
+		]);
+
+		await store.requestCancellation(turn);
+		expect((await store.eventsForTurn(turn, input)).map((event) => event.kind)).toEqual([
+			"accepted",
+			"usage",
+			"cancelled",
+		]);
+		expect(await store.claimTurnStart(input)).toMatchObject({
+			kind: "accepted",
+			turn,
+			terminal: true,
+		});
+	});
+
+	it("carries pre-binding cancellation through reconciliation to one interrupt", async () => {
+		const { store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input);
+		await store.claimTurnStart(input);
+		await store.requestCancellation(turn);
+		expect(await store.claimInterrupt(turn)).toEqual({ kind: "awaiting_provider" });
+		expect((await store.claimTurnStart(input)).kind).toBe("reconcile");
+
+		await store.acceptTurn(input, "provider-turn-private-1");
+		expect(await store.claimInterrupt(turn)).toEqual({
+			kind: "send",
+			threadId: "provider-thread-private-1",
+			codexTurnId: "provider-turn-private-1",
+		});
+		expect(await store.claimInterrupt(turn)).toEqual({ kind: "reconcile" });
+	});
+
+	it("durably abandons a proven zero-match without reopening the execution attempt", async () => {
+		const { store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input);
+		await store.claimTurnStart(input);
+		const events = await store.recordUnmatchedStartAfterQuiescence(turn, input);
+		expect(events.map((event) => event.kind)).toEqual(["accepted", "usage", "failed"]);
+		expect(await store.claimTurnStart(input)).toMatchObject({ kind: "accepted", terminal: true });
+
+		const next = turnInput(session, IDS.delivery2);
+		await store.prepareTurn(next);
+		expect((await store.claimTurnStart(next)).kind).toBe("send");
 	});
 
 	it("rejects changed duplicate input and a second active execution", async () => {
@@ -141,6 +198,40 @@ describe("CodexCapsuleStore", () => {
 			{ kind: "cancelled" },
 		);
 		expect(events.map((event) => event.kind)).toEqual(["accepted", "usage", "cancelled"]);
+	});
+
+	it("fails an uncertain interrupt after quiescence without exposing provider references", async () => {
+		const { directory, store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await acceptPreparedTurn(store, input);
+		await store.requestCancellation(turn);
+		expect(await store.claimInterrupt(turn)).toMatchObject({ kind: "send" });
+		await store.close();
+
+		const reopened = await reopenStore(directory);
+		const events = await reopened.recordUncertainInterruptAfterQuiescence(turn, input);
+		expect(events).toEqual([
+			{ kind: "accepted", turn, sequence: 1 },
+			{
+				kind: "usage",
+				turn,
+				sequence: 2,
+				usage: { available: false, reason: "not_reported" },
+			},
+			{
+				kind: "failed",
+				turn,
+				sequence: 3,
+				failure: {
+					class: "transient",
+					message: "Codex cancellation outcome could not be recovered after provider shutdown",
+				},
+			},
+		]);
+		expect(JSON.stringify(events)).not.toContain("provider-thread-private-1");
+		expect(JSON.stringify(events)).not.toContain("provider-turn-private-1");
+		expect(await reopened.recordUncertainInterruptAfterQuiescence(turn, input)).toEqual(events);
+		expect(await reopened.claimInterrupt(turn)).toEqual({ kind: "terminal" });
 	});
 
 	it("rejects a cancelled terminal without durable local cancellation", async () => {

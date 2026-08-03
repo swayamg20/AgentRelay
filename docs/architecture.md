@@ -9,7 +9,10 @@
 > first local checkpoint is recorded in
 > [`Foreground Node runtime`](research/002-foreground-node-runtime.md), and the
 > process-survival checkpoint is recorded in
-> [`Persistent Mission Capsule`](research/003-persistent-mission-capsule.md).
+> [`Persistent Mission Capsule`](research/003-persistent-mission-capsule.md). The
+> unactivated Codex boundaries are recorded in
+> [`Guarded Codex client and durable Capsule journal`](research/004-codex-capsule-journal.md)
+> and [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md).
 
 ## Product thesis
 
@@ -55,6 +58,19 @@ durable coordination foundations:
   deterministic fake adapter for turn deliveries. Its optional persistent path
   launches a detached, Mission-scoped fake Capsule and recovers it through a private
   capability-authenticated Unix socket after the Node process dies.
+- A provider-neutral persistent Capsule server behind that same versioned wire. The
+  existing fake descriptor and CLI use a compatibility wrapper, so no current command
+  selects another runtime. An unexpected internal runtime failure is redacted and
+  retires the running server generation. Runtime shutdown starts while admitted
+  handlers drain, and detached background work can request retirement.
+- An unactivated Codex library checkpoint with a pinned guarded app-server client, a
+  schema-v2 durable journal, and an injected runner. It publishes a stable logical
+  turn before provider binding and reconciles an uncertain start only in a fresh
+  provider generation after an injected quiescence assertion. Tests traverse the real
+  Unix wire with fake app-server clients. For an inherited uncertain interrupt, the
+  fresh generation reads the exact intent once, preserves a terminal provider outcome
+  when present, or records a transient failure without a second interrupt. Tests do
+  not execute a model turn.
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -63,10 +79,14 @@ durable coordination foundations:
 This is useful groundwork, but it is not yet an autonomous agent network. The current
 system does not contain:
 
-- A real coding-agent adapter. The persistent Capsule currently hosts only the
-  deterministic fake runtime and has no service supervisor or installer.
+- A production-activated coding-agent path. The persistent CLI still hosts only the
+  deterministic fake runtime; the Codex runner has no descriptor/CLI selection,
+  production guardian, service supervisor, heartbeat, or real-turn proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
+- OS-enforced Codex workspace/read-root and secret containment, plus guardian-owned
+  provider generation and owner-death behavior. Environment filtering and output
+  redaction do not provide that containment.
 - Mission-level expiry or dead-letter reconciliation that moves the Mission to a
   terminal state and cancels its remaining work. Discovery hides expired Missions,
   while delivery expiry is reconciled only when that delivery is reclaimed.
@@ -145,6 +165,13 @@ The first adapter targets Codex app-server over local stdio or a Unix socket. Cl
 follows through its Agent SDK or headless CLI. Experimental remote transports are not
 part of the correctness boundary.
 
+The Codex adapter library now implements this interface behind the provider-neutral
+Capsule server. Its child environment is allowlisted, and its home is derived locally
+beneath the Capsule and revalidated as canonical, current-user-owned, and exactly mode
+0700. Before a client is created, an injected recovery authority must assert that the
+previous provider generation is quiescent. That assertion is a seam for a future
+guardian, not current production ownership or process-death proof.
+
 ## Why MCP, A2A, and SSE are not the Node
 
 - **MCP** exposes local tools and context to a model host. An MCP server cannot
@@ -191,6 +218,25 @@ token-budget, network, path, and side-effect policy. Those hard limits must rema
 outside the model because the relay cannot trust usage or effects it has not
 observed. The system does not add a manager LLM with global access to every repository.
 
+### Unactivated Codex execution checkpoint
+
+The same private Capsule wire can now host an injected `CodexCapsuleRunner` in tests.
+Its schema-v2 journal makes the AgentRelay turn reference and first `accepted` event
+durable before any provider turn ID exists. Duplicate starts coalesce on that logical
+turn. If `turn/start` may have crossed the provider boundary, a replacement provider
+generation reads the thread and accepts only one exact client-ID and text match. A
+bounded zero match becomes a durable `failed` or `cancelled` terminal result; it never
+causes a blind resend.
+
+If a fresh provider generation inherits `interrupt_maybe_sent`, it does not issue a
+second interrupt. It performs one exact-intent thread read: an exact terminal turn is
+normalized authoritatively, while an absent or still-running turn becomes a bounded
+transient `failed` result because the prior provider was already proven quiescent.
+
+This is a library and fault-harness checkpoint. The fake Capsule descriptor and CLI
+remain unchanged, the quiescence proof is injected rather than guardian-owned, and no
+real Codex model turn has crossed the Mission delivery path.
+
 ## Delivery semantics
 
 Message persistence and agent processing are separate facts:
@@ -231,6 +277,12 @@ adapter must preserve the same `lookupTurn` and exact-input `recoverTurn` contra
 Ordering is causal within one Mission; no global ordering is required. Presence is
 advisory, and an SSE write or open connection never counts as processed.
 
+The unactivated Codex journal extends the same local rule to the pre-provider-binding
+window: schema v2 exposes a stable logical turn immediately, persists the exact
+provider intent before `turn/start`, and only reconciles in a fresh provider
+generation after the quiescence assertion. Schema-v1 development files are not
+migrated by this checkpoint.
+
 ## Security model
 
 Remote agent content is untrusted data. The receiving owner controls local authority.
@@ -254,6 +306,11 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   relay first. The running MCP reloads trust before every acceptance decision.
 - AES-GCM encrypted notification webhooks at rest, restricted to exact HTTPS Slack
   incoming-webhook targets and dispatched without redirects.
+- An allowlisted Codex child environment, a locally derived canonical owner-owned
+  exact-mode-0700 home, and generic internal Capsule errors that retire the affected
+  running server generation. Concurrent runtime close fences admitted work, and a
+  detached driver failure requests retirement. These apply only to the unactivated
+  Codex library path.
 - Static recommended host permission configuration.
 - Local per-teammate trust parsing and decision output.
 
@@ -274,6 +331,9 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
+- The Codex recovery authority is only an injected quiescence assertion. There is no
+  production guardian that atomically owns proof plus spawn, no heartbeat/watchdog,
+  and no OS-enforced workspace/read-root or secret boundary.
 
 ### Target invariant
 
@@ -304,7 +364,8 @@ may self-host it or use a future hosted service. Every developer machine can run
 own MCP process for interactive tools. The experimental AgentRelay Node is a separate
 foreground process today. It can launch detached fake Mission Capsules that outlive a
 normal Node exit or `SIGKILL`, but automatic Node supervision and real-runtime
-Capsules remain target behavior.
+Capsule activation remain target behavior. The provider-neutral server and injected
+Codex runner do not change which runtime the current CLI launches.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.
@@ -322,6 +383,10 @@ processes it after reconnecting.
   journal, in-process fake-adapter, and runner-reconstruction checkpoint.
 - [`Persistent Mission Capsule`](research/003-persistent-mission-capsule.md): detached
   fake-host persistence and Node-process recovery checkpoint.
+- [`Guarded Codex client and durable Capsule journal`](research/004-codex-capsule-journal.md):
+  pinned read-only provider boundary and local correlation checkpoint.
+- [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md):
+  provider-neutral server, schema-v2 turn lifecycle, and wire-level fake-client proof.
 - [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.
@@ -333,7 +398,8 @@ they disagree, document the gap; do not present the target as already shipped.
 
 - **Agent:** a logical network identity owned by a person or organization.
 - **Node:** a separately authenticated relay device identity plus an experimental
-  foreground daemon that can launch detached fake Mission Capsules; in the target, a
+  foreground daemon that launches detached fake Mission Capsules. Its library also
+  contains an unactivated provider-neutral Capsule/Codex path; in the target, it is a
   supervised persistent per-device execution boundary.
 - **Workspace binding:** a relay-visible logical alias and repository/base-ref
   constraint that the current Node maps locally to an approved checkout.

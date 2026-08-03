@@ -18,8 +18,19 @@ export type CodexTurnStartClaim =
 
 export type CodexInterruptClaim =
 	| { readonly kind: "send"; readonly threadId: string; readonly codexTurnId: string }
+	| { readonly kind: "awaiting_provider" }
 	| { readonly kind: "reconcile" }
 	| { readonly kind: "terminal" };
+
+export interface CodexTurnRuntimeState {
+	readonly turn: HostTurnRef;
+	readonly intent: CodexCapsuleTurnIntent;
+	readonly phase: "prepared" | "start_maybe_sent" | "accepted" | "cancelling" | "terminal";
+	readonly threadId: string;
+	readonly codexTurnId: string | null;
+	readonly cancellationRequested: boolean;
+	readonly terminal: boolean;
+}
 
 export type CodexNormalizedTerminal =
 	| { readonly kind: "completed"; readonly disposition: TurnDisposition }

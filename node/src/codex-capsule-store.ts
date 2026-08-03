@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import {
 	type HostEvent,
 	type HostSessionRef,
 	type HostTurnRef,
 	type HostUsage,
+	type SessionInput,
 	type StartTurnInput,
 	hostExecutionAttemptSchema,
 	hostTurnRefSchema,
@@ -14,33 +13,34 @@ import {
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
-import { digestStartTurnInput, executionKey } from "./capsule-correlation.js";
-import { CapsuleOperationError } from "./capsule-operation-error.js";
-import { buildCodexCapsuleTurnIntent } from "./codex-capsule-prompt.js";
-import {
-	assertSameInput,
-	conflict,
-	parseTerminal,
-	publicIntent,
-	replayTerminalEvents,
-	requireReadySession,
-	requireTurnByInput,
-	requireTurnByRef,
-	storedIntent,
-} from "./codex-capsule-records.js";
+import { executionKey } from "./capsule-correlation.js";
+import { assertSameInput, publicIntent, requireTurnByRef } from "./codex-capsule-records.js";
 import {
 	type CodexCapsuleIdentity,
 	type CodexCapsuleState,
 	cloneStoredEvents,
 	createCodexCapsuleState,
-	hostSessionFromState,
 	hostTurnFromStored,
 	validateCodexCapsuleState,
 } from "./codex-capsule-state.js";
+import {
+	acceptSession,
+	acceptTurn,
+	claimInterrupt,
+	claimSessionStart,
+	claimTurnStart,
+	prepareTurn,
+	recordTerminal,
+	recordUncertainInterruptAfterQuiescence,
+	recordUnmatchedStartAfterQuiescence,
+	requestCancellation,
+	resetUnboundSessionAfterQuiescence,
+} from "./codex-capsule-transitions.js";
 import type {
 	CodexInterruptClaim,
 	CodexNormalizedTerminal,
 	CodexSessionStartClaim,
+	CodexTurnRuntimeState,
 	CodexTurnStartClaim,
 } from "./codex-capsule-types.js";
 import {
@@ -88,111 +88,39 @@ export class CodexCapsuleStore {
 		return new CodexCapsuleStore(statePath, identity, state, now);
 	}
 
-	async claimSessionStart(): Promise<CodexSessionStartClaim> {
-		return this.mutate((state) => {
-			if (state.session.phase === "ready") {
-				return {
-					kind: "ready" as const,
-					session: hostSessionFromState(state),
-					threadId: state.session.codex_thread_id!,
-				};
-			}
-			if (state.session.phase === "start_maybe_sent") return { kind: "reconcile" as const };
-			state.session.phase = "start_maybe_sent";
-			return { kind: "send" as const };
-		});
+	claimSessionStart(): Promise<CodexSessionStartClaim> {
+		return this.mutate(claimSessionStart);
+	}
+
+	async sessionScope(): Promise<SessionInput> {
+		await this.#pendingWrite;
+		return structuredClone(this.#state.session.input);
 	}
 
 	async acceptSession(codexThreadIdValue: string): Promise<HostSessionRef> {
-		const codexThreadId = providerReferenceSchema.parse(codexThreadIdValue);
-		return this.mutate((state) => {
-			if (state.session.phase === "ready") {
-				if (state.session.codex_thread_id !== codexThreadId) {
-					throw conflict("Codex Capsule session is already bound to another thread");
-				}
-				return hostSessionFromState(state);
-			}
-			if (state.session.phase !== "start_maybe_sent") {
-				throw conflict("Codex Capsule thread acceptance is missing its start barrier");
-			}
-			state.session.phase = "ready";
-			state.session.codex_thread_id = codexThreadId;
-			return hostSessionFromState(state);
-		});
+		const threadId = providerReferenceSchema.parse(codexThreadIdValue);
+		return this.mutate((state) => acceptSession(state, threadId));
 	}
 
-	async prepareTurn(inputValue: StartTurnInput): Promise<void> {
+	/** Permits a replacement empty thread only after the caller proves the old process is gone. */
+	resetUnboundSessionAfterQuiescence(): Promise<void> {
+		return this.mutate(resetUnboundSessionAfterQuiescence);
+	}
+
+	async prepareTurn(inputValue: StartTurnInput): Promise<HostTurnRef> {
 		const input = startTurnInputSchema.parse(inputValue);
-		const providerIntent = buildCodexCapsuleTurnIntent(input);
-		await this.mutate((state) => {
-			const session = requireReadySession(state);
-			if (!isDeepStrictEqual(input.session, session)) {
-				throw new CapsuleOperationError("scope_mismatch", "Turn does not match the Codex session");
-			}
-			const key = executionKey(input.deliveryId, input.executionAttempt);
-			const existing = state.turns[key];
-			if (existing !== undefined) {
-				assertSameInput(existing, input);
-				return;
-			}
-			if (Object.values(state.turns).some((turn) => turn.phase !== "terminal")) {
-				throw conflict("Codex Capsule already has an active turn");
-			}
-			const timestamp = this.#now().toISOString();
-			state.turns[key] = {
-				input: structuredClone(input),
-				input_sha256: digestStartTurnInput(input),
-				host_turn_id: `capsule-turn-${randomUUID()}`,
-				phase: "prepared",
-				codex_turn_id: null,
-				provider_intent: storedIntent(providerIntent),
-				cancellation: "none",
-				events: [],
-				created_at: timestamp,
-				updated_at: timestamp,
-			};
-		});
+		return this.mutate((state) => prepareTurn(state, input, this.#now().toISOString()));
 	}
 
 	async claimTurnStart(inputValue: StartTurnInput): Promise<CodexTurnStartClaim> {
 		const input = startTurnInputSchema.parse(inputValue);
-		return this.mutate((state) => {
-			const turn = requireTurnByInput(state, input);
-			if (turn.phase === "prepared") {
-				turn.phase = "start_maybe_sent";
-				return { kind: "send" as const, intent: publicIntent(turn) };
-			}
-			if (turn.phase === "start_maybe_sent") {
-				return { kind: "reconcile" as const, intent: publicIntent(turn) };
-			}
-			return {
-				kind: "accepted" as const,
-				turn: hostTurnFromStored(turn),
-				terminal: turn.phase === "terminal",
-			};
-		});
+		return this.mutate((state) => claimTurnStart(state, input));
 	}
 
 	async acceptTurn(inputValue: StartTurnInput, codexTurnIdValue: string): Promise<HostTurnRef> {
 		const input = startTurnInputSchema.parse(inputValue);
 		const codexTurnId = providerReferenceSchema.parse(codexTurnIdValue);
-		return this.mutate((state) => {
-			const turn = requireTurnByInput(state, input);
-			if (["accepted", "cancelling", "terminal"].includes(turn.phase)) {
-				if (turn.codex_turn_id !== codexTurnId) {
-					throw conflict("Codex execution is already bound to another provider turn");
-				}
-				return hostTurnFromStored(turn);
-			}
-			if (turn.phase !== "start_maybe_sent") {
-				throw conflict("Codex turn acceptance is missing its at-most-once start barrier");
-			}
-			const ref = hostTurnFromStored(turn);
-			turn.codex_turn_id = codexTurnId;
-			turn.phase = "accepted";
-			turn.events = [{ kind: "accepted", turn: ref, sequence: 1 }];
-			return ref;
-		});
+		return this.mutate((state) => acceptTurn(state, input, codexTurnId));
 	}
 
 	async lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
@@ -202,7 +130,27 @@ export class CodexCapsuleStore {
 			hostExecutionAttemptSchema.parse(executionAttempt),
 		);
 		const turn = this.#state.turns[key];
-		return turn === undefined || turn.codex_turn_id === null ? null : hostTurnFromStored(turn);
+		return turn === undefined ? null : hostTurnFromStored(turn);
+	}
+
+	async inspectTurn(
+		refValue: HostTurnRef,
+		expectedInputValue: StartTurnInput,
+	): Promise<CodexTurnRuntimeState> {
+		const ref = hostTurnRefSchema.parse(refValue);
+		const expectedInput = startTurnInputSchema.parse(expectedInputValue);
+		await this.#pendingWrite;
+		const turn = requireTurnByRef(this.#state, ref);
+		assertSameInput(turn, expectedInput);
+		return {
+			turn: hostTurnFromStored(turn),
+			intent: publicIntent(turn),
+			phase: turn.phase,
+			threadId: this.#state.session.codex_thread_id!,
+			codexTurnId: turn.codex_turn_id,
+			cancellationRequested: turn.cancellation !== "none",
+			terminal: turn.phase === "terminal",
+		};
 	}
 
 	async eventsForTurn(
@@ -217,62 +165,50 @@ export class CodexCapsuleStore {
 		return cloneStoredEvents(turn);
 	}
 
+	async inputForTurn(refValue: HostTurnRef): Promise<StartTurnInput> {
+		const ref = hostTurnRefSchema.parse(refValue);
+		await this.#pendingWrite;
+		return structuredClone(requireTurnByRef(this.#state, ref).input);
+	}
+
 	async requestCancellation(refValue: HostTurnRef): Promise<void> {
 		const ref = hostTurnRefSchema.parse(refValue);
-		await this.mutate((state) => {
-			const turn = requireTurnByRef(state, ref);
-			if (turn.phase === "terminal" || turn.phase === "cancelling") return;
-			if (turn.phase !== "accepted") throw conflict("Codex turn is not cancellable");
-			turn.phase = "cancelling";
-			turn.cancellation = "requested";
-		});
+		await this.mutate((state) => requestCancellation(state, ref));
 	}
 
 	async claimInterrupt(refValue: HostTurnRef): Promise<CodexInterruptClaim> {
 		const ref = hostTurnRefSchema.parse(refValue);
-		return this.mutate((state) => {
-			const turn = requireTurnByRef(state, ref);
-			if (turn.phase === "terminal") return { kind: "terminal" as const };
-			if (turn.phase !== "cancelling") throw conflict("Codex cancellation was not requested");
-			if (turn.cancellation === "interrupt_maybe_sent") {
-				return { kind: "reconcile" as const };
-			}
-			turn.cancellation = "interrupt_maybe_sent";
-			return {
-				kind: "send" as const,
-				threadId: state.session.codex_thread_id!,
-				codexTurnId: turn.codex_turn_id!,
-			};
-		});
+		return this.mutate((state) => claimInterrupt(state, ref));
+	}
+
+	async recordUncertainInterruptAfterQuiescence(
+		refValue: HostTurnRef,
+		expectedInputValue: StartTurnInput,
+	): Promise<readonly HostEvent[]> {
+		const ref = hostTurnRefSchema.parse(refValue);
+		const expectedInput = startTurnInputSchema.parse(expectedInputValue);
+		return this.mutate((state) =>
+			recordUncertainInterruptAfterQuiescence(state, ref, expectedInput),
+		);
+	}
+
+	async recordUnmatchedStartAfterQuiescence(
+		refValue: HostTurnRef,
+		expectedInputValue: StartTurnInput,
+	): Promise<readonly HostEvent[]> {
+		const ref = hostTurnRefSchema.parse(refValue);
+		const expectedInput = startTurnInputSchema.parse(expectedInputValue);
+		return this.mutate((state) => recordUnmatchedStartAfterQuiescence(state, ref, expectedInput));
 	}
 
 	async recordTerminal(
 		refValue: HostTurnRef,
 		usageValue: HostUsage,
-		outcomeValue: CodexNormalizedTerminal,
+		outcome: CodexNormalizedTerminal,
 	): Promise<readonly HostEvent[]> {
 		const ref = hostTurnRefSchema.parse(refValue);
 		const usage = hostUsageSchema.parse(usageValue);
-		const outcome = parseTerminal(outcomeValue);
-		return this.mutate((state) => {
-			const turn = requireTurnByRef(state, ref);
-			if (turn.phase === "terminal") return replayTerminalEvents(turn, usage, outcome);
-			if (outcome.kind === "cancelled" && turn.phase !== "cancelling") {
-				throw conflict("Codex cancellation lacks a durable local cancellation intent");
-			}
-			if (turn.phase !== "accepted" && turn.phase !== "cancelling") {
-				throw conflict("Codex terminal result arrived before durable acceptance");
-			}
-			turn.events.push({
-				kind: "usage",
-				turn: ref,
-				sequence: turn.events.length + 1,
-				usage,
-			});
-			turn.events.push({ ...outcome, turn: ref, sequence: turn.events.length + 1 });
-			turn.phase = "terminal";
-			return cloneStoredEvents(turn);
-		});
+		return this.mutate((state) => recordTerminal(state, ref, usage, outcome));
 	}
 
 	async close(): Promise<void> {

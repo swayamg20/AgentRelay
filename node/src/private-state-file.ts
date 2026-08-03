@@ -9,7 +9,11 @@ export async function ensurePrivateStateDirectory(directory: string): Promise<vo
 	if (!isAbsolute(directory) || normalize(directory) !== directory || directory.includes("\0")) {
 		throw new Error(`Private state directory must be an absolute normalized path: ${directory}`);
 	}
-	await mkdir(directory, { recursive: true, mode: 0o700 });
+	try {
+		await mkdir(directory, { recursive: true, mode: 0o700 });
+	} catch (error) {
+		if (errorCode(error) !== "EEXIST") throw error;
+	}
 	const stats = await lstat(directory);
 	if (!stats.isDirectory() || stats.isSymbolicLink()) {
 		throw new Error(`Private state directory must be a real directory: ${directory}`);

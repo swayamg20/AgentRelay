@@ -19,11 +19,13 @@ repositories is the first proof, not the final product boundary.
 ## Honest status
 
 The repository currently ships an **authenticated asynchronous mailbox, a durable
-Mission delivery control plane, and an experimental Node with persistent fake Mission
-Capsules**, not the full autonomous runtime described above. The Node can consume one
-turn at a time through either its in-process deterministic fake or a detached fake
-Capsule backed by durable local state. It does not yet start a real coding-agent
-runtime or complete contract-acknowledgement and verification deliveries.
+Mission delivery control plane, and an experimental Node with persistent Mission
+Capsule foundations**, not the full autonomous runtime described above. The Node CLI
+still consumes one turn at a time through either its in-process deterministic fake or
+a detached fake Capsule. Separately, the Node library now contains a provider-neutral
+Capsule server and an injected Codex runner tested through the real Unix wire against
+fake app-server clients. It does not yet activate Codex for a real model turn or
+complete contract-acknowledgement and verification deliveries.
 
 ### Implemented today
 
@@ -60,18 +62,35 @@ runtime or complete contract-acknowledgement and verification deliveries.
   exposing acceptance. Real Relay/Postgres E2E coverage kills the Node after host
   acceptance, proves the Capsule remains reachable, then recovers the same turn and
   commits exactly one Mission result after an operator-safe stale-lock cleanup.
+- A provider-neutral persistent Capsule server behind the existing versioned,
+  capability-authenticated Unix wire. The fake Capsule CLI and Node path retain their
+  existing descriptor and wire contract through a compatibility wrapper. Unexpected
+  internal runtime failures return a redacted error and retire that running server
+  generation. Runtime close begins while admitted handlers drain so the runtime can
+  release and fence them; detached background work can request retirement directly.
+- An unactivated Codex runtime checkpoint: the pinned guarded client, schema-v2
+  Capsule journal, and injected runner implement session start/resume, stable logical
+  turn publication before provider binding, exact fresh-generation start
+  reconciliation, event replay, and cancellation. Wire-level tests use fake
+  app-server clients; no current descriptor or CLI selects this runner. The Codex
+  child receives an allowlisted environment and a locally derived, canonical,
+  current-user-owned mode-0700 home. For an inherited uncertain interrupt, a fresh
+  generation reads the exact intent once, persists an authoritative terminal outcome
+  when present, or records a transient failure; it never repeats the interrupt.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
 
 ### Next architecture, not shipped yet
 
-- Isolated worktrees and persistent real-runtime sessions attached to the persisted
-  device and workspace identities. The current persistent Capsule hosts only the
-  deterministic fake runtime.
+- Production descriptor and CLI activation for persistent real-runtime sessions. The
+  generic Capsule server and injected Codex runner exist as libraries, but the
+  current persistent command still selects only the deterministic fake runtime.
 - Complete local verification, contract-artifact carriage, and policy/evidence
   enforcement outside the model.
-- Codex and Claude runtime adapters that start or resume real agent turns.
+- A production provider-process guardian, heartbeat/liveness ownership, and
+  OS-enforced workspace and secret containment for Codex; then a Claude runtime
+  adapter.
 - Mission-level expiry and dead-letter reconciliation that transitions the Mission
   and cancels remaining work instead of only hiding expired work from discovery or
   terminating one delivery.
@@ -85,6 +104,10 @@ The initial local checkpoint is recorded in
 [`Foreground Node runtime`](docs/research/002-foreground-node-runtime.md).
 The detached-process recovery checkpoint is recorded in
 [`Persistent Mission Capsule`](docs/research/003-persistent-mission-capsule.md).
+The guarded client and journal checkpoint is recorded in
+[`Guarded Codex client and durable Capsule journal`](docs/research/004-codex-capsule-journal.md).
+The provider-neutral server and injected-runner checkpoint is recorded in
+[`Injected Codex Capsule runner`](docs/research/005-codex-capsule-runner.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -246,9 +269,12 @@ They are not yet a complete autonomous security boundary:
   local denial active and can be repaired by retrying the command.
 
 The current Node enforces repository preflight, accepted local-policy identity, and
-reported host-event bounds outside the model. It must still enforce the effective
-command, network, time, path, side-effect, budget, and revocation policy before real
-autonomous writes are safe to claim. See
+reported host-event bounds outside the model. The unactivated Codex library also
+allowlists its child environment, derives a private exact-mode-0700 home locally, and
+retires a Capsule server generation after an unexpected internal runtime failure. It
+still lacks a production guardian and OS-enforced workspace and secret containment,
+and the Node must enforce the effective command, network, time, path, side-effect,
+budget, and revocation policy before real autonomous writes are safe to claim. See
 [`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
 acceptance tests.
 
@@ -273,7 +299,7 @@ this README does not claim full A2A conformance.
 ├── protocol/             Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/                current Hono + Drizzle + Postgres relay
 ├── mcp-server/           current MCP server and agentrelay CLI
-├── node/                 experimental Node, local journal, and fake Mission Capsules
+├── node/                 Node, Capsule wire, fake runtime, and unactivated Codex libraries
 ├── tests/e2e/            relay + MCP and Node/Capsule process test harnesses
 ├── landing/              GitHub Pages landing page
 └── docs/
@@ -290,7 +316,9 @@ this README does not claim full A2A conformance.
     ├── research/
     │   ├── 001-delivery-lease-control-plane.md
     │   ├── 002-foreground-node-runtime.md
-    │   └── 003-persistent-mission-capsule.md
+    │   ├── 003-persistent-mission-capsule.md
+    │   ├── 004-codex-capsule-journal.md
+    │   └── 005-codex-capsule-runner.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```

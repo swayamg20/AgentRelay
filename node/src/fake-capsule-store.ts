@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize } from "node:path";
@@ -30,6 +30,7 @@ export { CapsuleOperationError } from "./capsule-operation-error.js";
 
 export const CAPSULE_DESCRIPTOR_FILE = "launch.json";
 export const CAPSULE_STATE_FILE = "state.json";
+const MAX_CAPSULE_SOCKET_PATH_BYTES = 100;
 
 const storedTurnSchema = z
 	.object({
@@ -67,10 +68,18 @@ export async function readCapsuleLaunchDescriptor(
 
 function assertValidCapsuleSocketPath(path: string, capsuleId: string): void {
 	const expectedSocketDirectory = `ar-capsules-${process.getuid?.() ?? "unknown"}`;
+	let canonicalRoot = false;
+	try {
+		const root = dirname(dirname(path));
+		canonicalRoot = realpathSync(root) === root;
+	} catch {
+		canonicalRoot = false;
+	}
 	if (
 		!isAbsolute(path) ||
 		normalize(path) !== path ||
-		Buffer.byteLength(path, "utf8") > 100 ||
+		!canonicalRoot ||
+		Buffer.byteLength(path, "utf8") > MAX_CAPSULE_SOCKET_PATH_BYTES ||
 		basename(dirname(path)) !== expectedSocketDirectory ||
 		basename(path) !== capsuleSocketFilename(capsuleId)
 	) {
@@ -81,7 +90,19 @@ function assertValidCapsuleSocketPath(path: string, capsuleId: string): void {
 export function capsuleSocketPath(capsuleId: string): string {
 	assertUnixSocketSupport();
 	const owner = process.getuid?.() ?? "unknown";
-	const path = join(tmpdir(), `ar-capsules-${owner}`, capsuleSocketFilename(capsuleId));
+	const temporaryRoot = tmpdir();
+	if (!isAbsolute(temporaryRoot) || normalize(temporaryRoot) !== temporaryRoot) {
+		throw new Error("Capsule descriptor contains an invalid local socket path");
+	}
+	const candidate = join(
+		realpathSync(temporaryRoot),
+		`ar-capsules-${owner}`,
+		capsuleSocketFilename(capsuleId),
+	);
+	const path =
+		Buffer.byteLength(candidate, "utf8") <= MAX_CAPSULE_SOCKET_PATH_BYTES
+			? candidate
+			: join(realpathSync("/tmp"), `ar-capsules-${owner}`, capsuleSocketFilename(capsuleId));
 	assertValidCapsuleSocketPath(path, capsuleId);
 	return path;
 }

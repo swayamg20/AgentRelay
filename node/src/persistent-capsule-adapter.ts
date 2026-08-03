@@ -30,6 +30,7 @@ import {
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
+import { buildBaseCapsuleEnvironment } from "./capsule-environment.js";
 import {
 	CAPSULE_ADAPTER_INFO,
 	type CapsuleErrorCode,
@@ -664,11 +665,7 @@ export function createDetachedCapsuleLauncher(command: CapsuleProcessCommand): C
 export function buildCapsuleEnvironment(
 	source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-	const result: NodeJS.ProcessEnv = {};
-	for (const name of ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "SystemRoot"]) {
-		if (source[name] !== undefined) result[name] = source[name];
-	}
-	return result;
+	return buildBaseCapsuleEnvironment(source);
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {

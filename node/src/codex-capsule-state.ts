@@ -53,7 +53,7 @@ const storedCodexTurnSchema = z
 		codex_turn_id: providerReferenceSchema.nullable(),
 		provider_intent: storedProviderIntentSchema,
 		cancellation: z.enum(["none", "requested", "interrupt_maybe_sent"]),
-		events: z.array(hostEventSchema),
+		events: z.array(hostEventSchema).min(1),
 		created_at: z.string().datetime({ offset: true }),
 		updated_at: z.string().datetime({ offset: true }),
 	})
@@ -61,7 +61,7 @@ const storedCodexTurnSchema = z
 
 export const codexCapsuleStateSchema = z
 	.object({
-		schema_version: z.literal(1),
+		schema_version: z.literal(2),
 		capsule_id: uuidSchema,
 		created_at: z.string().datetime({ offset: true }),
 		updated_at: z.string().datetime({ offset: true }),
@@ -93,7 +93,7 @@ export function createCodexCapsuleState(
 	const identity = parseIdentity(identityValue);
 	const timestamp = now.toISOString();
 	return codexCapsuleStateSchema.parse({
-		schema_version: 1,
+		schema_version: 2,
 		capsule_id: identity.capsuleId,
 		created_at: timestamp,
 		updated_at: timestamp,
@@ -201,9 +201,11 @@ function validateTurn(state: CodexCapsuleState, key: string, turn: StoredCodexTu
 }
 
 function validateTurnPhase(turn: StoredCodexTurn): void {
-	const accepted = ["accepted", "cancelling", "terminal"].includes(turn.phase);
-	if (accepted !== (turn.codex_turn_id !== null)) {
-		throw new Error("Codex Capsule turn phase does not match its provider binding");
+	if (["prepared", "start_maybe_sent"].includes(turn.phase) && turn.codex_turn_id !== null) {
+		throw new Error("Codex Capsule turn crossed a provider binding before its start phase");
+	}
+	if (turn.phase === "accepted" && turn.codex_turn_id === null) {
+		throw new Error("Accepted Codex turn is missing its provider binding");
 	}
 	if (turn.phase === "cancelling" && turn.cancellation === "none") {
 		throw new Error("Cancelling Codex turn is missing its cancellation barrier");
@@ -224,10 +226,6 @@ function validateTurnEvents(turn: StoredCodexTurn): void {
 	let stream = createHostEventStreamState({ ...hostTurnFromStored(turn), turnId: undefined });
 	for (const event of turn.events) {
 		stream = acceptHostEvent(stream, event, DEFAULT_HOST_EVENT_STREAM_POLICY).state;
-	}
-	const shouldHaveEvents = ["accepted", "cancelling", "terminal"].includes(turn.phase);
-	if (shouldHaveEvents !== turn.events.length > 0) {
-		throw new Error("Codex Capsule turn phase does not match its durable event stream");
 	}
 	if ((turn.phase === "terminal") !== (stream.phase === "terminal")) {
 		throw new Error("Codex Capsule terminal phase does not match its event stream");

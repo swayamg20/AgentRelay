@@ -1,5 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, normalize } from "node:path";
+import { buildCodexChildEnvironment, prepareCodexHome } from "./capsule-environment.js";
 import {
 	CODEX_APP_SERVER_CLIENT_VERSION,
 	QUIET_CODEX_NOTIFICATION_METHODS,
@@ -38,7 +37,7 @@ export type { StartCodexTurnInput } from "./codex-app-server-policy.js";
 export interface CodexAppServerClientOptions {
 	readonly command: CodexAppServerCommand;
 	readonly cwd: string;
-	readonly codexHome: string;
+	readonly capsuleDirectory: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly requestTimeoutMs?: number;
 }
@@ -63,8 +62,17 @@ export class CodexAppServerClient {
 	}
 
 	static async start(options: CodexAppServerClientOptions): Promise<CodexAppServerClient> {
-		const codexHome = await resolvePrivateCodexHome(options.codexHome);
-		const env = { ...options.env, HOME: codexHome, CODEX_HOME: codexHome };
+		let codexHome: string;
+		try {
+			codexHome = await prepareCodexHome(options.capsuleDirectory);
+		} catch (error) {
+			throw new CodexAppServerError(
+				"policy",
+				"Codex home must be a canonical, current-user-owned mode-0700 directory",
+				{ cause: error },
+			);
+		}
+		const env = buildCodexChildEnvironment(options.env, codexHome);
 		const transport = await CodexAppServerTransport.start({
 			command: options.command,
 			cwd: options.cwd,
@@ -258,23 +266,4 @@ export class CodexAppServerClient {
 		if (this.#failure !== null) throw this.#failure;
 		if (this.#closed) throw new CodexAppServerError("closed", "Codex app-server client is closed");
 	}
-}
-
-function validateAbsolutePath(path: string, label: string): string {
-	if (!isAbsolute(path) || normalize(path) !== path || path.includes("\0")) {
-		throw new Error(`${label} must be an absolute normalized path without NUL`);
-	}
-	return path;
-}
-
-async function resolvePrivateCodexHome(path: string): Promise<string> {
-	const canonical = await realpath(validateAbsolutePath(path, "Codex home"));
-	const metadata = await stat(canonical);
-	if (!metadata.isDirectory() || (metadata.mode & 0o077) !== 0) {
-		throw new CodexAppServerError("policy", "Codex home must be a private directory");
-	}
-	if (process.getuid !== undefined && metadata.uid !== process.getuid()) {
-		throw new CodexAppServerError("policy", "Codex home must be owned by the current user");
-	}
-	return canonical;
 }

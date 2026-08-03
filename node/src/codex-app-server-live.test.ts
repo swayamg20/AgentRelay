@@ -6,25 +6,25 @@ import { CodexAppServerClient } from "./codex-app-server-client.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 
 let client: CodexAppServerClient | null = null;
-let codexHome: string | null = null;
+let capsuleDirectory: string | null = null;
 
 afterEach(async () => {
 	await client?.close();
 	client = null;
-	if (codexHome !== null) await rm(codexHome, { recursive: true });
-	codexHome = null;
+	if (capsuleDirectory !== null) await rm(capsuleDirectory, { recursive: true });
+	capsuleDirectory = null;
 });
 
 describe.runIf(process.env.AGENTRELAY_TEST_CODEX_BIN)("installed Codex app-server", () => {
 	it("matches the pinned handshake and thread policy without a model turn", async () => {
 		const executable = process.env.AGENTRELAY_TEST_CODEX_BIN;
 		if (executable === undefined) throw new Error("AGENTRELAY_TEST_CODEX_BIN is required");
-		codexHome = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-live-codex-")));
-		await chmod(codexHome, 0o700);
+		capsuleDirectory = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-live-codex-")));
+		await chmod(capsuleDirectory, 0o700);
 		client = await CodexAppServerClient.start({
 			command: { executable },
 			cwd: process.cwd(),
-			codexHome,
+			capsuleDirectory,
 			env: allowlistedLiveEnvironment(),
 		});
 		expect(await client.startThread()).toMatchObject({

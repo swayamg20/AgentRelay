@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { type Server, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -610,7 +610,7 @@ async function temporaryDirectory(
 	parent = tmpdir(),
 	prefix = "agentrelay-node-capsule-",
 ): Promise<string> {
-	const path = await mkdtemp(join(parent, prefix));
+	const path = await realpath(await mkdtemp(join(parent, prefix)));
 	temporaryDirectories.push(path);
 	return path;
 }

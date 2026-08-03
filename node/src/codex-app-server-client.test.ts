@@ -1,9 +1,12 @@
+import { access, chmod } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type FakeAppServerFixture,
 	createFakeAppServer,
 	isProcessAlive,
 	waitForArgv,
+	waitForEnvironment,
 	waitForMessages,
 	waitForPid,
 	waitForProcessExit,
@@ -75,6 +78,17 @@ describe("CodexAppServerClient", () => {
 			"--listen",
 			"stdio://",
 		]);
+		const environment = await waitForEnvironment(fixture.environmentPath);
+		expect(environment.HOME).toBe(join(fixture.directory, "codex-home"));
+		expect(environment.CODEX_HOME).toBe(join(fixture.directory, "codex-home"));
+		for (const name of [
+			"AGENTRELAY_NODE_TOKEN",
+			"OPENAI_API_KEY",
+			"CODEX_API_KEY",
+			"NODE_OPTIONS",
+		]) {
+			expect(environment).not.toHaveProperty(name);
+		}
 	});
 
 	it("starts one correlated read-only turn and fails closed on an approval request", async () => {
@@ -212,6 +226,20 @@ describe("CodexAppServerClient", () => {
 		).rejects.toMatchObject({ name: "CodexAppServerError", reason: "policy" });
 	});
 
+	it("rejects unsafe Capsule permissions before starting the executable", async () => {
+		const fixture = await fakeAppServer();
+		await chmod(fixture.directory, 0o500);
+		try {
+			await expect(openClient(fixture)).rejects.toMatchObject({
+				name: "CodexAppServerError",
+				reason: "policy",
+			});
+			await expect(access(fixture.environmentPath)).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await chmod(fixture.directory, 0o700);
+		}
+	});
+
 	it("rejects a turn that tries to escape the Capsule workspace", async () => {
 		const fixture = await fakeAppServer();
 		const client = await openClient(fixture);
@@ -267,7 +295,7 @@ async function openClient(fixture: FakeAppServerFixture): Promise<CodexAppServer
 	const client = await CodexAppServerClient.start({
 		command: { executable: fixture.scriptPath },
 		cwd: fixture.directory,
-		codexHome: fixture.directory,
+		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 	});
 	clients.push(client);

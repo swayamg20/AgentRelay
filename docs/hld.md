@@ -2,7 +2,7 @@
 
 > **Scope:** Current repository implementation as of 2026-08-03.
 > This document describes the existing handoff plane, public Mission delivery
-> control plane, Node identity/workspace API, and experimental fake-runtime Node.
+> control plane, experimental Node, and unactivated Codex Capsule libraries.
 > It does not describe a complete autonomous coding runtime. See
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the target system.
 
@@ -16,8 +16,10 @@ the mailbox as tools to Claude Code or Codex.
 Humans or active agent sessions still initiate mailbox checks. Separately, the
 foreground `agentrelay-node` command can use a pre-issued Node credential, accept a
 Mission assignment, durably lease one turn, and drive either an in-process fake
-adapter or a detached persistent fake Mission Capsule. It does not yet activate a
-real coding-agent runtime or turn Mission work into repository changes.
+adapter or a detached persistent fake Mission Capsule. A provider-neutral Capsule
+server and injected Codex runner now exist behind that wire as a tested library
+checkpoint, but the descriptor and CLI still choose the fake. No current command
+activates a real model turn or turns Mission work into repository changes.
 
 ## Components
 
@@ -36,7 +38,9 @@ agentrelay-mcp                                          agentrelay-mcp
 Experimental path on each machine:
 agentrelay-node -> atomic local journal
         |-- in-process deterministic fake adapter
-        `-- private Unix socket -> detached fake Mission Capsule
+        `-- private Unix socket -> provider-neutral Capsule server
+                                      |-- selected today: deterministic fake
+                                      `-- tested only: injected Codex runner + fake client
 ```
 
 ### Relay
@@ -101,8 +105,27 @@ Relay payload.
 The original `run` path remains in memory. The `run-capsule` path instead persists
 one fake host process per Mission, authenticates every request with a local capability,
 and binds recovery to the exact original start input checkpointed before host start.
-That Capsule can remain alive when the Node is killed. The Node still has no Codex or
-Claude adapter.
+That Capsule can remain alive when the Node is killed.
+
+The wire server is now provider-neutral and accepts a locally injected runtime while
+preserving the fake descriptor, CLI entry point, and versioned request/response
+contract. The library also contains a `CodexCapsuleRunner` with probe, session,
+start/recover, event, and cancellation behavior. Its schema-v2 journal exposes a
+stable logical turn before a provider ID is known. A fresh provider generation may
+reconcile an uncertain start only after an injected authority has asserted the prior
+generation is quiescent. Unexpected internal runtime failures are redacted and retire
+the running server generation. Runtime shutdown starts concurrently with handler
+drain so `close()` can release and fence admitted work; detached background work can
+request the same retirement through the runtime lifecycle.
+
+This Codex path is tested through the real Unix wire with fake app-server clients. It
+has no descriptor/CLI selection, production process guardian, heartbeat, OS workspace
+or secret containment, real model-turn proof, or Claude equivalent. The Codex child
+environment is allowlisted, and its private home is derived locally beneath the
+Capsule and revalidated as canonical, current-user-owned, and exactly mode 0700. For
+an inherited uncertain-interrupt barrier, a fresh generation reads the exact intent
+once, persists a terminal provider outcome when present, or records a transient
+failure without resending the interrupt.
 
 ## Core data model
 
@@ -231,6 +254,10 @@ and the relay-owned idempotency key is not exposed to the model.
   workspace, and owner revocation also cancel active work across affected Missions.
 - Mission trust checks share the block-pair transaction fence, and every delivery
   mutation revalidates its active Node, participant, workspace, and Mission route.
+- At the unactivated library/test boundary, the provider-neutral Capsule wire, Codex
+  schema-v2 journal, stable pre-binding turn, exact fresh-generation reconciliation,
+  bounded zero-match terminalization, pre-binding cancellation, and conservative
+  inherited-interrupt terminalization are durable.
 
 ### Best effort today
 
@@ -240,11 +267,15 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ### Not implemented today
 
-- A real coding-agent runtime session. The external Capsule and Node-process recovery
-  proof currently exercise only the deterministic fake runtime.
+- A production-activated coding-agent runtime session. The Node/Capsule process proof
+  still exercises only the deterministic fake; the injected Codex runner is covered
+  only by fake-client wire tests and has not executed a model turn.
 - Automatic Node supervision or safe unattended reclamation of a `run.lock` left by
   `SIGKILL`; restart currently requires an operator to verify the recorded process is
   dead before removing that exact lock.
+- A production guardian that owns provider quiescence proof and spawn, heartbeat and
+  owner-death recovery, and OS-enforced Codex workspace/read-root and secret
+  containment.
 - Automatic worktree isolation and complete per-Mission command/network mediation.
 - Contract-acknowledgement and registered verification-command delivery handlers.
 - Local command, edit, test, and permission-decision audit.
@@ -290,6 +321,20 @@ section of [`architecture.md`](architecture.md).
   During `SIGINT` or `SIGTERM`, an in-flight turn is first asked to cancel. A
   `SIGKILL` cannot release the Node lock; after operator-safe lock cleanup, the
   restarted Node can recover the Capsule's exact persisted turn and event history.
+- The provider-neutral Capsule server authenticates before invoking a runtime. An
+  unexpected runtime exception is returned only as a generic internal error; the
+  server removes its owned socket and closes that runtime generation. Shutdown starts
+  runtime close while handlers drain so the runtime can release and fence admitted
+  operations. Detached runtime work can call `lifecycle.retire()` to trigger the same
+  teardown.
+- The unactivated Codex runner creates its client only after an injected authority
+  asserts the previous provider generation is quiescent. It then resolves an
+  uncertain `turn/start` by an exact client-ID and text match or a bounded durable
+  zero-match terminal result, never by resending. There is no production authority
+  implementation, and schema-v1 development state is not migrated to schema v2. If
+  that fresh generation inherits `interrupt_maybe_sent`, it performs one exact-intent
+  read, persists an exact terminal outcome when present, or records a transient
+  failure without issuing a second interrupt.
 - If a handoff creation or message append is retried with the same client idempotency
   key and matching checked fields, the relay returns the recorded result even after a
   later block or terminal transition. Same-key concurrent retries are serialized.
@@ -331,6 +376,9 @@ section of [`architecture.md`](architecture.md).
 The mailbox remains a compatibility and inspection surface. The relay exposes a
 separate, authenticated Mission and delivery control plane without stretching the
 handoff row into a scheduler. The foreground Node now consumes one turn through that
-API with either an in-process fake or a detached persistent fake Capsule. The next
-runtime checkpoint is a pinned coding-agent adapter, followed by a two-machine run;
-Mission-level expiry/dead-letter reconciliation remains a separate relay gap.
+API with either an in-process fake or a detached persistent fake Capsule. A pinned
+Codex client and injected runner now pass the provider-neutral Capsule wire with fake
+app-server clients, but remain unactivated. The next runtime checkpoint is
+guardian-owned, OS-contained CLI activation and a real model turn, followed by a
+two-machine run; Mission-level expiry/dead-letter reconciliation remains a separate
+relay gap.

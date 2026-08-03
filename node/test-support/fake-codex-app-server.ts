@@ -27,6 +27,7 @@ export interface FakeAppServerFixture {
 	readonly logPath: string;
 	readonly childPidPath: string;
 	readonly argvPath: string;
+	readonly environmentPath: string;
 	readonly env: NodeJS.ProcessEnv;
 	remove(): Promise<void>;
 }
@@ -39,28 +40,46 @@ export async function createFakeAppServer(
 	const logPath = join(directory, "requests.jsonl");
 	const childPidPath = join(directory, "child.pid");
 	const argvPath = join(directory, "argv.json");
+	const environmentPath = join(directory, "environment.json");
+	const configPath = join(directory, "fake-app-server-config.json");
 	await writeFile(scriptPath, `#!${process.execPath}\n${FAKE_APP_SERVER_SOURCE}`, { mode: 0o700 });
+	await writeFile(
+		configPath,
+		JSON.stringify({
+			version: options.version ?? SUPPORTED_CODEX_CLI_VERSION,
+			codexHome: options.codexHome ?? null,
+			threadId: options.mismatchedThreadId ? "thread-other" : "thread-1",
+			readErrorCode: options.readErrorCode ?? null,
+			notificationMode: options.notificationMode ?? "",
+			initializedFailure: options.initializedFailure ?? "",
+			ignoreRead: options.ignoreRead ?? false,
+			exitAfterRead: options.exitAfterRead ?? false,
+			unsafePolicy: options.unsafePolicy ?? false,
+			requestApproval: options.requestApproval ?? false,
+			spawnDescendant: options.spawnDescendant ?? false,
+			logPath,
+			childPidPath,
+			argvPath,
+			environmentPath,
+		}),
+		{ mode: 0o600 },
+	);
 	return {
 		directory,
 		scriptPath,
 		logPath,
 		childPidPath,
 		argvPath,
+		environmentPath,
 		env: {
-			FAKE_CODEX_VERSION: options.version ?? SUPPORTED_CODEX_CLI_VERSION,
-			FAKE_CODEX_HOME: options.codexHome ?? directory,
-			FAKE_CODEX_THREAD_ID: options.mismatchedThreadId ? "thread-other" : "thread-1",
-			FAKE_READ_ERROR_CODE: options.readErrorCode?.toString() ?? "",
-			FAKE_NOTIFICATION_MODE: options.notificationMode ?? "",
-			FAKE_INITIALIZED_FAILURE: options.initializedFailure ?? "",
-			FAKE_IGNORE_READ: options.ignoreRead ? "1" : "0",
-			FAKE_EXIT_AFTER_READ: options.exitAfterRead ? "1" : "0",
-			FAKE_CODEX_LOG: logPath,
-			FAKE_UNSAFE_POLICY: options.unsafePolicy ? "1" : "0",
-			FAKE_REQUEST_APPROVAL: options.requestApproval ? "1" : "0",
-			FAKE_SPAWN_DESCENDANT: options.spawnDescendant ? "1" : "0",
-			FAKE_CHILD_PID_PATH: childPidPath,
-			FAKE_ARGV_PATH: argvPath,
+			PATH: process.env.PATH,
+			TMPDIR: process.env.TMPDIR,
+			LANG: process.env.LANG,
+			TZ: process.env.TZ,
+			AGENTRELAY_NODE_TOKEN: "must-not-cross-the-capsule-boundary",
+			OPENAI_API_KEY: "must-not-cross-the-capsule-boundary",
+			CODEX_API_KEY: "must-not-cross-the-capsule-boundary",
+			NODE_OPTIONS: "--no-warnings",
 		},
 		remove: () => rm(directory, { recursive: true }),
 	};
@@ -104,6 +123,16 @@ export async function waitForArgv(path: string): Promise<string[]> {
 	throw new Error("Timed out waiting for fake app-server argv");
 }
 
+export async function waitForEnvironment(path: string): Promise<Record<string, string>> {
+	const deadline = Date.now() + 2_000;
+	while (Date.now() < deadline) {
+		const raw = await readFile(path, "utf8").catch(() => "");
+		if (raw !== "") return JSON.parse(raw) as Record<string, string>;
+		await delay(10);
+	}
+	throw new Error("Timed out waiting for fake app-server environment");
+}
+
 export async function waitForProcessExit(pid: number): Promise<void> {
 	const deadline = Date.now() + 2_000;
 	while (Date.now() < deadline) {
@@ -124,33 +153,37 @@ export function isProcessAlive(pid: number): boolean {
 
 const FAKE_APP_SERVER_SOURCE = `
 import { spawn } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import readline from "node:readline";
 
-const version = process.env.FAKE_CODEX_VERSION;
+const config = JSON.parse(readFileSync(
+  join(process.cwd(), "fake-app-server-config.json"),
+  "utf8",
+));
+const version = config.version;
+writeFileSync(config.environmentPath, JSON.stringify(process.env), { mode: 0o600 });
 if (process.argv.includes("--version")) {
   process.stdout.write("codex-cli " + version + "\\n");
   process.exit(0);
 }
-writeFileSync(process.env.FAKE_ARGV_PATH, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });
-const logPath = process.env.FAKE_CODEX_LOG;
+writeFileSync(config.argvPath, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });
+const logPath = config.logPath;
 const cwd = process.cwd();
-const codexHome = process.env.FAKE_CODEX_HOME;
-const threadId = process.env.FAKE_CODEX_THREAD_ID;
-const readErrorCode = process.env.FAKE_READ_ERROR_CODE === ""
-  ? null
-  : Number(process.env.FAKE_READ_ERROR_CODE);
-const notificationMode = process.env.FAKE_NOTIFICATION_MODE;
-const initializedFailure = process.env.FAKE_INITIALIZED_FAILURE;
-const ignoreRead = process.env.FAKE_IGNORE_READ === "1";
-const exitAfterRead = process.env.FAKE_EXIT_AFTER_READ === "1";
-const unsafePolicy = process.env.FAKE_UNSAFE_POLICY === "1";
-const requestApproval = process.env.FAKE_REQUEST_APPROVAL === "1";
-if (process.env.FAKE_SPAWN_DESCENDANT === "1") {
+const codexHome = config.codexHome ?? process.env.CODEX_HOME;
+const threadId = config.threadId;
+const readErrorCode = config.readErrorCode;
+const notificationMode = config.notificationMode;
+const initializedFailure = config.initializedFailure;
+const ignoreRead = config.ignoreRead;
+const exitAfterRead = config.exitAfterRead;
+const unsafePolicy = config.unsafePolicy;
+const requestApproval = config.requestApproval;
+if (config.spawnDescendant) {
   const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",
   });
-  writeFileSync(process.env.FAKE_CHILD_PID_PATH, String(descendant.pid), { mode: 0o600 });
+  writeFileSync(config.childPidPath, String(descendant.pid), { mode: 0o600 });
 }
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const log = (message) => appendFileSync(logPath, JSON.stringify(message) + "\\n", { mode: 0o600 });
