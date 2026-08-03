@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
+import { markTeammateValue } from "../provenance.js";
 import { listTeammatesInput } from "./schemas.js";
 
 const teammateSchema = z.object({
@@ -29,5 +30,8 @@ export async function listTeammates(
 		skill: input.skill,
 		repo: input.repo,
 	});
-	return responseSchema.parse(result);
+	const parsed = responseSchema.parse(result);
+	return {
+		teammates: parsed.teammates.map((teammate) => markTeammateValue(teammate.handle, teammate)),
+	};
 }

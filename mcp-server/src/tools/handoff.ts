@@ -42,7 +42,7 @@ export async function handoffToTeammate(
 		metadata: {
 			...(input.metadata ?? {}),
 			client_idempotency_key: idempotencyKey,
-			question: input.question,
+			...(input.question !== undefined ? { question: input.question } : {}),
 		},
 	};
 

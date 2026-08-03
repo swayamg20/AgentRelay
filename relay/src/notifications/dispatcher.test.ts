@@ -105,7 +105,7 @@ d("NotificationDispatcher", () => {
 	it("happy path: posts once and succeeds", async () => {
 		const id = await createAgentWithWebhook({
 			handle: "frank-2@a",
-			webhookPlain: "https://hooks.slack.com/services/ok",
+			webhookPlain: "https://hooks.slack.com/services/T000/B000/ok",
 		});
 		const { poster, calls } = makePoster([{ status: 200, ok: true }]);
 		const d = new NotificationDispatcher({
@@ -120,14 +120,14 @@ d("NotificationDispatcher", () => {
 		expect(r.ok).toBe(true);
 		expect(r.attempts).toBe(1);
 		expect(calls).toHaveLength(1);
-		expect(calls[0]?.url).toBe("https://hooks.slack.com/services/ok");
+		expect(calls[0]?.url).toBe("https://hooks.slack.com/services/T000/B000/ok");
 		expect(d.metrics.succeeded).toBe(1);
 	});
 
 	it("retries on 503 with backoff and eventually succeeds", async () => {
 		const id = await createAgentWithWebhook({
 			handle: "frank-3@a",
-			webhookPlain: "https://hooks.slack.com/r",
+			webhookPlain: "https://hooks.slack.com/services/T000/B000/retry",
 		});
 		const { poster, calls } = makePoster([
 			{ status: 503, ok: false },
@@ -153,7 +153,7 @@ d("NotificationDispatcher", () => {
 	it("gives up after 4 attempts (initial + 3 backoff retries)", async () => {
 		const id = await createAgentWithWebhook({
 			handle: "frank-4@a",
-			webhookPlain: "https://hooks.slack.com/r",
+			webhookPlain: "https://hooks.slack.com/services/T000/B000/exhaust",
 		});
 		const { poster, calls } = makePoster([
 			{ status: 503, ok: false },
@@ -179,7 +179,7 @@ d("NotificationDispatcher", () => {
 	it("does not retry on 4xx (non-429)", async () => {
 		const id = await createAgentWithWebhook({
 			handle: "frank-5@a",
-			webhookPlain: "https://hooks.slack.com/r",
+			webhookPlain: "https://hooks.slack.com/services/T000/B000/client-error",
 		});
 		const { poster, calls } = makePoster([{ status: 400, ok: false }]);
 		const d = new NotificationDispatcher({
@@ -199,7 +199,7 @@ d("NotificationDispatcher", () => {
 	it("respects 429 Retry-After exactly once", async () => {
 		const id = await createAgentWithWebhook({
 			handle: "frank-6@a",
-			webhookPlain: "https://hooks.slack.com/r",
+			webhookPlain: "https://hooks.slack.com/services/T000/B000/rate-limit",
 		});
 		const { poster, calls } = makePoster([
 			{ status: 429, ok: false, retryAfterSeconds: 1 },
@@ -223,7 +223,7 @@ d("NotificationDispatcher", () => {
 	it("queue drains FIFO via worker", async () => {
 		const id = await createAgentWithWebhook({
 			handle: "frank-7@a",
-			webhookPlain: "https://hooks.slack.com/r",
+			webhookPlain: "https://hooks.slack.com/services/T000/B000/fifo",
 		});
 		const seen: string[] = [];
 		const poster: SlackPoster = async (_, payload) => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
+import { markTeammateValue, wrap } from "../provenance.js";
 import { checkInboxInput, handoffStatusSchema } from "./schemas.js";
 
 // Wire shape uses rich `thread_id` + `sender:{...}` (lld §4.2). The relay
@@ -44,5 +45,13 @@ export async function checkInbox(client: A2AClient, rawInput: unknown): Promise<
 		page: { limit: input.limit ?? 50, cursor: null },
 	};
 	const raw = await client.request<unknown>("tasks/list", params);
-	return inboxResponseSchema.parse(raw);
+	const parsed = inboxResponseSchema.parse(raw);
+	return {
+		...parsed,
+		items: parsed.items.map((item) => ({
+			...item,
+			sender: markTeammateValue(item.sender.handle, item.sender),
+			summary_preview: wrap({ senderHandle: item.sender.handle, content: item.summary_preview }),
+		})),
+	};
 }

@@ -15,9 +15,9 @@
 
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
-import { wrap } from "../provenance.js";
+import { markTeammateMetadata, markTeammateValue, wrap } from "../provenance.js";
 import { type OverlayDecision, type TrustFile, computeOverlay } from "../trust.js";
-import { acceptHandoffInput, artifactSchema, proposedActionSchema } from "./schemas.js";
+import { acceptHandoffInput, proposedActionSchema, storedArtifactSchema } from "./schemas.js";
 
 const senderSchema = z.object({
 	handle: z.string(),
@@ -32,6 +32,7 @@ const messageSchema = z.object({
 	from: z.string(),
 	body: z.string(),
 	payload: z.record(z.string(), z.unknown()).optional(),
+	artifacts: z.array(storedArtifactSchema).default([]),
 	created_at: z.string(),
 });
 
@@ -39,8 +40,10 @@ const tasksGetResponseSchema = z.object({
 	thread_id: z.string(),
 	intent: z.enum(["inform", "ask_question", "propose_action"]),
 	sender: senderSchema,
+	recipient: senderSchema.optional(),
 	summary: z.string(),
-	artifacts: z.array(artifactSchema).default([]),
+	artifacts: z.array(storedArtifactSchema).default([]),
+	metadata: z.record(z.string(), z.unknown()).default({}),
 	proposed_action: proposedActionSchema.nullable().optional(),
 	messages: z.array(messageSchema).default([]),
 });
@@ -52,6 +55,7 @@ const tasksUpdateResponseSchema = z.object({
 export interface AcceptHandoffDeps {
 	client: A2AClient;
 	trust: TrustFile;
+	callerHandle?: string;
 }
 
 export interface AcceptHandoffResult {
@@ -60,7 +64,8 @@ export interface AcceptHandoffResult {
 	intent: "inform" | "ask_question" | "propose_action";
 	sender: z.infer<typeof senderSchema>;
 	summary: string;
-	artifacts: z.infer<typeof artifactSchema>[];
+	artifacts: z.infer<typeof storedArtifactSchema>[];
+	metadata: Record<string, unknown>;
 	proposed_action?: z.infer<typeof proposedActionSchema>;
 	messages: z.infer<typeof messageSchema>[];
 	accepted_at: string;
@@ -112,24 +117,34 @@ export async function acceptHandoff(
 	// path that returns un-wrapped content.
 	const senderHandle = thread.sender.handle;
 	const wrappedSummary = wrap({ senderHandle, content: thread.summary });
-	const wrappedMessages = thread.messages.map((m) => ({
-		...m,
-		body: wrap({ senderHandle, content: m.body }),
-	}));
+	const callerHandle = thread.recipient?.handle ?? deps.callerHandle;
+	const wrappedMessages = thread.messages.map((m) => {
+		if (callerHandle !== undefined && m.from === callerHandle) return m;
+		return {
+			...m,
+			body: wrap({ senderHandle: m.from, content: m.body }),
+			...(m.payload ? { payload: markTeammateValue(m.from, m.payload) } : {}),
+			artifacts: m.artifacts.map((artifact) => markTeammateValue(m.from, artifact)),
+		};
+	});
+	const wrappedArtifacts = thread.artifacts.map((artifact) =>
+		markTeammateValue(senderHandle, artifact),
+	);
 	const wrappedProposed = thread.proposed_action
-		? {
+		? markTeammateValue(senderHandle, {
 				...thread.proposed_action,
 				rationale: wrap({ senderHandle, content: thread.proposed_action.rationale }),
-			}
+			})
 		: undefined;
 
 	return {
 		thread_id: thread.thread_id,
 		status: "accepted",
 		intent: thread.intent,
-		sender: thread.sender,
+		sender: markTeammateValue(senderHandle, thread.sender),
 		summary: wrappedSummary,
-		artifacts: thread.artifacts,
+		artifacts: wrappedArtifacts,
+		metadata: markTeammateMetadata(senderHandle, thread.metadata),
 		...(wrappedProposed ? { proposed_action: wrappedProposed } : {}),
 		messages: wrappedMessages,
 		accepted_at,

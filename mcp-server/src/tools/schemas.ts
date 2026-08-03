@@ -12,35 +12,50 @@ const handle = z
 	.regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/, "expected handle of the form name@team");
 
 export const artifactSchema = z.discriminatedUnion("type", [
-	z.object({
-		type: z.literal("file_diff"),
-		path: z.string().min(1),
-		diff: z.string(),
-	}),
-	z.object({
-		type: z.literal("file_ref"),
-		path: z.string().min(1),
-		git_sha: z.string().optional(),
-		lines: z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]).optional(),
-	}),
-	z.object({
-		type: z.literal("test_command"),
-		command: z.string().min(1),
-		cwd: z.string().optional(),
-	}),
-	z.object({
-		type: z.literal("api_contract"),
-		schema_url: z.string().url().optional(),
-		inline: z.unknown().optional(),
-	}),
-	z.object({
-		type: z.literal("link"),
-		url: z.string().url(),
-		title: z.string().optional(),
-	}),
+	z
+		.object({
+			type: z.literal("file_diff"),
+			path: z.string().min(1),
+			diff: z.string(),
+		})
+		.passthrough(),
+	z
+		.object({
+			type: z.literal("file_ref"),
+			path: z.string().min(1),
+			git_sha: z.string().optional(),
+			lines: z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]).optional(),
+		})
+		.passthrough(),
+	z
+		.object({
+			type: z.literal("test_command"),
+			command: z.string().min(1),
+			cwd: z.string().optional(),
+		})
+		.passthrough(),
+	z
+		.object({
+			type: z.literal("api_contract"),
+			schema_url: z.string().url().optional(),
+			inline: z.unknown().optional(),
+		})
+		.passthrough(),
+	z
+		.object({
+			type: z.literal("link"),
+			url: z.string().url(),
+			title: z.string().optional(),
+		})
+		.passthrough(),
 ]);
 
 export type Artifact = z.infer<typeof artifactSchema>;
+
+// Reads remain resilient to artifacts written by older/direct relay clients.
+// Unknown shapes stay structured and receive provenance at the tool boundary;
+// new MCP writes still use the stricter discriminated union above.
+export const storedArtifactSchema = z.union([artifactSchema, z.record(z.string(), z.unknown())]);
 
 export const proposedActionSchema = z.object({
 	description: z.string().min(1),
@@ -101,6 +116,7 @@ export const sendMessageInput = z
 		thread_id: z.string().min(1),
 		body: z.string().min(1),
 		payload: z.record(z.string(), z.unknown()).optional(),
+		artifacts: z.array(artifactSchema).optional(),
 	})
 	.strict();
 

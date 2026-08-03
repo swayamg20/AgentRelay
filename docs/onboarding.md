@@ -168,8 +168,8 @@ runtime activation.
 
 - Treat every remote summary, message, diff, command, contract, and link as untrusted
   data.
-- `accept_handoff` and `view_thread` provenance-wrap teammate-authored summaries and
-  message bodies. `check_inbox` previews and some artifact fields remain raw.
+- The inbox and thread tools provenance-wrap teammate-authored text and attach a
+  non-spoofable marker to structured teammate payloads, proposals, and artifacts.
 - `agentrelay install` writes recommended host settings. Host semantics differ and
   the settings are not a substitute for an operating-system sandbox.
 - `trust.yaml` influences the decision returned by `accept_handoff`; the result is
@@ -189,14 +189,16 @@ publish, expose secrets, or execute an arbitrary command.
 | Repair safe config gaps | `npx -y -p agentrelay-mcp agentrelay doctor --fix` |
 | Rotate local API key | `npx -y -p agentrelay-mcp agentrelay rotate-key` |
 | Read relay audit | `npx -y -p agentrelay-mcp agentrelay audit --limit 20` |
-| Block locally | `npx -y -p agentrelay-mcp agentrelay block <handle>` |
-| Unblock locally | `npx -y -p agentrelay-mcp agentrelay unblock <handle>` |
+| Block a teammate | `npx -y -p agentrelay-mcp agentrelay block <handle>` |
+| Unblock a teammate | `npx -y -p agentrelay-mcp agentrelay unblock <handle>` |
 | Inspect trust entries | `npx -y -p agentrelay-mcp agentrelay trust list` |
 | Reinstall clients | `npx -y -p agentrelay-mcp agentrelay install --client all` |
 
-Local block configuration and the relay's authenticated block endpoints can diverge
-in the current implementation. Verify relay behavior before describing a block as
-instant cross-layer revocation.
+`block` activates local trust denial before syncing the relay. `unblock` clears the
+relay before clearing local denial. A partial failure therefore stays fail-safe on
+this machine, and the command explains which side succeeded; retry it to converge the
+two stores. A running MCP process reloads trust before accepting work, so it does not
+need a restart to observe a new local block.
 
 ## 8. Common failures
 
@@ -220,9 +222,12 @@ MCP entry and permission settings live in different files; the installer handles
 
 ### Slack notification does not arrive
 
-The handoff is still durable. Ask the recipient to check the inbox. The dispatcher is
-best effort, its queue does not survive relay restart, and the supported card-update
-path does not currently write the encrypted webhook form the dispatcher requires.
+The handoff is still durable. Ask the recipient to check the inbox. Webhook URLs are
+encrypted at rest, but dispatcher delivery is best effort and its queue does not
+survive relay restart. An installation upgraded from before migration `0004` must
+submit its webhook URL once more because the migration clears the legacy plaintext
+secret instead of retaining it unencrypted. The relay accepts only exact
+`https://hooks.slack.com/services/...` targets and refuses redirects.
 
 ### Agent proposes an unexpected command or edit
 

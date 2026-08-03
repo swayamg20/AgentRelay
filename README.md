@@ -24,17 +24,17 @@ full autonomous runtime described above.
 ### Implemented today
 
 - Postgres-backed identities, API keys, signed invite URLs, blocks, handoffs, and
-  messages, with audit records for invite and handoff/message mutations.
+  messages, with audit records for invite, handoff/message, and block mutations.
 - A Hono relay with REST onboarding and an A2A-shaped JSON-RPC mailbox surface.
 - Seven stdio MCP tools for Claude Code and Codex.
-- Typed engineering artifacts, plus provenance markers when `accept_handoff` or
-  `view_thread` returns teammate-authored summaries/messages.
+- Typed engineering artifacts, preserved message/completion payloads, and provenance
+  markers on teammate-authored inbox, thread, payload, proposal, and artifact data.
 - An executable `@agentrelay/protocol` workspace with bounded Mission contracts,
   strict lifecycle and coordinator reducers, a deterministic fake runtime adapter,
   and a reproducible backend-Android transcript fixture.
-- CLI setup, invite/join, install, doctor/fix, key rotation, audit, block, and trust.
-- An in-process Slack dispatcher, although the current card-update path does not
-  produce the encrypted webhook form it consumes, so setup is not end-to-end usable.
+- CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
+  block/unblock, and local trust management.
+- An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
 
 ### Next architecture, not shipped yet
 
@@ -187,20 +187,24 @@ pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp test
 ## Security posture
 
 Cross-agent messages and artifacts are untrusted input. Current safeguards include
-bearer authentication, participant authorization, block checks on new handoffs,
-audit for invite and handoff/message mutations, provenance markers on teammate text
-returned by `accept_handoff` and `view_thread`, recommended host settings, and local
-trust parsing.
+bearer authentication, participant authorization, block checks on new and existing
+handoff messages and content-bearing transitions, a shared transaction lock that makes
+a successful block response a commit fence for those mutations, audit for
+invite/handoff/message/block mutations, provenance
+wrappers or markers on every teammate-originated mailbox field returned by MCP,
+recommended host settings, and local trust parsing.
 
 They are not yet a complete autonomous security boundary:
 
-- Inbox previews and some artifact fields are returned without provenance wrapping.
-- Existing-thread appends do not re-check relay block state.
 - The returned `trust_overlay` is advisory; no runtime consumer applies it
   dynamically.
 - Relay audit omits several relay mutations and all local commands, edits, tests, and
   permission decisions.
 - Notification pickup is best effort and does not acknowledge model processing.
+- Successful CLI block/unblock updates both relay and local state, but those two writes
+  are not one atomic transaction across the network and filesystem.
+- Block is local-first and unblock is relay-first; a reported partial failure keeps
+  local denial active and can be repaired by retrying the command.
 
 The future Node must enforce the effective repository, command, network, budget, and
 revocation policy outside the model. See [`docs/architecture.md`](docs/architecture.md)

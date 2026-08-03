@@ -54,6 +54,12 @@ Whichever platform you pick, the relay needs:
 - `RELAY_ENCRYPTION_KEY` is sticky for any encrypted-at-rest fields (Slack webhook URLs today). Rotate only with a re-encrypt step.
 - `RELAY_ADMIN_TOKEN` is rotatable freely; existing teammates aren't affected.
 - `RELAY_INVITE_SECRET` is rotatable but invalidates any minted-but-unredeemed invite URLs.
+- Migration `0004_mailbox_integrity` backfills legacy message artifacts. Because SQL
+  cannot encrypt an old plaintext webhook without the runtime key, it clears any
+  pre-`0004` plaintext webhook URL; the owner must submit that URL once more after
+  the upgrade so the relay can encrypt it. The one-time message rewrite takes a
+  transaction advisory lock and uses the new column as its completion marker, so a
+  concurrent migration runner cannot reinterpret payloads written by the upgraded app.
 
 ## Worked examples
 

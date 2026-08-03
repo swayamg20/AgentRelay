@@ -6,6 +6,10 @@ import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { agentBlocks, agentCards, agents, apiKeys, auditLog } from "../db/schema.js";
 import { RelayError } from "../errors.js";
+import { encryptWebhook } from "../notifications/crypto.js";
+import { isSlackWebhookUrl } from "../notifications/slack.js";
+import { lockAgentBlockPair } from "../services/agent-block-lock.js";
+import { writeAudit } from "../services/audit.js";
 import type { AppEnv } from "../types.js";
 
 const updateCardSchema = z
@@ -13,13 +17,19 @@ const updateCardSchema = z
 		skills: z.array(z.string().min(1).max(60)).max(50).optional(),
 		repos_owned: z.array(z.string().min(1).max(200)).max(100).optional(),
 		role: z.string().min(1).max(60).optional(),
-		notification_webhook_url: z.string().url().nullable().optional(),
+		notification_webhook_url: z
+			.string()
+			.url()
+			.refine(isSlackWebhookUrl, "expected an https://hooks.slack.com/services/... webhook URL")
+			.nullable()
+			.optional(),
 	})
 	.strict();
 
 export interface AgentsRoutesOptions {
 	db: Database;
 	pepper: string;
+	encryptionKey: string;
 	/** 'live' on production relays, 'test' otherwise. */
 	keyEnvironment: "live" | "test";
 }
@@ -192,31 +202,40 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 			});
 		}
 		const input = parsed.data;
+		const encryptedWebhook =
+			input.notification_webhook_url === undefined
+				? undefined
+				: input.notification_webhook_url === null
+					? null
+					: encryptWebhook(input.notification_webhook_url, opts.encryptionKey);
 
 		if (input.role !== undefined) {
 			await opts.db.update(agents).set({ role: input.role }).where(eq(agents.id, agent.id));
 		}
 
-		// Upsert agent_cards
-		await opts.db
-			.insert(agentCards)
-			.values({
-				agentId: agent.id,
-				card: { id: agent.handle, name: agent.handle },
-				skills: input.skills ?? [],
-				reposOwned: input.repos_owned ?? [],
-				notificationWebhookUrl: input.notification_webhook_url ?? null,
-			})
-			.onConflictDoUpdate({
-				target: agentCards.agentId,
-				set: {
-					...(input.skills !== undefined ? { skills: input.skills } : {}),
-					...(input.repos_owned !== undefined ? { reposOwned: input.repos_owned } : {}),
-					...(input.notification_webhook_url !== undefined
-						? { notificationWebhookUrl: input.notification_webhook_url }
-						: {}),
-				},
-			});
+		const hasCardUpdate =
+			input.skills !== undefined ||
+			input.repos_owned !== undefined ||
+			encryptedWebhook !== undefined;
+		if (hasCardUpdate) {
+			await opts.db
+				.insert(agentCards)
+				.values({
+					agentId: agent.id,
+					card: { id: agent.handle, name: agent.handle },
+					skills: input.skills ?? [],
+					reposOwned: input.repos_owned ?? [],
+					notificationWebhookUrl: encryptedWebhook ?? null,
+				})
+				.onConflictDoUpdate({
+					target: agentCards.agentId,
+					set: {
+						...(input.skills !== undefined ? { skills: input.skills } : {}),
+						...(input.repos_owned !== undefined ? { reposOwned: input.repos_owned } : {}),
+						...(encryptedWebhook !== undefined ? { notificationWebhookUrl: encryptedWebhook } : {}),
+					},
+				});
+		}
 
 		return c.json({ ok: true });
 	});
@@ -276,10 +295,24 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 		if (!other) {
 			throw new RelayError("recipient_not_found", `No agent with handle '${target}'`);
 		}
-		await opts.db
-			.insert(agentBlocks)
-			.values({ blockerId: me.id, blockedId: other.id })
-			.onConflictDoNothing();
+		await opts.db.transaction(async (tx) => {
+			await lockAgentBlockPair(tx, me.id, other.id);
+			const inserted = await tx
+				.insert(agentBlocks)
+				.values({ blockerId: me.id, blockedId: other.id })
+				.onConflictDoNothing()
+				.returning({ blockedId: agentBlocks.blockedId });
+			if (inserted.length > 0) {
+				await writeAudit(tx, {
+					actorId: me.id,
+					action: "agent.block",
+					resourceType: "agent",
+					resourceId: other.id,
+					metadata: { handle: target, reason: parsed.data.reason ?? null },
+					requestId: c.get("requestId"),
+				});
+			}
+		});
 		return c.json({ ok: true, blocked_handle: target }, 201);
 	});
 
@@ -297,9 +330,23 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 			// Be lenient: idempotent unblock should still 204 if the agent vanished.
 			return c.body(null, 204);
 		}
-		await opts.db
-			.delete(agentBlocks)
-			.where(and(eq(agentBlocks.blockerId, me.id), eq(agentBlocks.blockedId, other.id)));
+		await opts.db.transaction(async (tx) => {
+			await lockAgentBlockPair(tx, me.id, other.id);
+			const deleted = await tx
+				.delete(agentBlocks)
+				.where(and(eq(agentBlocks.blockerId, me.id), eq(agentBlocks.blockedId, other.id)))
+				.returning({ blockedId: agentBlocks.blockedId });
+			if (deleted.length > 0) {
+				await writeAudit(tx, {
+					actorId: me.id,
+					action: "agent.unblock",
+					resourceType: "agent",
+					resourceId: other.id,
+					metadata: { handle: target },
+					requestId: c.get("requestId"),
+				});
+			}
+		});
 		return c.body(null, 204);
 	});
 

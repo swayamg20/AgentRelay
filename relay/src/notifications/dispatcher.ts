@@ -3,7 +3,12 @@ import type { Database } from "../db/client.js";
 import { agentCards } from "../db/schema.js";
 import type { Logger } from "../logger.js";
 import { decryptWebhook } from "./crypto.js";
-import { type SlackPoster, defaultSlackPoster, renderSlackBlocks } from "./slack.js";
+import {
+	type SlackPoster,
+	defaultSlackPoster,
+	isSlackWebhookUrl,
+	renderSlackBlocks,
+} from "./slack.js";
 import type { DispatchOutcome, NotificationJob } from "./types.js";
 
 export interface DispatcherMetrics {
@@ -142,6 +147,19 @@ export class NotificationDispatcher {
 				attempts: 0,
 				durationMs: Date.now() - started,
 				reason: "decrypt_failed",
+			};
+		}
+		if (!isSlackWebhookUrl(webhookUrl)) {
+			this.logger.error(
+				{ event: "notify.invalid_webhook", threadId: job.threadId },
+				"stored notification webhook is outside the Slack allowlist",
+			);
+			this.metrics.failed += 1;
+			return {
+				ok: false,
+				attempts: 0,
+				durationMs: Date.now() - started,
+				reason: "invalid_webhook",
 			};
 		}
 

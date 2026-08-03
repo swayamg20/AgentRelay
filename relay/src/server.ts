@@ -68,7 +68,15 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 				inviteSecret: config.RELAY_INVITE_SECRET,
 			}),
 		);
-		app.route("/agents", createAgentsRoutes({ db, pepper: config.RELAY_PEPPER, keyEnvironment }));
+		app.route(
+			"/agents",
+			createAgentsRoutes({
+				db,
+				pepper: config.RELAY_PEPPER,
+				encryptionKey: config.RELAY_ENCRYPTION_KEY,
+				keyEnvironment,
+			}),
+		);
 		app.route(
 			"/a2a",
 			createA2aRoutes({

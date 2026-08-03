@@ -26,7 +26,6 @@ import {
 	unblockCmd,
 } from "../cli/commands.js";
 import { listTrust } from "../cli/trust-mutate.js";
-import { logger } from "../logger.js";
 import { FALLBACK_TRUST, loadTrust } from "../trust.js";
 
 const cli = cac("agentrelay");
@@ -225,7 +224,7 @@ cli
 	});
 
 cli
-	.command("block <handle>", "Block a teammate; syncs to ~/.agentrelay/trust.yaml")
+	.command("block <handle>", "Block a teammate locally and at the configured relay")
 	.option("--list", "List blocked handles")
 	.action(async (handle: string | undefined, opts: Record<string, unknown>) => {
 		if (opts.list) {
@@ -293,10 +292,10 @@ try {
 		cli.outputHelp();
 		process.exit(0);
 	}
-	void cli.runMatchedCommand();
+	await cli.runMatchedCommand();
 } catch (err) {
-	logger.error({ err }, "agentrelay CLI error");
-	process.exit(1);
+	process.stderr.write(`agentrelay: ${err instanceof Error ? err.message : String(err)}\n`);
+	process.exitCode = 1;
 }
 
 function parseTrustSetOptions(opts: Record<string, unknown>): {

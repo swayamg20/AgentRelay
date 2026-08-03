@@ -139,6 +139,13 @@ d("block-sync REST endpoints", () => {
 		const list2 = await app.request("/agents/me/block", { headers: bearer(frank.key) });
 		const list2Body = (await list2.json()) as { blocked: unknown[] };
 		expect(list2Body.blocked).toHaveLength(0);
+
+		const audit = await app.request("/agents/me/audit", { headers: bearer(frank.key) });
+		const auditBody = (await audit.json()) as { events: Array<{ action: string }> };
+		expect(auditBody.events.map((event) => event.action).sort()).toEqual([
+			"agent.block",
+			"agent.unblock",
+		]);
 	});
 
 	it("double-block is a no-op (still 201)", async () => {

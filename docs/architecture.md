@@ -27,9 +27,9 @@ The repository currently ships an authenticated asynchronous mailbox:
   completing handoff threads.
 - An executable protocol workspace with Mission/delivery/runtime contracts and an
   in-memory deterministic backend-Android coordination proof.
-- Typed engineering artifacts and provenance wrapping for some inbound content.
-- An in-process Slack notification dispatcher, but no currently supported
-  end-to-end webhook configuration path.
+- Typed engineering artifacts plus provenance wrapping or structural markers on all
+  teammate-originated mailbox content.
+- An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
 - CLI setup, invite/join, key rotation, doctor, audit, block, and trust commands.
 
 This is useful groundwork, but it is not yet an autonomous agent network. The current
@@ -39,7 +39,6 @@ system does not contain:
 - Durable delivery events, replay cursors, processing claims, or acknowledgements.
 - Distinct device, workspace, runtime-session, or mission-lease identity.
 - Enforcement of the returned per-teammate trust overlay inside a runtime.
-- Complete provenance wrapping for every artifact field.
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
 - End-to-end traces of local commands, edits, policy decisions, and tests.
 
@@ -173,24 +172,29 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 
 - Hashed and revocable API keys.
 - Participant-only handoff access and role-specific state transitions.
-- Relay-side block checks when creating a handoff, plus audit records for invite and
-  handoff/message mutations.
-- Provenance markers on teammate-authored summaries and message bodies returned by
-  `accept_handoff` and `view_thread`.
+- Relay-side block checks when creating, accepting, appending to, or completing a
+  content-bearing handoff. A shared directed-pair transaction lock makes a committed
+  block a fence for those mutations. Invite, handoff/message, and block mutations are
+  audited.
+- Provenance wrappers on teammate text and non-spoofable structural markers on
+  teammate payloads, proposals, and artifacts returned by mailbox MCP tools.
+- Fail-safe CLI synchronization: block writes local trust first; unblock clears the
+  relay first. The running MCP reloads trust before every acceptance decision.
+- AES-GCM encrypted notification webhooks at rest, restricted to exact HTTPS Slack
+  incoming-webhook targets and dispatched without redirects.
 - Static recommended host permission configuration.
 - Local per-teammate trust parsing and decision output.
 
 ### Gaps before autonomous execution
 
-- Inbox summary previews and some artifact/proposed-action fields are returned
-  without provenance wrapping.
-- Existing-thread appends do not re-check relay block state.
-- Registration, card updates, key rotation, agent disable, and block/unblock are not
-  written to the current relay audit log.
+- Registration, card updates, key rotation, and agent disable are not written to the
+  current relay audit log.
 - `trust_overlay` is returned as JSON but is not dynamically applied to the host.
 - Relay audit does not record local commands, edits, tests, or policy decisions.
 - The notification queue is process-local and can drop work on overflow or restart.
-- Local and relay revocation behavior is not one atomic, continuously observed policy.
+- Local and relay revocation behavior is not one atomic, continuously observed policy;
+  successful CLI block/unblock converges both stores but cannot transactionally commit
+  a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
 

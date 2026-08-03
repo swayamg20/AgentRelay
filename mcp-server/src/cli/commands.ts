@@ -669,6 +669,7 @@ function isSupportedClient(client: string): client is SupportedClient {
 export interface MutateTrustDeps {
 	readTrust?: () => Promise<TrustFile>;
 	writeTrust?: (file: TrustFile) => Promise<void>;
+	syncRelayBlock?: (handle: string, blocked: boolean) => Promise<void>;
 }
 
 async function readOrFallback(path: string): Promise<TrustFile> {
@@ -689,6 +690,7 @@ function defaultMutateDeps(): Required<MutateTrustDeps> {
 		writeTrust: async (file) => {
 			await writeSecretFile(path, serializeTrust(file));
 		},
+		syncRelayBlock: defaultSyncRelayBlock,
 	};
 }
 
@@ -697,6 +699,14 @@ export async function blockCmd(handle: string, deps: MutateTrustDeps = {}): Prom
 	const file = await d.readTrust();
 	const { next, changed } = blockTeammate(file, handle);
 	if (changed) await d.writeTrust(next);
+	try {
+		await d.syncRelayBlock(handle, true);
+	} catch (error) {
+		throw new Error(
+			`local block is active, but relay synchronization failed: ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error },
+		);
+	}
 	return changed;
 }
 
@@ -704,7 +714,17 @@ export async function unblockCmd(handle: string, deps: MutateTrustDeps = {}): Pr
 	const d = { ...defaultMutateDeps(), ...deps };
 	const file = await d.readTrust();
 	const { next, changed } = unblockTeammate(file, handle);
-	if (changed) await d.writeTrust(next);
+	await d.syncRelayBlock(handle, false);
+	if (changed) {
+		try {
+			await d.writeTrust(next);
+		} catch (error) {
+			throw new Error(
+				`relay unblock succeeded, but the local block remains active; retry the command: ${error instanceof Error ? error.message : String(error)}`,
+				{ cause: error },
+			);
+		}
+	}
 	return changed;
 }
 
@@ -997,6 +1017,8 @@ async function defaultHttpPost(
 		method: "POST",
 		headers,
 		body: JSON.stringify(body),
+		headersTimeout: 10_000,
+		bodyTimeout: 10_000,
 	});
 	const text = await res.body.text();
 	let json: unknown;
@@ -1012,6 +1034,8 @@ async function defaultWhoami(relay: string, apiKey: string): Promise<boolean> {
 	const res = await undiciRequest(`${stripTrailing(relay)}/agents/me`, {
 		method: "GET",
 		headers: { authorization: `Bearer ${apiKey}` },
+		headersTimeout: 10_000,
+		bodyTimeout: 10_000,
 	});
 	await res.body.dump();
 	return res.statusCode >= 200 && res.statusCode < 300;
@@ -1021,7 +1045,12 @@ async function defaultHttpGet(
 	url: string,
 	headers: Record<string, string>,
 ): Promise<{ status: number; json: unknown }> {
-	const res = await undiciRequest(url, { method: "GET", headers });
+	const res = await undiciRequest(url, {
+		method: "GET",
+		headers,
+		headersTimeout: 10_000,
+		bodyTimeout: 10_000,
+	});
 	const text = await res.body.text();
 	let json: unknown;
 	try {
@@ -1030,6 +1059,35 @@ async function defaultHttpGet(
 		json = { raw: text };
 	}
 	return { status: res.statusCode, json };
+}
+
+async function defaultSyncRelayBlock(handle: string, blocked: boolean): Promise<void> {
+	const cfg = await loadConfigOrThrow(configPath());
+	const base = `${stripTrailing(cfg.relay_url)}/agents/me/block`;
+	const headers = {
+		"content-type": "application/json",
+		authorization: `Bearer ${cfg.api_key}`,
+	};
+	if (blocked) {
+		const res = await defaultHttpPost(base, { handle }, headers);
+		if (res.status < 200 || res.status >= 300) {
+			throw new Error(`block: relay returned ${res.status} (${shortBody(res.json)})`);
+		}
+		return;
+	}
+
+	const res = await undiciRequest(`${base}/${encodeURIComponent(handle)}`, {
+		method: "DELETE",
+		headers,
+		headersTimeout: 10_000,
+		bodyTimeout: 10_000,
+	});
+	const responseBody = await res.body.text();
+	if (res.statusCode < 200 || res.statusCode >= 300) {
+		throw new Error(
+			`unblock: relay returned ${res.statusCode} (${responseBody.slice(0, 200) || "empty response"})`,
+		);
+	}
 }
 
 function stripTrailing(s: string): string {

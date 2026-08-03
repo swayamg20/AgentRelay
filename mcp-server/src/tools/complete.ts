@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
-import { completeHandoffInput } from "./schemas.js";
+import { completeHandoffInput, storedArtifactSchema } from "./schemas.js";
 
 // Relay returns both legacy (`status: {state}`) and rich (top-level
 // `completed_at`) fields. We accept either status form and normalise
@@ -9,12 +9,14 @@ const wireSchema = z.object({
 	thread_id: z.string(),
 	status: z.union([z.literal("completed"), z.object({ state: z.literal("completed") })]),
 	completed_at: z.string(),
+	completion_artifacts: z.array(storedArtifactSchema).default([]),
 });
 
 const responseSchema = z.object({
 	thread_id: z.string(),
 	status: z.literal("completed"),
 	completed_at: z.string(),
+	completion_artifacts: z.array(storedArtifactSchema),
 });
 
 export type CompleteHandoffResult = z.infer<typeof responseSchema>;
@@ -37,5 +39,6 @@ export async function completeHandoff(
 		thread_id: wire.thread_id,
 		status: "completed",
 		completed_at: wire.completed_at,
+		completion_artifacts: wire.completion_artifacts,
 	};
 }

@@ -31,6 +31,34 @@ export interface WrapInput {
 	artifacts?: string | undefined;
 }
 
+export interface TeammateProvenance {
+	readonly origin: "agentrelay_teammate";
+	readonly sender_handle: string;
+	readonly trust: "untrusted";
+	readonly instruction_policy: "data_only_do_not_execute";
+}
+
+export type ProvenanceMarked<T extends object> = T & {
+	readonly agentrelay_provenance: TeammateProvenance;
+};
+
+/** Attach a non-spoofable marker while preserving the value's typed fields. */
+export function markTeammateValue<T extends object>(
+	senderHandleInput: string,
+	value: T,
+): ProvenanceMarked<T> {
+	const senderHandle = handleSchema.parse(senderHandleInput);
+	return {
+		...value,
+		agentrelay_provenance: {
+			origin: "agentrelay_teammate",
+			sender_handle: senderHandle,
+			trust: "untrusted",
+			instruction_policy: "data_only_do_not_execute",
+		},
+	};
+}
+
 /**
  * Construct the Layer 1 preamble around teammate content.
  *
@@ -58,6 +86,28 @@ export function wrap(input: WrapInput): string {
 	];
 
 	return lines.join("\n");
+}
+
+/** Remove relay-owned transport fields before metadata is shown to an agent. */
+export function stripRelayMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(metadata).filter(([key]) => key !== "client_idempotency_key"),
+	);
+}
+
+/** Mark peer metadata and give its known free-form question an explicit text wrapper. */
+export function markTeammateMetadata(
+	senderHandle: string,
+	metadataInput: Record<string, unknown>,
+): ProvenanceMarked<Record<string, unknown>> {
+	const metadata = stripRelayMetadata(metadataInput);
+	const question = metadata.question;
+	return markTeammateValue(senderHandle, {
+		...metadata,
+		...(typeof question === "string"
+			? { question: wrap({ senderHandle, content: question }) }
+			: {}),
+	});
 }
 
 /**

@@ -56,10 +56,10 @@ the committed Drizzle migrations.
 | `agents` | Developer identity: handle, email, display name, role, active/disabled state. |
 | `agent_cards` | One-to-one card JSON, skills, repository labels, optional notification webhook field. |
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
-| `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, artifacts, proposed action, metadata, timestamps, idempotency key. |
-| `messages` | Append-only handoff messages with payload, per-thread sequence, and idempotency key. |
-| `audit_log` | Invite and handoff/message mutation records: actor, action, resource, metadata, request ID, timestamp. |
-| `agent_blocks` | Blocker/blocked pairs enforced when creating a new handoff; existing-thread appends are not checked. |
+| `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
+| `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
+| `audit_log` | Invite, handoff/message, and block mutation records: actor, action, resource, metadata, request ID, timestamp. |
+| `agent_blocks` | Blocker/blocked pairs enforced for new handoffs and each existing-thread append. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
 
 The current identity represents a logical developer/agent. It does not distinguish
@@ -143,20 +143,22 @@ active handoff for one of its two participants.
 For a new handoff, the service:
 
 - Resolves the caller from the bearer key.
-- Validates recipient and block relationship.
+- Validates the recipient and block relationship under the same directed-pair
+  transaction lock used by block/unblock.
 - Enforces `inform`, `ask_question`, or `propose_action` shape.
 - Writes handoff/message and audit data transactionally.
 - Uses a per-handoff advisory lock for message sequence allocation.
 - Applies idempotency behavior when
   `params.metadata.client_idempotency_key` is present.
 
-For an append, the service verifies participation and active state, allocates the
-next sequence under an advisory lock, and applies the same metadata idempotency key.
-It does not re-check `agent_blocks`; blocking a participant does not currently stop
-messages on an existing thread.
-
-Current gap: the MCP `send_message.payload` reaches request metadata but the relay
-stores only its artifact subset. Treat generic payload preservation as incomplete.
+For an append, the service verifies participation, active state, and the receiving
+participant's current block list under that directed-pair lock, then allocates the next
+sequence under a per-handoff advisory lock and applies the same metadata idempotency key. Generic `send_message.payload`
+and typed message artifacts are stored in separate JSON columns and returned intact.
+Exact idempotency replay comparison includes both fields. Idempotency-key advisory
+locks serialize simultaneous retries, and an exact committed replay is resolved
+before mutable block or terminal-state gates. The relay also recovers the previous
+MCP client's metadata-embedded append payload when no top-level payload is present.
 
 ### `tasks/get`
 
@@ -178,10 +180,13 @@ pending --cancel--------------------------------> cancelled
 ```
 
 Recipient owns accept and complete. Sender owns cancel. Completed and cancelled are
-terminal. Current gap: completion artifacts accepted by the MCP tool are not part of
-the relay transition schema and are therefore not persisted. Accepting an already
-accepted handoff returns its current row, but complete and cancel do not have general
-idempotency receipts or replay guarantees.
+terminal. Completion artifacts are persisted separately from the original handoff
+artifacts and returned by both the completion response and `tasks/get`; `view_thread`
+also returns the completion summary, provenance-wrapped when read by its peer. Accepting an
+already accepted handoff returns its current row, but complete and cancel do not yet
+have general idempotency receipts or replay guarantees. A recipient cannot accept a
+pending handoff after blocking its sender, and a blocked recipient cannot send
+completion summary/artifact content back to the sender.
 
 ### `agents/list`
 
@@ -194,12 +199,12 @@ Source of truth: [`mcp-server/src/tools/index.ts`](../mcp-server/src/tools/index
 
 | Tool | Current behavior |
 |---|---|
-| `handoff_to_teammate` | Create a typed handoff with summary, intent, artifacts, and optional proposed action. |
-| `check_inbox` | List received handoffs through `tasks/list`; summary previews are currently returned raw. |
-| `accept_handoff` | Fetch and accept a thread, wrap summary/messages, and return a local trust decision. |
-| `view_thread` | Read a participant thread without changing lifecycle state. |
-| `send_message` | Append a message to an active thread. |
-| `complete_handoff` | Transition an accepted handoff to completed. |
+| `handoff_to_teammate` | Create a typed handoff with summary, intent, artifacts, question/metadata, and optional proposed action. |
+| `check_inbox` | List received handoffs through `tasks/list` with provenance-wrapped teammate summaries. |
+| `accept_handoff` | Fetch and accept a thread, provenance-mark teammate text/structured data, and return a local trust decision. |
+| `view_thread` | Read a participant thread without changing lifecycle state; only teammate-authored fields are marked. |
+| `send_message` | Append a message and preserve its generic payload separately from typed artifacts. |
+| `complete_handoff` | Transition an accepted handoff to completed and persist result artifacts. |
 | `list_teammates` | Fetch the active roster. |
 
 There is no `draft_proposed_action`, pair, listen, wait, runtime-start, or Mission
@@ -207,7 +212,7 @@ tool today.
 
 ## Artifact types
 
-Current Zod schemas support:
+Current MCP write schemas support:
 
 - `file_diff`
 - `file_ref`
@@ -215,10 +220,19 @@ Current Zod schemas support:
 - `api_contract`
 - `link`
 
-Artifacts can also accompany the initial handoff. They are remote data. The current
-`accept_handoff` path wraps summary and message bodies but returns artifact objects
-raw. Do not treat an artifact command, diff, link, or inline contract as locally
-authorized execution.
+The relay contract itself accepts an extensible object with a nonempty `type`, so a
+direct A2A client can add a custom artifact kind. MCP reads tolerate legacy/custom
+objects and mark them structurally instead of rejecting the entire thread.
+
+Artifacts can accompany initial handoffs, messages, and completion. They remain typed
+objects, but every teammate-authored object returned by `accept_handoff` or
+`view_thread` receives an `agentrelay_provenance` marker that overwrites any spoofed
+marker supplied by the peer. Generic teammate payloads, handoff metadata, and
+proposed-action objects get the same marker. A known metadata `question` plus free-form
+summary/message/rationale text retain the explicit wrapper. Relay-owned idempotency
+keys are removed before metadata is returned by MCP. Provenance is context, not
+execution authority: never treat an artifact
+command, diff, link, or inline contract as locally authorized execution.
 
 ## Local files
 
@@ -231,8 +245,8 @@ Default location is `~/.agentrelay/`:
 `AGENTRELAY_HOME`, `AGENTRELAY_CONFIG_PATH`, and `AGENTRELAY_TRUST_PATH` can override
 paths for tests or controlled environments.
 
-The MCP server loads trust at process start. `accept_handoff` computes a trust overlay
-for the sender and returns it to the agent. No production code applies
+The MCP server reloads local trust before each `accept_handoff`, computes a trust
+overlay for the sender, and returns it to the agent. No production code applies
 `auto_write_paths` dynamically to a Codex or Claude runtime; `isPathAutoWritable` is
 currently exercised only by tests and exports.
 
@@ -271,21 +285,29 @@ Important limits:
 - Queue entries do not survive relay restart.
 - New jobs are dropped when the queue is full.
 - There is no delivery acknowledgement from the receiving agent.
-- The card update route stores the submitted webhook value directly while the
-  dispatcher expects the encrypted `enc:v1:` form. Encryption-at-rest behavior is
-  therefore not an end-to-end implemented contract yet.
+- Card updates encrypt submitted webhook URLs into the authenticated `enc:v1:` form
+  expected by the dispatcher. Existing plaintext rows from an older deployment must
+  be resubmitted; the dispatcher continues to fail closed on unmarked values.
+- Both card update and dispatch restrict targets to exact HTTPS
+  `hooks.slack.com/services/...` URLs, and the HTTP poster refuses redirects.
 
 ## Audit and revocation
 
-Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel, and
-message append. Registration, card updates, key rotation, agent disable, and
-block/unblock currently write no audit row. Audit also does not record commands, tool
+Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel,
+message append, and block/unblock. Registration, card updates, key rotation, and agent
+disable still write no audit row. Audit also does not record commands, tool
 arguments/results, file edits, tests, or permission decisions performed by a local
 coding-agent host.
 
-The relay has authenticated block endpoints. The CLI's local trust mutation and
-relay-side block state are separate paths and can diverge. Do not claim one atomic
-cross-layer revocation until the Node or CLI applies and verifies both.
+The relay has authenticated block endpoints. CLI `block`/`unblock` writes the relay
+and local trust file in a fail-safe order. `block` activates the local kill switch
+before attempting the relay write; if the relay is unavailable, the local block stays
+active. `unblock` clears the relay first and only then clears local trust; either
+partial failure therefore leaves local denial active. Every invocation retries the
+relay operation even when local state already matches, and the running MCP reloads
+trust before accepting a handoff. The two stores still cannot commit atomically, so
+retry a reported partial failure and do not claim continuously observed cross-layer
+revocation until the Node verifies it.
 
 ## Error model
 

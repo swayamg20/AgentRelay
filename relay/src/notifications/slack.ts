@@ -10,7 +10,31 @@ export interface SlackPostResult {
 
 export type SlackPoster = (url: string, payload: unknown) => Promise<SlackPostResult>;
 
+export function isSlackWebhookUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		const pathParts = url.pathname.split("/").filter(Boolean);
+		return (
+			url.protocol === "https:" &&
+			url.hostname === "hooks.slack.com" &&
+			url.port === "" &&
+			url.username === "" &&
+			url.password === "" &&
+			url.search === "" &&
+			url.hash === "" &&
+			pathParts.length === 4 &&
+			pathParts[0] === "services" &&
+			pathParts.slice(1).every((part) => part.length > 0)
+		);
+	} catch {
+		return false;
+	}
+}
+
 export const defaultSlackPoster: SlackPoster = async (url, payload) => {
+	if (!isSlackWebhookUrl(url)) {
+		throw new Error("refusing non-Slack notification webhook URL");
+	}
 	const ctrl = new AbortController();
 	const t = setTimeout(() => ctrl.abort(), SLACK_TIMEOUT_MS);
 	try {
@@ -19,6 +43,7 @@ export const defaultSlackPoster: SlackPoster = async (url, payload) => {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(payload),
 			signal: ctrl.signal,
+			redirect: "error",
 		});
 		const retryAfter = res.headers.get("retry-after");
 		return {

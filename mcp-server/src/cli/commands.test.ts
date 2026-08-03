@@ -724,12 +724,17 @@ describe("doctorFix", () => {
 describe("blockCmd / unblockCmd / trustSetCmd / trustResetCmd", () => {
 	function makeStore(initial: TrustFile = JSON.parse(JSON.stringify(FALLBACK_TRUST))) {
 		let current = initial;
+		const relaySyncs: Array<{ handle: string; blocked: boolean }> = [];
 		return {
 			readTrust: async () => current,
 			writeTrust: async (next: TrustFile) => {
 				current = next;
 			},
+			syncRelayBlock: async (handle: string, blocked: boolean) => {
+				relaySyncs.push({ handle, blocked });
+			},
 			get: () => current,
+			getRelaySyncs: () => relaySyncs,
 		};
 	}
 
@@ -740,6 +745,10 @@ describe("blockCmd / unblockCmd / trustSetCmd / trustResetCmd", () => {
 		expect(store.get().blocked).toContain("mallory@external");
 		const second = await blockCmd("mallory@external", store);
 		expect(second).toBe(false);
+		expect(store.getRelaySyncs()).toEqual([
+			{ handle: "mallory@external", blocked: true },
+			{ handle: "mallory@external", blocked: true },
+		]);
 	});
 
 	it("unblockCmd removes the entry", async () => {
@@ -748,6 +757,55 @@ describe("blockCmd / unblockCmd / trustSetCmd / trustResetCmd", () => {
 		const changed = await unblockCmd("mallory@external", store);
 		expect(changed).toBe(true);
 		expect(store.get().blocked).not.toContain("mallory@external");
+		expect(store.getRelaySyncs()).toEqual([
+			{ handle: "mallory@external", blocked: true },
+			{ handle: "mallory@external", blocked: false },
+		]);
+	});
+
+	it("keeps the local kill switch active when relay block synchronization fails", async () => {
+		const store = makeStore();
+		await expect(
+			blockCmd("mallory@external", {
+				...store,
+				syncRelayBlock: async () => {
+					throw new Error("relay unavailable");
+				},
+			}),
+		).rejects.toThrow("local block is active, but relay synchronization failed");
+		expect(store.get().blocked).toContain("mallory@external");
+	});
+
+	it("keeps a local block when relay unblock synchronization fails", async () => {
+		const store = makeStore();
+		await blockCmd("mallory@external", store);
+		await expect(
+			unblockCmd("mallory@external", {
+				...store,
+				syncRelayBlock: async () => {
+					throw new Error("relay unavailable");
+				},
+			}),
+		).rejects.toThrow("relay unavailable");
+		expect(store.get().blocked).toContain("mallory@external");
+	});
+
+	it("reports fail-safe divergence when relay unblock succeeds but the local write fails", async () => {
+		const store = makeStore();
+		await blockCmd("mallory@external", store);
+		await expect(
+			unblockCmd("mallory@external", {
+				...store,
+				writeTrust: async () => {
+					throw new Error("disk read-only");
+				},
+			}),
+		).rejects.toThrow("relay unblock succeeded, but the local block remains active");
+		expect(store.get().blocked).toContain("mallory@external");
+		expect(store.getRelaySyncs().at(-1)).toEqual({
+			handle: "mallory@external",
+			blocked: false,
+		});
 	});
 
 	it("trustSetCmd writes the merged entry", async () => {
