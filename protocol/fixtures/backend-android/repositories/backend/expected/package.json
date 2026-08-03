@@ -1,0 +1,8 @@
+{
+	"name": "agentrelay-fixture-backend",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"verify": "node verify.mjs"
+	}
+}

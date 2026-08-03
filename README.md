@@ -30,7 +30,8 @@ full autonomous runtime described above.
 - Typed engineering artifacts, plus provenance markers when `accept_handoff` or
   `view_thread` returns teammate-authored summaries/messages.
 - An executable `@agentrelay/protocol` workspace with bounded Mission contracts,
-  strict lifecycle reducers, and a deterministic fake runtime adapter.
+  strict lifecycle and coordinator reducers, a deterministic fake runtime adapter,
+  and a reproducible backend-Android transcript fixture.
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, block, and trust.
 - An in-process Slack dispatcher, although the current card-update path does not
   produce the encrypted webhook form it consumes, so setup is not end-to-end usable.
@@ -223,7 +224,7 @@ this README does not claim full A2A conformance.
 .
 ├── AGENTS.md             coding-agent instructions: understand first, keep code clear
 ├── CLAUDE.md             Claude-specific entry point; delegates to AGENTS.md
-├── protocol/             Mission schemas, state machines, and adapter contract
+├── protocol/             Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/                current Hono + Drizzle + Postgres relay
 ├── mcp-server/           current MCP server and agentrelay CLI
 ├── tests/e2e/            relay + two-MCP-process test harness

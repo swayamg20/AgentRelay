@@ -1,0 +1,15 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"title": "ProfileResponse",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["id", "display_name", "avatar_url"],
+	"properties": {
+		"id": { "type": "string", "minLength": 1 },
+		"display_name": { "type": "string", "minLength": 1 },
+		"avatar_url": {
+			"oneOf": [{ "type": "string", "format": "uri" }, { "type": "null" }]
+		}
+	},
+	"x-avatar-fallback": "When avatar_url is null, show uppercase initials from the first and last non-empty display_name segments."
+}

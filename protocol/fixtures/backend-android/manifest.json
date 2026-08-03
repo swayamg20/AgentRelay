@@ -1,0 +1,44 @@
+{
+	"schema_version": 1,
+	"mission_id": "10000000-0000-4000-8000-000000000001",
+	"objective": "Make the backend profile response and Android profile UI compatible when an avatar is absent.",
+	"public_acceptance_criteria": [
+		"The backend emits the accepted profile contract.",
+		"The Android client renders a deterministic initials fallback for a missing avatar.",
+		"The public cross-repository user scenario passes."
+	],
+	"participants": [
+		{
+			"agent_id": "10000000-0000-4000-8000-000000000003",
+			"role": "backend",
+			"workspace_alias": "profile-backend",
+			"repository_url": "https://fixtures.agentrelay.dev/backend-profile.git",
+			"expected_base_commit": "ce242c52841933788bc3b6a0a4e6c32ef38bf149",
+			"initial_assignment": "Own the profile response and propose any shared-contract change required by Android.",
+			"requested_local_policy_profile": "fixture-coding"
+		},
+		{
+			"agent_id": "10000000-0000-4000-8000-000000000004",
+			"role": "android",
+			"workspace_alias": "profile-android",
+			"repository_url": "https://fixtures.agentrelay.dev/android-profile.git",
+			"expected_base_commit": "a976d7c7967b3ef8e89cbd1b9add606e08dbbbca",
+			"initial_assignment": "Own profile decoding and UI fallback behavior against the accepted contract.",
+			"requested_local_policy_profile": "fixture-coding"
+		}
+	],
+	"shared_contract": {
+		"artifact_id": "10000000-0000-4000-8000-000000000005",
+		"type": "api_contract",
+		"version": 1,
+		"sha256": "ec4721811c959df1b7b2947b307c130104b67ec76adf74bcd00361732372f184",
+		"media_type": "application/schema+json",
+		"byte_size": 371
+	},
+	"max_turns": 12,
+	"max_wall_time_seconds": 3600,
+	"token_budget": 100000,
+	"expires_at": "2026-08-03T10:00:00.000Z",
+	"allowed_artifact_types": ["api_contract", "patch", "verification_report"],
+	"created_at": "2026-08-02T10:00:00.000Z"
+}

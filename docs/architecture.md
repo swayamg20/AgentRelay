@@ -25,6 +25,8 @@ The repository currently ships an authenticated asynchronous mailbox:
 - A Hono relay with REST onboarding and an A2A-shaped JSON-RPC endpoint.
 - Seven stdio MCP tools for sending, receiving, replying to, inspecting, and
   completing handoff threads.
+- An executable protocol workspace with Mission/delivery/runtime contracts and an
+  in-memory deterministic backend-Android coordination proof.
 - Typed engineering artifacts and provenance wrapping for some inbound content.
 - An in-process Slack notification dispatcher, but no currently supported
   end-to-end webhook configuration path.

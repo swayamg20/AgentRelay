@@ -19,12 +19,12 @@
 			"import": "./dist/testing/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": ["dist", "fixtures"],
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
 		"prepack": "pnpm run build",
 		"test": "vitest run",
-		"test:exports": "node --input-type=module -e \"const p = await import('@agentrelay/protocol'); const t = await import('@agentrelay/protocol/testing'); if (!p.missionManifestSchema || !p.transitionDeliveryState || !p.acceptHostEvent || !t.FakeAgentHostAdapter) throw new Error('protocol exports missing')\"",
+		"test:exports": "node --input-type=module -e \"const p = await import('@agentrelay/protocol'); const t = await import('@agentrelay/protocol/testing'); if (!p.missionManifestSchema || !p.transitionDeliveryState || !p.acceptHostEvent || !p.missionCoordinatorEventSchema || !t.FakeAgentHostAdapter || !t.runMissionFixture || !t.backendAndroidMissionFixture) throw new Error('protocol exports missing')\"",
 		"test:watch": "vitest",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},

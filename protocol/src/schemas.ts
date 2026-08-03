@@ -53,7 +53,10 @@ const fencingTokenSchema = z
 	.string()
 	.regex(/^(?:0|[1-9][0-9]*)$/)
 	.max(64);
-export const uuidSchema = z.string().uuid();
+export const uuidSchema = z
+	.string()
+	.uuid()
+	.refine((value) => value === value.toLowerCase(), "UUID must use lowercase canonical form");
 export const contractVersionSchema = z.number().int().positive().max(1_000_000);
 
 function hasUniqueValues(values: string[]): boolean {

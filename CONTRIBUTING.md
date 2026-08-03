@@ -41,7 +41,7 @@ pnpm --filter agentrelay-mcp dev
 ## Repository layout
 
 ```text
-protocol/       shared Mission, delivery, and runtime-adapter contracts
+protocol/       Mission contracts, coordinator, test fixtures, and runtime adapters
 relay/          Hono + Drizzle + Postgres relay
 mcp-server/     agentrelay-mcp package and agentrelay CLI
 tests/e2e/      real relay plus two MCP processes

@@ -6,9 +6,13 @@ The package contains:
 
 - strict Zod schemas for Mission manifests, contract revisions, typed messages,
   artifact references, policy requests, delivery leases, runs, and evidence;
-- pure Mission and fenced-delivery reducers that reject invalid transitions; and
+- pure Mission, fenced-delivery, and deterministic coordinator reducers that reject
+  invalid transitions;
 - a runtime-neutral host adapter contract, with a deterministic fake under
-  `@agentrelay/protocol/testing`.
+  `@agentrelay/protocol/testing`; and
+- a packaged backend-Android fixture with reproducible Git commits, an accepted
+  contract revision, duplicate/recovery replay, executable verification, and a
+  post-completion hidden evaluator.
 
 Wire schemas use `snake_case`. Adapter lifecycle fields use local TypeScript naming;
 embedded relay payloads such as `TurnDisposition` and `ArtifactRef` deliberately keep
@@ -27,6 +31,16 @@ const next = transitionMissionStatus("awaiting_acceptance", {
 });
 ```
 
+`missionCoordinatorEventSchema` and `reduceMissionCoordinatorEvent` join the
+individually valid wire objects into one replayable Mission projection. The current
+coordinator slice allows one scheduled participant at a time. A contract proposal
+pauses turns, neither participant is implicitly acknowledged, both participant
+identities require explicit events for the exact revision artifact, and the next turn
+then belongs to the participant opposite the proposer. Each readiness cycle receives
+a new verification round, so delayed evidence from an older cycle is rejected.
+Required verification command IDs come from local coordinator configuration, never
+peer text. Authenticated event ingestion remains a relay responsibility.
+
 The adapter contract makes replay semantics explicit: every event has a stable
 turn-local sequence, available usage is a monotonic cumulative turn snapshot, and
 artifact input retains its version, source actor, exact hashed UTF-8 text, and a
@@ -43,8 +57,9 @@ with the lease deadline against durable delivery state before runtime
 start/recovery/cancellation and result publication; they are not copied into host turn
 references.
 
-This package defines data and state transitions. It does not persist Missions,
-execute policy, start a model runtime, or claim A2A conformance.
+This package defines data, state transitions, and an in-memory deterministic proof.
+It does not persist Missions or idempotency receipts, execute production policy,
+start a real model runtime, prove offline/restart recovery, or claim A2A conformance.
 
 Version 0.1 is the TypeScript/Zod binding used to prove the first Node. Committed
 JSON Schema and OpenAPI bindings remain required before a non-TypeScript Node or

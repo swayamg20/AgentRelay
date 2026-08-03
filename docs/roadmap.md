@@ -33,6 +33,10 @@ and delivery guarantees.
 
 ## Stage 1: executable Mission contract
 
+**Status:** deterministic exit gate passed on 2026-08-02. See
+[`experiment 001`](experiments/001-backend-android-deterministic-proof.md). Durable
+relay delivery and real Nodes remain unproved.
+
 - Add a small shared protocol package or module with Mission, participant, message,
   artifact, delivery, run, and policy schemas.
 - Implement deterministic Mission and delivery state machines with invalid-transition
