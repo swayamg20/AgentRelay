@@ -20,13 +20,16 @@ or trust gaps.
 
 ## 2. Write executable Mission schemas
 
-- [ ] Add Mission, participant, revision, typed message, artifact, policy, delivery,
+- [x] Add Mission, participant, revision, typed message, artifact, policy, delivery,
   and run schemas.
-- [ ] Add Mission and delivery state-machine transition tests.
+- [x] Add Mission and delivery state-machine transition tests.
 - [ ] Define one fake backend repository and one fake Android repository at frozen
   commits.
 - [ ] Define a hidden cross-repository acceptance scenario.
-- [ ] Add a fake runtime adapter and deterministic transcript fixtures.
+- [x] Add a fake runtime adapter with duplicate, recovery, and cancellation tests.
+- [ ] Add deterministic transcript fixtures.
+- [ ] Publish JSON Schema and OpenAPI bindings before a non-TypeScript Node or public
+  A2A gateway consumes this contract.
 
 Keep this layer small. Do not implement multi-party Missions, parallel actors, smart
 routing, or provider-specific fields.

@@ -113,7 +113,7 @@ interface AgentHostAdapter {
 	probe(): Promise<AdapterInfo>;
 	ensureSession(input: SessionInput): Promise<HostSessionRef>;
 	lookupTurn(deliveryId: string): Promise<HostTurnRef | null>;
-	startTurn(input: TurnInput & { deliveryId: string }): AsyncIterable<HostEvent>;
+	startTurn(input: StartTurnInput): AsyncIterable<HostEvent>;
 	recoverTurn(ref: HostTurnRef): AsyncIterable<HostEvent>;
 	cancelTurn(ref: HostTurnRef): Promise<void>;
 }
@@ -121,6 +121,28 @@ interface AgentHostAdapter {
 
 `startTurn` is idempotent by `deliveryId`: if the host already accepted that delivery,
 the adapter returns or recovers the existing turn rather than starting another one.
+Lease authority does not enter the runtime adapter or `HostTurnRef`. Before starting,
+recovering, cancelling, or publishing a host result, the Node atomically checks the
+delivery's current lease ID, fencing token, and unexpired deadline in durable state. A
+newly leased Node may recover the same delivery's existing host turn; an expired
+holder is rejected before it reaches the adapter.
+
+Every normalized host event has one stable, turn-local sequence number so full replay
+can be deduplicated after recovery. Events cover acceptance, bounded output, tool and
+permission lifecycle, artifact references, cumulative turn token usage or explicit
+usage unavailability, completion, failure, and cancellation. A later usage event
+supersedes an earlier usage event; consumers do not sum snapshots, and no terminal
+event is accepted before usage or explicit unavailability. Provider events do not
+become a side channel around Node policy or evidence capture.
+
+The Node applies one stream reducer across live events and full recovery replay. It
+requires contiguous acceptance-first sequencing, monotonic cumulative usage, one
+terminal event, and locally configured aggregate event, output-byte, artifact-count,
+artifact-byte, and reported-token limits. Every event must retain the accepted host
+turn correlation, and the initial acceptance must match the requested Mission,
+delivery, session, and contract version. The delivery-to-host-turn mapping is durable
+as soon as the host accepts; a malformed later provider event cannot erase it and
+cause a second host turn.
 
 The first adapter pins one supported Codex app-server version. Preview host channels,
 Codex remote control, remote ACP, and generic MCP notifications are not dependencies
@@ -168,6 +190,11 @@ The immutable creation manifest contains:
 The remote manifest may request a policy profile. Only local configuration defines
 what that profile permits.
 
+The relay authenticates the Mission creator and attaches that actor separately from
+the immutable manifest. The Node derives objective, assignment, and acceptance text
+from this authenticated Mission context; a runtime caller cannot select its own
+provenance label.
+
 ### Shared-contract revisions
 
 Do not version the entire Mission for every discussion change. Version one shared
@@ -186,10 +213,10 @@ Every runtime turn returns exactly one structured disposition:
 
 ```typescript
 type TurnDisposition =
-	| { kind: "reply"; message: string; artifacts?: ArtifactRef[] }
+	| { kind: "reply"; message_type: MessageType; message: string; artifacts?: ArtifactRef[] }
 	| { kind: "propose_contract"; artifact: ArtifactRef }
 	| { kind: "ready"; evidence: VerificationEvidence[] }
-	| { kind: "blocked"; reason: string; requestedInput?: string }
+	| { kind: "blocked"; reason: string; requested_input?: string }
 	| { kind: "failed"; class: "transient" | "permanent" | "policy_denied" };
 ```
 
@@ -256,6 +283,11 @@ Delivery is at least once. Each retry increments attempt count and applies bound
 backoff. A true terminal delivery failure becomes `dead_lettered`; Mission policy then
 moves the Mission to `blocked` or `failed`.
 
+Each new lease also advances a monotonic fencing token. Lease-owned execution,
+acknowledgement, retry, cancellation, and result publication must present the active
+lease ID and token before the lease deadline, so a delayed or expired holder cannot
+mutate a re-leased delivery.
+
 "Written to a socket" is not a delivery state. Polling the durable Node cursor is the
 first correct implementation. SSE may later reduce pickup latency without changing
 these states.
@@ -268,7 +300,8 @@ The relay coordinator reduces typed events; it does not reason about repository 
 - `reply` schedules the other participant.
 - `propose_contract` pauses turns until both acknowledge.
 - `blocked` stops scheduling until required input is supplied.
-- `ready` marks that participant ready for the current contract version.
+- `ready` marks that participant ready for the current contract version. Its evidence
+  array may be empty because required Node verification runs only after both are ready.
 - When both are ready, each Node runs locally registered verification command IDs.
 - A command ID resolves locally to structured argv, workspace alias, timeout, and
   environment allowlist. Peer-provided shell strings are never executable authority.
@@ -290,6 +323,10 @@ acceptance. It does not influence the agents' shared contract or runtime complet
   sandbox, approval policy, or credentials through conversation.
 - Provenance-mark every peer-originated text-bearing field while preserving typed
   artifact structure.
+- Preserve the exact bounded UTF-8 artifact text identified by its hash. JSON input
+  carries that source text and a structured value derived from it; the Node rejects a
+  supplied mismatch instead of silently reserializing it. Artifact version and source
+  actor remain attached.
 - Deny push, merge, publish, deploy, credentials, and arbitrary network effects.
 - Observe cancellation, expiry, and credential revocation before claiming new work.
 - Bound outbound text and artifacts so AgentRelay cannot become an unrestricted data
