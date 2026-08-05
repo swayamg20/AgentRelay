@@ -1,12 +1,15 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const require = createRequire(import.meta.url);
+const pkg = require("../../package.json") as { version: string };
 const PACKAGE_ROOT = pathResolve(__dirname, "../..");
 const AGENTRELAY_BIN_PATH = pathResolve(PACKAGE_ROOT, "dist/bin/agentrelay.js");
 
@@ -65,6 +68,21 @@ describeIfBuilt("agentrelay CLI mcp subcommand", () => {
 
 		expect(result.status, result.stderr).toBe(0);
 		expect(result.stdout).toMatch(/mcp\s+Start the AgentRelay MCP server/);
+	});
+
+	it("reports the package version", () => {
+		const result = spawnSync("node", [AGENTRELAY_BIN_PATH, "--version"], {
+			cwd: PACKAGE_ROOT,
+			encoding: "utf8",
+			stdio: "pipe",
+		});
+
+		if (result.error !== undefined) {
+			throw result.error;
+		}
+
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout.trim()).toContain(`agentrelay/${pkg.version}`);
 	});
 });
 

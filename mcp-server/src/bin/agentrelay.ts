@@ -5,6 +5,7 @@
  * exercised directly by the test suite.
  */
 
+import { createRequire } from "node:module";
 import { cac } from "cac";
 import {
 	blockCmd,
@@ -28,6 +29,8 @@ import {
 import { listTrust } from "../cli/trust-mutate.js";
 import { FALLBACK_TRUST, loadTrust } from "../trust.js";
 
+const require = createRequire(import.meta.url);
+const pkg = require("../../package.json") as { version: string };
 const cli = cac("agentrelay");
 
 cli
@@ -284,7 +287,7 @@ cli.command("mcp", "Start the AgentRelay MCP server (stdio)").action(async () =>
 });
 
 cli.help();
-cli.version("0.0.1");
+cli.version(pkg.version);
 
 try {
 	cli.parse(process.argv, { run: false });
