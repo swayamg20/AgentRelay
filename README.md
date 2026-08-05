@@ -171,7 +171,7 @@ and production credentials remain denied.
 
 Start with the published `agentrelay-mcp` mailbox. It connects already-running Claude
 Code and Codex hosts to a Relay your team configures; no public hosted Relay is
-bundled yet. Each developer needs Node 20+ and an AgentRelay identity. Package-specific
+bundled yet. Each developer needs Node 20.18.1+ and an AgentRelay identity. Package-specific
 details live in
 [`mcp-server/README.md`](mcp-server/README.md).
 
@@ -252,7 +252,7 @@ Full setup and current limitations are in [`docs/onboarding.md`](docs/onboarding
 
 ## Run the repository locally
 
-Requires Node 20+, pnpm 9+, Docker, and Postgres 16 through Compose.
+Requires Node 20.18.1+, pnpm 9+, Docker, and Postgres 16 through Compose.
 
 ```bash
 pnpm install

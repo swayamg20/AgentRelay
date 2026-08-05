@@ -32,6 +32,15 @@ jobs:
 
       - run: pnpm --filter @agentrelay/protocol test:exports
 
+      - name: Pack and smoke-test agentrelay-mcp
+        run: |
+          pack_dir="$RUNNER_TEMP/agentrelay-mcp-pack"
+          package_version=$(node -p "require('./mcp-server/package.json').version")
+          mkdir -p "$pack_dir"
+          pnpm --dir mcp-server pack --pack-destination "$pack_dir"
+          node mcp-server/scripts/smoke-packed-artifact.mjs \
+            "$pack_dir/agentrelay-mcp-$package_version.tgz"
+
   unit:
     needs: lint-typecheck
     runs-on: ubuntu-latest

@@ -8,7 +8,7 @@ If you use a coding agent, give it [`AGENTS.md`](AGENTS.md). Claude Code also re
 
 ## Development setup
 
-Requires Node 20+, pnpm 9+, Docker, and Git. CI tests Node 20 and 22.
+Requires Node 20.18.1+, pnpm 9+, Docker, and Git. CI tests Node 20 and 22.
 
 ```bash
 git clone https://github.com/swayamg20/AgentRelay
