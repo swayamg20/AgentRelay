@@ -4,6 +4,8 @@ import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { beforeAll, describe, expect, it } from "vitest";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +85,26 @@ describeIfBuilt("agentrelay CLI mcp subcommand", () => {
 
 		expect(result.status, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toContain(`agentrelay/${pkg.version}`);
+	});
+
+	it("reports the package version during MCP initialization", async () => {
+		const transport = new StdioClientTransport({
+			command: "node",
+			args: [AGENTRELAY_BIN_PATH, "mcp"],
+			cwd: PACKAGE_ROOT,
+			stderr: "pipe",
+		});
+		const client = new Client({ name: "agentrelay-version-test", version: "1.0.0" });
+
+		try {
+			await client.connect(transport);
+			expect(client.getServerVersion()).toEqual({
+				name: "agentrelay-mcp",
+				version: pkg.version,
+			});
+		} finally {
+			await client.close();
+		}
 	});
 });
 

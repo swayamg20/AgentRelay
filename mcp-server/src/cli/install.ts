@@ -32,7 +32,8 @@ export const RECOMMENDED_PERMISSIONS = {
 	],
 } as const;
 
-// TODO(#5): switch to ["-y", "agentrelay-mcp", "mcp"] in v0.2.0; today the deprecated bin still works and changing this would re-trigger Claude Code's MCP trust prompt for every existing user.
+// TODO(#5): switch to ["-y", "agentrelay-mcp", "mcp"] after the deprecated-bin
+// compatibility window; changing it re-triggers the MCP trust prompt for existing users.
 export const RECOMMENDED_MCP_ENTRY = {
 	command: "npx",
 	args: ["-y", "agentrelay-mcp"],
@@ -45,7 +46,8 @@ export const RECOMMENDED_MCP_ENTRY = {
  * `type` makes our entry indistinguishable from one Claude Code wrote itself,
  * which avoids the user being prompted to "trust" the server again.
  */
-// TODO(#5): switch to ["-y", "agentrelay-mcp", "mcp"] in v0.2.0; today the deprecated bin still works and changing this would re-trigger Claude Code's MCP trust prompt for every existing user.
+// TODO(#5): switch to ["-y", "agentrelay-mcp", "mcp"] after the deprecated-bin
+// compatibility window; changing it re-triggers the MCP trust prompt for existing users.
 export const RECOMMENDED_CLAUDE_JSON_MCP_ENTRY = {
 	type: "stdio",
 	command: "npx",
