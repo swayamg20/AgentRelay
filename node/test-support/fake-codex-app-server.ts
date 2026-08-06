@@ -16,6 +16,7 @@ export interface FakeAppServerOptions {
 	readonly initializedFailure?: "invalid_json" | "incomplete_frame" | "stdout_eof";
 	readonly ignoreRead?: boolean;
 	readonly exitAfterRead?: boolean;
+	readonly closeInputAfterRead?: boolean;
 	readonly unsafePolicy?: boolean;
 	readonly requestApproval?: boolean;
 	readonly spawnDescendant?: boolean;
@@ -54,6 +55,7 @@ export async function createFakeAppServer(
 			initializedFailure: options.initializedFailure ?? "",
 			ignoreRead: options.ignoreRead ?? false,
 			exitAfterRead: options.exitAfterRead ?? false,
+			closeInputAfterRead: options.closeInputAfterRead ?? false,
 			unsafePolicy: options.unsafePolicy ?? false,
 			requestApproval: options.requestApproval ?? false,
 			spawnDescendant: options.spawnDescendant ?? false,
@@ -153,7 +155,7 @@ export function isProcessAlive(pid: number): boolean {
 
 const FAKE_APP_SERVER_SOURCE = `
 import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
 
@@ -177,6 +179,7 @@ const notificationMode = config.notificationMode;
 const initializedFailure = config.initializedFailure;
 const ignoreRead = config.ignoreRead;
 const exitAfterRead = config.exitAfterRead;
+const closeInputAfterRead = config.closeInputAfterRead;
 const unsafePolicy = config.unsafePolicy;
 const requestApproval = config.requestApproval;
 if (config.spawnDescendant) {
@@ -275,6 +278,12 @@ rl.on("line", (line) => {
       ]) } };
       if (exitAfterRead) {
         process.stdout.write(JSON.stringify(readResponse) + "\\n", () => process.exit(0));
+        return;
+      }
+      if (closeInputAfterRead) {
+        setInterval(() => {}, 1_000);
+        closeSync(0);
+        send(readResponse);
         return;
       }
       send(readResponse);

@@ -46,6 +46,16 @@ describe("Codex app-server failure boundaries", () => {
 			reason: "transport",
 		});
 	});
+
+	it("fails closed when app-server input closes before the process exits", async () => {
+		const fixture = await fakeAppServer({ closeInputAfterRead: true });
+		const client = await openClient(fixture);
+		expect(await client.readThread("thread-1")).toMatchObject({ id: "thread-1" });
+		await expect(client.startThread()).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "transport",
+		});
+	});
 });
 
 async function fakeAppServer(
