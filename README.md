@@ -28,7 +28,7 @@ repositories is the first proof, not the final product boundary.
 
 | Status | Layer | Current boundary |
 | --- | --- | --- |
-| **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.0: identities, invites, typed handoffs, messages, blocks, trust, and audit |
+| **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.1: identities, invites, typed handoffs, messages, blocks, trust, and audit |
 | **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
 | **Experimental** | Node and persistent Capsule | Local policy and crash-recovery foundations, currently exercised with deterministic fake runtimes |
 | **Next gate** | Guarded real Codex activation | One contained real turn, then a two-machine backend ↔ Android Mission |
