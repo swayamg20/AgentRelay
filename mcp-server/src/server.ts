@@ -12,6 +12,7 @@ import { type LoadConfigResult, unavailableMessage } from "./config.js";
 import { logger } from "./logger.js";
 import { registerTools } from "./tools/index.js";
 import { FALLBACK_TRUST, loadTrust } from "./trust.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 export interface ServerHandle {
 	stop(): Promise<void>;
@@ -21,7 +22,7 @@ export async function startServer(opts: {
 	configResult: LoadConfigResult;
 }): Promise<ServerHandle> {
 	const server = new Server(
-		{ name: "agentrelay-mcp", version: "0.0.1" },
+		{ name: "agentrelay-mcp", version: PACKAGE_VERSION },
 		{ capabilities: { tools: {} } },
 	);
 

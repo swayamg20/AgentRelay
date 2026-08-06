@@ -32,6 +32,15 @@ jobs:
 
       - run: pnpm --filter @agentrelay/protocol test:exports
 
+      - name: Pack and smoke-test agentrelay-mcp
+        run: |
+          pack_dir="$RUNNER_TEMP/agentrelay-mcp-pack"
+          package_version=$(node -p "require('./mcp-server/package.json').version")
+          mkdir -p "$pack_dir"
+          pnpm --dir mcp-server pack --pack-destination "$pack_dir"
+          node mcp-server/scripts/smoke-packed-artifact.mjs \
+            "$pack_dir/agentrelay-mcp-$package_version.tgz"
+
   unit:
     needs: lint-typecheck
     runs-on: ubuntu-latest
@@ -50,6 +59,10 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      # The MCP CLI tests exercise compiled bins and intentionally skip when
+      # dist is absent. Build it in both supported Node lanes before unit tests.
+      - run: pnpm --filter agentrelay-mcp build
 
       # Skip the e2e workspace — it needs Postgres + builds + a real
       # relay subprocess and is covered by the dedicated `e2e` job.

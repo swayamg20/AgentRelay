@@ -12,7 +12,7 @@ secrets defined in `.env.example`.
 
 ### Local evaluation
 
-Requires Node 20+, pnpm 9+, Docker, and a clone of this repository:
+Requires Node 20.18.1+, pnpm 9+, Docker, and a clone of this repository:
 
 ```bash
 pnpm install
@@ -92,7 +92,7 @@ unrelated origin, but the recipient CLI will submit it to the relay redemption r
 
 ## 3. Teammate: join
 
-Requires Node 20+ and at least one supported host: Claude Code or Codex.
+Requires Node 20.18.1+ and at least one supported host: Claude Code or Codex.
 
 ```bash
 npx -y -p agentrelay-mcp agentrelay join 'https://relay.example.com/join#v1.…'

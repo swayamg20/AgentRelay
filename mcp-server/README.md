@@ -4,10 +4,12 @@ The current local tool surface for [AgentRelay](https://github.com/swayamg20/Age
 It runs as a stdio MCP process and lets an already-running Claude Code or Codex host
 use the AgentRelay handoff mailbox.
 
-> **Package:** `agentrelay-mcp` 0.2.0.
+> **Package:** `agentrelay-mcp` 0.2.1.
 > **Boundary:** this package does not run a background listener, wake a closed host,
 > or start autonomous coding-agent turns. Runtime activation belongs to the separate
 > experimental AgentRelay Node, which is currently fake-adapter only.
+
+Requires Node 20.18.1 or newer.
 
 ## Join a relay
 
