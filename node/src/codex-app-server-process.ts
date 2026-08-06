@@ -27,6 +27,7 @@ export interface CodexAppServerProcess {
 	readonly cwd: string;
 	readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	readonly closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+	readonly inputError: Promise<Error>;
 }
 
 export class CodexAppServerError extends Error {
@@ -64,6 +65,7 @@ export async function startCodexAppServerProcess(
 		stdio: ["pipe", "pipe", "pipe"],
 		shell: false,
 	});
+	const inputError = writableError(child.stdin);
 	const exited = childExit(child);
 	const closed = childClose(child);
 	try {
@@ -74,7 +76,7 @@ export async function startCodexAppServerProcess(
 		});
 	}
 	child.stderr.resume();
-	return { child, cwd, exited, closed };
+	return { child, cwd, exited, closed, inputError };
 }
 
 export function stopCodexAppServerProcess(processRef: CodexAppServerProcess): Promise<void> {
@@ -224,6 +226,10 @@ function childClose(
 	child: ChildProcess,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
 	return new Promise((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+}
+
+function writableError(stream: Writable): Promise<Error> {
+	return new Promise((resolve) => stream.once("error", resolve));
 }
 
 function childExit(

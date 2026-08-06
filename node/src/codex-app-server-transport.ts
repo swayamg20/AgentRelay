@@ -89,6 +89,15 @@ export class CodexAppServerTransport {
 		this.#requestTimeoutMs = requestTimeoutMs;
 		this.#handleServerRequest = handleServerRequest;
 		void this.readLoop();
+		void processRef.inputError.then((error) => {
+			if (!this.#closing && this.#failure === null) {
+				this.fail(
+					new CodexAppServerError("transport", "Cannot write to Codex app-server", {
+						cause: error,
+					}),
+				);
+			}
+		});
 		void processRef.exited.then(() => {
 			if (!this.#closing && this.#failure === null) {
 				void stopCodexAppServerProcess(processRef).catch((error) =>
