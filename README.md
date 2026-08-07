@@ -249,6 +249,8 @@ View the AgentRelay thread <thread_id> and show me the latest reply.
 ```
 
 Full setup and current limitations are in [`docs/onboarding.md`](docs/onboarding.md).
+For a first shared team deployment on Azure, use the review-first
+[`docs/deploy-azure.md`](docs/deploy-azure.md) pilot guide.
 
 ## Run the repository locally
 
@@ -338,6 +340,7 @@ this README does not claim full A2A conformance.
 ├── mcp-server/           current MCP server and agentrelay CLI
 ├── node/                 Node, Capsule wire, fake runtime, and unactivated Codex libraries
 ├── tests/e2e/            relay + MCP and Node/Capsule process test harnesses
+├── infra/azure/          reviewable Azure team-pilot infrastructure and smoke checks
 ├── landing/              GitHub Pages landing page
 └── docs/
     ├── architecture.md   current truth and target boundaries
@@ -347,6 +350,7 @@ this README does not claim full A2A conformance.
     ├── next-steps.md     near-term engineering queue
     ├── onboarding.md     current mailbox setup
     ├── hosting.md        relay hosting survey
+    ├── deploy-azure.md   Azure Container Apps + private PostgreSQL pilot
     ├── deploy-fly.md     relay-only Fly.io example
     ├── auto-mode.md      superseded design decision record
     ├── ambient-agent.md  superseded design decision record

@@ -532,10 +532,9 @@ Some configured values are not yet wired to behavior: there is no metrics route,
 rate-limit middleware, audit-retention job, or OpenTelemetry pipeline in the current
 server.
 
-The self-host Docker profile currently does not forward the required
-`RELAY_INVITE_SECRET` into the relay container. Until that configuration gap is
-fixed, use the host-run contributor flow or explicitly correct the deployment config
-before relying on invite onboarding.
+The self-host Docker profile forwards every required Relay secret from `.env`,
+including `RELAY_INVITE_SECRET`. Its runtime config validation still rejects empty or
+development-only values before the server starts.
 
 ## Validation commands
 

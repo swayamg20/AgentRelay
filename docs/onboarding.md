@@ -41,14 +41,11 @@ outstanding invites.
 
 ### Team deployment
 
-The relay is a container plus Postgres. See [`hosting.md`](hosting.md) for options and
-[`deploy-fly.md`](deploy-fly.md) for one relay-only worked example.
-
-Current configuration caveat: the repository's `docker compose --profile selfhost`
-service does not forward the required `RELAY_INVITE_SECRET` into the relay container.
-Until that code gap is fixed, do not rely on that profile unchanged for invite-based
-onboarding. Run the relay on the host as above or correct the deployment environment
-explicitly.
+The relay is a container plus Postgres. See [`hosting.md`](hosting.md) for options,
+[`deploy-azure.md`](deploy-azure.md) for the Azure team pilot, and
+[`deploy-fly.md`](deploy-fly.md) for a relay-only Fly example. The repository's
+`docker compose --profile selfhost` service forwards every required Relay secret from
+`.env`, including `RELAY_INVITE_SECRET`.
 
 Set `RELAY_PUBLIC_URL` to the externally reachable HTTPS origin before minting
 invites. The URL is embedded in invite links.
