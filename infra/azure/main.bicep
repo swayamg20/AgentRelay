@@ -172,9 +172,9 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   tags: tags
   properties: {
     retentionInDays: 30
-  }
-  sku: {
-    name: 'PerGB2018'
+    sku: {
+      name: 'PerGB2018'
+    }
   }
 }
 
@@ -203,7 +203,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 var keyVaultSecretsUserRole = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions'
+  'Microsoft.Authorization/roleDefinitions',
   '4633458b-17de-408a-b874-0445c86b69e6'
 )
 
@@ -218,7 +218,9 @@ resource relayKeyVaultAccess 'Microsoft.Authorization/roleAssignments@2022-04-01
 }
 
 resource deployerKeyVaultAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, deployerPrincipalId, keyVaultSecretsUserRole)
+  // A stable name makes a principal change fail closed instead of silently
+  // retaining the old deployer's secret access in incremental deployments.
+  name: guid(keyVault.id, 'agentrelay-deployer-secrets-user', keyVaultSecretsUserRole)
   scope: keyVault
   properties: {
     principalId: deployerPrincipalId
@@ -477,12 +479,6 @@ resource relay 'Microsoft.App/containerApps@2025-01-01' = {
   dependsOn: [
     postgresDatabase
     postgresExtensions
-    databaseUrlSecret
-    pepperSecret
-    encryptionKeySecret
-    inviteSecret
-    adminTokenSecret
-    metricsTokenSecret
     relayKeyVaultAccess
   ]
 }

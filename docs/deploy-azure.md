@@ -44,6 +44,9 @@ Container Apps availability for your subscription.
 Interactive user logins are detected automatically. For a service principal or an
 account whose directory object cannot be queried, add
 `--deployer-object-id '<entra-object-id>'` to both commands.
+Keep the same deployment principal for redeployments. Changing it fails closed at the
+stable role assignment instead of leaving the previous principal's secret access
+behind; transfer that access deliberately before changing deployment ownership.
 
 ## Review the change before paying for it
 
@@ -158,13 +161,16 @@ npx -y -p agentrelay-mcp@0.2.1 agentrelay register \
   --role backend
 
 unset AGENTRELAY_ADMIN_TOKEN
+npx -y -p agentrelay-mcp@0.2.1 agentrelay install --client all
 npx -y -p agentrelay-mcp@0.2.1 agentrelay doctor
 ```
 
 Continue with the signed invite and round-trip commands in
-[`onboarding.md`](onboarding.md). The command substitution keeps the token out of the
-command text, but it still exists briefly in the process environment; run it only on a
-trusted administrator machine and unset it immediately.
+[`onboarding.md`](onboarding.md), substituting `agentrelay-mcp@0.2.1` in every pilot
+command on both machines. The command substitution keeps the literal token out of
+shell history, but `--admin-token "$AGENTRELAY_ADMIN_TOKEN"` still exposes it briefly
+in both the process environment and the registration process arguments. Run it only
+on a trusted administrator machine and unset it immediately.
 
 ## Secret handling and redeployment
 
@@ -180,6 +186,9 @@ Never paste Key Vault values into issues, chat, shell history, or logs.
 
 If `deploy.sh` cannot read an existing secret, restore the deployer's Key Vault data
 access. Do not delete the vault or generate replacement values as a workaround.
+If every deployment credential is missing but a Relay or PostgreSQL resource already
+exists, the script also fails closed; restore the original values or deliberately
+retire that partial pilot before starting with a new resource group.
 
 Key Vault role assignments can take time to propagate on the first deployment. If
 Container App creation reports a Key Vault authorization error, wait a few minutes and

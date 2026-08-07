@@ -11,10 +11,9 @@ Mission, and delivery records. The experimental AgentRelay Node, local
 alias-to-checkout mapping, processing journal, and future coding-agent runtime
 adapters stay on each developer's machine. See [`architecture.md`](architecture.md).
 
-This doc is a quick survey of common options as of **May 2026** so you
-don't have to research each one. Pricing changes; verify before
-committing. The project does not endorse any specific platform — pick
-what matches your team's posture.
+This doc is a quick survey of common options. Pricing and free-tier terms change;
+verify each platform before committing. The project does not endorse any specific
+platform — pick what matches your team's posture.
 
 ## Quick comparison
 

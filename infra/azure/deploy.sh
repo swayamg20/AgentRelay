@@ -213,6 +213,8 @@ elif [[ "$stored_prefix" != "$name_prefix" ]]; then
 fi
 
 key_vault_name="${name_prefix}-${resource_suffix}-kv"
+relay_name="${name_prefix}-${resource_suffix}-relay"
+postgres_server_name="${name_prefix}-${resource_suffix}-pg"
 if az keyvault show --name "$key_vault_name" --resource-group "$resource_group" --only-show-errors >/dev/null 2>&1; then
 	if ! secret_names=$(az keyvault secret list \
 		--vault-name "$key_vault_name" \
@@ -238,6 +240,31 @@ if az keyvault show --name "$key_vault_name" --resource-group "$resource_group" 
 	done
 
 	if [[ "$present_secret_count" -eq 0 ]]; then
+		if ! relay_count=$(az resource list \
+			--resource-group "$resource_group" \
+			--name "$relay_name" \
+			--resource-type Microsoft.App/containerApps \
+			--query 'length(@)' \
+			--output tsv \
+			--only-show-errors); then
+			fail 'cannot prove whether an existing Relay depends on the missing credentials'
+		fi
+		if ! postgres_count=$(az resource list \
+			--resource-group "$resource_group" \
+			--name "$postgres_server_name" \
+			--resource-type Microsoft.DBforPostgreSQL/flexibleServers \
+			--query 'length(@)' \
+			--output tsv \
+			--only-show-errors); then
+			fail 'cannot prove whether an existing PostgreSQL server depends on the missing credentials'
+		fi
+		[[ "$relay_count" =~ ^[0-9]+$ ]] || fail 'Azure returned an invalid Relay inventory result'
+		[[ "$postgres_count" =~ ^[0-9]+$ ]] || fail 'Azure returned an invalid PostgreSQL inventory result'
+		if [[ "$relay_count" -ne 0 || "$postgres_count" -ne 0 ]]; then
+			fail \
+				"Key Vault '$key_vault_name' has no deployment credentials, but an existing workload may depend on them." \
+				'Restore the original values; regeneration would break stored credentials or encrypted data.'
+		fi
 		printf 'Key Vault exists without deployment credentials; recovering first-deployment secret generation.\n'
 		postgres_password=$(new_hex_secret 24)
 		relay_pepper=$(new_hex_secret 32)
@@ -300,7 +327,6 @@ relay_url=$(az deployment group create \
 	--output tsv)
 
 [[ "$relay_url" == https://* ]] || fail 'deployment completed without an HTTPS Relay URL output'
-relay_name="${name_prefix}-${resource_suffix}-relay"
 printf '\nRelay deployed: %s\n' "$relay_url"
 printf 'Container App: %s\nKey Vault: %s\n' "$relay_name" "$key_vault_name"
 printf 'Verify it with: %q %q\n' "$script_dir/smoke.sh" "$relay_url"
