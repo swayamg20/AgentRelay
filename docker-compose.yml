@@ -54,6 +54,7 @@ services:
       # rejects empty values at startup with a clearer error than docker's.
       RELAY_PEPPER: ${RELAY_PEPPER:-}
       RELAY_ENCRYPTION_KEY: ${RELAY_ENCRYPTION_KEY:-}
+      RELAY_INVITE_SECRET: ${RELAY_INVITE_SECRET:-}
       RELAY_ADMIN_TOKEN: ${RELAY_ADMIN_TOKEN:-}
       RELAY_METRICS_TOKEN: ${RELAY_METRICS_TOKEN:-}
       RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://localhost:8080}

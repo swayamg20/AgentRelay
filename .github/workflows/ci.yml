@@ -24,6 +24,33 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Validate Azure deployment assets
+        env:
+          AGENTRELAY_AZURE_NAME_PREFIX: agentrelay
+          AGENTRELAY_AZURE_RESOURCE_SUFFIX: '0123abcd'
+          AGENTRELAY_AZURE_LOCATION: centralindia
+          AGENTRELAY_AZURE_RELAY_IMAGE: ghcr.io/swayamg20/agentrelay-relay@sha256:595586c46b66d0106d420a85148aa6624fa9b72d02235541a3634abb05cdaf54
+          AGENTRELAY_AZURE_POSTGRES_LOGIN: agentrelay_admin
+          AGENTRELAY_AZURE_DEPLOYER_PRINCIPAL_ID: '00000000-0000-0000-0000-000000000000'
+          AGENTRELAY_AZURE_POSTGRES_PASSWORD: '0123456789abcdef0123456789abcdef0123456789abcdef'
+          AGENTRELAY_AZURE_RELAY_PEPPER: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          AGENTRELAY_AZURE_RELAY_ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          AGENTRELAY_AZURE_RELAY_INVITE_SECRET: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          AGENTRELAY_AZURE_RELAY_ADMIN_TOKEN: '0123456789abcdef0123456789abcdef0123456789abcdef'
+          AGENTRELAY_AZURE_RELAY_METRICS_TOKEN: '0123456789abcdef0123456789abcdef'
+        run: |
+          bicep="$RUNNER_TEMP/bicep"
+          curl --fail --silent --show-error --location \
+            https://github.com/Azure/bicep/releases/download/v0.46.1/bicep-linux-x64 \
+            --output "$bicep"
+          printf '%s  %s\n' \
+            3e011d629ea4311b7a7dd8f0040ab2b1a072ea4ff5d02cb75e0e55a9a6703fb9 \
+            "$bicep" | sha256sum --check
+          chmod +x "$bicep"
+          bash -n infra/azure/deploy.sh infra/azure/smoke.sh
+          "$bicep" build infra/azure/main.bicep --stdout >/dev/null
+          "$bicep" build-params infra/azure/main.bicepparam --stdout >/dev/null
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm lint

@@ -11,15 +11,9 @@ Mission, and delivery records. The experimental AgentRelay Node, local
 alias-to-checkout mapping, processing journal, and future coding-agent runtime
 adapters stay on each developer's machine. See [`architecture.md`](architecture.md).
 
-> **Current Compose caveat:** the self-host profile does not yet forward the required
-> `RELAY_INVITE_SECRET` into the relay container. Correct that deployment environment
-> before relying on signed invite onboarding, or use the host-run flow in
-> [`onboarding.md`](onboarding.md).
-
-This doc is a quick survey of common options as of **May 2026** so you
-don't have to research each one. Pricing changes; verify before
-committing. The project does not endorse any specific platform — pick
-what matches your team's posture.
+This doc is a quick survey of common options. Pricing and free-tier terms change;
+verify each platform before committing. The project does not endorse any specific
+platform — pick what matches your team's posture.
 
 ## Quick comparison
 
@@ -29,6 +23,7 @@ what matches your team's posture.
 | **Railway Hobby** | $5 (flat sub + $5 usage credit) | trial only ($5 credit) | low | Push to GitHub, auto-detect Dockerfile, one-click Postgres add-on, custom domain + auto SSL. AgentRelay's tiny load fits inside the included credit. |
 | **Fly.io** | ~$5–10 | ❌ (retired Oct 2024) | medium | Pay-as-you-go: ~$2 VM + ~$5 Postgres dev cluster. New signups need a credit card. Fast deploy via `flyctl`. |
 | **Render Starter** | ~$7 per service | free web service sleeps after 15min | low | Always-on at Starter tier. Postgres add-on extra. Free tier's idle-sleep makes inbox checks slow. |
+| **Azure Container Apps + PostgreSQL** | usage-based | limited grants vary | medium | Managed HTTPS compute plus private managed Postgres. See the repository's explicit pilot template and limitations. |
 | **Oracle Cloud Always Free** | $0 forever | ✅ (4 ARM cores, 24 GB RAM) | high | Most generous free hardware in the industry, but capacity errors during signup are common and Oracle has been known to reclaim idle accounts. |
 | **Self-hosted on your own hardware** (NUC, Pi, NAS) | $0 (you own it) | ✅ | varies | DDNS or Cloudflare Tunnel for the public URL. Fine for a small team. |
 
@@ -69,8 +64,9 @@ The repo ships some reference configs you may find useful, but they're
 not the primary path:
 
 - **`fly.toml`** at the repo root and **`docs/deploy-fly.md`** — a complete Fly walkthrough, kept as a reference for users who already use Fly.
+- **`infra/azure/`** and **`docs/deploy-azure.md`** — a reviewable Azure Container Apps + private PostgreSQL team-pilot deployment.
 - **`.github/workflows/deploy.yml`** — auto-deploy to Fly on `v*.*.*` tag push. Adapt the steps for your platform if it's different.
-- **`docker-compose.yml`** with the `selfhost` profile — the canonical "everything on one box" setup. Use it on any VPS.
+- **`docker-compose.yml`** with the `selfhost` profile — the canonical "everything on one box" setup. It forwards all required Relay secrets from `.env`; use it on any VPS.
 
 If you write a guide for a platform that isn't in this list, PRs are
 welcome. Keep cost notes honest and dated.
