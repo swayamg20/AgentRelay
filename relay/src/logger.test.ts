@@ -98,6 +98,26 @@ describe("relay logger", () => {
 		expect(serialized).not.toContain("database rejected");
 	});
 
+	it("removes query details from a Drizzle error in a standard error array", () => {
+		const sensitiveBody = "sentinel-custom-error-array-body";
+		const drizzleError = new DrizzleQueryError(
+			"delete from messages where body = $1",
+			[sensitiveBody],
+			new Error(`database rejected ${sensitiveBody}`),
+		);
+		const entry = captureError(
+			Object.assign(new Error("custom batch failed"), {
+				errors: [new Error("ordinary batch error"), drizzleError],
+			}),
+		);
+		const serialized = JSON.stringify(entry);
+
+		expect(entry.err).toEqual({ type: "DrizzleQueryError" });
+		expect(serialized).not.toContain(sensitiveBody);
+		expect(serialized).not.toContain("delete from messages");
+		expect(serialized).not.toContain("database rejected");
+	});
+
 	it("omits unrecognized Drizzle cause metadata", () => {
 		const sensitiveMetadata = "sentinel-arbitrary-cause-value";
 		const error = new DrizzleQueryError(

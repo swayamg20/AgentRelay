@@ -31,8 +31,9 @@ function findDrizzleQueryError(
 	const causedByDrizzle = findDrizzleQueryError(value.cause, seen);
 	if (causedByDrizzle) return causedByDrizzle;
 
-	if (value instanceof AggregateError) {
-		for (const nestedError of value.errors) {
+	const nestedErrors = (value as Error & { errors?: unknown }).errors;
+	if (Array.isArray(nestedErrors)) {
+		for (const nestedError of nestedErrors) {
 			const aggregatedDrizzleError = findDrizzleQueryError(nestedError, seen);
 			if (aggregatedDrizzleError) return aggregatedDrizzleError;
 		}
