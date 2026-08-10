@@ -20,17 +20,39 @@ function stringProperty(value: unknown, key: string): string | undefined {
 	return typeof candidate === "string" ? candidate : undefined;
 }
 
-function serializeLogError(error: unknown): unknown {
-	if (!(error instanceof DrizzleQueryError)) {
-		return error instanceof Error ? pino.stdSerializers.err(error) : error;
-	}
+function findDrizzleQueryError(
+	value: unknown,
+	seen = new Set<object>(),
+): DrizzleQueryError | undefined {
+	if (value instanceof DrizzleQueryError) return value;
+	if (!(value instanceof Error) || seen.has(value)) return undefined;
 
+	seen.add(value);
+	const causedByDrizzle = findDrizzleQueryError(value.cause, seen);
+	if (causedByDrizzle) return causedByDrizzle;
+
+	if (value instanceof AggregateError) {
+		for (const nestedError of value.errors) {
+			const aggregatedDrizzleError = findDrizzleQueryError(nestedError, seen);
+			if (aggregatedDrizzleError) return aggregatedDrizzleError;
+		}
+	}
+	return undefined;
+}
+
+function serializeDrizzleQueryError(error: DrizzleQueryError): Record<string, string> {
 	const serialized: Record<string, string> = { type: "DrizzleQueryError" };
 	const code = stringProperty(error.cause, "code");
 	const severity = stringProperty(error.cause, "severity");
 	if (code && POSTGRES_ERROR_CODE.test(code)) serialized.code = code;
 	if (severity && POSTGRES_SEVERITIES.has(severity)) serialized.severity = severity;
 	return serialized;
+}
+
+function serializeLogError(error: unknown): unknown {
+	const drizzleError = findDrizzleQueryError(error);
+	if (drizzleError) return serializeDrizzleQueryError(drizzleError);
+	return error instanceof Error ? pino.stdSerializers.err(error) : error;
 }
 
 export function createLogger(

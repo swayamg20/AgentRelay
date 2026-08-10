@@ -57,6 +57,47 @@ describe("relay logger", () => {
 		});
 	});
 
+	it("removes query details from a wrapped Drizzle error", () => {
+		const sensitiveBody = "sentinel-wrapped-message-body";
+		const drizzleError = new DrizzleQueryError(
+			"insert into messages (body) values ($1)",
+			[sensitiveBody],
+			Object.assign(new Error(`database rejected ${sensitiveBody}`), {
+				code: "23514",
+				severity: "ERROR",
+			}),
+		);
+		const entry = captureError(new Error("outer request diagnostic", { cause: drizzleError }));
+		const serialized = JSON.stringify(entry);
+
+		expect(entry.err).toEqual({
+			type: "DrizzleQueryError",
+			code: "23514",
+			severity: "ERROR",
+		});
+		expect(serialized).not.toContain(sensitiveBody);
+		expect(serialized).not.toContain("insert into messages");
+		expect(serialized).not.toContain("database rejected");
+	});
+
+	it("removes query details from an aggregated Drizzle error", () => {
+		const sensitiveBody = "sentinel-aggregated-message-body";
+		const drizzleError = new DrizzleQueryError(
+			"update messages set body = $1",
+			[sensitiveBody],
+			new Error(`database rejected ${sensitiveBody}`),
+		);
+		const entry = captureError(
+			new AggregateError([new Error("ordinary batch error"), drizzleError], "batch failed"),
+		);
+		const serialized = JSON.stringify(entry);
+
+		expect(entry.err).toEqual({ type: "DrizzleQueryError" });
+		expect(serialized).not.toContain(sensitiveBody);
+		expect(serialized).not.toContain("update messages");
+		expect(serialized).not.toContain("database rejected");
+	});
+
 	it("omits unrecognized Drizzle cause metadata", () => {
 		const sensitiveMetadata = "sentinel-arbitrary-cause-value";
 		const error = new DrizzleQueryError(
