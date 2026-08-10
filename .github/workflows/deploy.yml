@@ -32,8 +32,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Set up flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+      - name: Install verified flyctl
+        env:
+          FLYCTL_VERSION: 0.4.80
+          FLYCTL_ARCHIVE_SHA256: 6444747d922f1763152d665d378c98bb21aa9b0aa773c4318a9a2c10b2ff54da
+        run: |
+          archive="$RUNNER_TEMP/flyctl.tar.gz"
+          install_dir="$RUNNER_TEMP/flyctl-bin"
+          curl --fail --silent --show-error --location \
+            "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$FLYCTL_ARCHIVE_SHA256" "$archive" | sha256sum --check
+          mkdir -p "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$install_dir" flyctl
+          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Deploy
         run: flyctl deploy --remote-only
