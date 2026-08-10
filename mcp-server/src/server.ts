@@ -14,6 +14,8 @@ import { registerTools } from "./tools/index.js";
 import { FALLBACK_TRUST, loadTrust } from "./trust.js";
 import { PACKAGE_VERSION } from "./version.js";
 
+const MCP_STDIO_MAX_REQUEST_BYTES = 10 * 1024 * 1024;
+
 export interface ServerHandle {
 	stop(): Promise<void>;
 }
@@ -78,7 +80,9 @@ export async function startServer(opts: {
 		}));
 	}
 
-	const transport = new StdioServerTransport();
+	const transport = new StdioServerTransport(process.stdin, process.stdout, {
+		maxBufferSize: MCP_STDIO_MAX_REQUEST_BYTES,
+	});
 	await server.connect(transport);
 
 	return {
