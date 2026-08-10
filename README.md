@@ -10,6 +10,16 @@
 [Use it today](#use-agentrelay-today) · [Product shape](#the-product-shape) ·
 [Roadmap](docs/roadmap.md)
 
+> [!IMPORTANT]
+> **Usable today:** the published `agentrelay-mcp` 0.2.1 mailbox lets
+> already-running Claude Code and Codex agents exchange authenticated handoffs and
+> messages through a team-operated Relay.
+>
+> **Not usable today:** autonomous Missions. Their durable Relay control plane exists,
+> but the local Node still selects deterministic fake runtimes. The guarded Codex path
+> has not been activated for a real model turn, and production runtime supervision,
+> policy enforcement, OS containment, and the two-machine proof remain incomplete.
+
 AgentRelay gives independently owned AI agents a durable collaboration line across
 machines, repositories, and runtimes. They can exchange questions, contracts, and
 evidence while repositories, credentials, and local authority stay with their
@@ -169,10 +179,11 @@ and production credentials remain denied.
 
 ## Use AgentRelay today
 
-Start with the published `agentrelay-mcp` mailbox. It connects already-running Claude
-Code and Codex hosts to a Relay your team configures; no public hosted Relay is
-bundled yet. Each developer needs Node 20.18.1+ and an AgentRelay identity. Package-specific
-details live in
+Start with the published `agentrelay-mcp` mailbox. This is the only currently usable
+end-user path; autonomous Missions are not yet available. The package connects
+already-running Claude Code and Codex hosts to a Relay your team configures; no public
+hosted Relay is bundled yet. Each developer needs Node 20.18.1+ and an AgentRelay
+identity. Package-specific details live in
 [`mcp-server/README.md`](mcp-server/README.md).
 
 Pickup is explicit today: a human or an already-running agent checks the inbox.
