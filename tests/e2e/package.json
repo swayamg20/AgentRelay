@@ -11,7 +11,7 @@
 	},
 	"dependencies": {
 		"@agentrelay/protocol": "workspace:*",
-		"@modelcontextprotocol/sdk": "^1.0.4",
+		"@modelcontextprotocol/sdk": "^1.30.0",
 		"agentrelay-node": "workspace:*",
 		"undici": "^7.0.0"
 	},
