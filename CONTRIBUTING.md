@@ -179,8 +179,8 @@ For docs-only changes, run at least `git diff --check` and check local links.
 - Do not mix unrelated refactoring into a product or bug-fix PR.
 
 Open PRs against `main`, or against the explicit prerequisite branch when recording a
-short-lived stacked change. Report security issues privately to the maintainer rather
-than opening a public issue.
+short-lived stacked change. Report security issues through the private process in
+[`SECURITY.md`](SECURITY.md), not through a public issue.
 
 ## License
 
