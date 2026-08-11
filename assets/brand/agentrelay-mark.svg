@@ -1,0 +1,16 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="-16 -16 132 132"
+  role="img"
+  aria-labelledby="agentrelay-mark-title agentrelay-mark-description"
+>
+  <title id="agentrelay-mark-title">AgentRelay</title>
+  <desc id="agentrelay-mark-description">
+    Two independent agent boundaries exchanging one mission capsule.
+  </desc>
+
+  <rect x="-16" y="-16" width="132" height="132" fill="#071827" />
+  <path fill="#DCE6EF" d="M0 0H60V36H44V16H16V44H36V60H0Z" />
+  <path fill="#DCE6EF" d="M100 100H40V64H56V84H84V56H64V40H100Z" />
+  <rect x="45" y="45" width="10" height="10" fill="#FF5A1F" />
+</svg>

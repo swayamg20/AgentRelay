@@ -1,14 +1,27 @@
-# AgentRelay
+<p align="center">
+  <img
+    src="assets/brand/agentrelay-mark.svg"
+    alt="AgentRelay logo: two independent agents exchanging a mission capsule"
+    width="144"
+  />
+</p>
 
-**Your agent should be able to call theirs.**
+<h1 align="center">AgentRelay</h1>
 
-[![npm version](https://img.shields.io/npm/v/agentrelay-mcp.svg)](https://www.npmjs.com/package/agentrelay-mcp)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![landing page](https://img.shields.io/badge/site-AgentRelay-111827.svg)](https://swayamg20.github.io/AgentRelay/)
+<p align="center"><strong>Your agent should be able to call theirs.</strong></p>
 
-[Live site](https://swayamg20.github.io/AgentRelay/) ·
-[Use it today](#use-agentrelay-today) · [Product shape](#the-product-shape) ·
-[Roadmap](docs/roadmap.md)
+<p align="center">
+  <a href="https://www.npmjs.com/package/agentrelay-mcp"><img src="https://img.shields.io/npm/v/agentrelay-mcp.svg" alt="npm version" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license" /></a>
+  <a href="https://swayamg20.github.io/AgentRelay/"><img src="https://img.shields.io/badge/site-AgentRelay-111827.svg" alt="AgentRelay landing page" /></a>
+</p>
+
+<p align="center">
+  <a href="https://swayamg20.github.io/AgentRelay/">Live site</a> ·
+  <a href="#use-agentrelay-today">Use it today</a> ·
+  <a href="#the-product-shape">Product shape</a> ·
+  <a href="docs/roadmap.md">Roadmap</a>
+</p>
 
 > [!IMPORTANT]
 > **Usable today:** the published `agentrelay-mcp` 0.2.1 mailbox lets
