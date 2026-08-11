@@ -1,0 +1,66 @@
+name: Documentation improvement
+description: Report unclear, incorrect, or missing AgentRelay documentation.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation must distinguish shipped behavior from accepted design and experimental
+        checkpoints. A documentation issue records a problem; it does not reserve the work.
+
+  - type: input
+    id: location
+    attributes:
+      label: Page or section
+      description: Link the file, heading, command help, or public page that needs attention.
+      placeholder: https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Documentation area
+      options:
+        - MCP mailbox or CLI
+        - Relay API or self-hosting
+        - Experimental Node or Missions
+        - Architecture, HLD, LLD, or RFC
+        - Contributor or developer setup
+        - Landing page
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is unclear or incorrect?
+      description: State what a reader is likely to misunderstand and why.
+    validations:
+      required: true
+
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Suggested improvement
+      description: Describe the outcome you want; draft wording is welcome but optional.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Evidence or verification
+      description: Point to current code, tests, command output, or another authoritative source.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for the same documentation problem.
+          required: true
+        - label: This report contains no credentials, private repository content, or personal data.
+          required: true
