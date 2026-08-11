@@ -53,7 +53,7 @@ d("db schema integration", () => {
 				role: "r",
 				status: "sideways",
 			}),
-		).rejects.toThrow(/agents_status_chk/);
+		).rejects.toMatchObject({ cause: { message: expect.stringMatching(/agents_status_chk/) } });
 	});
 
 	it("agent_cards: round-trips with array + jsonb defaults", async () => {
@@ -78,7 +78,9 @@ d("db schema integration", () => {
 		// duplicate active hash blocked
 		await expect(
 			handle.db.insert(apiKeys).values({ agentId, keyHash: hash, salt }),
-		).rejects.toThrow(/idx_api_keys_active_hash/);
+		).rejects.toMatchObject({
+			cause: { message: expect.stringMatching(/idx_api_keys_active_hash/) },
+		});
 
 		// revoking the original allows reissuing
 		await handle.db
@@ -98,7 +100,9 @@ d("db schema integration", () => {
 				recipientId: agentId,
 				summary: "self-talk",
 			}),
-		).rejects.toThrow(/handoffs_sender_not_recipient/);
+		).rejects.toMatchObject({
+			cause: { message: expect.stringMatching(/handoffs_sender_not_recipient/) },
+		});
 	});
 
 	it("handoffs: enforces intent enum", async () => {
@@ -121,7 +125,9 @@ d("db schema integration", () => {
 				summary: "hi",
 				intent: "demand",
 			}),
-		).rejects.toThrow(/handoffs_intent_valid/);
+		).rejects.toMatchObject({
+			cause: { message: expect.stringMatching(/handoffs_intent_valid/) },
+		});
 	});
 
 	it("handoffs: enforces proposed_action invariant", async () => {
@@ -146,7 +152,9 @@ d("db schema integration", () => {
 				intent: "inform",
 				proposedAction: { description: "no", target_files: [], rationale: "no" },
 			}),
-		).rejects.toThrow(/handoffs_proposed_action_invariant/);
+		).rejects.toMatchObject({
+			cause: { message: expect.stringMatching(/handoffs_proposed_action_invariant/) },
+		});
 
 		// intent='propose_action' without proposed_action → fail
 		await expect(
@@ -156,7 +164,9 @@ d("db schema integration", () => {
 				summary: "x",
 				intent: "propose_action",
 			}),
-		).rejects.toThrow(/handoffs_proposed_action_invariant/);
+		).rejects.toMatchObject({
+			cause: { message: expect.stringMatching(/handoffs_proposed_action_invariant/) },
+		});
 
 		// intent='propose_action' with proposed_action → ok
 		const [ok] = await handle.db
@@ -206,7 +216,7 @@ d("db schema integration", () => {
 			handle.db
 				.insert(messages)
 				.values({ handoffId: h.id, authorId: senderId, body: "dup", sequenceNo: 1 }),
-		).rejects.toThrow(/idx_messages_seq/);
+		).rejects.toMatchObject({ cause: { message: expect.stringMatching(/idx_messages_seq/) } });
 	});
 
 	it("audit_log: round-trips typed actors and bigserial id auto-increments", async () => {
@@ -253,7 +263,9 @@ d("db schema integration", () => {
 				resourceType: "agent",
 				resourceId: agentId,
 			}),
-		).rejects.toThrow(/audit_log_actor_identity_chk/);
+		).rejects.toMatchObject({
+			cause: { message: expect.stringMatching(/audit_log_actor_identity_chk/) },
+		});
 	});
 
 	it("updated_at trigger advances timestamp on UPDATE", async () => {

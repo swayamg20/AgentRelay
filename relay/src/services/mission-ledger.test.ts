@@ -897,7 +897,9 @@ d("durable Mission ledger", () => {
 						"accept:rollback:android",
 					),
 				}),
-			).rejects.toThrow(/forced delivery failure/);
+			).rejects.toMatchObject({
+				cause: { message: expect.stringMatching(/forced delivery failure/) },
+			});
 		} finally {
 			await handle.sql.unsafe(`
 				DROP TRIGGER IF EXISTS reject_node_delivery_test ON node_deliveries;
