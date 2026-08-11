@@ -53,6 +53,9 @@ configuration is written to the current Claude and Codex user config locations.
 The relay stores messages durably, but pickup is explicit. A human or running agent
 must call `check_inbox` or `view_thread`.
 
+The stdio server caps each MCP JSON-RPC request at 10 MiB. For larger code artifacts,
+send a `file_ref` instead of putting a huge diff or other content inline.
+
 ## CLI
 
 - `agentrelay register`
