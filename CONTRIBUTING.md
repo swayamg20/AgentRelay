@@ -6,33 +6,71 @@ valuable than broad rewrites or speculative framework work.
 If you use a coding agent, give it [`AGENTS.md`](AGENTS.md). Claude Code also reads
 [`CLAUDE.md`](CLAUDE.md).
 
+By participating, you agree to follow the project
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## Choose and coordinate work
+
+Search the open issues and pull requests before starting so two contributors do not
+solve the same problem.
+
+- An issue labeled `ideas` is a proposal for discussion, not approved or scoped work.
+- Issues labeled `good first issue` or `help wanted` have maintainer-approved scope and
+  are ready for contributors to claim.
+- For any non-trivial change, comment on the issue with your intended scope and wait
+  for a maintainer to confirm it. An assignment or explicit maintainer reply is the
+  claim; an expression of interest alone does not reserve an issue indefinitely.
+- If no issue covers the change, open one before investing in a large implementation.
+  Small, obvious documentation or typo fixes may go directly to a pull request.
+- Link your pull request from the issue as soon as it is open. Report suspected
+  vulnerabilities privately through [`SECURITY.md`](SECURITY.md).
+
 ## Development setup
 
-Requires Node 20.18.1+, pnpm 9+, Docker, and Git. CI tests Node 20 and 22.
+Requires Git, Docker, Node 20.18.1+, and pnpm 9+. The repository-selected toolchain is
+Node 22 from `.nvmrc` and pnpm 9.15.0 from `package.json`; CI also checks the minimum
+supported Node 20 line.
+
+Fork the repository on GitHub, then clone your fork and register the main repository
+as `upstream`:
 
 ```bash
-git clone https://github.com/swayamg20/AgentRelay
+git clone https://github.com/YOUR_GITHUB_HANDLE/AgentRelay.git
 cd AgentRelay
-pnpm install
-docker compose up -d
+git remote add upstream https://github.com/swayamg20/AgentRelay.git
+git fetch upstream
+git switch -c fix/short-description upstream/main
 ```
 
-Plain `docker compose up -d` starts Postgres on port 5433. Run migrations and the
-relay on the host so source changes are easy to inspect:
+Install the repository-selected Node and pnpm versions, then install the locked
+dependencies:
 
 ```bash
-RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
-  pnpm --filter relay db:migrate
+nvm install
+nvm use
+corepack enable
+corepack prepare pnpm@9.15.0 --activate
+pnpm install --frozen-lockfile
 ```
 
-To start the full relay, provide the required values documented in `.env.example`
-and [`relay/src/config.ts`](relay/src/config.ts), then run:
+For local development, copy the safe development defaults, export them into the
+current shell, start Postgres on port 5433, and migrate it:
 
 ```bash
+cp .env.example .env
+set -a
+. ./.env
+set +a
+pnpm db:up
+pnpm --filter relay db:migrate
 pnpm --filter relay dev
 ```
 
-Start the stdio MCP server during local client work with:
+Do not reuse the values in `.env.example` in a public or production deployment. The
+full configuration contract is documented in `.env.example` and
+[`relay/src/config.ts`](relay/src/config.ts).
+
+Start the stdio MCP server in another terminal during local client work with:
 
 ```bash
 pnpm --filter agentrelay-mcp dev
