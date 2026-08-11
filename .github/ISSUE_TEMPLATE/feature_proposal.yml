@@ -1,0 +1,93 @@
+name: Feature or design proposal
+description: Propose a product capability or contract change for maintainer review.
+title: "[Proposal]: "
+labels:
+  - enhancement
+  - ideas
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form starts a design discussion. It does **not** mean the proposal is approved,
+        scheduled, or ready to implement. Please wait for a maintainer to confirm the scope
+        before investing in a substantial pull request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user, the current workflow, and the concrete limitation.
+      placeholder: When ..., an agent or operator cannot ..., which causes ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Product surface
+      options:
+        - Published MCP mailbox or agentrelay CLI
+        - Relay API or self-hosted operations
+        - Protocol or interoperability
+        - Experimental Node or Mission runtime
+        - Editor, agent-host, or notification integration
+        - Documentation or contributor experience
+        - Other or cross-cutting
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence of need
+      description: Share a real workflow, repeated failure, user request, or measurable constraint.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed outcome
+      description: Describe externally observable behavior, not only an implementation choice.
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and tradeoffs
+      description: |
+        Note non-goals and any impact on authentication, authorization, untrusted content,
+        public contracts, idempotency, audit, local authority, or backward compatibility.
+      placeholder: No new security or public-contract impact, or explain the expected impact here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include existing AgentRelay behavior or a smaller solution when applicable.
+
+  - type: dropdown
+    id: intent
+    attributes:
+      label: Contribution intent
+      options:
+        - I am seeking product or design feedback
+        - I may implement this after maintainer approval
+        - I cannot implement this but can help validate it
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open issues, pull requests, and accepted RFCs for related work.
+          required: true
+        - label: I understand this proposal is not approved or reserved until a maintainer says so.
+          required: true
+        - label: I have not included credentials, private content, or other sensitive data.
+          required: true

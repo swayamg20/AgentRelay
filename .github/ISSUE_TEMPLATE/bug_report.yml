@@ -1,0 +1,91 @@
+name: Bug report
+description: Report reproducible behavior that differs from AgentRelay's documented contract.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve AgentRelay. The MCP mailbox is the supported user path;
+        the Node and autonomous Mission runtime remain experimental. For vulnerabilities,
+        use [private vulnerability reporting](https://github.com/swayamg20/AgentRelay/security/advisories/new).
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected area
+      options:
+        - Published MCP mailbox or agentrelay CLI
+        - Relay API or self-hosted deployment
+        - Protocol contracts
+        - Experimental Node or Mission runtime
+        - Repository tooling or CI
+        - Landing page
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Include `agentrelay --version`, the release tag, or the commit SHA.
+      placeholder: agentrelay 0.2.1 or commit abc1234
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Node and pnpm versions, client, and deployment method.
+      placeholder: macOS 15, Node 22, pnpm 9, Claude Code, self-hosted Relay
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest repeatable sequence, request, or repository command.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Link the documented contract when possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs or other evidence
+      description: Remove API keys, invite tokens, webhook URLs, private content, and personal data.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched open and closed issues for this behavior.
+          required: true
+        - label: This is a defect report, not a feature request or security disclosure.
+          required: true
+        - label: I removed credentials, teammate content, and other sensitive data.
+          required: true
