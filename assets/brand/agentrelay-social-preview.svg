@@ -14,8 +14,8 @@
   <rect width="1280" height="640" fill="#071827" />
 
   <g transform="translate(120 180) scale(2.8)">
-    <path fill="#DCE6EF" d="M0 0H60V36H44V16H16V44H36V60H0Z" />
-    <path fill="#DCE6EF" d="M100 100H40V64H56V84H84V56H64V40H100Z" />
+    <path fill="#DCE6EF" d="M0 0H60V36H44V16H16V44H36V56H32V60H0Z" />
+    <path fill="#DCE6EF" d="M100 100H40V64H56V84H84V56H64V44H68V40H100Z" />
     <rect x="45" y="45" width="10" height="10" fill="#FF5A1F" />
   </g>
 
