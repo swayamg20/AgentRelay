@@ -43,6 +43,7 @@ outstanding invites.
 
 The relay is a container plus Postgres. See [`hosting.md`](hosting.md) for options,
 [`deploy-azure.md`](deploy-azure.md) for the Azure team pilot, and
+[`deploy-railway.md`](deploy-railway.md) for guarded Railway production, or
 [`deploy-fly.md`](deploy-fly.md) for a relay-only Fly example. The repository's
 `docker compose --profile selfhost` service forwards every required Relay secret from
 `.env`, including `RELAY_INVITE_SECRET`.

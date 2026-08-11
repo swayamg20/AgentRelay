@@ -262,6 +262,8 @@ View the AgentRelay thread <thread_id> and show me the latest reply.
 Full setup and current limitations are in [`docs/onboarding.md`](docs/onboarding.md).
 For a first shared team deployment on Azure, use the review-first
 [`docs/deploy-azure.md`](docs/deploy-azure.md) pilot guide.
+For Railway, use the protected-environment
+[`docs/deploy-railway.md`](docs/deploy-railway.md) deployment guide.
 
 ## Run the repository locally
 
@@ -362,6 +364,7 @@ this README does not claim full A2A conformance.
     ├── onboarding.md     current mailbox setup
     ├── hosting.md        relay hosting survey
     ├── deploy-azure.md   Azure Container Apps + private PostgreSQL pilot
+    ├── deploy-railway.md Railway deployment with CI and approval gates
     ├── deploy-fly.md     relay-only Fly.io example
     ├── auto-mode.md      superseded design decision record
     ├── ambient-agent.md  superseded design decision record
