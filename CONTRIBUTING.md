@@ -14,6 +14,10 @@ By participating, you agree to follow the project
 Search the open issues and pull requests before starting so two contributors do not
 solve the same problem.
 
+Use the [AgentRelay Discord community](https://discord.gg/r2R9v3cret) for questions and
+early design discussion. GitHub issues remain the source of truth for approved scope
+and ownership; a Discord conversation does not reserve an issue.
+
 - An issue labeled `ideas` is a proposal for discussion, not approved or scoped work.
 - Issues labeled `good first issue` or `help wanted` have maintainer-approved scope and
   are ready for contributors to claim.

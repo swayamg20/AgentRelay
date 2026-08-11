@@ -99,6 +99,14 @@ run arbitrary commands.
 The target enforcement model is documented in
 [`RFC 001`](https://github.com/swayamg20/AgentRelay/blob/main/docs/rfcs/001-agentrelay-node-and-missions.md).
 
+## Community and help
+
+Join the [AgentRelay Discord community](https://discord.gg/r2R9v3cret) for setup and
+usage questions. Do not post credentials, invite URLs, private message content,
+unredacted logs, or security reports. Use the repository's
+[private security process](https://github.com/swayamg20/AgentRelay/security/advisories/new)
+for suspected vulnerabilities.
+
 ## Development
 
 From the repository root:
