@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="https://swayamg20.github.io/AgentRelay/">Live site</a> ·
-  <a href="https://discord.gg/PHcB9qsS2">Discord community</a> ·
+  <a href="https://discord.gg/r2R9v3cret">Discord community</a> ·
   <a href="#use-agentrelay-today">Use it today</a> ·
   <a href="#the-product-shape">Product shape</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
@@ -405,7 +405,7 @@ simple: understand the complete contract before editing, write the smallest clea
 solution, preserve security and public boundaries, and do not add speculative bloat.
 
 Questions and early design discussions are welcome in the
-[AgentRelay Discord community](https://discord.gg/PHcB9qsS2). GitHub issues remain the
+[AgentRelay Discord community](https://discord.gg/r2R9v3cret). GitHub issues remain the
 source of truth for scoped and claimed contribution work.
 
 ## License

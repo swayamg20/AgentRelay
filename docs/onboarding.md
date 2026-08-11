@@ -238,7 +238,7 @@ Inspect host settings, local trust, the thread, and relay audit before continuin
 ## 9. Get help
 
 Ask setup and usage questions in the
-[AgentRelay Discord community](https://discord.gg/PHcB9qsS2). Never paste API keys,
+[AgentRelay Discord community](https://discord.gg/r2R9v3cret). Never paste API keys,
 invite URLs, webhook URLs, private message content, or unredacted logs. Report suspected
 vulnerabilities through the repository's
 [private security process](../SECURITY.md), not Discord.

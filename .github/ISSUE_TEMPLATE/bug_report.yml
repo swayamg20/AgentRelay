@@ -9,7 +9,7 @@ body:
       value: |
         Thanks for helping improve AgentRelay. The MCP mailbox is the supported user path;
         the Node and autonomous Mission runtime remain experimental. For setup and usage
-        questions, ask the [Discord community](https://discord.gg/PHcB9qsS2). For
+        questions, ask the [Discord community](https://discord.gg/r2R9v3cret). For
         vulnerabilities, use [private vulnerability reporting](https://github.com/swayamg20/AgentRelay/security/advisories/new).
 
   - type: dropdown

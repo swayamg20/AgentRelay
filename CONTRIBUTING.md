@@ -14,7 +14,7 @@ By participating, you agree to follow the project
 Search the open issues and pull requests before starting so two contributors do not
 solve the same problem.
 
-Use the [AgentRelay Discord community](https://discord.gg/PHcB9qsS2) for questions and
+Use the [AgentRelay Discord community](https://discord.gg/r2R9v3cret) for questions and
 early design discussion. GitHub issues remain the source of truth for approved scope
 and ownership; a Discord conversation does not reserve an issue.
 
