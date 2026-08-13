@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
+	type DeliveryCompleteResult,
 	type HostEvent,
 	hostEventSchema,
 	missionCreationResultSchema,
@@ -31,6 +32,7 @@ import {
 	ForegroundNode,
 	NodeJournal,
 	type NodeJournalState,
+	type NodeRelayClient,
 	PersistentFakeCapsuleAdapter,
 	createFileJournalStorage,
 	createNodeRelayClient,
@@ -40,7 +42,7 @@ import {
 	syncDirectory,
 	writeNodeConfig,
 } from "agentrelay-node";
-import { request } from "undici";
+import { request, fetch as undiciFetch } from "undici";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { REPO_ROOT, TestRelay } from "./harness.js";
 
@@ -202,6 +204,266 @@ describe("foreground Node delivery", () => {
 		expect(assignment.coordinator_state.turn_count).toBe(2);
 		expect(assignment.coordinator_state.messages).toHaveLength(2);
 	}, 30_000);
+
+	it("replays a committed completion after Relay and Node restarts without duplicating work", async () => {
+		const fixture = await createDurableReplayFixture(relay, temporaryRoot, "completion-replay");
+		const {
+			backend,
+			backendNode,
+			backendConfig,
+			backendJournalPath,
+			backendAdapter,
+			backendRelayClient,
+		} = fixture;
+		backendAdapter.queueOutcome({
+			kind: "completed",
+			disposition: {
+				kind: "reply",
+				message_type: "progress",
+				message: "Replay survived both process boundaries.",
+			},
+		});
+		const missionId = await acceptReplayMission(relay, fixture, 1);
+
+		// The delivery exists only in Postgres when the Relay process exits.
+		const discovery = await restartAndDiscoverStoredDelivery(relay, fixture);
+		const { deliveryId, journal: journalAfterNodeRestart, persistedCursor } = discovery;
+
+		let failAfterClaim = true;
+		await expect(
+			new DeliveryProcessor({
+				config: backendConfig,
+				client: backendRelayClient,
+				journal: journalAfterNodeRestart,
+				adapter: backendAdapter,
+				onCheckpoint(checkpoint) {
+					if (failAfterClaim && checkpoint === "claimed") {
+						failAfterClaim = false;
+						throw new Error("injected disconnect after durable claim");
+					}
+				},
+			}).process(deliveryId),
+		).rejects.toThrow("injected disconnect after durable claim");
+		expect(backendAdapter.counters.turnsCreated).toBe(0);
+
+		await relay.restart();
+		const journalAfterClaimRestart = await NodeJournal.open(
+			createFileJournalStorage(backendJournalPath),
+		);
+		const cursorAfterClaim = await backendRelayClient.pollDeliveries(persistedCursor);
+		expect(cursorAfterClaim.items).toHaveLength(0);
+		const recoveredAfterClaim = await backendRelayClient.recoverDeliveries();
+		expect(recoveredAfterClaim.items.map((item) => item.delivery.delivery_id)).toContain(
+			deliveryId,
+		);
+		await journalAfterClaimRestart.ingestRecoverable(recoveredAfterClaim.items);
+
+		let completionResponseLost = true;
+		const lossyClient = createNodeRelayClient({
+			relayUrl: relay.baseUrl,
+			credential: backendNode.credential.token,
+			maxAttempts: 1,
+			fetch: async (input, init) => {
+				const response = await undiciFetch(input, init);
+				if (
+					completionResponseLost &&
+					String(input).endsWith(`/deliveries/${deliveryId}/complete`) &&
+					response.ok
+				) {
+					completionResponseLost = false;
+					await response.arrayBuffer();
+					throw new Error("injected loss after committed completion");
+				}
+				return response;
+			},
+		});
+		await expect(
+			new DeliveryProcessor({
+				config: backendConfig,
+				client: lossyClient,
+				journal: journalAfterClaimRestart,
+				adapter: backendAdapter,
+			}).process(deliveryId),
+		).rejects.toThrow("injected loss after committed completion");
+		expect(backendAdapter.counters.turnsCreated).toBe(1);
+		const pendingCompletion = journalAfterClaimRestart.snapshot().deliveries[deliveryId]?.operation;
+		if (pendingCompletion?.kind !== "complete") {
+			throw new Error("Node did not preserve its ambiguous completion intent");
+		}
+
+		await relay.restart();
+		const journalAfterCompletionRestart = await NodeJournal.open(
+			createFileJournalStorage(backendJournalPath),
+		);
+		const replayedCompletions: DeliveryCompleteResult[] = [];
+		const recordingClient: NodeRelayClient = {
+			...backendRelayClient,
+			complete: async (id, input) => {
+				const result = await backendRelayClient.complete(id, input);
+				replayedCompletions.push(result);
+				return result;
+			},
+		};
+		await new DeliveryProcessor({
+			config: backendConfig,
+			client: recordingClient,
+			journal: journalAfterCompletionRestart,
+			adapter: backendAdapter,
+		}).process(deliveryId);
+		const replayedCompletion = replayedCompletions[0];
+		if (replayedCompletion === undefined)
+			throw new Error("Node did not replay its completion intent");
+		expect(replayedCompletion.replayed).toBe(true);
+		expect(journalAfterCompletionRestart.snapshot().deliveries[deliveryId]?.phase).toBe(
+			"acknowledged",
+		);
+		expect(backendAdapter.counters.turnsCreated).toBe(1);
+
+		const secondReplay = await backendRelayClient.complete(deliveryId, pendingCompletion.input);
+		expect(secondReplay).toEqual(replayedCompletion);
+		await expect(
+			backendRelayClient.complete(deliveryId, {
+				...pendingCompletion.input,
+				idempotency_key: `late:${randomUUID()}`,
+			}),
+		).rejects.toMatchObject({ status: 409, code: "invalid_transition" });
+
+		const assignment = await backendRelayClient.getAssignment(missionId);
+		expect(assignment.coordinator_state).toMatchObject({ status: "failed", turn_count: 1 });
+		expect(assignment.coordinator_state.messages).toHaveLength(1);
+		const auditResponse = (await getJson(
+			`${relay.baseUrl}/agents/me/audit?action=delivery.complete&limit=100`,
+			backend.api_key,
+		)) as { events?: { action: string; resource_id: string }[] };
+		if (!Array.isArray(auditResponse.events)) throw new Error("Audit response is missing events");
+		expect(
+			auditResponse.events.filter(
+				(event) => event.action === "delivery.complete" && event.resource_id === deliveryId,
+			),
+		).toHaveLength(1);
+	}, 60_000);
+
+	it("recovers a retry behind the cursor and rejects its stale lease fence", async () => {
+		const fixture = await createDurableReplayFixture(relay, temporaryRoot, "retry-replay");
+		fixture.backendAdapter.queueOutcome({
+			kind: "failed",
+			failure: { class: "transient", message: "injected transient host failure" },
+		});
+		fixture.backendAdapter.queueOutcome({
+			kind: "completed",
+			disposition: {
+				kind: "reply",
+				message_type: "progress",
+				message: "Retry recovered from the durable ledger.",
+			},
+		});
+		const missionId = await acceptReplayMission(relay, fixture, 1);
+		const discovery = await restartAndDiscoverStoredDelivery(relay, fixture);
+		const firstLeases: { lease_id: string; fencing_token: string }[] = [];
+		await new DeliveryProcessor({
+			config: fixture.backendConfig,
+			client: fixture.backendRelayClient,
+			journal: discovery.journal,
+			adapter: fixture.backendAdapter,
+			onCheckpoint(checkpoint, deliveryId) {
+				if (checkpoint !== "relay_executing") return;
+				const lease = discovery.journal.snapshot().deliveries[deliveryId]?.item.delivery.lease;
+				if (lease !== null && lease !== undefined) {
+					firstLeases.push({
+						lease_id: lease.lease_id,
+						fencing_token: lease.fencing_token,
+					});
+				}
+			},
+		}).process(discovery.deliveryId);
+		const released = discovery.journal.snapshot().deliveries[discovery.deliveryId];
+		if (released === undefined) throw new Error("Released delivery disappeared from the journal");
+		expect(released.item.delivery).toMatchObject({ status: "stored", attempt_count: 1 });
+		expect(released.host_attempt_history).toHaveLength(1);
+		expect(fixture.backendAdapter.counters.turnsCreated).toBe(1);
+
+		await relay.restart();
+		const retryJournal = await NodeJournal.open(
+			createFileJournalStorage(fixture.backendJournalPath),
+		);
+		expect(
+			(await fixture.backendRelayClient.pollDeliveries(discovery.persistedCursor)).items,
+		).toHaveLength(0);
+		const retryDelay = Date.parse(released.item.delivery.available_at) - Date.now() + 100;
+		if (retryDelay > 0) await delay(retryDelay);
+		const recoveredRetry = await fixture.backendRelayClient.recoverDeliveries();
+		expect(recoveredRetry.items.map((item) => item.delivery.delivery_id)).toContain(
+			discovery.deliveryId,
+		);
+		await retryJournal.ingestRecoverable(recoveredRetry.items);
+
+		let disconnectOnSecondStart = true;
+		const secondLeases: { lease_id: string; fencing_token: string }[] = [];
+		await expect(
+			new DeliveryProcessor({
+				config: fixture.backendConfig,
+				client: fixture.backendRelayClient,
+				journal: retryJournal,
+				adapter: fixture.backendAdapter,
+				onCheckpoint(checkpoint, deliveryId) {
+					if (!disconnectOnSecondStart || checkpoint !== "relay_executing") return;
+					disconnectOnSecondStart = false;
+					const lease = retryJournal.snapshot().deliveries[deliveryId]?.item.delivery.lease;
+					if (lease !== null && lease !== undefined) {
+						secondLeases.push({
+							lease_id: lease.lease_id,
+							fencing_token: lease.fencing_token,
+						});
+					}
+					throw new Error("injected disconnect after retry start");
+				},
+			}).process(discovery.deliveryId, undefined, new Date(recoveredRetry.as_of)),
+		).rejects.toThrow("injected disconnect after retry start");
+		const staleLease = firstLeases[0];
+		const currentLease = secondLeases[0];
+		if (staleLease === undefined || currentLease === undefined) {
+			throw new Error("Test did not capture both Relay lease authorities");
+		}
+		expect(currentLease).not.toEqual(staleLease);
+		await expect(
+			fixture.backendRelayClient.complete(discovery.deliveryId, {
+				idempotency_key: `stale:${randomUUID()}`,
+				...staleLease,
+				result: {
+					type: "turn_completed",
+					disposition: {
+						kind: "reply",
+						message_type: "progress",
+						message: "This stale result must not be committed.",
+					},
+				},
+			}),
+		).rejects.toMatchObject({ status: 409, code: "state_changed" });
+
+		await relay.restart();
+		const finalJournal = await NodeJournal.open(
+			createFileJournalStorage(fixture.backendJournalPath),
+		);
+		const recoveredExecuting = await fixture.backendRelayClient.recoverDeliveries();
+		expect(recoveredExecuting.items.map((item) => item.delivery.delivery_id)).toContain(
+			discovery.deliveryId,
+		);
+		await finalJournal.ingestRecoverable(recoveredExecuting.items);
+		await new DeliveryProcessor({
+			config: fixture.backendConfig,
+			client: fixture.backendRelayClient,
+			journal: finalJournal,
+			adapter: fixture.backendAdapter,
+		}).process(discovery.deliveryId);
+		expect(finalJournal.snapshot().deliveries[discovery.deliveryId]).toMatchObject({
+			phase: "acknowledged",
+			execution_attempt: 2,
+		});
+		expect(fixture.backendAdapter.counters.turnsCreated).toBe(2);
+		const assignment = await fixture.backendRelayClient.getAssignment(missionId);
+		expect(assignment.coordinator_state).toMatchObject({ status: "failed", turn_count: 1 });
+		expect(assignment.coordinator_state.messages).toHaveLength(1);
+	}, 60_000);
 
 	it.skipIf(process.platform === "win32")(
 		"replays exactly once after operator-assisted Node recovery while its detached capsule survives",
@@ -412,6 +674,120 @@ interface LocalRepository {
 	readonly commit: string;
 }
 
+async function createDurableReplayFixture(relay: TestRelay, root: string, prefix: string) {
+	const backend = await relay.createAgent({
+		handle: `${prefix}-backend@e2e`,
+		email: `${prefix}-backend@example.com`,
+		name: `${prefix} backend`,
+		role: "backend",
+	});
+	const client = await relay.createAgent({
+		handle: `${prefix}-client@e2e`,
+		email: `${prefix}-client@example.com`,
+		name: `${prefix} client`,
+		role: "client",
+	});
+	const backendNode = await enrollNode(relay.baseUrl, backend.api_key, `${prefix}-backend-node`);
+	const clientNode = await enrollNode(relay.baseUrl, client.api_key, `${prefix}-client-node`);
+	const backendRepo = await createRepository(
+		join(root, `${prefix}-backend`),
+		`https://github.com/acme/${prefix}-backend.git`,
+	);
+	const clientRepo = await createRepository(
+		join(root, `${prefix}-client`),
+		`https://github.com/acme/${prefix}-client.git`,
+	);
+	const backendConfig = nodeConfigSchema.parse(
+		localConfig(relay.baseUrl, backend.agent_id, backendNode, "backend", backendRepo),
+	);
+	const clientConfig = nodeConfigSchema.parse(
+		localConfig(relay.baseUrl, client.agent_id, clientNode, "client", clientRepo),
+	);
+	const backendJournalPath = join(root, `${prefix}-backend-state`, "journal.json");
+	const backendJournal = await NodeJournal.open(createFileJournalStorage(backendJournalPath));
+	const backendAdapter = new FakeAgentHostAdapter();
+	const backendRelayClient = createNodeRelayClient({
+		relayUrl: relay.baseUrl,
+		credential: backendNode.credential.token,
+	});
+	const backendDaemon = new ForegroundNode({
+		config: backendConfig,
+		client: backendRelayClient,
+		journal: backendJournal,
+		adapter: backendAdapter,
+	});
+	const clientDaemon = new ForegroundNode({
+		config: clientConfig,
+		client: createNodeRelayClient({
+			relayUrl: relay.baseUrl,
+			credential: clientNode.credential.token,
+		}),
+		journal: await NodeJournal.open(
+			createFileJournalStorage(join(root, `${prefix}-client-state`, "journal.json")),
+		),
+		adapter: new FakeAgentHostAdapter(),
+	});
+	await backendDaemon.initialize();
+	await clientDaemon.initialize();
+	return {
+		backend,
+		client,
+		backendNode,
+		backendRepo,
+		clientRepo,
+		backendConfig,
+		backendJournalPath,
+		backendAdapter,
+		backendRelayClient,
+		backendDaemon,
+		clientDaemon,
+	};
+}
+
+type DurableReplayFixture = Awaited<ReturnType<typeof createDurableReplayFixture>>;
+
+async function acceptReplayMission(
+	relay: TestRelay,
+	fixture: DurableReplayFixture,
+	maxTurns: number,
+): Promise<string> {
+	const missionId = randomUUID();
+	await createMission(relay.baseUrl, fixture.backend.api_key, {
+		missionId,
+		backendAgentId: fixture.backend.agent_id,
+		clientAgentId: fixture.client.agent_id,
+		backendCommit: fixture.backendRepo.commit,
+		clientCommit: fixture.clientRepo.commit,
+		backendUrl: fixture.backendRepo.url,
+		clientUrl: fixture.clientRepo.url,
+		maxTurns,
+	});
+	expect((await fixture.backendDaemon.runCycle()).acceptedMissions).toBe(1);
+	expect((await fixture.clientDaemon.runCycle()).acceptedMissions).toBe(1);
+	return missionId;
+}
+
+async function restartAndDiscoverStoredDelivery(
+	relay: TestRelay,
+	fixture: DurableReplayFixture,
+): Promise<{
+	readonly deliveryId: string;
+	readonly journal: NodeJournal;
+	readonly persistedCursor: string;
+}> {
+	await relay.restart();
+	const journal = await NodeJournal.open(createFileJournalStorage(fixture.backendJournalPath));
+	expect((await fixture.backendRelayClient.recoverDeliveries()).items).toHaveLength(0);
+	const cursorPage = await fixture.backendRelayClient.pollDeliveries(journal.snapshot().cursor);
+	expect(cursorPage.items).toHaveLength(1);
+	const item = cursorPage.items[0]!;
+	await journal.ingestCursorPage(cursorPage.items, cursorPage.next_cursor);
+	const persistedCursor = journal.snapshot().cursor;
+	if (persistedCursor === null) throw new Error("Stored delivery did not advance the Node cursor");
+	expect(persistedCursor).toBe(item.delivery.cursor);
+	return { deliveryId: item.delivery.delivery_id, journal, persistedCursor };
+}
+
 async function createRepository(path: string, url: string): Promise<LocalRepository> {
 	await mkdir(path, { recursive: true });
 	const canonicalPath = await realpath(path);
@@ -484,6 +860,7 @@ async function createMission(
 		clientCommit: string;
 		backendUrl: string;
 		clientUrl: string;
+		maxTurns?: number;
 	},
 ) {
 	const now = new Date();
@@ -523,7 +900,7 @@ async function createMission(
 					},
 				],
 				shared_contract: contract,
-				max_turns: 4,
+				max_turns: input.maxTurns ?? 4,
 				max_wall_time_seconds: 3_600,
 				token_budget: 100_000,
 				expires_at: new Date(now.getTime() + 3_600_000).toISOString(),

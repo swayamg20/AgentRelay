@@ -63,8 +63,10 @@ fenced claim/start/renew/complete/release operations with exact durable receipts
 Postgres tests cover concurrent claims, stale fences, expiry after lock waits, lost
 response replay, retry discovery, dead-lettering, blocks, and revocation races. A
 journaled client now proves runner reconstruction and duplicate polling without a
-second fake-host turn. The Stage 2 exit gate remains open for a real Relay-process
-restart and reconnect proof.
+second fake-host turn. A Postgres E2E now restarts the real Relay process before
+claim, after claim, and after a committed completion response is lost; it reopens the
+Node journal, converges cursor polling with cursorless recovery, and rejects stale or
+terminal output without a second effect. This proof uses no notification transport.
 
 - Add Node identity, workspace-binding, Mission, event, delivery, claim, and
   acknowledgement persistence. Relay-visible run persistence remains part of the
@@ -78,11 +80,11 @@ restart and reconnect proof.
 **Exit gate:** forced disconnects, relay restarts, expired leases, and duplicate
 notifications cause no lost event and no duplicated effect.
 
-Before declaring the control plane complete, also add stable Mission-assignment
-pagination and reconcile Mission state when delivery expiry or dead-lettering makes
-further progress impossible. Current discovery excludes expired and terminal Mission
-work so stale rows cannot starve runnable work, but filtering is not lifecycle
-reconciliation.
+Stable Mission-assignment pagination and the replay/restart evidence are implemented.
+The remaining lifecycle follow-up is to reconcile Mission state when delivery expiry
+or dead-lettering makes further progress impossible. Current discovery excludes
+expired and terminal Mission work so stale rows cannot starve runnable work, but
+filtering is not lifecycle reconciliation.
 
 ## Stage 3: AgentRelay Node
 
