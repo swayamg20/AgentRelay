@@ -1123,6 +1123,9 @@ export function missionDeliveryItemFromRows(
 	delivery: typeof nodeDeliveries.$inferSelect,
 	event: typeof missionEvents.$inferSelect,
 ): MissionDeliveryItem {
+	if (event.actorKind !== "agent" || event.actorAgentId === null) {
+		throw new RelayError("internal", "Node delivery source event is not participant-authored");
+	}
 	return {
 		delivery: deliveryFromRow(delivery),
 		event: eventFromRow(event),
