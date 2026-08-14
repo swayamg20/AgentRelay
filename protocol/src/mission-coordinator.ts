@@ -111,12 +111,22 @@ const verificationRecordedEventSchema = z
 		evidence: verificationEvidenceSchema,
 	})
 	.strict();
+const missionTerminalEventSchema = z
+	.object({
+		...missionEventEnvelopeSchema.shape,
+		type: z.literal("mission_terminal"),
+		terminal_status: z.enum(["expired", "failed"]),
+		reason: z.enum(["deadline_exceeded", "delivery_dead_lettered"]),
+		triggering_delivery_id: uuidSchema.nullable(),
+	})
+	.strict();
 
 const rawMissionCoordinatorEventSchema = z.discriminatedUnion("type", [
 	participantsAcceptedEventSchema,
 	turnCompletedEventSchema,
 	contractAcknowledgedEventSchema,
 	verificationRecordedEventSchema,
+	missionTerminalEventSchema,
 ]);
 
 const rawMissionCoordinatorAppendInputSchema = z.discriminatedUnion("type", [
@@ -721,6 +731,14 @@ function validateMissionDeliveryItem(
 		}
 		return;
 	}
+	if (item.event.type === "mission_terminal") {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Terminal Mission events do not derive Node deliveries",
+			path: ["event", "type"],
+		});
+		return;
+	}
 	if (item.actor_agent_id !== item.event.participant_agent_id) {
 		ctx.addIssue({
 			code: z.ZodIssueCode.custom,
@@ -747,6 +765,24 @@ function validateCoordinatorEventPayload(
 				code: z.ZodIssueCode.custom,
 				message: "Accepted Mission participants must be unique",
 				path: ["participant_agent_ids"],
+			});
+		}
+		return;
+	}
+	if (event.type === "mission_terminal") {
+		const expiresMission =
+			event.terminal_status === "expired" &&
+			event.reason === "deadline_exceeded" &&
+			event.triggering_delivery_id === null;
+		const failsMission =
+			event.terminal_status === "failed" &&
+			event.reason === "delivery_dead_lettered" &&
+			event.triggering_delivery_id !== null;
+		if (!expiresMission && !failsMission) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Mission terminal status must match its authoritative cause",
+				path: ["terminal_status"],
 			});
 		}
 		return;
@@ -866,8 +902,10 @@ export function reduceMissionCoordinatorEvent(
 		reduced = applyTurnCompleted(current, event);
 	} else if (event.type === "contract_acknowledged") {
 		reduced = applyContractAcknowledged(current, event);
-	} else {
+	} else if (event.type === "verification_recorded") {
 		reduced = applyVerificationRecorded(current, event);
+	} else {
+		reduced = applyMissionTerminal(current, event);
 	}
 
 	return {
@@ -901,6 +939,26 @@ type VerificationRecordedEvent = Extract<
 	MissionCoordinatorEvent,
 	{ readonly type: "verification_recorded" }
 >;
+type MissionTerminalEvent = Extract<MissionCoordinatorEvent, { readonly type: "mission_terminal" }>;
+
+function applyMissionTerminal(
+	state: MissionCoordinatorState,
+	event: MissionTerminalEvent,
+): MissionCoordinatorState {
+	if (state.status !== "active" && state.status !== "verifying") {
+		throw new InvalidMissionCoordinatorEventError("terminal_state");
+	}
+	return {
+		...state,
+		status: transitionMissionStatus(state.status, {
+			type: event.terminal_status === "expired" ? "expire" : "fail",
+		}),
+		pending_revision: null,
+		current_participant_agent_id: null,
+		ready_agent_ids: [],
+		verification_records: [],
+	};
+}
 
 function applyParticipantsAccepted(
 	state: MissionCoordinatorState,
