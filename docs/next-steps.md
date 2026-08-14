@@ -74,8 +74,8 @@ in-memory scripted proof, not durable relay or real-runtime evidence.
   without a second fake-host turn.
 - [x] Prove Relay-process restart plus Node reconnect through cursor/recovery polling;
   leave SSE out of this slice.
-- [ ] Reconcile delivery expiry/dead-letter outcomes into an explicit terminal or
-  blocked Mission transition instead of only hiding expired/terminal Mission work.
+- [x] Reconcile active/verifying deadlines to `expired` and unsettled dead-lettered
+  work to `failed`, cancelling remaining runnable deliveries transactionally.
 - [x] Add stable Node-scoped keyset pagination to Mission assignment discovery. The
   foreground Node persists its continuation and advances one bounded page only after
   servicing delivery work; it rejects immediate cursor loops, and the Relay excludes
@@ -103,9 +103,9 @@ WebSocket, or the process-local notification queue. Its exact failure matrix is:
 | A transient release becomes due behind the cursor | Postgres returns the delivery to `stored` with database-time backoff; the journal cursor already exceeds its creation cursor. | Cursor polling cannot rediscover it. The cursorless recovery route returns it when due, and the next claim advances the fence. |
 | Old or terminal work publishes late output | Postgres has either a newer active fence or a terminal Mission and acknowledged source delivery. | The old fence is rejected with `state_changed`; a fresh completion after the terminal max-turn transition is rejected with `invalid_transition`. Neither creates a second Mission turn. |
 
-The remaining delivery-control-plane gap is lifecycle reconciliation: delivery expiry
-or final dead-lettering still does not itself drive an explicit terminal or blocked
-Mission transition.
+Deterministic terminal reconciliation now closes the remaining delivery-control-plane
+gap. The next cross-device product proof is a real two-machine, two-repository run
+through the public control plane.
 
 ## 4. Build the local Node
 

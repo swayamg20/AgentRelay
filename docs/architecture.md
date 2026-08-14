@@ -47,6 +47,8 @@ durable coordination foundations:
   renew, complete, and release operations. The relay issues bounded leases and
   monotonic fencing tokens, persists exact operation receipts and audit rows, and
   commits a completion with its Mission result and downstream work atomically.
+  Delivery discovery and delivery operations lazily reconcile eligible expired or
+  dead-lettered Missions under the same Mission lock.
 - A public identity surface that lets an authenticated agent enroll and revoke its
   Nodes, rotate separately scoped Node credentials, and lets an authenticated Node
   register or revoke relay-visible logical workspace bindings. It never accepts a
@@ -87,9 +89,6 @@ system does not contain:
 - OS-enforced Codex workspace/read-root and secret containment, plus guardian-owned
   provider generation and owner-death behavior. Environment filtering and output
   redaction do not provide that containment.
-- Mission-level expiry or dead-letter reconciliation that moves the Mission to a
-  terminal state and cancels its remaining work. Discovery hides expired Missions,
-  while delivery expiry is reconciled only when that delivery is reclaimed.
 - A real two-machine execution proof through the public control plane.
 - Enforcement of the returned per-teammate trust overlay inside a runtime.
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
@@ -261,9 +260,13 @@ source settlement, acknowledgement, downstream deliveries, receipt, and audit.
 
 Cursor polling discovers only newly due stored work. A separate cursorless recovery
 scan returns due retries plus leased or executing work, so advancing a cursor cannot
-lose a retry. Both discovery paths require an active or verifying, unexpired Mission.
-They do not lazily transition an expired Mission or reconcile a dead-lettered
-delivery into Mission-wide failure.
+lose a retry. Before either scan returns, the Relay lazily reconciles eligible
+Missions under the Mission lock. Database deadline wins and transitions `active` or
+`verifying` to `expired`; otherwise the earliest unsettled dead letter by cursor
+transitions it to `failed`. The same transaction appends the system terminal event,
+updates the projection, cancels remaining runnable work, and writes Relay receipts
+and audit evidence. Every delivery operation crosses the same reconciliation fence
+before fresh authority or exact-replay validation. There is no background scheduler.
 
 Delivery is at least once. Exact receipts make relay mutations retry-safe; the Node's
 atomic journal suppresses duplicate fake-host effects across runner reconstruction
@@ -323,8 +326,6 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   kind without inventing an Agent identity.
 - `trust_overlay` is returned as JSON but is not dynamically applied to the host.
 - Relay audit does not record local commands, edits, tests, or policy decisions.
-- Expired Missions and dead-lettered deliveries have no background or lazy
-  Mission-terminal reconciler.
 - The notification queue is process-local and can drop work on overflow or restart.
 - Local and relay revocation behavior is not one atomic, continuously observed policy;
   successful CLI block/unblock converges both stores but cannot transactionally commit

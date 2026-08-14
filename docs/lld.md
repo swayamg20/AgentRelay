@@ -39,8 +39,9 @@ prove execution on two machines.
   new-work cursor, recovery-page, delivery-operation input/result, lease, fencing,
   cancellation, and receipt contracts;
 - pure Mission lifecycle and fenced-delivery reducers;
-- a replayable four-event coordinator boundary for participant acceptance, completed
-  turns, explicit contract acknowledgement, and local verification evidence;
+- a replayable five-event coordinator boundary for participant acceptance, completed
+  turns, explicit contract acknowledgement, local verification evidence, and the
+  Relay-owned terminal Mission event;
 - one-current-participant routing, consecutive contract revision pause/activation,
   contract-scoped readiness, required local command IDs, turn limits, terminal-event
   rejection, verification-round fencing, and exact event/idempotency/delivery replay
@@ -77,7 +78,7 @@ the committed Drizzle migrations.
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
 | `missions` | Immutable coordinator config, current reducer projection/status/contract version, sequence, creator, and expiry. |
 | `mission_participants` | The exact agent, Node, and workspace binding selected for each two-party Mission, plus that participant's idempotent contract and opaque local-policy-grant acceptance receipt. |
-| `mission_events` | Append-only type-specific coordinator payload with relay-generated event ID, Mission sequence/time, service-supplied actor, source delivery, idempotency key, and causal parent. |
+| `mission_events` | Append-only type-specific coordinator payload with relay-generated event ID, Mission sequence/time, explicit `agent`/`system` actor kind, nullable Agent actor ID, source delivery, idempotency key, and causal parent. Only `mission_terminal` is system-authored. |
 | `node_deliveries` | Per-Node opaque cursor pointing to one Mission event, with `stored`, `leased`, `executing`, `acknowledged`, `cancelled`, or `dead_lettered` state; attempts, relay lease/fence, retry availability, settlement, and terminal evidence. |
 | `delivery_operation_receipts` | Append-only Node `claim`/`start`/`renew`/`complete`/`release` and relay `lease_expired`/`cancel` evidence, including idempotency identity, attempt, lease/fence, transition, input, output, and database timestamp. |
 
@@ -113,8 +114,8 @@ journal.
 
 ## Mission and delivery ledger
 
-`relay/src/services/mission-ledger.ts` and `delivery-ledger.ts` back public agent and
-Node routes.
+`relay/src/services/mission-ledger.ts`, `delivery-ledger.ts`, and
+`mission-reconciliation.ts` back public agent and Node routes.
 
 - Mission creation validates the shared protocol config, resolves every participant
   to exactly one active `agent + Node + workspace alias + repository URL`, stores
@@ -130,8 +131,8 @@ Node routes.
   public path for publishing a runtime result; there is no raw event-append route.
 - New-work polling reads strictly increasing global-`bigserial` cursors and only due,
   unsettled `stored` work. Recovery is cursorless and returns due stored retries plus
-  `leased` or `executing` work. Both join the Mission and require `active` or
-  `verifying` state with `expires_at` later than the relay database clock.
+  `leased` or `executing` work. Both first reconcile eligible `active` or `verifying`
+  Missions, then return only unexpired runnable state.
 - Claim issues a relay-generated lease for 60 seconds or the remaining Mission
   lifetime, whichever is shorter. It increments `attempt_count`, uses that attempt as
   the fencing token, and records a receipt. Start, renew, complete, and release
@@ -148,9 +149,13 @@ Node routes.
 - Reclaiming an expired lease below the attempt limit records a Relay
   `lease_expired` receipt and audit row before issuing the next claim. Reclaiming an
   expired final attempt records the terminal Node `claim` receipt with
-  `claim_outcome: dead_lettered` and no separate expiry receipt. Expired Missions are
-  not advertised, but no background or lazy reconciler changes the Mission row to
-  `expired` or turns one dead letter into Mission-wide failure and cancellation.
+  `claim_outcome: dead_lettered` and no separate expiry receipt. Final dead letters
+  reconcile immediately. Expired or previously dead-lettered Missions also reconcile
+  lazily from both delivery discovery routes and before every delivery operation.
+  Fresh authority and exact receipt replay are validated only after that fence. For
+  `active` or `verifying`, deadline maps to
+  `expired/deadline_exceeded/null`; otherwise the earliest unsettled dead-letter
+  cursor maps to `failed/delivery_dead_lettered/<delivery-id>`.
 
 ## HTTP surface
 
@@ -209,8 +214,8 @@ A2A well-known discovery URL.
 | `GET` | `/node/v1/missions` | List assignments for this Node with newest-first `after_cursor`/`next_cursor` keyset pagination. An unfiltered list is assignment history; `status=awaiting_acceptance` is the live acceptance view and excludes expired Missions using Relay database time. This is not delivery discovery. |
 | `GET` | `/node/v1/missions/:missionId` | Return this Node's exact Mission assignment and acceptance state. |
 | `POST` | `/node/v1/missions/:missionId/accept` | Store or exactly replay this participant's contract and local-policy acceptance receipt; the second participant activates the Mission. |
-| `GET` | `/node/v1/deliveries` | Cursor-page newly due, unsettled `stored` work for active/verifying, unexpired Missions. Reading does not claim it. |
-| `GET` | `/node/v1/deliveries/recoverable` | Cursorless scan for due retried `stored` work plus `leased` or `executing` work on active/verifying, unexpired Missions. |
+| `GET` | `/node/v1/deliveries` | Lazily reconcile eligible Mission terminal causes, then cursor-page newly due, unsettled `stored` work. Reading does not claim it. |
+| `GET` | `/node/v1/deliveries/recoverable` | Lazily reconcile eligible Mission terminal causes, then scan due retried `stored` work plus `leased` or `executing` work without a cursor. |
 | `POST` | `/node/v1/deliveries/:deliveryId/claim` | Issue or exactly replay a relay lease, incremented attempt, and fencing token; lazily reconcile an expired lease before reclaim. |
 | `POST` | `/node/v1/deliveries/:deliveryId/start` | Move the exact active lease from `leased` to `executing`. |
 | `POST` | `/node/v1/deliveries/:deliveryId/renew` | Retain lease/fence and extend its deadline from relay database time, bounded by Mission expiry; at that cap, confirm current authority with a fresh receipt without shortening the deadline. |
@@ -223,6 +228,10 @@ the same Node transaction lock used by rotation and revocation, so a completed
 revocation fences later mutations. Delivery operations use relay-issued authority;
 the wire cannot choose Node identity, server time, lease duration, lease expiry,
 working directory, runtime policy, or command permission.
+
+The two delivery `GET` routes may write terminal reconciliation state. Mission
+assignment list and detail routes remain read-only and do not reconcile. There is no
+background scheduler.
 
 ## JSON-RPC surface
 
@@ -492,12 +501,15 @@ Important limits:
 Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel,
 message append, block/unblock, Node enroll/credential-rotate/revoke, workspace
 register/revoke, Mission create/participant accept/event append, every public Node
-delivery mutation, and relay lease-expiry/cancellation transitions. The matching
-`delivery_operation_receipts` retain exact Node-operation results and relay-owned
-transport history. Audit actors are explicit: authenticated Agent mutations retain an
-Agent ID, while admin and relay-system mutations use a typed actor with no fabricated
-Agent identity. Agent registration, card updates, and agent-key rotation still write
-no audit row. Audit also does not record commands, tool arguments/results, file edits,
+delivery mutation, `mission.terminal`, and relay lease-expiry/cancellation transitions.
+Each terminal reconciliation writes a system Mission audit plus Relay `cancel`
+receipts and audits tied to the terminal event for every remaining runnable delivery.
+The matching `delivery_operation_receipts` retain exact Node-operation results and
+relay-owned transport history. Audit actors are explicit: authenticated Agent
+mutations retain an Agent ID, while admin and relay-system mutations use a typed actor
+with no fabricated Agent identity. Agent registration, card updates, and agent-key
+rotation still write no audit row. Audit also does not record commands, tool
+arguments/results, file edits,
 tests, or permission decisions performed by a local coding-agent host.
 
 The relay has authenticated block endpoints. CLI `block`/`unblock` writes the relay
@@ -572,6 +584,5 @@ both the journaled in-process fake-turn boundary and detached fake-Capsule recov
 after Node-process death. The provider-neutral server and injected Codex runner add an
 unactivated wire-level checkpoint. The next slices are deterministic verification and
 contract handling, guardian-owned and OS-contained Codex CLI activation, a real model
-turn, and a two-machine proof. Mission-level expiry and dead-letter terminal
-reconciliation is still a separate relay gap; the mailbox API remains a compatibility
-and inspection surface.
+turn, and a two-machine proof. The mailbox API remains a compatibility and inspection
+surface.

@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-03. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-14. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -61,12 +61,13 @@ receipts, source-bound result settlement, verification generations, joined curso
 recovery scans, separately revocable Node credentials, public Mission routes, and
 fenced claim/start/renew/complete/release operations with exact durable receipts.
 Postgres tests cover concurrent claims, stale fences, expiry after lock waits, lost
-response replay, retry discovery, dead-lettering, blocks, and revocation races. A
-journaled client now proves runner reconstruction and duplicate polling without a
-second fake-host turn. A Postgres E2E now restarts the real Relay process before
-claim, after claim, and after a committed completion response is lost; it reopens the
-Node journal, converges cursor polling with cursorless recovery, and rejects stale or
-terminal output without a second effect. This proof uses no notification transport.
+response replay, retry discovery, dead-lettering, terminal reconciliation, blocks,
+and revocation races. A journaled client now proves runner reconstruction and duplicate
+polling without a second fake-host turn. A Postgres E2E restarts the real Relay process
+before claim, after claim, and after a committed completion response is lost; it
+reopens the Node journal, converges cursor polling with cursorless recovery, and
+rejects stale or terminal output without a second effect. This proof uses no
+notification transport.
 
 - Add Node identity, workspace-binding, Mission, event, delivery, claim, and
   acknowledgement persistence. Relay-visible run persistence remains part of the
@@ -77,14 +78,13 @@ terminal output without a second effect. This proof uses no notification transpo
 - Start with cursor polling over the durable ledger.
 - Defer authenticated SSE until replay, claims, and recovery are already correct.
 
-**Exit gate:** forced disconnects, relay restarts, expired leases, and duplicate
-notifications cause no lost event and no duplicated effect.
+**Exit gate:** passed. Forced disconnects, relay restarts, expired leases, and
+duplicate discovery/polling cause no lost event and no duplicated effect in the
+durable fake-runtime proof.
 
-Stable Mission-assignment pagination and the replay/restart evidence are implemented.
-The remaining lifecycle follow-up is to reconcile Mission state when delivery expiry
-or dead-lettering makes further progress impossible. Current discovery excludes
-expired and terminal Mission work so stale rows cannot starve runnable work, but
-filtering is not lifecycle reconciliation.
+Stable assignment pagination, restart/replay evidence, and deterministic terminal
+reconciliation are implemented. Reconciliation is lazy at delivery discovery and
+delivery-operation boundaries; it does not require a scheduler.
 
 ## Stage 3: AgentRelay Node
 
