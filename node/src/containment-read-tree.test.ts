@@ -56,7 +56,7 @@ describe("containment read tree isolation", () => {
 		).rejects.toThrow("cannot target denied roots");
 	});
 
-	it("rejects host-writable entries", async () => {
+	it("rejects group- or world-writable entries", async () => {
 		const fixture = await createFixture();
 		const writable = join(fixture.readRoot, "writable");
 		await writeFile(writable, "mutable");
@@ -68,7 +68,7 @@ describe("containment read tree isolation", () => {
 				deniedRoots: [fixture.deniedRoot],
 				writableRoots: [fixture.writableRoot],
 			}),
-		).rejects.toThrow("writable host entries");
+		).rejects.toThrow("group- or world-writable host entries");
 	});
 
 	it("rejects symbolic links into writable roots", async () => {

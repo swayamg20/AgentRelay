@@ -62,7 +62,9 @@ async function assertReadTreeIsolated(
 				continue;
 			}
 			if ((stats.mode & 0o22n) !== 0n) {
-				throw new Error("Containment read tree cannot contain writable host entries");
+				throw new Error(
+					"Containment read tree cannot contain group- or world-writable host entries",
+				);
 			}
 			if (stats.isDirectory()) {
 				pending.push(path);
