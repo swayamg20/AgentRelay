@@ -25,17 +25,11 @@ export interface CodexSandboxProbeInput {
 /** Runs an actual child through the effective profile before any provider is admitted. */
 export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promise<void> {
 	const sharedTempCanary = join(await realpath(tmpdir()), `.agentrelay-${randomUUID()}.canary`);
-	const canary = await open(
-		sharedTempCanary,
-		constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-		0o600,
-	);
-	try {
-		await canary.writeFile("host-temp-canary", "utf8");
-		await canary.sync();
-	} finally {
-		await canary.close();
-	}
+	const ownerHomeCanary = join(await realpath(homedir()), `.agentrelay-${randomUUID()}.canary`);
+	await Promise.all([
+		writeHostCanary(sharedTempCanary, "host-temp-canary"),
+		writeHostCanary(ownerHomeCanary, "owner-home-canary"),
+	]);
 
 	const probePaths = {
 		workspaceRead: join(input.gitDirectory, "HEAD"),
@@ -43,7 +37,7 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 		gitWrite: join(input.gitDirectory, `.agentrelay-${randomUUID()}.probe`),
 		runtimeTmpWrite: join(input.runtimeTmp, `.agentrelay-${randomUUID()}.probe`),
 		controlRead: input.launcherPath,
-		ownerHome: await realpath(homedir()),
+		ownerHomeCanary,
 		sharedTempCanary,
 		parentNetworkNamespace: await readlink("/proc/self/ns/net"),
 	};
@@ -86,10 +80,21 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 	} finally {
 		await Promise.all([
 			unlink(sharedTempCanary).catch(() => undefined),
+			unlink(ownerHomeCanary).catch(() => undefined),
 			unlink(probePaths.workspaceWrite).catch(() => undefined),
 			unlink(probePaths.gitWrite).catch(() => undefined),
 			unlink(probePaths.runtimeTmpWrite).catch(() => undefined),
 		]);
+	}
+}
+
+async function writeHostCanary(path: string, contents: string): Promise<void> {
+	const canary = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+	try {
+		await canary.writeFile(contents, "utf8");
+		await canary.sync();
+	} finally {
+		await canary.close();
 	}
 }
 
@@ -140,15 +145,12 @@ function killProcessGroup(pid: number | undefined): void {
 }
 
 const PROBE_SOURCE = String.raw`
-import { access, readFile, readdir, readlink, unlink, writeFile } from "node:fs/promises";
+import { access, readFile, readlink, unlink, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 
 const paths = JSON.parse(process.argv[1]);
 const canRead = async (path) => {
   try { await readFile(path); return true; } catch { return false; }
-};
-const canList = async (path) => {
-  try { await readdir(path); return true; } catch { return false; }
 };
 const canWrite = async (path) => {
   try {
@@ -171,7 +173,7 @@ const checks = {
   gitWrite: await canWrite(paths.gitWrite),
   runtimeTmpWrite: await canWrite(paths.runtimeTmpWrite),
   controlRead: await canRead(paths.controlRead),
-  ownerHomeRead: await canList(paths.ownerHome),
+  ownerHomeRead: await canRead(paths.ownerHomeCanary),
   sharedTempRead: await canRead(paths.sharedTempCanary),
   environmentSecretPresent: process.env.AGENTRELAY_CONTAINMENT_PROBE_SECRET !== undefined,
   networkNamespaceChanged: await readlink("/proc/self/ns/net") !== paths.parentNetworkNamespace,

@@ -22,6 +22,22 @@ const AMBIENT_CODEX_CONFIG_PATHS = [
 	"/etc/codex/requirements.toml",
 ] as const;
 
+// Codex's `:minimal` profile mounts these host trees, while Bubblewrap creates
+// fresh /dev and /proc mounts. Denials below one of these visible roots need an
+// explicit mask; all other unapproved host paths are absent from the tmpfs view.
+const LINUX_VISIBLE_BASE_ROOTS = [
+	"/bin",
+	"/dev",
+	"/etc",
+	"/lib",
+	"/lib64",
+	"/nix/store",
+	"/proc",
+	"/run/current-system/sw",
+	"/sbin",
+	"/usr",
+] as const;
+
 export function assertSupportedLinuxContainment(): void {
 	if (process.platform !== "linux") {
 		throw new Error("Codex Bubblewrap containment is supported only on Linux");
@@ -113,10 +129,15 @@ export async function buildCodexSandboxConfig(
 	if (readRoots.some((readRoot) => deniedRoots.some((denied) => isPathWithin(denied, readRoot)))) {
 		throw new Error("A readable root cannot contain a denied containment root");
 	}
+	const explicitDenyRoots = deniedRoots.filter((deniedRoot) =>
+		[...LINUX_VISIBLE_BASE_ROOTS, input.workspace.root, layout.runtimeHome, layout.runtimeTmp].some(
+			(visibleRoot) => isPathWithin(deniedRoot, visibleRoot),
+		),
+	);
 
 	const filesystemEntries = new Map<string, "read" | "write" | "deny">();
 	filesystemEntries.set(":minimal", "read");
-	for (const path of deniedRoots) filesystemEntries.set(path, "deny");
+	for (const path of explicitDenyRoots) filesystemEntries.set(path, "deny");
 	for (const path of readRoots) filesystemEntries.set(path, "read");
 	filesystemEntries.set(input.workspace.root, "write");
 	filesystemEntries.set(input.workspace.gitDirectory, "read");
