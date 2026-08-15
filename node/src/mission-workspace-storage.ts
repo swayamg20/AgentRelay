@@ -1,6 +1,6 @@
-import { lstat, opendir, readFile } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import { join } from "node:path";
-import { isPathWithin } from "./filesystem-path.js";
+import { type LinuxMount, hasNestedLinuxMount, readLinuxMounts } from "./linux-mounts.js";
 import {
 	type LocalFilesystemIdentity,
 	MissionWorkspaceError,
@@ -124,31 +124,22 @@ async function rejectAlternates(gitDirectory: string): Promise<void> {
 }
 
 async function rejectNestedLinuxMounts(root: string): Promise<void> {
-	if (process.platform !== "linux") return;
-	const mountInfo = await readFile("/proc/self/mountinfo", "utf8");
-	for (const line of mountInfo.split("\n")) {
-		if (line.length === 0) continue;
-		const encodedMountPoint = line.split(" ")[4];
-		if (encodedMountPoint === undefined) {
-			throw new MissionWorkspaceError(
-				"workspace_mounts_unsupported",
-				"Linux mount metadata was malformed",
-			);
-		}
-		const mountPoint = decodeMountInfoPath(encodedMountPoint);
-		if (mountPoint !== root && isPathWithin(mountPoint, root)) {
-			throw new MissionWorkspaceError(
-				"workspace_mounts_unsupported",
-				"Mission workspace cannot contain nested mounts",
-			);
-		}
+	let mounts: readonly LinuxMount[];
+	try {
+		mounts = await readLinuxMounts();
+	} catch (error) {
+		throw new MissionWorkspaceError(
+			"workspace_mounts_unsupported",
+			"Linux mount metadata could not be validated",
+			{ cause: error },
+		);
 	}
-}
-
-function decodeMountInfoPath(value: string): string {
-	return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
-		String.fromCharCode(Number.parseInt(octal, 8)),
-	);
+	if (hasNestedLinuxMount(mounts, root)) {
+		throw new MissionWorkspaceError(
+			"workspace_mounts_unsupported",
+			"Mission workspace cannot contain nested mounts",
+		);
+	}
 }
 
 function errorCode(error: unknown): string | undefined {

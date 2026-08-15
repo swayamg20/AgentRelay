@@ -14,6 +14,7 @@ import { assertAbsoluteNormalizedPath, canonicalContainmentRoots } from "./codex
 import type { ContainmentProbeExecutable } from "./codex-sandbox-probe.js";
 import { assertContainmentReadTreesIsolated } from "./containment-read-tree.js";
 import { isPathWithin } from "./filesystem-path.js";
+import { assertNoLinuxStorageAliases, readLinuxMounts } from "./linux-mounts.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
 import { revalidateMissionWorkspaceIsolation } from "./mission-workspace.js";
 import {
@@ -43,20 +44,31 @@ export async function buildRuntimeContainmentBinding(
 				...(input.forbiddenRoots ?? []),
 			]),
 		]);
-	await assertContainmentReadTreesIsolated({
-		roots: [
-			launcher.readRoot.path,
-			provider.readRoot.path,
-			inspectedProbe.readRoot.path,
-			...readOnlyRoots.map((root) => root.path),
+	const trustedReadRoots = [
+		launcher.readRoot.path,
+		provider.readRoot.path,
+		inspectedProbe.readRoot.path,
+		...readOnlyRoots.map((root) => root.path),
+	];
+	const writableRoots = [
+		workspace.root.path,
+		privatePaths.runtime_home.path,
+		privatePaths.runtime_tmp.path,
+	];
+	const deniedRootPaths = deniedRoots.map((root) => root.path);
+	const linuxMounts = await readLinuxMounts();
+	await assertContainmentReadTreesIsolated(
+		{ roots: trustedReadRoots, deniedRoots: deniedRootPaths, writableRoots },
+		linuxMounts,
+	);
+	assertNoLinuxStorageAliases(
+		[
+			...trustedReadRoots.map((path) => ({ path, access: "read" as const })),
+			...writableRoots.map((path) => ({ path, access: "write" as const })),
+			...deniedRootPaths.map((path) => ({ path, access: "deny" as const })),
 		],
-		deniedRoots: deniedRoots.map((root) => root.path),
-		writableRoots: [
-			workspace.root.path,
-			privatePaths.runtime_home.path,
-			privatePaths.runtime_tmp.path,
-		],
-	});
+		linuxMounts,
+	);
 	return {
 		backend: RUNTIME_CONTAINMENT_BACKEND,
 		runtime_version: SUPPORTED_CODEX_CLI_VERSION,

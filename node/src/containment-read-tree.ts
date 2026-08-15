@@ -1,18 +1,29 @@
-import { lstat, opendir, readFile, readlink, realpath } from "node:fs/promises";
+import { lstat, opendir, readlink, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isPathWithin } from "./filesystem-path.js";
+import { type LinuxMount, hasNestedLinuxMount, readLinuxMounts } from "./linux-mounts.js";
 
 const MAX_READ_TREE_ENTRIES = 100_000;
 
 /** Rejects storage aliases that could make an approved read tree expose unrelated host data. */
-export async function assertContainmentReadTreesIsolated(input: {
-	readonly roots: readonly string[];
-	readonly deniedRoots: readonly string[];
-	readonly writableRoots: readonly string[];
-}): Promise<void> {
+export async function assertContainmentReadTreesIsolated(
+	input: {
+		readonly roots: readonly string[];
+		readonly deniedRoots: readonly string[];
+		readonly writableRoots: readonly string[];
+	},
+	mounts?: readonly LinuxMount[],
+): Promise<void> {
+	const linuxMounts = mounts ?? (await readLinuxMounts());
 	const readRoots = minimalRoots(input.roots);
 	for (const root of readRoots) {
-		await assertReadTreeIsolated(root, readRoots, input.deniedRoots, input.writableRoots);
+		await assertReadTreeIsolated(
+			root,
+			readRoots,
+			input.deniedRoots,
+			input.writableRoots,
+			linuxMounts,
+		);
 	}
 }
 
@@ -21,8 +32,11 @@ async function assertReadTreeIsolated(
 	readRoots: readonly string[],
 	deniedRoots: readonly string[],
 	writableRoots: readonly string[],
+	linuxMounts: readonly LinuxMount[],
 ): Promise<void> {
-	await rejectNestedLinuxMounts(root);
+	if (hasNestedLinuxMount(linuxMounts, root)) {
+		throw new Error("Containment read tree cannot contain nested mounts");
+	}
 	const rootStats = await lstat(root, { bigint: true });
 	const rootDevice = rootStats.dev;
 	const pending = [root];
@@ -108,32 +122,10 @@ function assertOwnerControlled(uid: bigint): void {
 	}
 }
 
-async function rejectNestedLinuxMounts(root: string): Promise<void> {
-	if (process.platform !== "linux") return;
-	const mountInfo = await readFile("/proc/self/mountinfo", "utf8");
-	for (const line of mountInfo.split("\n")) {
-		if (line.length === 0) continue;
-		const encodedMountPoint = line.split(" ")[4];
-		if (encodedMountPoint === undefined) {
-			throw new Error("Linux mount metadata was malformed");
-		}
-		const mountPoint = decodeMountInfoPath(encodedMountPoint);
-		if (mountPoint !== root && isPathWithin(mountPoint, root)) {
-			throw new Error("Containment read tree cannot contain nested mounts");
-		}
-	}
-}
-
 function minimalRoots(roots: readonly string[]): string[] {
 	const ordered = [...new Set(roots)].sort((left, right) => left.length - right.length);
 	return ordered.filter(
 		(root, index) => !ordered.slice(0, index).some((parent) => isPathWithin(root, parent)),
-	);
-}
-
-function decodeMountInfoPath(value: string): string {
-	return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
-		String.fromCharCode(Number.parseInt(octal, 8)),
 	);
 }
 
