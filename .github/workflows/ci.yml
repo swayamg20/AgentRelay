@@ -145,6 +145,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm --filter @agentrelay/protocol build
+
       - name: Prove the Linux Mission containment boundary
         env:
           AGENTRELAY_RUN_CONTAINMENT_TESTS: '1'
