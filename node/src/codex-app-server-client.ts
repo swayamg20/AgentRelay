@@ -28,6 +28,7 @@ import {
 	isCodexRelevantNotificationMethod,
 } from "./codex-app-server-protocol.js";
 import { CodexAppServerTransport } from "./codex-app-server-transport.js";
+import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 
 export { CodexAppServerError } from "./codex-app-server-process.js";
 export type { CodexAppServerCommand } from "./codex-app-server-process.js";
@@ -39,6 +40,7 @@ export interface CodexAppServerClientOptions {
 	readonly cwd: string;
 	readonly capsuleDirectory: string;
 	readonly env: NodeJS.ProcessEnv;
+	readonly boundary: CodexProcessBoundary;
 	readonly requestTimeoutMs?: number;
 }
 
@@ -77,6 +79,7 @@ export class CodexAppServerClient {
 			command: options.command,
 			cwd: options.cwd,
 			env,
+			boundary: options.boundary,
 			requestTimeoutMs: options.requestTimeoutMs,
 			handleServerRequest: denyCodexServerRequest,
 		});

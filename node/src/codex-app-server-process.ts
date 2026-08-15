@@ -6,6 +6,7 @@ import {
 	MAX_CODEX_APP_SERVER_FRAME_BYTES,
 	SUPPORTED_CODEX_CLI_VERSION,
 } from "./codex-app-server-protocol.js";
+import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
 const STOP_GRACE_MS = 2_000;
@@ -20,6 +21,7 @@ export interface CodexAppServerProcessOptions {
 	readonly command: CodexAppServerCommand;
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
+	readonly boundary: CodexProcessBoundary;
 }
 
 export interface CodexAppServerProcess {
@@ -56,12 +58,18 @@ export async function startCodexAppServerProcess(
 	}
 	const executable = validateCommand(options.command);
 	const cwd = validateAbsolutePath(options.cwd, "Codex working directory");
-	await verifyCodexCliVersion(executable, cwd, options.env);
+	await verifyCodexCliVersion(executable, cwd, options.env, options.boundary);
 
-	const child = spawn(executable, buildCodexAppServerArguments(), {
+	const prepared = await prepareContainedProcess(options.boundary, {
+		executable,
+		argv: buildCodexAppServerArguments(),
 		cwd,
+		env: options.env,
+	});
+	const child = spawn(prepared.executable, [...prepared.argv], {
+		cwd: prepared.cwd,
 		detached: true,
-		env: { ...options.env },
+		env: { ...prepared.env },
 		stdio: ["pipe", "pipe", "pipe"],
 		shell: false,
 	});
@@ -144,11 +152,18 @@ async function verifyCodexCliVersion(
 	executable: string,
 	cwd: string,
 	env: NodeJS.ProcessEnv,
+	boundary: CodexProcessBoundary,
 ): Promise<void> {
-	const child = spawn(executable, ["--version"], {
+	const prepared = await prepareContainedProcess(boundary, {
+		executable,
+		argv: ["--version"],
 		cwd,
+		env,
+	});
+	const child = spawn(prepared.executable, [...prepared.argv], {
+		cwd: prepared.cwd,
 		detached: true,
-		env: { ...env },
+		env: { ...prepared.env },
 		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
 	});
@@ -193,6 +208,19 @@ async function verifyCodexCliVersion(
 		});
 	} finally {
 		if (timeout !== undefined) clearTimeout(timeout);
+	}
+}
+
+async function prepareContainedProcess(
+	boundary: CodexProcessBoundary,
+	request: Parameters<CodexProcessBoundary["prepare"]>[0],
+) {
+	try {
+		return await boundary.prepare(request);
+	} catch (error) {
+		throw new CodexAppServerError("policy", "Codex process containment could not be prepared", {
+			cause: error,
+		});
 	}
 }
 

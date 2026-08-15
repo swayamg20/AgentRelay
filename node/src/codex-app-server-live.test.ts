@@ -2,6 +2,7 @@ import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { directCodexProcessBoundaryForTests } from "../test-support/direct-codex-process-boundary.js";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 
@@ -26,6 +27,7 @@ describe.runIf(process.env.AGENTRELAY_TEST_CODEX_BIN)("installed Codex app-serve
 			cwd: process.cwd(),
 			capsuleDirectory,
 			env: allowlistedLiveEnvironment(),
+			boundary: directCodexProcessBoundaryForTests,
 		});
 		expect(await client.startThread()).toMatchObject({
 			thread: { cliVersion: SUPPORTED_CODEX_CLI_VERSION, cwd: process.cwd(), ephemeral: false },

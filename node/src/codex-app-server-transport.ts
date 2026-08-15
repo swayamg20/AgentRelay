@@ -11,6 +11,7 @@ import {
 } from "./codex-app-server-process.js";
 import type { CodexServerMessage } from "./codex-app-server-protocol.js";
 import { parseCodexServerMessage } from "./codex-app-server-protocol.js";
+import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_QUEUED_EVENTS = 1_024;
@@ -20,6 +21,7 @@ export interface CodexAppServerTransportOptions {
 	readonly command: CodexAppServerCommand;
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
+	readonly boundary: CodexProcessBoundary;
 	readonly requestTimeoutMs?: number;
 	readonly handleServerRequest: (request: CodexServerRequest) => CodexServerRequestDecision;
 }
