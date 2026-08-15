@@ -48,6 +48,8 @@ export interface ContainmentLayout {
 	readonly controlRoot: string;
 	readonly launcherHome: string;
 	readonly launcherPath: string;
+	readonly stagedProbeRoot: string;
+	readonly stagedProbeExecutable: string;
 	readonly runtimeRoot: string;
 	readonly runtimeHome: string;
 	readonly runtimeTmp: string;

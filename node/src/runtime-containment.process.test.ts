@@ -1,6 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import {
 	appendFile,
+	chmod,
+	copyFile,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -39,11 +41,10 @@ describe.runIf(
 	it("allows only the bound workspace, read roots, and private runtime directories", async () => {
 		const fixture = await createFixture();
 		const launcher = await resolvePinnedCodex();
-		const providerExecutable = await realpath(process.execPath);
 		const provider = {
-			executable: providerExecutable,
-			readRoot: await realpath(dirname(providerExecutable)),
-			sha256: await sha256File(providerExecutable),
+			executable: fixture.providerExecutable,
+			readRoot: fixture.providerRoot,
+			sha256: await sha256File(fixture.providerExecutable),
 		};
 		const input = {
 			controlDirectory: fixture.control,
@@ -180,6 +181,8 @@ async function createFixture() {
 	const ownerHome = join(root, "owner-home");
 	const control = join(root, "control");
 	const runtime = join(root, "runtime");
+	const providerRoot = join(root, "provider-runtime");
+	const providerExecutable = join(providerRoot, "node");
 	const sharedTemp = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-shared-temp-")));
 	temporaryRoots.push(sharedTemp);
 	await Promise.all([
@@ -190,7 +193,10 @@ async function createFixture() {
 		mkdir(join(ownerHome, ".aws"), { recursive: true }),
 		mkdir(join(ownerHome, ".azure"), { recursive: true }),
 		mkdir(control, { mode: 0o700 }),
+		mkdir(providerRoot, { mode: 0o700 }),
 	]);
+	await copyFile(await realpath(process.execPath), providerExecutable);
+	await chmod(providerExecutable, 0o500);
 	await Promise.all([
 		writeFile(join(readOnly, "allowed.txt"), "approved\n"),
 		writeFile(join(sibling, "secret.txt"), "sibling-canary\n"),
@@ -235,6 +241,8 @@ async function createFixture() {
 		ownerHome,
 		control,
 		runtime,
+		providerRoot,
+		providerExecutable,
 		sharedTemp,
 		probe,
 		recoveryHelper,

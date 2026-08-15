@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { open, readlink, realpath, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { PinnedExecutable } from "./codex-sandbox-contract.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -20,17 +20,6 @@ export interface CodexSandboxProbeInput {
 	readonly gitDirectory: string;
 	readonly runtimeTmp: string;
 	readonly probe: ContainmentProbeExecutable;
-}
-
-export async function resolveContainmentProbe(
-	sha256File: (path: string) => Promise<string>,
-): Promise<ContainmentProbeExecutable> {
-	const executable = await realpath(process.execPath);
-	return {
-		executable,
-		readRoot: await realpath(dirname(executable)),
-		sha256: await sha256File(executable),
-	};
 }
 
 /** Runs an actual child through the effective profile before any provider is admitted. */

@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CodexProcessBoundary, CodexProcessRequest } from "./codex-process-boundary.js";
-import { buildRuntimeContainmentBinding, sha256PinnedFile } from "./codex-sandbox-binding.js";
+import { buildRuntimeContainmentBinding } from "./codex-sandbox-binding.js";
 import {
 	CODEX_SANDBOX_MANIFEST_FILE,
 	CODEX_SANDBOX_PROFILE_NAME,
@@ -11,6 +11,7 @@ import {
 	type CodexSandboxRecoveryExpectation,
 	type ContainmentLayout,
 	type ContainmentOpenMode,
+	type PinnedExecutable,
 } from "./codex-sandbox-contract.js";
 import {
 	assertAbsoluteNormalizedPath,
@@ -23,7 +24,8 @@ import {
 	prepareContainmentLayout,
 	readPrivateContainmentConfig,
 } from "./codex-sandbox-policy.js";
-import { resolveContainmentProbe, runCodexSandboxProbe } from "./codex-sandbox-probe.js";
+import { runCodexSandboxProbe } from "./codex-sandbox-probe.js";
+import { prepareStagedContainmentProbe } from "./codex-sandbox-staging.js";
 import {
 	type PreparedMissionWorkspace,
 	assertMissionWorkspaceClean,
@@ -112,6 +114,11 @@ export async function recoverCodexSandboxContainment(
 		},
 		"recover",
 		expectation,
+		{
+			executable: binding.probe.executable.path,
+			readRoot: binding.probe.read_root.path,
+			sha256: binding.probe.executable_sha256,
+		},
 	);
 }
 
@@ -119,6 +126,7 @@ async function prepareContainment(
 	input: CodexSandboxContainmentInput,
 	mode: ContainmentOpenMode,
 	recoveryExpectation?: CodexSandboxRecoveryExpectation,
+	recoveryProbe?: PinnedExecutable,
 ): Promise<CodexSandboxContainment> {
 	assertSupportedLinuxContainment();
 	assertCodexSandboxInput(input);
@@ -127,7 +135,7 @@ async function prepareContainment(
 	if (mode === "create") await assertMissionWorkspaceClean(input.workspace);
 
 	const layout = await prepareContainmentLayout(input, mode);
-	const probe = await resolveContainmentProbe(sha256PinnedFile);
+	const probe = await prepareStagedContainmentProbe(layout, mode, recoveryProbe);
 	const config = await buildCodexSandboxConfig(input, layout, probe);
 	if (mode === "create") {
 		await createPrivateContainmentConfig(layout.launcherPath, config);
@@ -166,6 +174,7 @@ async function prepareContainment(
 		boundary: new PinnedCodexSandboxBoundary(
 			input,
 			layout,
+			probe,
 			manifest.instance_id,
 			manifest.binding_sha256,
 		),
@@ -184,6 +193,7 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 	constructor(
 		private readonly input: CodexSandboxContainmentInput,
 		private readonly layout: ContainmentLayout,
+		private readonly probe: PinnedExecutable,
 		private readonly instanceId: string,
 		private readonly bindingSha256: string,
 	) {}
@@ -193,8 +203,12 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 		assertProcessRequest(request, this.input, this.layout);
 		await assertNoAmbientCodexConfiguration();
 		const config = await readPrivateContainmentConfig(this.layout.launcherPath);
-		const probe = await resolveContainmentProbe(sha256PinnedFile);
-		const binding = await buildRuntimeContainmentBinding(this.input, this.layout, config, probe);
+		const binding = await buildRuntimeContainmentBinding(
+			this.input,
+			this.layout,
+			config,
+			this.probe,
+		);
 		const manifest = await openRuntimeContainmentManifest(this.layout.manifestPath, binding);
 		if (
 			manifest.instance_id !== this.instanceId ||
