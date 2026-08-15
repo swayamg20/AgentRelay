@@ -55,6 +55,15 @@ export function hasNestedLinuxMount(mounts: readonly LinuxMount[], root: string)
 	);
 }
 
+export function assertNoNestedLinuxMounts(
+	roots: readonly string[],
+	mounts: readonly LinuxMount[],
+): void {
+	if (roots.some((root) => hasNestedLinuxMount(mounts, root))) {
+		throw new Error("Containment writable roots cannot contain nested mounts");
+	}
+}
+
 /** Rejects disjoint namespace paths that resolve to overlapping writable or secret storage. */
 export function assertNoLinuxStorageAliases(
 	roots: readonly ClassifiedLinuxRoot[],

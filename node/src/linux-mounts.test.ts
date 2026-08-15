@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	assertNoLinuxStorageAliases,
+	assertNoNestedLinuxMounts,
 	hasNestedLinuxMount,
 	parseLinuxMounts,
 } from "./linux-mounts.js";
@@ -47,5 +48,16 @@ describe("Linux mount provenance", () => {
 		);
 
 		expect(hasNestedLinuxMount(mounts, "/workspace")).toBe(true);
+	});
+
+	it("rejects a nested mount under any writable runtime root", () => {
+		const mounts = parseLinuxMounts(
+			`${MOUNT_INFO}\n33 29 8:4 /secrets /runtime/tmp/secret rw - none /secrets rw`,
+		);
+
+		expect(() =>
+			assertNoNestedLinuxMounts(["/workspace", "/runtime/home", "/runtime/tmp"], mounts),
+		).toThrow("writable roots cannot contain nested mounts");
+		expect(() => assertNoNestedLinuxMounts(["/runtime/home"], mounts)).not.toThrow();
 	});
 });

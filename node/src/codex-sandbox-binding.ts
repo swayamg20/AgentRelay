@@ -14,7 +14,11 @@ import { assertAbsoluteNormalizedPath, canonicalContainmentRoots } from "./codex
 import type { ContainmentProbeExecutable } from "./codex-sandbox-probe.js";
 import { assertContainmentReadTreesIsolated } from "./containment-read-tree.js";
 import { isPathWithin } from "./filesystem-path.js";
-import { assertNoLinuxStorageAliases, readLinuxMounts } from "./linux-mounts.js";
+import {
+	assertNoLinuxStorageAliases,
+	assertNoNestedLinuxMounts,
+	readLinuxMounts,
+} from "./linux-mounts.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
 import { revalidateMissionWorkspaceIsolation } from "./mission-workspace.js";
 import {
@@ -57,6 +61,7 @@ export async function buildRuntimeContainmentBinding(
 	];
 	const deniedRootPaths = deniedRoots.map((root) => root.path);
 	const linuxMounts = await readLinuxMounts();
+	assertNoNestedLinuxMounts(writableRoots, linuxMounts);
 	await assertContainmentReadTreesIsolated(
 		{ roots: trustedReadRoots, deniedRoots: deniedRootPaths, writableRoots },
 		linuxMounts,
