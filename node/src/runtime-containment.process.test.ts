@@ -1,15 +1,19 @@
 import { execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
 	appendFile,
 	chmod,
 	copyFile,
 	mkdir,
 	mkdtemp,
+	open,
 	readFile,
 	readlink,
 	realpath,
 	rm,
 	symlink,
+	unlink,
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,6 +34,7 @@ const temporaryRoots: string[] = [];
 const REPOSITORY_URL = "https://github.com/example/contained.git";
 const PROCESS_TIMEOUT_MS = 20_000;
 const MAX_PROCESS_OUTPUT_BYTES = 1_048_576;
+const MAX_PROBE_RESULT_BYTES = 64 * 1_024;
 
 afterAll(async () => {
 	await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })));
@@ -58,6 +63,8 @@ describe.runIf(
 		};
 		const containment = await prepareCodexSandboxContainment(input);
 		const parentNetworkNamespace = await readlink("/proc/self/ns/net");
+		const resultPath = join(containment.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
+		const resultToken = randomUUID();
 		const paths = {
 			workspaceFile: join(fixture.workspace.root, "tracked.txt"),
 			workspaceWrite: join(fixture.workspace.root, "created.txt"),
@@ -76,6 +83,8 @@ describe.runIf(
 			traversalEscape: join(fixture.workspace.root, "..", "sibling", "secret.txt"),
 			runtimeHomeWrite: join(containment.runtimeHome, "state.txt"),
 			runtimeTmpWrite: join(containment.runtimeTmp, "scratch.txt"),
+			resultPath,
+			resultToken,
 		};
 		const prepared = await containment.boundary.prepare({
 			executable: provider.executable,
@@ -87,10 +96,15 @@ describe.runIf(
 				AGENTRELAY_NODE_TOKEN: "must-not-cross",
 			},
 		});
-		const output = await run(prepared);
-		const result = JSON.parse(output.stdout) as Record<string, unknown>;
+		let result: Record<string, unknown>;
+		try {
+			const output = await run(prepared);
+			expect(output).toEqual({ stdout: "", stderr: "" });
+			result = await readContainedProbeResult(resultPath, resultToken);
+		} finally {
+			await unlink(resultPath).catch(() => undefined);
+		}
 
-		expect(output.stderr).not.toContain("must-not-cross");
 		expect(result).toMatchObject({
 			workspaceRead: true,
 			workspaceWrite: true,
@@ -311,6 +325,43 @@ async function run(processSpec: {
 	}
 	if (status !== 0) throw new Error(`Contained probe failed (${status}): ${stderr}`);
 	return { stdout, stderr };
+}
+
+async function readContainedProbeResult(
+	path: string,
+	expectedToken: string,
+): Promise<Record<string, unknown>> {
+	const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	try {
+		const stats = await handle.stat({ bigint: true });
+		const currentUid = process.getuid?.();
+		if (
+			currentUid === undefined ||
+			!stats.isFile() ||
+			(stats.mode & 0o777n) !== 0o600n ||
+			stats.nlink !== 1n ||
+			stats.uid !== BigInt(currentUid) ||
+			stats.size < 1n ||
+			stats.size > BigInt(MAX_PROBE_RESULT_BYTES)
+		) {
+			throw new Error("Contained probe result has unsafe filesystem metadata");
+		}
+		const serialized = await handle.readFile("utf8");
+		if (Buffer.byteLength(serialized, "utf8") > MAX_PROBE_RESULT_BYTES) {
+			throw new Error("Contained probe result exceeded its byte limit");
+		}
+		const envelope: unknown = JSON.parse(serialized);
+		if (!isRecord(envelope) || envelope.token !== expectedToken || !isRecord(envelope.result)) {
+			throw new Error("Contained probe result did not match its one-shot request");
+		}
+		return envelope.result;
+	} finally {
+		await handle.close();
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function killProcessGroup(pid: number | undefined): void {

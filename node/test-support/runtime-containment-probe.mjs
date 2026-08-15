@@ -31,7 +31,10 @@ const result = {
 	networkConnect: await canConnect(),
 };
 
-process.stdout.write(`${JSON.stringify(result)}\n`);
+await writeFile(paths.resultPath, JSON.stringify({ token: paths.resultToken, result }), {
+	flag: "wx",
+	mode: 0o600,
+});
 
 async function canRead(path) {
 	try {
