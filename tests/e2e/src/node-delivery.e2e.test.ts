@@ -1,17 +1,6 @@
 import { type ChildProcess, execFile as execFileCallback, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import {
-	lstat,
-	mkdir,
-	mkdtemp,
-	open,
-	readFile,
-	realpath,
-	rm,
-	unlink,
-	writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -466,7 +455,7 @@ describe("foreground Node delivery", () => {
 	}, 60_000);
 
 	it.skipIf(process.platform === "win32")(
-		"replays exactly once after operator-assisted Node recovery while its detached capsule survives",
+		"replays exactly once after direct Node restart while its detached capsule survives",
 		async () => {
 			const backend = await relay.createAgent({
 				handle: "capsule-backend@e2e",
@@ -520,11 +509,12 @@ describe("foreground Node delivery", () => {
 			const capsuleRoot = join(backendHome, "state", "capsules");
 			const missionId = randomUUID();
 			const capsuleDirectory = join(capsuleRoot, missionId);
-			const staleLockPath = join(backendHome, "run.lock");
+			const lockPath = join(backendHome, "run.lock");
 			let runningNode: TrackedNodeProcess | null = startNodeProcess(
 				backendConfigPath,
 				completionDelayMs,
 			);
+			let competingNode: TrackedNodeProcess | null = null;
 			let capsuleDescriptor: CapsuleLaunchDescriptor | null = null;
 			let socketIdentity: FileIdentity | null = null;
 			let noLaunchAdapter: PersistentFakeCapsuleAdapter | null = null;
@@ -563,10 +553,17 @@ describe("foreground Node delivery", () => {
 				if (killedPid === undefined) throw new Error("Started Node process has no PID");
 				capsuleDescriptor = await readCapsuleLaunchDescriptor(capsuleDirectory);
 				socketIdentity = await privateSocketIdentity(capsuleDescriptor.socket_path);
-				const lockIdentity = await nodeLockIdentity(staleLockPath, killedPid);
+
+				competingNode = startNodeProcess(backendConfigPath, completionDelayMs, true);
+				await expectNodeExit(competingNode, 1, "Concurrent Node start");
+				expect(competingNode.stderr).toContain("AgentRelay Node ownership is already held");
+				expect(competingNode.stderr).toContain(String(killedPid));
+				competingNode = null;
+
 				const killed = await stopNodeProcess(runningNode, "SIGKILL");
 				expect(killed).toEqual({ code: null, signal: "SIGKILL" });
 				runningNode = null;
+				expect(await lstatIfPresent(lockPath)).not.toBeNull();
 				const stateAtCrash = nodeJournalStateSchema.parse(
 					JSON.parse(await readFile(journalPath, "utf8")),
 				);
@@ -617,16 +614,7 @@ describe("foreground Node delivery", () => {
 				);
 
 				runningNode = startNodeProcess(backendConfigPath, completionDelayMs, true);
-				await expectNodeExit(runningNode, 1, "Stale-lock restart");
-				expect(runningNode.stderr).toContain(
-					`Stale AgentRelay Node lock found for non-running PID ${killedPid}`,
-				);
-				expect(runningNode.stderr).toContain(staleLockPath);
-				runningNode = null;
-
-				await reclaimKilledNodeLock(staleLockPath, killedPid, lockIdentity);
-				runningNode = startNodeProcess(backendConfigPath, completionDelayMs, true);
-				await expectNodeExit(runningNode, 0, "Operator-assisted restart");
+				await expectNodeExit(runningNode, 0, "Direct restart after SIGKILL");
 				runningNode = null;
 				const survivingSession = await noLaunchAdapter.ensureSession(capsuleDescriptor.session);
 				expect(survivingSession.sessionId).toBe(acceptedEvent.turn.sessionId);
@@ -658,9 +646,13 @@ describe("foreground Node delivery", () => {
 				expect(completionAudits).toHaveLength(1);
 			} finally {
 				try {
-					if (runningNode !== null) await stopNodeProcess(runningNode, "SIGKILL");
+					if (competingNode !== null) await stopNodeProcess(competingNode, "SIGKILL");
 				} finally {
-					await stopCapsule(noLaunchAdapter, capsuleDirectory, capsuleDescriptor, socketIdentity);
+					try {
+						if (runningNode !== null) await stopNodeProcess(runningNode, "SIGKILL");
+					} finally {
+						await stopCapsule(noLaunchAdapter, capsuleDirectory, capsuleDescriptor, socketIdentity);
+					}
 				}
 			}
 		},
@@ -971,7 +963,7 @@ function startNodeProcess(
 		stderr: "",
 		exited: new Promise((resolve, reject) => {
 			child.once("error", reject);
-			child.once("exit", (code, signal) => resolve({ code, signal }));
+			child.once("close", (code, signal) => resolve({ code, signal }));
 		}),
 	};
 	child.stdout?.setEncoding("utf8");
@@ -1110,42 +1102,6 @@ function errorCode(error: unknown): string | undefined {
 	return typeof error === "object" && error !== null && "code" in error
 		? String(error.code)
 		: undefined;
-}
-
-async function nodeLockIdentity(path: string, expectedPid: number): Promise<FileIdentity> {
-	const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-	try {
-		const stats = await handle.stat();
-		if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
-			throw new Error("Node lock is not a private regular file");
-		}
-		const decoded = JSON.parse(await handle.readFile("utf8")) as { pid?: unknown };
-		if (decoded.pid !== expectedPid) {
-			throw new Error(`Node lock does not belong to expected PID ${expectedPid}`);
-		}
-		return { dev: stats.dev, ino: stats.ino };
-	} finally {
-		await handle.close();
-	}
-}
-
-async function reclaimKilledNodeLock(
-	path: string,
-	killedPid: number,
-	expectedIdentity: FileIdentity,
-): Promise<void> {
-	try {
-		process.kill(killedPid, 0);
-		throw new Error(`Refusing to reclaim a lock while PID ${killedPid} is alive`);
-	} catch (error) {
-		if (errorCode(error) !== "ESRCH") throw error;
-	}
-	const current = await nodeLockIdentity(path, killedPid);
-	if (current.dev !== expectedIdentity.dev || current.ino !== expectedIdentity.ino) {
-		throw new Error("Refusing to reclaim a Node lock that changed after validation");
-	}
-	await unlink(path);
-	await syncDirectory(dirname(path));
 }
 
 async function stopCapsule(
