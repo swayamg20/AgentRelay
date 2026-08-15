@@ -56,8 +56,10 @@ INTEGRATION_FILES=(
   src/db/migration-0006.test.ts
   src/db/migration-0007.test.ts
   src/db/migration-0008.test.ts
+  src/db/migration-0009.test.ts
   src/db/schema.test.ts
   src/services/delivery-ledger.test.ts
+  src/services/mission-reconciliation.test.ts
   src/services/delivery-revocation.test.ts
   src/services/mission-ledger.test.ts
   src/routes/admin.test.ts

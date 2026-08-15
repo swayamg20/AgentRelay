@@ -199,16 +199,20 @@ export const deliveryCompleteResultSchema = z
 	.strict()
 	.superRefine((result, ctx) => {
 		validateOperationResult(result, ctx);
-		if (result.events.some((event) => event.type === "participants_accepted")) {
+		if (
+			result.events.some(
+				(event) => event.type === "participants_accepted" || event.type === "mission_terminal",
+			)
+		) {
 			ctx.addIssue({
 				code: z.ZodIssueCode.custom,
-				message: "A Node completion cannot publish participant acceptance",
+				message: "A Node completion cannot publish Relay-owned Mission events",
 				path: ["events"],
 			});
 			return;
 		}
 		for (const [index, event] of result.events.entries()) {
-			if (event.type === "participants_accepted") {
+			if (event.type === "participants_accepted" || event.type === "mission_terminal") {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: "Completion events must exactly match the returned delivery work",

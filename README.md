@@ -81,8 +81,11 @@ but no current descriptor or CLI activates Codex for a real model turn.
   start, renew, complete, or release a delivery.
 - Relay-issued 60-second leases bounded by Mission expiry, monotonic attempt fencing,
   exact operation replay, transactional result completion, retries, cancellation,
-  dead-lettering, and audit evidence. Delivery discovery excludes expired or
-  non-runnable Missions; current block and routing state fence later Mission work.
+  dead-lettering, and audit evidence. Delivery discovery lazily reconciles eligible
+  `active` or `verifying` Missions before reading work. The database deadline produces
+  `expired`; otherwise the earliest unsettled dead letter produces `failed`. One
+  system event, remaining-work cancellations, exact receipts, and audit evidence
+  commit transactionally; current block and routing state fence later Mission work.
 - Separately revocable Node credentials plus authenticated enrollment, credential
   rotation, Node revocation, and logical workspace registration routes. Agent and
   Node credentials are different key types; rotation is generation-fenced, and
@@ -127,9 +130,6 @@ but no current descriptor or CLI activates Codex for a real model turn.
 - A production provider-process guardian, heartbeat/liveness ownership, and
   OS-enforced workspace and secret containment for Codex; then a Claude runtime
   adapter.
-- Mission-level expiry and dead-letter reconciliation that transitions the Mission
-  and cancels remaining work instead of only hiding expired work from discovery or
-  terminating one delivery.
 - A real two-machine, two-repository proof using the public control plane.
 
 The design is in

@@ -52,9 +52,9 @@ import {
 	appendMissionEventInTransaction,
 	deliveryFromRow,
 	listStoredDeliveryEvents,
-	lockMissionMutation,
 	missionDeliveryItemFromRows,
 } from "./mission-ledger.js";
+import { reconcileMissionInTransaction, reconcileNodeMissions } from "./mission-reconciliation.js";
 import { assertMissionTrustBoundary } from "./mission-trust.js";
 import {
 	type NodeCredentialContext,
@@ -75,10 +75,24 @@ interface LockedDeliveryContext {
 	readonly workspaceStatus: string;
 }
 
+interface LockedDeliveryResult {
+	readonly context: LockedDeliveryContext;
+	readonly now: Date;
+	readonly reconciledStatus: string | null;
+}
+
+const postCommitRejection = Symbol("postCommitRejection");
+
+interface PostCommitRejection {
+	readonly [postCommitRejection]: true;
+	readonly error: unknown;
+}
+
 export async function listAvailableDeliveryEvents(
 	db: Database,
 	input: { readonly nodeId: string; readonly page: unknown },
 ) {
+	await reconcileNodeMissions(db, input.nodeId);
 	return listStoredDeliveryEvents(db, input);
 }
 
@@ -87,6 +101,7 @@ export async function listRecoverableDeliveryEvents(
 	input: { readonly nodeId: string; readonly page: unknown },
 ) {
 	const page = recoverableMissionDeliveryPageRequestSchema.parse(input.page);
+	await reconcileNodeMissions(db, input.nodeId);
 	const asOf = await readDatabaseClock(db);
 	const rows = await db
 		.select({ delivery: nodeDeliveries, event: missionEvents })
@@ -126,18 +141,20 @@ export async function claimDelivery(
 	const parsed = deliveryClaimInputSchema.parse(input);
 	const storedInput = operationInput(deliveryId, parsed);
 
-	return db.transaction(async (tx) => {
-		await lockNodeMutation(tx, auth.nodeId);
-		await assertActiveNodeCredential(tx, auth);
-		let context = await lockAuthorizedDeliveryContext(tx, auth, deliveryId);
+	return runLockedDeliveryOperation(db, auth, deliveryId, async (tx, locked) => {
+		let { context } = locked;
+		await assertMissionRoutingAuthority(tx, context.mission);
 		const replay = await replayClaim(tx, auth.nodeId, deliveryId, parsed, storedInput);
 		if (replay !== null) {
 			await assertDeliveryMissionTrust(tx, context.mission);
 			assertReplayableDelivery(context.delivery);
 			return replay;
 		}
+		if (locked.reconciledStatus !== null) {
+			throw terminalMutationError(locked.reconciledStatus);
+		}
 		await assertDeliveryMissionTrust(tx, context.mission);
-		const now = await readDatabaseClock(tx);
+		const { now } = locked;
 		assertRunnableContext(context, now);
 
 		if (context.delivery.status === "leased" || context.delivery.status === "executing") {
@@ -313,17 +330,18 @@ export async function completeDelivery(
 	const parsed = deliveryCompleteInputSchema.parse(input);
 	const storedInput = operationInput(deliveryId, parsed);
 
-	return db.transaction(async (tx) => {
-		await lockNodeMutation(tx, auth.nodeId);
-		await assertActiveNodeCredential(tx, auth);
-		const context = await lockAuthorizedDeliveryContext(tx, auth, deliveryId);
+	return runLockedDeliveryOperation(db, auth, deliveryId, async (tx, locked) => {
+		const { context, now } = locked;
+		await assertMissionRoutingAuthority(tx, context.mission);
 		const replay = await replayComplete(tx, auth.nodeId, deliveryId, parsed, storedInput);
 		if (replay !== null) {
 			assertReplayableDelivery(context.delivery);
 			return replay;
 		}
+		if (locked.reconciledStatus !== null) {
+			throw terminalMutationError(locked.reconciledStatus);
+		}
 		await assertDeliveryMissionTrust(tx, context.mission);
-		const now = await readDatabaseClock(tx);
 		assertRunnableContext(context, now);
 		if (context.delivery.status !== "executing" || context.delivery.settledByEventId !== null) {
 			throw new RelayError(
@@ -483,10 +501,9 @@ async function mutateLeaseDelivery<
 	mutate: (tx: DeliveryTransaction, context: LockedDeliveryContext, now: Date) => Promise<TResult>,
 ): Promise<TResult> {
 	const storedInput = operationInput(deliveryId, input);
-	return db.transaction(async (tx) => {
-		await lockNodeMutation(tx, auth.nodeId);
-		await assertActiveNodeCredential(tx, auth);
-		const context = await lockAuthorizedDeliveryContext(tx, auth, deliveryId);
+	return runLockedDeliveryOperation(db, auth, deliveryId, async (tx, locked) => {
+		const { context, now } = locked;
+		await assertMissionRoutingAuthority(tx, context.mission);
 		const replay = await replayOperation(
 			tx,
 			auth.nodeId,
@@ -503,13 +520,18 @@ async function mutateLeaseDelivery<
 			assertReplayableDelivery(context.delivery);
 			return replay;
 		}
+		if (locked.reconciledStatus !== null) {
+			throw terminalMutationError(locked.reconciledStatus);
+		}
 		await assertDeliveryMissionTrust(tx, context.mission);
-		const now = await readDatabaseClock(tx);
 		assertRunnableContext(context, now);
 		const result = await mutate(tx, context, now);
 		const receipt = deliveryOperationReceiptSchema.parse(result.receipt);
 		await persistNodeReceipt(tx, auth, context.delivery, receipt, storedInput, result);
 		await auditNodeOperation(tx, auth, context.delivery, receipt);
+		if (receipt.status_after === "dead_lettered") {
+			await reconcileMissionInTransaction(tx, context.delivery.missionId);
+		}
 		return result;
 	});
 }
@@ -615,16 +637,74 @@ async function prefetchMissionId(
 	return row.missionId;
 }
 
-async function lockAuthorizedDeliveryContext(
+async function reconcileAndLockDeliveryContext(
 	tx: DeliveryTransaction,
 	auth: NodeCredentialContext,
 	deliveryId: string,
-): Promise<LockedDeliveryContext> {
+): Promise<LockedDeliveryResult> {
 	const missionId = await prefetchMissionId(tx, auth.nodeId, deliveryId);
-	await lockMissionMutation(tx, missionId);
+	const reconciliation = await reconcileMissionInTransaction(tx, missionId);
 	const mission = await loadMission(tx, missionId);
-	await assertMissionRoutingAuthority(tx, mission);
-	return lockDeliveryContext(tx, auth, deliveryId, mission);
+	return {
+		context: await lockDeliveryContext(tx, auth, deliveryId, mission),
+		now: reconciliation.checkedAt,
+		reconciledStatus: reconciliation.reconciled ? reconciliation.status : null,
+	};
+}
+
+async function runLockedDeliveryOperation<TResult>(
+	db: Database,
+	auth: NodeCredentialContext,
+	deliveryId: string,
+	operation: (tx: DeliveryTransaction, locked: LockedDeliveryResult) => Promise<TResult>,
+): Promise<TResult> {
+	return runDeliveryTransaction(db, async (tx) => {
+		await lockNodeMutation(tx, auth.nodeId);
+		await assertActiveNodeCredential(tx, auth);
+		const locked = await reconcileAndLockDeliveryContext(tx, auth, deliveryId);
+		return preserveReconciliation(locked, () => operation(tx, locked));
+	});
+}
+
+async function runDeliveryTransaction<TResult>(
+	db: Database,
+	operation: (tx: DeliveryTransaction) => Promise<TResult | PostCommitRejection>,
+): Promise<TResult> {
+	const outcome = await db.transaction(operation);
+	if (isPostCommitRejection(outcome)) throw outcome.error;
+	return outcome;
+}
+
+function terminalMutationError(status: string): RelayError {
+	return new RelayError(
+		"invalid_transition",
+		`Mission reconciled to ${status} before the delivery mutation`,
+	);
+}
+
+async function preserveReconciliation<TResult>(
+	locked: LockedDeliveryResult,
+	operation: () => Promise<TResult>,
+): Promise<TResult | PostCommitRejection> {
+	try {
+		return await operation();
+	} catch (error) {
+		if (locked.reconciledStatus !== null) return postCommitReject(error);
+		throw error;
+	}
+}
+
+function postCommitReject(error: unknown): PostCommitRejection {
+	return { [postCommitRejection]: true, error };
+}
+
+function isPostCommitRejection(value: unknown): value is PostCommitRejection {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		postCommitRejection in value &&
+		(value as PostCommitRejection)[postCommitRejection] === true
+	);
 }
 
 async function assertDeliveryMissionTrust(
@@ -1032,6 +1112,7 @@ async function deadLetterExpiredFinalClaim(
 	});
 	await persistNodeReceipt(tx, auth, deadLettered, receipt, storedInput, result);
 	await auditNodeOperation(tx, auth, deadLettered, receipt);
+	await reconcileMissionInTransaction(tx, deadLettered.missionId);
 	return result;
 }
 

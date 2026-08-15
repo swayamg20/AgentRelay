@@ -420,9 +420,8 @@ export const missionEvents = pgTable(
 			.references(() => missions.id, { onDelete: "restrict" }),
 		sequenceNo: integer("sequence_no").notNull(),
 		type: text("type").notNull(),
-		actorAgentId: uuid("actor_agent_id")
-			.notNull()
-			.references(() => agents.id, { onDelete: "restrict" }),
+		actorKind: text("actor_kind").notNull().default("agent"),
+		actorAgentId: uuid("actor_agent_id").references(() => agents.id, { onDelete: "restrict" }),
 		idempotencyKey: text("idempotency_key").notNull(),
 		sourceDeliveryId: uuid("source_delivery_id"),
 		causalParentEventId: uuid("causal_parent_event_id"),
@@ -444,9 +443,30 @@ export const missionEvents = pgTable(
 			foreignColumns: [missionParticipants.missionId, missionParticipants.agentId],
 			name: "mission_events_actor_participant_fk",
 		}),
+		actorKindCheck: check(
+			"mission_events_actor_kind_chk",
+			sql`${t.actorKind} IN ('agent','system')`,
+		),
+		actorIdentityCheck: check(
+			"mission_events_actor_identity_chk",
+			sql`(
+				(${t.actorKind} = 'agent' AND ${t.actorAgentId} IS NOT NULL)
+				OR (${t.actorKind} = 'system' AND ${t.actorAgentId} IS NULL)
+			)`,
+		),
+		actorEventCheck: check(
+			"mission_events_actor_event_chk",
+			sql`(
+				(${t.type} = 'mission_terminal' AND ${t.actorKind} = 'system')
+				OR (${t.type} != 'mission_terminal' AND ${t.actorKind} = 'agent')
+			)`,
+		),
 		typeCheck: check(
 			"mission_events_type_chk",
-			sql`${t.type} IN ('participants_accepted','turn_completed','contract_acknowledged','verification_recorded')`,
+			sql`${t.type} IN (
+				'participants_accepted','turn_completed','contract_acknowledged',
+				'verification_recorded','mission_terminal'
+			)`,
 		),
 		sequenceCheck: check("mission_events_sequence_chk", sql`${t.sequenceNo} > 0`),
 	}),

@@ -425,6 +425,24 @@ describe("delivery operation results", () => {
 		expect(
 			deliveryCompleteResultSchema.safeParse({
 				...result,
+				events: [
+					{
+						event_id: event.event_id,
+						idempotency_key: event.idempotency_key,
+						mission_id: event.mission_id,
+						sequence_no: event.sequence_no,
+						created_at: event.created_at,
+						type: "mission_terminal",
+						terminal_status: "expired",
+						reason: "deadline_exceeded",
+						triggering_delivery_id: null,
+					},
+				],
+			}).success,
+		).toBe(false);
+		expect(
+			deliveryCompleteResultSchema.safeParse({
+				...result,
 				delivery: {
 					...acknowledgedDelivery,
 					logical_settlement: { ...settlement, settled_by_event_id: IDS.derived },

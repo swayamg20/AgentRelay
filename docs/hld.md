@@ -62,7 +62,8 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - Node-authenticated cursor polling and recovery discovery, followed by fenced claim,
   start, renew, complete, and release operations. Completion commits the Mission
   result, source settlement, acknowledgement, downstream deliveries, receipt, and
-  audit consequences in one transaction.
+  audit consequences in one transaction. Delivery discovery and delivery operations
+  lazily reconcile eligible terminal causes under the same Mission lock.
 - Agent-authenticated Node enrollment, credential rotation, and revocation routes,
   plus Node-authenticated logical workspace registration and revocation. These
   operations are audited in the same transaction as their state changes.
@@ -167,7 +168,8 @@ Agent 1---N Node ---N NodeCredential
 - `NodeCredential` stores only the hashed, separately revocable credential used by
   one active Node. Its raw token is returned only when enrolled or rotated.
 - `Mission` stores the immutable coordinator config plus a reducer projection;
-  `MissionEvent` is append-only and ordered within that Mission.
+  `MissionEvent` is append-only and ordered within that Mission. Events have explicit
+  `agent` or `system` actors; Relay-owned `mission_terminal` has no Agent actor.
 - `NodeDelivery` points one Node cursor to work derived from a committed Mission
   event. It moves through `stored`, `leased`, `executing`, `acknowledged`,
   `cancelled`, or `dead_lettered`, with attempt, fencing, lease, availability, and
@@ -249,6 +251,10 @@ and the relay-owned idempotency key is not exposed to the model.
 - New-work cursor polling plus a separate recovery scan; relay-issued bounded leases,
   monotonic attempt fencing, exact operation receipts, retry/dead-letter transitions,
   relay cancellation, and atomic Mission-result completion.
+- Deterministic lazy terminal reconciliation: deadline maps eligible Missions to
+  `expired`, otherwise the earliest unsettled dead letter maps them to `failed`, with
+  one system event, remaining-work cancellations, receipts, and audits committed
+  atomically.
 - Node enrollment, credential rotation/revocation, logical workspace registration,
   exact workspace replay, and atomic Node-to-credential/workspace revocation. Node,
   workspace, and owner revocation also cancel active work across affected Missions.
@@ -279,9 +285,6 @@ and the relay-owned idempotency key is not exposed to the model.
 - Automatic worktree isolation and complete per-Mission command/network mediation.
 - Contract-acknowledgement and registered verification-command delivery handlers.
 - Local command, edit, test, and permission-decision audit.
-- Background or lazy Mission-level expiry/dead-letter reconciliation. Expired
-  Missions are filtered from delivery discovery, but their row and all remaining
-  deliveries are not automatically moved to terminal states.
 - A real two-machine, two-repository execution proof.
 - A current A2A compatibility proof.
 
@@ -350,8 +353,12 @@ section of [`architecture.md`](architecture.md).
   aggregate activation event and first turn. A failed delivery insert rolls back that
   entire mutation.
 - Cursor reads discover only newly due stored work; the separate recovery scan finds
-  due retried work and active or expired leases regardless of cursor age. Both hide
-  work for expired or non-runnable Missions, but do not transition the Mission.
+  due retried work and active or expired leases regardless of cursor age. Both
+  reconcile before reading. Every delivery operation also reconciles before applying
+  fresh authority or validating exact replay. Deadline wins over dead letter;
+  otherwise the earliest unsettled dead-letter cursor is authoritative. Reconciliation
+  is serialized with normal Mission mutation, no-ops after terminalization, cancels
+  remaining `stored`/`leased`/`executing` work, and fences delayed output.
 - Claim uses relay database time to issue a 60-second lease bounded by Mission expiry,
   increments the attempt, and uses that attempt as the fence. A stale holder cannot
   start, renew, release, or complete after re-lease. New mutations re-check current
@@ -362,8 +369,8 @@ section of [`architecture.md`](architecture.md).
   work to `stored` with relay backoff; permanent, policy, exhausted, or Mission-bound
   failure dead-letters it. Reclaiming a non-final expired lease records Relay expiry
   evidence before issuing the next claim; an expired final attempt instead produces
-  one terminal Node claim receipt with `claim_outcome: dead_lettered`. No process
-  promotes that terminal delivery outcome to a Mission-wide terminal state.
+  one terminal Node claim receipt with `claim_outcome: dead_lettered`, which then
+  reconciles the Mission to `failed` when the deadline has not already expired it.
 - Node credential rotation is a compare-and-swap against the owner-visible active
   credential ID and serializes with workspace mutations. Concurrent rotations from
   one credential generation cannot both succeed. Node revocation atomically disables
@@ -380,5 +387,4 @@ API with either an in-process fake or a detached persistent fake Capsule. A pinn
 Codex client and injected runner now pass the provider-neutral Capsule wire with fake
 app-server clients, but remain unactivated. The next runtime checkpoint is
 guardian-owned, OS-contained CLI activation and a real model turn, followed by a
-two-machine run; Mission-level expiry/dead-letter reconciliation remains a separate
-relay gap.
+two-machine run.

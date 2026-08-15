@@ -1,9 +1,9 @@
 # Delivery lease control plane
 
-- **Date:** 2026-08-02
+- **Date:** 2026-08-14
 - **Status:** Implemented and covered at the Relay service/HTTP boundary; foreground
-  Node journaling and detached fake-Capsule recovery are implemented, while Relay
-  restart, a real runtime, and two-machine proof remain pending.
+  Node journaling, detached fake-Capsule recovery, and Relay-process restart/replay
+  are implemented. A guarded real runtime and two-machine proof remain pending.
 - **Decision:** Build a database-backed Node delivery API before starting a local
   runtime.
 - **Scope:** Poll, claim, start, renew, complete, release, retry discovery, and
@@ -33,8 +33,7 @@ receipts for every state-changing delivery operation.
 - `release` returns transient work to stored state with relay-controlled backoff or
   dead-letters terminal and exhausted work.
 - Relay-owned cancellation closes work invalidated by sibling settlement, workspace
-  revocation, or Node revocation. Mission-wide terminal reconciliation remains a
-  separate pending control-plane responsibility.
+  revocation, Node revocation, or Mission terminal reconciliation.
 
 The wire never accepts Node identity, participant identity, server time, lease expiry,
 lease duration, a local path, or runtime policy. Those values come from authentication,
@@ -43,7 +42,10 @@ stored Mission routing, relay policy, and the database clock.
 ## Implemented surface
 
 Migration `relay/drizzle/0007_delivery_claims.sql` extends the durable delivery
-projection and adds append-only operation receipts. The authenticated routes are:
+projection and adds append-only operation receipts. Migration
+`relay/drizzle/0009_mission_terminal_reconciliation.sql` adds system-authored terminal
+Mission events while preserving the historical agent-event rows. The authenticated
+routes are:
 
 - `POST /agents/me/missions` for participant-owned Mission creation;
 - `GET /node/v1/missions`, `GET /node/v1/missions/:missionId`, and
@@ -66,17 +68,19 @@ rewrite the historical ledger.
 Each Node mutation uses this lock order:
 
 1. Serialize with Node credential rotation and revocation.
-2. Revalidate the exact active credential, Node, owner, participant, and workspace.
+2. Revalidate the exact active credential, Node, and owner.
 3. Resolve the Mission ID only through the exact Node-scoped delivery.
-4. Lock the Mission, revalidate all participant routing, then lock the exact delivery
-   row with `SELECT ... FOR UPDATE`.
-5. Resolve the exact Node-scoped idempotency receipt under those locks. Replay still
-   checks routing/revocation and cancellation; claim/start/renew replay also checks
-   current mutual trust, while complete/release returns only historical evidence.
-6. For a fresh mutation, lock and revalidate the Mission trust boundary.
-7. Read `clock_timestamp()` after blocking locks are held, then recheck Mission
-   status/expiry, delivery status/settlement, lease ID, fence, and deadline.
-8. Commit the delivery projection, any resulting Mission event, receipt, and audit
+4. Lock the Mission, read `clock_timestamp()`, and reconcile an eligible deadline or
+   unresolved dead letter before locking the exact delivery row with
+   `SELECT ... FOR UPDATE`.
+5. Revalidate participant routing, then resolve the exact Node-scoped idempotency
+   receipt under those locks. Replay still checks routing/revocation and cancellation;
+   claim/start/renew replay also checks current mutual trust, while complete/release
+   returns only historical evidence.
+6. For a fresh mutation, reject any just-reconciled terminal outcome, revalidate the
+   Mission trust boundary, and check Mission status/expiry, delivery
+   status/settlement, lease ID, fence, and deadline against the same database time.
+7. Commit the delivery projection, any resulting Mission event, receipt, and audit
    evidence together.
 
 PostgreSQL documents that `FOR UPDATE` blocks competing writers and lockers on the
@@ -129,12 +133,14 @@ These cases have deterministic Postgres coverage in
 `relay/src/db/migration-0007.test.ts`. They prove the in-process Relay boundary, not a
 real Node journal, a killed Relay process, or two-machine execution.
 
-## Remaining lifecycle work
+## Lifecycle follow-up
 
-- Expired and terminal Mission deliveries are excluded from discovery, so stale rows
-  cannot consume a bounded recovery page. The Relay does not yet append an explicit
-  `expired`, `blocked`, or `failed` Mission transition when expiry or dead-lettering
-  makes progress impossible.
+- Delivery discovery now lazily reconciles eligible Mission deadlines to `expired`
+  and unsettled dead letters to `failed`; every delivery operation crosses the same
+  Mission-lock fence before fresh authority or exact-replay validation. The
+  transaction appends one system terminal event,
+  cancels remaining runnable work, and records receipts and audits. There is no
+  background scheduler.
 - Mission assignment discovery is newest-first with a stable Node-scoped keyset
   cursor. The foreground Node durably advances one bounded page after servicing
   delivery work, while the Relay uses database time to exclude expired
@@ -142,10 +148,10 @@ real Node journal, a killed Relay process, or two-machine execution.
   recovery at the start of a cycle.
 - The foreground Node now persists its cursor, exact operation intent, lease/fence,
   Mission session, and host-turn mapping in an atomic local journal. Its detached
-  fake Capsule persists the exact start input, turn, and event stream independently;
-  the Node-process kill/restart test proves one recovered fake-host result. Relay
-  restart, real-runtime recovery, and two-machine correctness remain unproved end to
-  end.
+  fake Capsule persists the exact start input, turn, and event stream independently.
+  Process-level tests now prove both Node/Capsule recovery and Relay restart/reconnect
+  through public cursor and recovery polling. Real-runtime recovery and two-machine
+  correctness remain unproved end to end.
 
 The local checkpoint and its deliberate nonclaims are recorded in
 [`002-foreground-node-runtime.md`](002-foreground-node-runtime.md) and

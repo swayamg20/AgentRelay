@@ -308,7 +308,10 @@ stored | leased | executing -> cancelled  (Relay-owned revocation/invalidation)
 
 Delivery is at least once. Each retry increments attempt count and applies bounded
 backoff. A true terminal delivery failure becomes `dead_lettered`; Mission policy then
-moves the Mission to `blocked` or `failed`.
+moves an eligible Mission deterministically. Its database deadline produces
+`expired`; otherwise its earliest unsettled dead-lettered delivery produces `failed`.
+These causes never select `blocked` or `cancelled`. Reconciliation cancels remaining
+runnable deliveries and rejects delayed output.
 
 Each new lease also advances a monotonic fencing token. Node-owned start, renewal,
 release, and result publication must present the active lease ID and token before the
@@ -427,8 +430,8 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    workspace-binding, and run schemas with state-machine tests.
 3. **Implemented at the Relay boundary:** transactional event/delivery append, Node
    cursor polling, leases, acknowledgement, retry, exact replay, and revocation.
-   A journaled client now covers runner reconstruction; Relay-process restart still
-   belongs to later control-plane evidence.
+   A journaled client covers runner reconstruction, and a real Relay-process restart
+   proof converges public cursor polling, recovery discovery, and exact receipt replay.
 4. **In progress:** the foreground `node/` daemon now consumes a pre-issued device
    credential, registers logical workspaces, journals cursor/operation/session/event
    state, enforces repository and local-profile preflight, and drives the fake adapter

@@ -846,6 +846,75 @@ describe("Mission coordinator", () => {
 		expect(reduceMissionCoordinatorEvent(afterFirst, firstReply)).toBe(afterFirst);
 		expect(afterFirst).toMatchObject({ status: "active", turn_count: 1 });
 	});
+
+	it.each([
+		["expired", "deadline_exceeded", null],
+		["failed", "delivery_dead_lettered", deliveryId(2)],
+	] as const)(
+		"accepts a Relay terminal event that moves active work to %s",
+		(terminalStatus, reason, triggeringDeliveryId) => {
+			const active = replayMissionCoordinatorEvents(CONFIG, [acceptedEvent(1)]);
+			const terminal = missionTerminalEvent(2, terminalStatus, reason, triggeringDeliveryId);
+			const reduced = reduceMissionCoordinatorEvent(active, terminal);
+
+			expect(reduced).toMatchObject({
+				status: terminalStatus,
+				sequence_no: 2,
+				pending_revision: null,
+				current_participant_agent_id: null,
+				ready_agent_ids: [],
+				verification_records: [],
+			});
+			expect(reduceMissionCoordinatorEvent(reduced, terminal)).toBe(reduced);
+			expect(() =>
+				reduceMissionCoordinatorEvent(
+					reduced,
+					replyTurn(3, IDS.backend, 1, IDS.message1, null, "Late output."),
+				),
+			).toThrow(/terminal/);
+		},
+	);
+
+	it("expires a verifying Mission and clears in-flight coordinator progress", () => {
+		const verifying = replayMissionCoordinatorEvents(CONFIG, [
+			acceptedEvent(1),
+			readyTurn(2, IDS.backend, 1),
+			readyTurn(3, IDS.android, 1),
+			verificationEvent(4, IDS.backend, 1, "backend-contract"),
+		]);
+
+		const expired = reduceMissionCoordinatorEvent(
+			verifying,
+			missionTerminalEvent(5, "expired", "deadline_exceeded", null),
+		);
+
+		expect(expired).toMatchObject({
+			status: "expired",
+			ready_agent_ids: [],
+			verification_records: [],
+		});
+	});
+
+	it("rejects participant-state terminalization and mismatched terminal causes", () => {
+		const initial = createMissionCoordinatorState(CONFIG);
+		expect(() =>
+			reduceMissionCoordinatorEvent(
+				initial,
+				missionTerminalEvent(1, "expired", "deadline_exceeded", null),
+			),
+		).toThrow(/terminal_state/);
+		expect(
+			missionCoordinatorEventSchema.safeParse({
+				...missionTerminalEvent(1, "failed", "delivery_dead_lettered", deliveryId(1)),
+				triggering_delivery_id: null,
+			}).success,
+		).toBe(false);
+		expect(
+			missionCoordinatorAppendInputSchema.safeParse(
+				toAppendInput(missionTerminalEvent(1, "expired", "deadline_exceeded", deliveryId(1))),
+			).success,
+		).toBe(false);
+	});
 });
 
 function acceptedEvent(sequence: number) {
@@ -854,6 +923,21 @@ function acceptedEvent(sequence: number) {
 		type: "participants_accepted" as const,
 		participant_agent_ids: [IDS.backend, IDS.android],
 		contract: structuredClone(CONTRACT_V1),
+	};
+}
+
+function missionTerminalEvent(
+	sequence: number,
+	terminalStatus: "expired" | "failed",
+	reason: "deadline_exceeded" | "delivery_dead_lettered",
+	triggeringDeliveryId: string | null,
+) {
+	return {
+		...envelope(sequence),
+		type: "mission_terminal" as const,
+		terminal_status: terminalStatus,
+		reason,
+		triggering_delivery_id: triggeringDeliveryId,
 	};
 }
 
