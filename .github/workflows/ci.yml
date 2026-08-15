@@ -143,6 +143,15 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # Ubuntu 24.04 gates unprivileged user namespaces behind AppArmor. This
+      # disposable proof host must expose the namespace primitive that the
+      # production boundary probes and otherwise fails closed on.
+      - name: Enable the Linux namespace prerequisite
+        run: |
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       # The containment scanner deliberately rejects package trees that are
       # hard-linked back into pnpm's content-addressed store.
       - run: pnpm install --frozen-lockfile --package-import-method=copy
