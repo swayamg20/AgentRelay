@@ -19,6 +19,7 @@ export async function prepareStagedContainmentProbe(
 	layout: ContainmentLayout,
 	mode: ContainmentOpenMode,
 	recovery?: PinnedExecutable,
+	sourceExecutable: string = process.execPath,
 ): Promise<PinnedExecutable> {
 	if (mode === "recover") {
 		if (
@@ -32,7 +33,7 @@ export async function prepareStagedContainmentProbe(
 		return recovery;
 	}
 
-	const source = await realpath(process.execPath);
+	const source = await realpath(sourceExecutable);
 	const sha256 = await stageExecutable(source, layout.stagedProbeExecutable);
 	return Object.freeze({
 		executable: layout.stagedProbeExecutable,
