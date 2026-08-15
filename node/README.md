@@ -3,7 +3,8 @@
 `agentrelay-node` is the owner-controlled local execution boundary for AgentRelay
 Missions. This package is private and experimental. Its current purpose is to prove
 durable delivery, local authority checks, and runtime recovery with the deterministic
-fake adapter before a real coding-agent adapter is introduced.
+fake paths while the guarded Codex and Linux-containment libraries remain
+unactivated.
 
 ## What works
 
@@ -37,6 +38,10 @@ fake adapter before a real coding-agent adapter is introduced.
   correlation, separately bounded 128 MiB request and 4 MiB response frames,
   mode-0700 directories, mode-0600 files and sockets, and an allowlisted child
   environment that excludes Relay, Node, and coding-runtime credentials.
+- An unactivated guarded Codex client and injected Capsule runner, plus a Linux-only
+  Codex `0.146.0` containment library. The dedicated Linux process job proves its
+  workspace/read/deny/network boundary and pinned app-server handshake; no current
+  descriptor, CLI, or Mission lifecycle selects it.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
@@ -60,9 +65,12 @@ configuration.
 
 The Capsule checkpoint is experimental and Unix-only because its transport is a Unix
 domain socket. It is not a general local daemon manager: there is no installer, OS
-service supervisor, automatic process respawn, or real Codex/Claude adapter yet. The
-foreground Node's singleton ownership is crash-releasable, but an external service
-manager must still start a replacement process.
+service supervisor, automatic process respawn, or production Codex/Claude activation.
+The guarded Codex client, injected runner, and Linux containment boundary exist only
+as unactivated libraries; see
+[`Mission workspace containment`](../docs/research/006-mission-workspace-containment.md).
+The foreground Node's singleton ownership is crash-releasable, but an external
+service manager must still start a replacement process.
 
 ## Configuration
 
@@ -109,7 +117,8 @@ explicit loopback host during local development.
 At this checkpoint, `max_reported_tokens` feeds the host-event reducer. The other
 policy fields are validated and included in the acceptance grant hash, but turn
 deadlines, network sandboxing, and registered verification-command execution are not
-implemented yet.
+enforced by the active fake-runtime commands. The separate unactivated Linux
+containment library denies network access for processes launched through its boundary.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this
