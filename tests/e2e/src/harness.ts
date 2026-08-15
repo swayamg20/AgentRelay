@@ -54,29 +54,25 @@ export class TestRelay {
 	readonly adminToken: string;
 	readonly port: number;
 
-	private readonly child: RelayChild;
+	private child: RelayChild;
+	private readonly childEnv: Record<string, string>;
 	private stderrBuffer = "";
 	private exit: RelayExit | undefined;
 	private stopPromise: Promise<void> | undefined;
 
 	private constructor(input: {
 		child: RelayChild;
+		childEnv: Record<string, string>;
 		baseUrl: string;
 		adminToken: string;
 		port: number;
 	}) {
 		this.child = input.child;
+		this.childEnv = input.childEnv;
 		this.baseUrl = input.baseUrl;
 		this.adminToken = input.adminToken;
 		this.port = input.port;
-
-		this.child.stderr.setEncoding("utf8");
-		this.child.stderr.on("data", (chunk: string) => {
-			this.stderrBuffer += chunk;
-		});
-		this.child.once("exit", (code, signal) => {
-			this.exit = { code, signal };
-		});
+		this.observeChild();
 	}
 
 	static async boot(opts?: { databaseUrl?: string; port?: number }): Promise<TestRelay> {
@@ -103,11 +99,8 @@ export class TestRelay {
 			RELAY_LOG_LEVEL: "fatal",
 		});
 
-		const child = spawn("node", [RELAY_BIN_PATH], {
-			env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		const relay = new TestRelay({ child, baseUrl, adminToken, port });
+		const child = spawnRelay(env);
+		const relay = new TestRelay({ child, childEnv: env, baseUrl, adminToken, port });
 
 		try {
 			await relay.waitForHealth(15_000);
@@ -115,6 +108,21 @@ export class TestRelay {
 		} catch (error) {
 			await relay.stop();
 			throw new Error(`Relay failed to boot: ${errorMessage(error)}${relay.stderrForError()}`);
+		}
+	}
+
+	async restart(): Promise<void> {
+		await this.stop();
+		this.stderrBuffer = "";
+		this.exit = undefined;
+		this.stopPromise = undefined;
+		this.child = spawnRelay(this.childEnv);
+		this.observeChild();
+		try {
+			await this.waitForHealth(15_000);
+		} catch (error) {
+			await this.stop();
+			throw new Error(`Relay failed to restart: ${errorMessage(error)}${this.stderrForError()}`);
 		}
 	}
 
@@ -221,6 +229,24 @@ export class TestRelay {
 	private stderrForError(): string {
 		return this.stderrBuffer.length > 0 ? `\nstderr:\n${this.stderrBuffer}` : "\nstderr: <empty>";
 	}
+
+	private observeChild(): void {
+		const child = this.child;
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk: string) => {
+			if (this.child === child) this.stderrBuffer += chunk;
+		});
+		child.once("exit", (code, signal) => {
+			if (this.child === child) this.exit = { code, signal };
+		});
+	}
+}
+
+function spawnRelay(env: Record<string, string>): RelayChild {
+	return spawn("node", [RELAY_BIN_PATH], {
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
 }
 
 export class AgentHarness {

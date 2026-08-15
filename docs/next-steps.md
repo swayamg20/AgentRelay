@@ -72,7 +72,7 @@ in-memory scripted proof, not durable relay or real-runtime evidence.
   response, revocation-race, and final-dead-letter behavior against Postgres.
 - [x] Prove journal reopening, runner reconstruction, and duplicate cursor polling
   without a second fake-host turn.
-- [ ] Prove Relay-process restart plus Node reconnect through cursor/recovery polling;
+- [x] Prove Relay-process restart plus Node reconnect through cursor/recovery polling;
   leave SSE out of this slice.
 - [ ] Reconcile delivery expiry/dead-letter outcomes into an explicit terminal or
   blocked Mission transition instead of only hiding expired/terminal Mission work.
@@ -88,12 +88,24 @@ discovers work without claiming it; a Node must claim an exact delivery and pres
 the Relay-issued lease ID and fence before execution-related mutations. Completion
 atomically appends Mission output, settles source work, acknowledges transport, and
 stores the exact replay receipt. The foreground Node now consumes this boundary for
-turn deliveries; Relay restart and full-Mission recovery evidence remain open.
+turn deliveries. The Postgres E2E harness now restarts the real Relay child on the
+same database and port while a Node reopens its file journal.
 
 The client journal, after-host-acceptance runner reconstruction, and independently
-persistent fake-host recovery now exist. Remaining Stage 2 evidence includes
-disconnect before and after claim, an actual Relay-process restart, and rejection of
-late output after a terminal Mission.
+persistent fake-host recovery now exist. The restart proof does not use MCP, SSE,
+WebSocket, or the process-local notification queue. Its exact failure matrix is:
+
+| Failure point | Durable state at failure | Public recovery proof |
+|---|---|---|
+| Relay exits before claim | Postgres has the `stored` delivery; the Node journal has only Mission acceptance state. | The restarted Relay returns the delivery from ordered cursor polling. Cursorless recovery correctly excludes never-claimed work. |
+| Node disconnects after claim | Postgres has the active lease and fence; the file journal has the claimed delivery and advanced cursor. | Polling after that cursor returns nothing, while `/node/v1/deliveries/recoverable` returns the leased delivery. Re-ingesting it starts no host turn until execution resumes. |
+| Completion commits but its HTTP response is lost | Postgres atomically has the Mission event, acknowledged delivery, exact receipt, and audit row; the journal retains `complete_intent`. | After another Relay restart and journal reopen, replay returns the stored result with `replayed: true`. A second replay is structurally identical, the audit has one completion, and the fake host has one turn. |
+| A transient release becomes due behind the cursor | Postgres returns the delivery to `stored` with database-time backoff; the journal cursor already exceeds its creation cursor. | Cursor polling cannot rediscover it. The cursorless recovery route returns it when due, and the next claim advances the fence. |
+| Old or terminal work publishes late output | Postgres has either a newer active fence or a terminal Mission and acknowledged source delivery. | The old fence is rejected with `state_changed`; a fresh completion after the terminal max-turn transition is rejected with `invalid_transition`. Neither creates a second Mission turn. |
+
+The remaining delivery-control-plane gap is lifecycle reconciliation: delivery expiry
+or final dead-lettering still does not itself drive an explicit terminal or blocked
+Mission transition.
 
 ## 4. Build the local Node
 
