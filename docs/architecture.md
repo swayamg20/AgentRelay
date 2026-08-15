@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-08-15.
+> **Status:** Canonical system overview as of 2026-08-16.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). The accepted next target lives in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
@@ -12,7 +12,9 @@
 > [`Persistent Mission Capsule`](research/003-persistent-mission-capsule.md). The
 > unactivated Codex boundaries are recorded in
 > [`Guarded Codex client and durable Capsule journal`](research/004-codex-capsule-journal.md)
-> and [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md).
+> and [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md). The
+> Linux-first runtime boundary is recorded in
+> [`Mission workspace containment`](research/006-mission-workspace-containment.md).
 
 ## Product thesis
 
@@ -77,6 +79,12 @@ durable coordination foundations:
   fresh generation reads the exact intent once, preserves a terminal provider outcome
   when present, or records a transient failure without a second interrupt. Tests do
   not execute a model turn.
+- An unactivated Linux containment library for Codex `0.146.0`. It binds an
+  owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
+  mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
+  process proof passes. No descriptor, CLI, or Mission lifecycle selects it;
+  [research 006](research/006-mission-workspace-containment.md) owns the detailed
+  policy and evidence boundary.
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -90,9 +98,11 @@ system does not contain:
   production guardian, service supervisor, heartbeat, or real-turn proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
-- OS-enforced Codex workspace/read-root and secret containment, plus guardian-owned
-  provider generation and owner-death behavior. Environment filtering and output
-  redaction do not provide that containment.
+- Production wiring that composes the Linux containment library with a Codex
+  descriptor, durably stores its exact recovery handle before provider start, and
+  gives a guardian ownership of provider generation and owner-death behavior.
+- A supported containment boundary outside Linux. macOS explicitly fails closed in
+  this checkpoint.
 - A real two-machine execution proof through the public control plane.
 - Enforcement of the returned per-teammate trust overlay inside a runtime.
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
@@ -175,6 +185,12 @@ beneath the Capsule and revalidated as canonical, current-user-owned, and exactl
 previous provider generation is quiescent. That assertion is a seam for a future
 guardian, not current production ownership or process-death proof.
 
+The separate Node-owned containment library can wrap both the pinned Codex version
+probe and app-server spawn on Linux. Its returned recovery handle is local authority,
+not Relay evidence: future lifecycle wiring must durably store the manifest path,
+instance ID, and binding digest before it can rely on crash recovery. The current
+Capsule descriptor and CLI never construct this composition.
+
 ## Why MCP, A2A, and SSE are not the Node
 
 - **MCP** exposes local tools and context to a model host. An MCP server cannot
@@ -220,6 +236,10 @@ yet execute registered verification commands or enforce the complete wall-time,
 token-budget, network, path, and side-effect policy. Those hard limits must remain
 outside the model because the relay cannot trust usage or effects it has not
 observed. The system does not add a manager LLM with global access to every repository.
+
+The Linux containment library strengthens the available local boundary, but it does
+not change this runtime path: no Mission handler prepares it, stores its recovery
+handle, or passes its process boundary to a selected Codex descriptor today.
 
 ### Unactivated Codex execution checkpoint
 
@@ -318,6 +338,8 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   running server generation. Concurrent runtime close fences admitted work, and a
   detached driver failure requests retirement. These apply only to the unactivated
   Codex library path.
+- A Linux-only, fail-closed Codex containment library. This is library capability,
+  not an active Mission security claim.
 - Static recommended host permission configuration.
 - Local per-teammate trust parsing and decision output.
 
@@ -337,8 +359,11 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
 - The Codex recovery authority is only an injected quiescence assertion. There is no
-  production guardian that atomically owns proof plus spawn, no heartbeat/watchdog,
-  and no OS-enforced workspace/read-root or secret boundary.
+  production guardian that atomically owns proof plus spawn or heartbeat/watchdog.
+- The Linux containment boundary is not selected by the Capsule/Node CLI, and the
+  Mission lifecycle does not durably store its exact recovery handle. Its dedicated
+  Linux process proof passes as library-level evidence, but that does not activate a
+  Mission runtime; macOS remains unsupported.
 
 ### Target invariant
 
@@ -373,7 +398,9 @@ process death, so a replacement Node can restart directly and recover the same
 Capsule turn. No OS service manager currently installs, monitors, or automatically
 respawns that foreground process, and real-runtime Capsule activation remains target
 behavior. The provider-neutral server and injected Codex runner do not change which
-runtime the current CLI launches.
+runtime the current CLI launches. The same is true of the Linux containment library:
+it is not composed into that launch path, and no service lifecycle stores its
+recovery handle yet.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.
@@ -395,6 +422,8 @@ processes it after reconnecting.
   pinned read-only provider boundary and local correlation checkpoint.
 - [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md):
   provider-neutral server, schema-v2 turn lifecycle, and wire-level fake-client proof.
+- [`Mission workspace containment`](research/006-mission-workspace-containment.md):
+  Linux-only workspace policy, retained recovery identity, and activation gates.
 - [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.
@@ -407,8 +436,9 @@ they disagree, document the gap; do not present the target as already shipped.
 - **Agent:** a logical network identity owned by a person or organization.
 - **Node:** a separately authenticated relay device identity plus an experimental
   foreground daemon that launches detached fake Mission Capsules. Its library also
-  contains an unactivated provider-neutral Capsule/Codex path; in the target, it is a
-  supervised persistent per-device execution boundary.
+  contains an unactivated provider-neutral Capsule/Codex path and Linux containment
+  boundary; in the target, it is a supervised persistent per-device execution
+  boundary.
 - **Workspace binding:** a relay-visible logical alias and repository/base-ref
   constraint that the current Node maps locally to an approved checkout.
 - **Runtime adapter:** host-specific control of a coding-agent session.

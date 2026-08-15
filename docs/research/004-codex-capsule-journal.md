@@ -21,7 +21,8 @@ Separate the first real-runtime work into three boundaries:
 All three now exist as unactivated libraries. The provider-neutral server and runner
 checkpoint is detailed in research 005. The Node and `agentrelay-capsule` commands
 still select the deterministic fake runtime. No descriptor, config, or CLI path can
-start Codex.
+start Codex. The separate, also-unactivated Linux process boundary is detailed in
+[`006-mission-workspace-containment.md`](006-mission-workspace-containment.md).
 
 ## Guarded client boundary
 
@@ -151,14 +152,19 @@ Do not wire this checkpoint to a real delivery until all of these are true:
   spawn, with heartbeat and owner-death evidence;
 - revocation, deadline, and process-death races have fault tests and closed recovery
   rules against a real provider;
-- the runtime has OS-enforced workspace/read-root and secret isolation, not only
-  environment filtering and output redaction;
+- the Linux containment library is composed into the selected descriptor/CLI path,
+  and the Mission lifecycle durably stores its exact recovery handle before provider
+  start;
 - a locally selected descriptor/runtime factory activates Codex without exposing Relay
   or Node credentials;
 - the missing contract-acknowledgement and registered verification delivery handlers
-  exist for dispositions that depend on them; and
-- a real model turn passes before the two-machine Mission proof begins.
+  exist for dispositions that depend on them;
+- bounded Mission artifacts, local capability enforcement, structured dispositions,
+  and execution evidence are implemented; and
+- Guarded Real Mission 0 passes before the two-machine Mission proof begins.
 
-The next checkpoint is guardian-owned, OS-contained descriptor/CLI activation for one
-real read-only turn. Research 005 records what the current injected runner proves and
-what remains outside that boundary.
+The Linux containment process gate now passes. The remaining dependency order,
+through contract/artifact carriage, guardian/descriptor composition, and Guarded Real
+Mission 0, lives in the [roadmap](../roadmap.md). Research 005 records what the
+current injected runner proves; research 006 records containment and its lifecycle
+gates.

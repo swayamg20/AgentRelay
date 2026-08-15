@@ -1,6 +1,6 @@
 # Low-level design: current relay contracts
 
-> **Scope:** Current repository implementation as of 2026-08-15.
+> **Scope:** Current repository implementation as of 2026-08-16.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Unimplemented local Node runtime behavior remains in
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
@@ -27,7 +27,9 @@ independently persistent fake Mission Capsule after the Node process is killed. 
 is now a provider-neutral Capsule server and injected Codex runner library, but no
 descriptor or CLI activates it and no test executes a real model turn. There is also
 no contract-acknowledgement or verification-delivery handler, so this still does not
-prove execution on two machines.
+prove execution on two machines. A Linux-only Codex containment library now exists,
+and its dedicated process test passes. It remains unactivated because no descriptor,
+CLI, or Mission lifecycle selects it.
 
 ## Protocol workspace
 
@@ -469,13 +471,54 @@ resolution.
 The guarded app-server client derives `codex-home` locally beneath the Capsule,
 requires the Capsule and home to be real canonical current-user-owned directories
 with exact mode 0700, and supplies that path as both `HOME` and `CODEX_HOME` inside an
-otherwise allowlisted child environment. This does not provide OS-enforced workspace
-read-root or secret isolation.
+otherwise allowlisted child environment. That client boundary alone does not provide
+filesystem isolation; the separate containment library below must wrap its process
+boundary on Linux.
 
 The recovery authority is only an interface supplied by tests. There is no production
 guardian that atomically owns quiescence proof and provider spawn, no durable provider
 generation owner or heartbeat, no descriptor/CLI wiring, and no real model-turn
 evidence.
+
+### Unactivated Linux containment library
+
+`prepareMissionWorkspace` admits an owner-prepared standalone checkout. The canonical
+root and its real checkout-local `.git` directory must be current-user-owned and not
+group/world writable; repository URL, frozen `HEAD`, allowed base ref, and initial
+clean state must match. Linked worktrees, Git alternates, nested mounts, special
+files, extra hard links, symlinked Git metadata, and replaced root/Git object identity
+fail closed. Recovery revalidates the same identity while allowing expected dirty
+Mission edits.
+
+`prepareCodexSandboxContainment` builds a Linux-only Codex `0.146.0` boundary. Its
+private permissions profile exposes the workspace as writable, `.git` as read-only,
+the pinned minimal system view plus explicit approved trees as readable, and the
+owner home, containment control directory, and configured forbidden roots as denied.
+`HOME`, `CODEX_HOME`, and all
+temporary variables point to private exact-mode directories; the child environment
+is rebuilt, network is disabled, and legacy Landlock is explicitly disabled. The
+launcher rejects `/etc/codex/config.toml`, `managed_config.toml`, and
+`requirements.toml` rather than merging ambient system policy.
+
+Before the boundary is returned, executable and bundled Bubblewrap hashes and object
+identities are checked, approved read trees are recursively inspected for nested
+mounts, hard links, special or group/world-writable entries, ownership, and symlink
+aliases into denied roots. Read, write, and deny roots are compared by Linux storage
+provenance, and writable roots reject nested mounts. An actual child canary must prove
+workspace read/write, read-only Git metadata, private temp, denied
+control/home/shared-temp access, environment filtering, a separate network namespace,
+and failed network access through a private token-bound result file.
+
+The exclusive private `containment.json` manifest records `retain_for_review` and
+binds the workspace, read/deny roots, executable/helper identities and hashes, config
+path and hash, private paths, base commit, and supplied local-policy-grant digest. The
+returned recovery handle is exactly `{ manifestPath, instanceId, bindingSha256 }`.
+`recoverCodexSandboxContainment` reopens only that manifest and binding, reruns
+identity and canary checks, and never resets or deletes the dirty checkout. Future
+Mission lifecycle wiring must durably store this exact handle before provider start;
+no descriptor or CLI does so today. macOS and other platforms fail closed, no real
+model turn uses this boundary, and the passing Linux process job is library-level
+boundary evidence rather than activation evidence.
 
 ## CLI surface
 
@@ -582,6 +625,22 @@ pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp \
   --filter agentrelay-node test
 ```
 
+The Linux-only containment process gate is separate because macOS must not pretend to
+prove Bubblewrap behavior:
+
+```bash
+pnpm install --frozen-lockfile --package-import-method=copy
+pnpm --filter @agentrelay/protocol build
+AGENTRELAY_RUN_CONTAINMENT_TESTS=1 \
+  pnpm --filter agentrelay-node exec vitest run \
+  src/runtime-containment.process.test.ts
+```
+
+The copy import is intentional: approved runtime trees must not remain hard-linked
+to pnpm's shared content-addressed store. The host must also permit unprivileged user
+and network namespaces; containment setup otherwise fails closed. CI enables that
+prerequisite only on its disposable Linux proof host.
+
 Database-backed tests require Postgres and migrations:
 
 ```bash
@@ -604,7 +663,9 @@ runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
 deliveries have a separate model and public control plane. The local Node now proves
 both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
 after Node-process death. The provider-neutral server and injected Codex runner add an
-unactivated wire-level checkpoint. The next slices are deterministic verification and
-contract handling, guardian-owned and OS-contained Codex CLI activation, a real model
-turn, and a two-machine proof. The mailbox API remains a compatibility and inspection
-surface.
+unactivated wire-level checkpoint; the Linux containment library adds an unactivated
+workspace boundary with exact retained recovery identity and a passing Linux process
+proof. The next gates are contract/verification and artifact carriage, guardian and
+local capability enforcement, descriptor/CLI composition with durable handle
+storage, structured execution evidence, Guarded Real Mission 0, and finally the
+two-machine proof. The mailbox API remains a compatibility and inspection surface.

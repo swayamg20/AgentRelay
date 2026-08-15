@@ -1,10 +1,10 @@
 # Mission workspace containment: Linux first
 
 - **Date:** 2026-08-16
-- **Status:** Decision for issue
-  [#95](https://github.com/swayamg20/AgentRelay/issues/95); implementation and
-  process evidence still required.
-- **First supported platform:** Linux.
+- **Status:** Implemented as an unactivated Node library for issue
+  [#95](https://github.com/swayamg20/AgentRelay/issues/95); the dedicated Linux
+  process gate passed in [CI run 31910163416](https://github.com/swayamg20/AgentRelay/actions/runs/31910163416).
+- **First implementation target:** Linux.
 - **Runtime under test:** Codex app-server `0.146.0`.
 - **Initial retention policy:** `retain_for_review` only.
 
@@ -19,9 +19,10 @@
   and policy; remote content is untrusted; recovery must reopen only the same local
   workspace; local paths must not enter Relay-visible evidence; the first RFC defers
   automatic worktree lifecycle and general container orchestration.
-- **Current gap:** Environment filtering, a private Capsule home, clean-checkout
-  preflight, and output redaction exist, but none prevents a same-user provider
-  process from reading other paths. See
+- **Decision-time gap:** Environment filtering, a private Capsule home,
+  clean-checkout preflight, and output redaction did not prevent a same-user provider
+  process from reading other paths. The new library constructs that filesystem
+  boundary on Linux, but the current fake descriptor/CLI does not select it. See
   [research 005](005-codex-capsule-runner.md#child-environment-and-private-home).
 - **Non-goals:** Cross-platform parity, automatic checkout creation or deletion,
   general-purpose containers, complete command/network mediation, push, merge,
@@ -41,10 +42,10 @@ part of the runtime's required read surface.
 
 ## Recommendation
 
-Support enforcement on Linux first. Add a provider-neutral containment boundary owned
-by the Node, with a Linux implementation that launches both the Codex version probe
-and app-server through the exact pinned Codex `0.146.0` `sandbox` path and its
-bubblewrap backend.
+Support enforcement on Linux first. The implementation adds a backend-swappable Codex
+process boundary owned by the Node. When supplied to the guarded client, that required
+boundary launches both the Codex version probe and app-server through the exact pinned
+Codex `0.146.0` `sandbox` path and its Bubblewrap backend.
 
 The Node, not Codex and never a peer, constructs the effective policy:
 
@@ -58,7 +59,7 @@ The Node, not Codex and never a peer, constructs the effective policy:
 - an explicit locally selected network posture, without treating this filesystem
   decision as complete command/network mediation.
 
-The Linux backend must use the pinned package's bundled bubblewrap rather than
+The Linux backend uses the pinned package's bundled Bubblewrap rather than
 silently selecting an arbitrary `bwrap` from the ambient `PATH`, and must verify the
 runtime version plus the selected helper identity before admitting a provider. If the
 exact backend cannot be selected, user namespaces are unavailable, policy setup
@@ -74,11 +75,63 @@ supported App Sandbox requires a signed macOS app and an embedded helper that
 inherits the app's sandbox, so it is not a drop-in wrapper for AgentRelay's arbitrary
 CLI process today.
 
-The initial lifecycle supports only `retain_for_review`. The owner creates the
-checkout, AgentRelay validates and retains it after success, failure, cancellation,
-or crash, and only the owner removes it. Unknown retention values are rejected.
-Automatic disposal remains deferred so runtime failure cannot destroy reviewable
-changes.
+The library records only `retain_for_review`: it never resets or deletes the checkout,
+and only the owner removes it. Future Mission lifecycle wiring must preserve that
+decision across success, failure, cancellation, and crash. Automatic disposal remains
+deferred so runtime failure cannot destroy reviewable changes.
+
+## Implementation outcome
+
+The Node now contains the first Linux implementation behind focused library
+boundaries:
+
+- `prepareMissionWorkspace` admits an owner-controlled standalone checkout at the
+  configured repository, frozen commit, and allowed base ref. The root and real
+  checkout-local `.git` directory are current-user-owned, not group/world writable,
+  and bound by device/inode identity. Linked worktrees, Git alternates, nested mounts,
+  special files, extra hard links, symlinked Git metadata, initial tracked/untracked
+  changes, and ignored entries fail closed.
+- `prepareCodexSandboxContainment` creates private launcher/runtime directories and a
+  private permissions profile. The workspace is writable, `.git` is read-only,
+  runtime home/temp are writable, owner home, Node control state, and configured
+  forbidden roots are denied, and only explicit additional trees are readable.
+  Network is disabled.
+- The generated profile and launcher arguments both disable legacy Landlock. Exact
+  system layers under `/etc/codex/` are rejected before setup and before every spawn
+  so they cannot silently widen or replace the local policy.
+- The launcher, bundled `codex-resources/bwrap` helper, and provider are bound to
+  canonical paths, filesystem identities, approved read roots, and caller-approved
+  SHA-256 digests. The canary runtime is copied into an owner-private staged tree and
+  bound to its computed digest. Approved read trees are recursively checked for
+  ownership, group/world-writable entries, hard links, special files, nested mounts,
+  and symlink aliases into denied roots. Read, write, and deny roots are also compared
+  by Linux storage provenance so disjoint bind-mount aliases cannot cross access
+  boundaries; writable roots reject nested mounts. The pinned package must therefore
+  be installed as an independent copy rather than hard-linked to pnpm's store; the
+  Linux proof job uses `pnpm install --package-import-method=copy`.
+- A mandatory actual-child canary must confirm workspace read/write, read-only Git
+  metadata, private temp writes, denied control/home/shared-temp access, stripped
+  ambient environment, a distinct network namespace, and no network connection. It
+  publishes success through an exclusive, owner-private, token-bound result file and
+  must pass before creation or recovery returns a process boundary.
+- The exclusive private `containment.json` manifest records `retain_for_review` and
+  binds the local workspace, executable/helper identities and hashes, config path and
+  hash, approved roots, private paths, frozen base, and supplied local-policy-grant
+  digest. The
+  returned recovery handle is exactly `{ manifestPath, instanceId, bindingSha256 }`;
+  recovery requires that handle and the same manifest/binding, permits expected dirty
+  Mission edits, reruns validation and the canary, and performs no reset or deletion.
+- Returned evidence is path-redacted. The manifest and recovery handle deliberately
+  remain local and include the path data needed for exact recovery.
+
+The guarded Codex client now requires an external process boundary for both its
+version probe and app-server spawn, but the fake Capsule descriptor and Node CLI do
+not construct this containment boundary. No Mission lifecycle durably stores the
+returned recovery handle, no real model turn uses it, no production guardian owns the
+provider lifecycle, and no macOS equivalent exists. The dedicated Linux process job
+now proves the implemented filesystem/network canaries, dirty recovery, and pinned
+Codex version/app-server handshake. That is evidence for the unactivated library
+boundary, not an activated Mission runtime.
 
 ## Why this is the lowest-regret first step
 
@@ -86,7 +139,7 @@ changes.
   exposing that provider choice to the rest of the Node.
 - Bubblewrap supplies a mount namespace and an explicit filesystem view, which fits
   workspace/read-root containment better than path-access control alone.
-- A provider-neutral boundary preserves a later direct-bubblewrap, rootless-OCI, or
+- A backend-swappable Codex boundary preserves a later direct-bubblewrap, rootless-OCI, or
   packaged-macOS implementation without pretending the providers have identical
   mechanics.
 - Linux support can be proven in process tests now. Shipping an unproven macOS claim
@@ -118,7 +171,7 @@ contract.
 
 | Option | Strength | Weakness | Verdict |
 | --- | --- | --- | --- |
-| Pinned Codex `sandbox` with bundled bubblewrap on Linux | Incremental fit with the existing pinned runtime; mount, user, PID, and optional network namespaces; narrow policies | Provider-version coupling; system `bwrap` selection must be prevented; still needs AgentRelay-owned policy and tests | **Use first behind a provider-neutral boundary** |
+| Pinned Codex `sandbox` with bundled bubblewrap on Linux | Incremental fit with the existing pinned runtime; mount, user, PID, and optional network namespaces; narrow policies | Provider-version coupling; system `bwrap` selection must be prevented; still needs AgentRelay-owned policy and tests | **Use first behind a backend-swappable Codex boundary** |
 | Direct AgentRelay-owned bubblewrap policy | Maximum policy control and runtime independence | Bubblewrap is deliberately low-level; AgentRelay would immediately own loader, mount, Git-metadata, seccomp, and compatibility policy | Keep as the fallback if the pinned wrapper cannot meet the process tests |
 | Landlock alone | Unprivileged, stackable Linux path restrictions inherited by children | It does not construct a minimal filesystem view; already-open file descriptors remain usable; ABI/filesystem coverage varies | Do not use as the first or silent fallback |
 | Rootless OCI container | Strong image and mount boundary with mature tooling | Adds image lifecycle, daemon/runtime setup, auth mounting, and container operations outside this slice | Defer unless deployment constraints make it the simpler operational primitive |
@@ -129,9 +182,11 @@ contract.
 
 | Claim | Evidence and implication | Primary source |
 | --- | --- | --- |
-| Codex `0.146.0` uses bubblewrap as its default Linux filesystem sandbox | It prefers system `bwrap`, otherwise uses a bundled helper; applies a read-only base, layers writable and denied paths, isolates user/PID namespaces, and does not automatically fall back to Landlock when bubblewrap fails. AgentRelay must force or attest the bundled path because ambient-system preference is otherwise wider than an exact pin. | [Pinned Codex Linux sandbox README](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/README.md), [pinned launcher source](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/launcher.rs), [bundled-helper verification](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/bundled_bwrap.rs) |
-| Bubblewrap can build the required filesystem view, but is not a complete policy by itself | It starts with an empty tmpfs root in a new mount namespace and exposes only caller-selected mounts. Its maintainers explicitly assign the security model and arguments to the caller. AgentRelay therefore owns the policy and the acceptance tests. | [bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md) |
+| Codex `0.146.0` uses Bubblewrap as its default Linux filesystem sandbox | It prefers system `bwrap`, otherwise discovers a bundled helper; applies a restricted root, layers writable and denied paths, isolates user/PID namespaces, and does not automatically fall back to Landlock when Bubblewrap fails. AgentRelay must force the packaged path and independently bind its locally approved digest because ambient-system preference is otherwise wider than an exact pin. | [Pinned Codex Linux sandbox README](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/README.md), [pinned launcher source](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/launcher.rs), [pinned Bubblewrap policy source](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/bwrap.rs), [bundled-helper discovery and optional embedded-digest verification](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/bundled_bwrap.rs) |
+| Bubblewrap can build the required filesystem view, but is not a complete policy by itself | The pinned Codex builder starts from an empty tmpfs root in a new mount namespace and adds scoped mounts; Bubblewrap's maintainers assign the security model and arguments to the caller. AgentRelay therefore owns the policy and acceptance tests. | [Pinned Codex Bubblewrap policy source](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/bwrap.rs), [Bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md) |
+| Ubuntu may gate the required unprivileged user namespace through AppArmor | Ubuntu requires applications that need unprivileged user namespaces to be explicitly allowed. AgentRelay must treat this as a host prerequisite, not silently fall back. The disposable CI proof host enables it explicitly; production should use an owner-approved host policy. | [Ubuntu AppArmor security documentation](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/) |
 | Landlock is useful defense in depth, not an equivalent first boundary | Landlock can restrict the calling thread and future children without privilege, but access through file descriptors opened before restriction is unaffected. It does not replace mount-view construction and explicit descriptor hygiene. | [Linux kernel Landlock documentation](https://cdn.kernel.org/doc/html/latest/userspace-api/landlock.html) |
+| Codex configuration is layered rather than read from one file | System and managed layers can merge with or override user configuration. The first boundary therefore rejects the exact `/etc/codex` layer files instead of assuming a private `CODEX_HOME` is sufficient. | [Pinned config-loader overview](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/loader/README.md), [pinned loader implementation](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/loader/mod.rs), [pinned layer I/O](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/loader/layer_io.rs) |
 | The pinned macOS backend depends on `sandbox-exec` | Codex hardcodes `/usr/bin/sandbox-exec`. On the research host, the macOS 26.3 `sandbox-exec(1)` manual labels the command deprecated and directs developers to App Sandbox. | [Pinned Codex Seatbelt source](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/sandboxing/src/seatbelt.rs); local `man sandbox-exec` on Darwin 25.3.0 |
 | The pinned macOS `:minimal` profile is not an explicit-private-temp boundary | The profile grants read/write access to four shared host temporary trees. Replacing `TMPDIR` does not revoke those grants. | [Pinned restricted platform defaults](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/sandboxing/src/restricted_read_only_platform_defaults.sbpl) |
 | App Sandbox is an application packaging model | Apple describes enabling an entitlement on a macOS app; an embedded command-line tool must be signed, embedded, and inherit the containing app's sandbox. | [Protecting user data with App Sandbox](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox), [Embedding a command-line tool in a sandboxed app](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app) |
@@ -141,10 +196,10 @@ contract.
 
 ### Components and ownership
 
-Add one small Node-owned containment interface between runtime selection and process
-spawn. It accepts already validated local authority and returns a spawn plan plus
-non-sensitive evidence. It must not accept Relay text, peer paths, or provider-authored
-permissions.
+The implementation adds one small Node-owned containment interface between runtime
+selection and process spawn. It accepts already validated local authority and returns
+a process plan plus non-sensitive evidence. It must not accept Relay text, peer paths,
+or provider-authored permissions.
 
 The first implementation has four focused responsibilities:
 
@@ -152,7 +207,7 @@ The first implementation has four focused responsibilities:
    checkout and proves repository URL, exact frozen commit, allowed base ref, initial
    cleanliness, owner, mode, and Git-directory containment.
 2. **Containment policy builder:** turns the validated workspace, private Capsule
-   home, private temp, pinned runtime, and local profile into one immutable policy and
+   home, private temp, pinned runtime, and local profile into one exact policy and
    digest.
 3. **Linux Codex provider:** starts the version probe and app-server under the exact
    bubblewrap-backed `codex sandbox` boundary and rejects every unsupported or
@@ -165,15 +220,15 @@ arguments or Codex profile syntax.
 
 ### Workspace admission
 
-Before first execution, admission must establish all of these facts with argument-array
-Git calls and a minimal environment:
+Before first execution, admission establishes these facts with argument-array Git
+calls and a minimal environment:
 
 - the configured root is absolute, normalized, canonical, current-user-owned, and not
   a symlink alias;
 - `git rev-parse --show-toplevel` resolves exactly to that root;
 - both the Git directory and common Git directory are directories beneath that root;
-  a top-level `.git` indirection file, linked worktree, external object store,
-  submodule, or alternate Git directory is rejected;
+  a top-level `.git` indirection file, linked worktree, external object store, or
+  alternate Git directory is rejected;
 - the canonical remote URL and `HEAD` equal the locally configured repository and
   frozen Mission base commit, and the commit is reachable from an allowed base ref;
 - the initial index and working tree are clean; and
@@ -198,10 +253,12 @@ inside the same effective boundary. Any unexpected success is a hard setup failu
 
 ### Recovery and retention
 
-Persist the containment descriptor before provider start. It should include a schema
-version, backend and runtime versions, executable/helper digests, repository URL,
-frozen commit, canonical-root identity retained only locally, filesystem object
-identity where supported, policy digest, and retention policy.
+Containment creation persists the private manifest before returning the process
+boundary that can start the provider. It includes a schema version, backend and
+runtime versions, executable/helper digests, repository URL, frozen commit,
+canonical-root and filesystem object identities, supplied local-policy-grant digest,
+and retention policy. Future Mission lifecycle wiring must also persist the exact
+recovery handle before starting the provider.
 
 On recovery, re-resolve and compare every identity field before opening the provider.
 The working tree may now be dirty because Mission edits are expected; recovery must
@@ -215,36 +272,41 @@ design and is not implied by this descriptor.
 
 ### Evidence and external contract
 
-Local evidence may record the canonical root for owner diagnostics. Relay-visible or
-peer-visible evidence may contain only the logical workspace alias, repository/base
-identity already present in the Mission, backend/runtime versions, a policy digest,
-the retention decision, and pass/fail reason codes. It must not contain raw paths,
-environment values, canary contents, provider diagnostics, or credential locations.
+The private manifest records canonical paths for exact local recovery. The returned
+evidence exposes only the containment instance, backend/runtime version, base commit,
+binding digest, and retention decision. It contains no raw path, environment value,
+canary content, provider diagnostic, or credential location. Probe outcome and
+rejection reason codes are not yet represented in that evidence, and no current
+Relay-visible route carries it.
 
 This decision changes no public HTTP, JSON-RPC, MCP, or Mission schema by itself.
 
-## Implementation plan
+## Implementation status
 
-1. Extend the existing workspace preflight to require a self-contained standalone
-   checkout and return the local identity needed by containment and recovery.
-2. Add the provider-neutral containment request, descriptor, evidence, and spawn-plan
-   types without importing Codex-specific types into the generic Capsule runtime.
-3. Implement the Linux Codex `0.146.0` backend, generated private permissions
-   profile, exact bundled-helper selection, private temp, and fail-closed capability
-   probe.
-4. Route both the configured executable version probe and app-server start through
-   that backend; make uncontained production construction impossible.
-5. Persist the descriptor before provider start and compare it during fresh-generation
-   recovery.
-6. Emit redacted local evidence and expose no new raw-path field on Relay-visible
-   surfaces.
-7. Keep macOS and every unimplemented platform on one explicit unsupported error.
+1. [x] Extend workspace preflight with standalone-checkout, storage-alias, ownership,
+   object-identity, initial-cleanliness, and dirty-recovery checks.
+2. [x] Add the Codex containment request, manifest, redacted evidence,
+   recovery-handle, and process-boundary types without changing the Capsule wire.
+3. [x] Implement the Linux Codex `0.146.0` Bubblewrap policy, exact bundled-helper
+   selection, private home/temp, ambient-config rejection, disabled legacy Landlock,
+   recursive read-tree inspection, and mandatory capability canary.
+4. [x] Require an external process boundary for both the configured executable version
+   probe and app-server start.
+5. [x] Persist the exclusive private manifest before returning a new boundary and
+   compare the exact handle, binding, and current identities during recovery.
+6. [x] Return path-redacted local evidence and expose no new Relay, JSON-RPC, MCP, or
+   Mission field.
+7. [x] Keep macOS and every unimplemented platform on an explicit unsupported error.
+8. [x] Pass the dedicated Linux process job, including the policy canaries, dirty
+   recovery, and pinned app-server handshake, as library-boundary evidence.
+9. [ ] Wire the boundary into a locally selected descriptor and Mission lifecycle,
+   durably store its exact recovery handle, and execute one guardian-owned real turn.
 
-The smallest falsifying experiment is a Linux process test that launches a trivial
-descendant through the proposed boundary. If it can read one sibling, home, shared
-temp, credential, or symlink-target canary, or if the exact bundled helper cannot be
-selected independently from the child's tool `PATH`, stop and use a direct
-AgentRelay-owned bubblewrap backend instead.
+The smallest falsifying experiment is the dedicated Linux process test. It launches a
+trivial descendant and a pinned app-server handshake through the boundary. Any
+read/write escape, helper-selection ambiguity, or setup failure blocks activation. At
+this snapshot the job is green. A direct AgentRelay-owned Bubblewrap backend remains
+the fallback if a future pinned wrapper can no longer satisfy the gate.
 
 ## Evaluation plan
 
@@ -275,28 +337,36 @@ AgentRelay-owned bubblewrap backend instead.
   or second workspace is selected.
 - **Compatibility threshold:** pinned Codex handshake and existing database-free Node
   suite remain green on the supported Linux CI host.
-- **Observability:** record backend/runtime/helper versions, policy digest, probe
-  outcome, rejection reason code, and retention decision locally.
+- **Observability:** current evidence records the instance, backend/runtime, base,
+  binding digest, and retention decision without paths. Probe outcome and rejection
+  reason codes remain follow-up work.
 - **Human review:** inspect the retained checkout after success, cancellation,
   containment denial, and crash recovery.
 
 A real model turn is a later activation gate. Containment tests should not spend model
 tokens or depend on model behavior.
 
+Focused tests cover workspace identity/storage failures, manifest exclusivity and
+exact recovery, private configuration, required-boundary failure before version or
+app-server spawn, and path-redacted evidence. The Linux process test contains the
+workspace/read/deny/network/dirty-recovery and pinned app-server cases, and the job is
+green. The inherited non-stdio descriptor canary and the full forced-failure matrix
+above are still missing.
+
 ## Risk register
 
 | Risk | Severity | Mitigation |
 | --- | --- | --- |
-| Ambient `PATH` causes pinned Codex to prefer an unpinned system `bwrap` | High | Force and attest the bundled helper; if the wrapper cannot do this while preserving an explicit child tool path, use direct bubblewrap |
+| Ambient `PATH` causes pinned Codex to prefer an unpinned system `bwrap` | High | Bind the exact packaged helper path and caller-approved digest, give the launcher a non-searchable outer `PATH`, and require the Linux process gate; use direct Bubblewrap if the wrapper still cannot satisfy it |
 | Linux disables unprivileged user namespaces | High | Capability probe at startup; fail before provider creation; document the host prerequisite |
 | A Codex update changes permission-profile or helper behavior | High | Exact version and digest pin, process regression suite, explicit reviewed upgrade |
-| Policy merge or owner config expands roots | High | Generate policy in a private exact-mode Capsule home; do not load ambient/managed profiles; compare the durable policy digest |
+| Policy merge or owner config expands roots | High | Generate policy in a private exact-mode launcher home, reject the exact ambient `/etc/codex` layers, and compare the durable config/binding digests before every spawn |
 | Symlink or path-replacement race changes an admitted root | High | Canonical and object-identity checks before spawn and recovery; reject indirection; process tests; fail on mismatch |
 | A pre-opened descriptor bypasses path containment | High | Close all non-stdio descriptors and include descriptor-leak tests; do not rely on Landlock to revoke existing descriptors |
 | Linked Git metadata exposes or mutates the main repository | High | Require both Git and common directories beneath the admitted standalone checkout; keep Git metadata read-only in the runtime |
 | Provider network becomes an exfiltration path | High | Expose no secrets or unrelated files; keep network posture explicit; complete separate command/network mediation before autonomous write claims |
 | Retained workspaces consume disk or preserve sensitive generated data | Medium | Surface local retained-state evidence and owner cleanup instructions; add bounded disposal only in a later explicit lifecycle design |
-| Linux-only support slows a macOS-first pilot | Medium | Keep the interface provider-neutral; run the safe pilot on Linux; reconsider a packaged App Sandbox Node rather than weakening the boundary |
+| Linux-only support slows a macOS-first pilot | Medium | Keep the process boundary backend-swappable; run the safe pilot on Linux; reconsider a packaged App Sandbox Node rather than weakening the boundary |
 
 ## When this recommendation would be wrong
 
@@ -312,37 +382,53 @@ tokens or depend on model behavior.
 - Multiple runtime providers must ship immediately. Owning bubblewrap directly may
   reduce provider coupling enough to justify its larger policy surface.
 
+## Resolved implementation choices
+
+- The launcher binds the exact packaged `codex-resources/bwrap` path and the
+  caller-approved helper SHA-256, uses a non-searchable outer `PATH`, and gives
+  sandboxed children a separate explicit tool path.
+- Durable path identity uses device and inode for the workspace, Git directory,
+  executable/read roots, and private directories, with canonical-path, owner, mode,
+  type, and digest checks where applicable before recovery and spawn.
+- Linux mount metadata binds approved roots to underlying storage provenance, rejects
+  access-boundary aliases, and rejects nested mounts under writable roots.
+- [CI run 31910163416](https://github.com/swayamg20/AgentRelay/actions/runs/31910163416)
+  passed the filesystem/network policy proof and pinned Codex version/app-server
+  handshake on the supported Ubuntu host.
+
 ## Open questions
 
-- Can the packaged `0.146.0` CLI force its bundled, digest-verified helper while the
-  sandboxed app-server receives a separate explicit tool `PATH`? This is the first
-  implementation falsifier.
-- What is the smallest Linux system/executable read set that passes the app-server
-  handshake without making `/`, `/home`, or shared temp broadly readable?
-- Which local filesystem identity fields are stable across supported Linux filesystems
-  and sufficient to detect root replacement during recovery?
 - How will provider authentication reach the private Codex home without copying any
   Relay or Node credential and without widening readable roots?
 - What provider-service network access is necessary for the outer app-server, and
   which separate issue owns endpoint mediation for its descendants?
 - What owner-facing command will eventually dispose a retained checkout safely, and
   what durable state must prove it is no longer recoverable first?
+- Which follow-up owns inherited non-stdio descriptor proof, the remaining forced-
+  failure matrix, and path-redacted probe/rejection evidence?
 
 ## Reading trail
 
 1. [Pinned Codex Linux sandbox README](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/README.md)
    — exact backend selection and mount/namespace behavior this decision depends on.
-2. [bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md)
+2. [Pinned Codex Bubblewrap policy source](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/linux-sandbox/src/bwrap.rs)
+   — the exact restricted root and scoped mounts used by the pinned wrapper.
+3. [Bubblewrap README](https://github.com/containers/bubblewrap/blob/main/README.md)
    — primitive capabilities and the caller's responsibility for the security model.
-3. [Linux kernel Landlock documentation](https://cdn.kernel.org/doc/html/latest/userspace-api/landlock.html)
+4. [Ubuntu AppArmor security documentation](https://documentation.ubuntu.com/security/security-features/privilege-restriction/apparmor/)
+   — why the required unprivileged user namespace is an explicit host prerequisite.
+5. [Pinned Codex config-loader overview](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/loader/README.md)
+   and [implementation](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/config/src/loader/mod.rs)
+   — why a private `CODEX_HOME` does not by itself remove system and managed layers.
+6. [Linux kernel Landlock documentation](https://cdn.kernel.org/doc/html/latest/userspace-api/landlock.html)
    — descendant enforcement, ABI behavior, and open-file-descriptor limitation.
-4. [Pinned Codex macOS restricted defaults](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/sandboxing/src/restricted_read_only_platform_defaults.sbpl)
+7. [Pinned Codex macOS restricted defaults](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/sandboxing/src/restricted_read_only_platform_defaults.sbpl)
    — concrete shared-temp grants that block a macOS claim in this checkpoint.
-5. [Apple App Sandbox guidance](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox)
+8. [Apple App Sandbox guidance](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox)
    and [embedded helper guidance](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app)
    — the supported macOS packaging model.
-6. [Git worktree details](https://git-scm.com/docs/git-worktree#_details)
+9. [Git worktree details](https://git-scm.com/docs/git-worktree#_details)
    — why linked worktrees cannot fit inside one approved standalone root.
-7. [RFC 001](../rfcs/001-agentrelay-node-and-missions.md) and
+10. [RFC 001](../rfcs/001-agentrelay-node-and-missions.md) and
    [research 005](005-codex-capsule-runner.md) — AgentRelay's lifecycle limit and the
    exact current containment gap.

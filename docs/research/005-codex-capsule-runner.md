@@ -131,7 +131,10 @@ receives that derived path as both `HOME` and `CODEX_HOME`.
 
 This limits ambient process input. It does not enforce a filesystem read root, hide
 secrets already reachable by the operating-system user, or mediate every command and
-network effect.
+network effect. The later
+[`006-mission-workspace-containment.md`](006-mission-workspace-containment.md)
+implements a separate, unactivated Linux filesystem boundary; it does not change this
+runner checkpoint's active wiring.
 
 ## Evidence
 
@@ -166,12 +169,14 @@ This checkpoint does not provide:
 - a real Codex model turn or two-machine Mission;
 - a production provider guardian, atomic quiescence-proof-plus-spawn ownership,
   heartbeat, or owner-death recovery;
-- OS-enforced workspace/read-root or secret containment;
+- OS-enforced workspace/read-root or secret containment in this runner checkpoint;
 - deadline and revocation race evidence for a real provider process;
 - structured contract proposal, acknowledgement, readiness, or registered
   verification-command handling; or
 - the complete Node policy, evidence, and supervision boundary required by RFC 001.
 
-The next activation gate is one guardian-owned, OS-contained, locally selected Codex
-Capsule that executes a real read-only turn without receiving Relay or Node
-credentials. Only then should the two-machine product proof begin.
+The Linux containment process proof now passes. Contract and artifact carriage,
+guardian and capability enforcement, descriptor composition with durable handle
+storage, structured execution evidence, and Guarded Real Mission 0 remain in the
+[roadmap's dependency order](../roadmap.md). Only after that public pipeline gate
+should the two-machine proof begin.
