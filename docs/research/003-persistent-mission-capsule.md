@@ -1,13 +1,14 @@
 # Persistent Mission Capsule
 
 - **Date:** 2026-08-03
+- **Updated:** 2026-08-15
 - **Status:** Implemented for a detached deterministic fake runtime on Unix; a real
   coding-agent adapter and two-machine Mission remain open.
 - **Decision:** Keep Relay authority and local policy in the foreground Node, while a
   Mission-scoped Capsule owns durable host-session and turn state across Node-process
   death.
-- **Scope:** One fake Capsule per Mission, one active turn per Capsule, and
-  operator-assisted Node restart after `SIGKILL`.
+- **Scope:** One fake Capsule per Mission, one active turn per Capsule, and direct
+  Node restart after `SIGKILL` through crash-releasable singleton ownership.
 
 ## Question
 
@@ -100,25 +101,34 @@ This prevents a restarted Node from attaching previously accepted output to chan
 objective text, assignments, peer messages, artifacts, contract version, or session
 scope. Live delivery and recovered replay pass through the same Node event reducer.
 
-## Process lifecycle and operator boundary
+## Process lifecycle and ownership boundary
 
-A normal Node exit releases `run.lock` but does not terminate detached Capsules. If
-`SIGINT` or `SIGTERM` arrives during a turn, the Node asks the adapter to cancel that
-turn before its bounded shutdown completes; the Capsule process itself remains
-available with the terminal event history.
+A normal Node exit releases kernel ownership while leaving `run.lock` in place, and
+does not terminate detached Capsules. If `SIGINT` or `SIGTERM` arrives during a turn,
+the Node asks the adapter to cancel that turn before its bounded shutdown completes;
+the Capsule process itself remains available with the terminal event history.
 
-`SIGKILL` cannot run Node cleanup. The Capsule continues independently, but the Node's
-mode-0600 `run.lock` remains. The current recovery procedure is deliberately
-operator-assisted:
+The Node now opens a stable mode-0600 `run.lock` and acquires a nonblocking kernel
+advisory lock through exact-pinned `fs-native-extensions@1.5.0` before opening its
+journal or Capsule registry. The inode is not unlinked, renamed, or atomically
+replaced during normal operation; it remains permanently in place. PID, timestamps,
+and owner metadata are written durably to the separate mode-0600 sibling
+`run.owner.json`; none of them grants or denies ownership, and missing or malformed
+diagnostics cannot change the kernel lock decision.
 
-1. Open the exact lock without following symlinks.
-2. Verify it is a private regular file and records the killed Node PID.
-3. Confirm that PID is no longer alive.
-4. Recheck that the file identity has not changed.
-5. Remove only that lock, sync its directory, and restart the Node.
+The kernel releases ownership on normal exit, `SIGKILL`, and host reboot, so a
+replacement Node can restart directly against the same stable file. A stopped,
+suspended, or event-loop-stalled live Node retains the lock. There is no heartbeat or
+timeout at which another process may steal ownership. The lock handle closes last on
+graceful shutdown and is not inherited by a detached Capsule.
 
-The Node does not guess that a lock is stale or reclaim it automatically. Automatic
-service supervision or a crash-releasable ownership mechanism is separate work.
+Path and primitive uncertainty fail closed before journal access. Every schema-1 PID
+lock requires a one-time explicit offline migration: `ESRCH` inside one PID namespace
+cannot exclude a live old Node in another namespace that shares the state. Malformed
+or partial state, symlinks, wrong type/owner/mode, extra hard links, path replacement,
+or unsupported lock semantics produce an actionable operator error rather than
+guessed reclamation. This is safe singleton ownership, not OS service supervision: no
+current installer or service manager starts a replacement Node after failure.
 
 Capsule socket ownership is also fail-closed. After repeated failed authenticated probes,
 the Node compares the private socket's device/inode identity, quarantines the path,
@@ -131,6 +141,9 @@ guessing ownership.
 
 Focused Node tests cover:
 
+- private stable-lock creation, diagnostic metadata, and fail-closed path validation;
+- two live contenders, a stopped live owner, `SIGKILL` followed by immediate
+  reacquisition, legacy ownership, and non-inheritance by detached Capsules;
 - durable session, turn, and event replay after reopening both adapter and Capsule;
 - coalesced concurrent creation of one Capsule/session;
 - exact duplicate start and rejection of changed start or recovery input;
@@ -149,8 +162,9 @@ The Relay/Postgres E2E test uses the built Node and Capsule binaries. It:
 3. Kills the Node with `SIGKILL`.
 4. Uses the persisted local capability to recover the same turn through the same
    Capsule and observes its terminal event while the Node is absent.
-5. Performs the validated stale-`run.lock` cleanup above.
-6. Starts a one-cycle Node recovery process.
+5. Starts a one-cycle Node recovery process directly, without deleting or replacing
+   `run.lock`.
+6. Confirms the replacement acquires kernel ownership before opening local state.
 7. Verifies the original accepted event and turn ID, one result message, one Mission
    turn, and exactly one `delivery.complete` audit row.
 
@@ -168,9 +182,8 @@ still recoverable rather than deleting state or inventing an input.
 This checkpoint does not provide:
 
 - a Codex, Claude, or other real agent-host adapter;
-- automatic Node or Capsule installation and supervision;
+- automatic Node or Capsule installation, OS supervision, or process respawn;
 - Windows support;
-- unattended Node stale-lock recovery;
 - isolated worktree creation or complete command, network, path, deadline, token,
   expiry, and revocation enforcement;
 - contract-acknowledgement or registered verification-command delivery handlers;

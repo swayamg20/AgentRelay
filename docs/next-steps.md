@@ -127,9 +127,14 @@ through the public control plane.
 - [x] Move the fake host into a detached, Mission-scoped Capsule with a strict private
   Unix-socket capability protocol and exact-input durable recovery.
 - [x] Kill the Node after Capsule acceptance, prove the same Capsule remains live,
-  safely reclaim the exact stale Node lock, and recover one turn/result on restart.
-- [ ] Add automatic Node supervision or a crash-releasable ownership design; the
-  current `SIGKILL` proof intentionally requires verified operator cleanup.
+  restart directly without deleting `run.lock`, and recover one turn/result.
+- [x] Add crash-releasable Node ownership with a stable private kernel lock. Treat
+  `run.owner.json` PID metadata as diagnostic, keep the `run.lock` inode permanently
+  in place, never steal ownership on a heartbeat timeout, and fail closed on every
+  legacy schema-1 PID lock until an explicit offline migration.
+- [ ] Package the Node as an installed background service with OS supervision and
+  automatic process respawn. Crash-releasable ownership makes restart safe; it does
+  not start the replacement process.
 
 Start with one eligible Node per logical agent and one active turn per Mission. The
 Capsule path is experimental and Unix-only; it is not yet an installed background

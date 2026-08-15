@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-08-03.
+> **Status:** Canonical system overview as of 2026-08-15.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). The accepted next target lives in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
@@ -59,7 +59,11 @@ durable coordination foundations:
   operation intent before side effects, renews fenced leases, and drives the
   deterministic fake adapter for turn deliveries. Its optional persistent path
   launches a detached, Mission-scoped fake Capsule and recovers it through a private
-  capability-authenticated Unix socket after the Node process dies.
+  capability-authenticated Unix socket after the Node process dies. A stable private
+  `run.lock` held with a kernel advisory lock provides single-writer Node ownership;
+  its inode remains permanently in place while `run.owner.json` is diagnostic only.
+  Process death or host reboot releases ownership without PID inference or manual
+  file deletion.
 - A provider-neutral persistent Capsule server behind that same versioned wire. The
   existing fake descriptor and CLI use a compatibility wrapper, so no current command
   selects another runtime. An unexpected internal runtime failure is redacted and
@@ -364,9 +368,12 @@ The relay can run anywhere that supports the relay container image and Postgres.
 may self-host it or use a future hosted service. Every developer machine can run its
 own MCP process for interactive tools. The experimental AgentRelay Node is a separate
 foreground process today. It can launch detached fake Mission Capsules that outlive a
-normal Node exit or `SIGKILL`, but automatic Node supervision and real-runtime
-Capsule activation remain target behavior. The provider-neutral server and injected
-Codex runner do not change which runtime the current CLI launches.
+normal Node exit or `SIGKILL`. Its kernel-held singleton ownership is released on
+process death, so a replacement Node can restart directly and recover the same
+Capsule turn. No OS service manager currently installs, monitors, or automatically
+respawns that foreground process, and real-runtime Capsule activation remains target
+behavior. The provider-neutral server and injected Codex runner do not change which
+runtime the current CLI launches.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.

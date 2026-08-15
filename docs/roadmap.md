@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-14. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-15. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -95,13 +95,19 @@ adapter replay. It can launch a detached, Mission-scoped fake Capsule through a
 private capability-authenticated Unix socket. Unit fault injection and real
 Relay/Postgres E2E coverage prove one host turn per processed delivery across
 duplicate polling, runner reconstruction, and `SIGKILL` after host acceptance. The
-restart proof still requires operator-safe cleanup of the killed Node's stale process
-lock. The Capsule server is now provider-neutral while the existing descriptor, CLI,
-and wire remain fake-compatible. An injected Codex runner is tested through that real
-Unix wire. Runtime shutdown concurrently fences admitted work, and background runtime
-failures can retire their server generation, but no production path selects Codex.
-Contract acknowledgement, verification execution, guarded real-runtime activation,
-and the two-machine exit gate remain open.
+Node now holds a stable private `run.lock` with a kernel advisory lock: process death
+or reboot releases ownership, direct restart needs no file deletion, and a stopped or
+stalled live owner cannot be displaced by a timeout. The lock inode remains
+permanently in place, and PID metadata in `run.owner.json` is diagnostic rather than
+authority. Every legacy schema-1 PID lock requires a one-time explicit offline
+migration because PID-only evidence cannot rule out another namespace. The Capsule
+server is now provider-neutral while the existing descriptor, CLI, and wire remain
+fake-compatible. An injected Codex runner is tested through that real Unix wire.
+Runtime shutdown concurrently fences admitted work, and background runtime failures
+can retire their server generation, but no production path selects Codex. OS service
+installation and automatic process respawn, contract acknowledgement, verification
+execution, guarded real-runtime activation, and the two-machine exit gate remain
+open.
 
 - Add a `node/` pnpm workspace and daemon CLI.
 - Register device-scoped credentials and capabilities.

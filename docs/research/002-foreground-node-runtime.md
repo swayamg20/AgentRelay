@@ -80,8 +80,10 @@ Atomic JSON is sufficient for this checkpoint because the Node is a single write
 processes one delivery at a time. Each save durably creates any missing directory
 chain, writes and syncs a same-directory temporary file, renames it over the journal,
 and syncs the leaf directory. A singleton process lock prevents two local writers.
-Stale locks are refused rather than removed automatically; recovery requires the owner
-to confirm no Node process is alive before deleting the exact lock file.
+This initial checkpoint inferred liveness from PID metadata and deliberately required
+operator recovery. The later Node-ownership checkpoint replaced that lifecycle with a
+permanent stable kernel-held `run.lock`: `run.owner.json` is diagnostic, and process
+death releases ownership without deleting the lock file.
 
 SQLite would add a native dependency and migration surface without improving the
 first proof. The storage interface remains separate so a later scheduler can move to
@@ -147,8 +149,9 @@ checkpoint, not autonomous coding completion.
 
 The follow-on gate moved the fake host behind a separately persistent Capsule, killed
 and restarted the Node process after host acceptance, recovered the same turn and
-event history, and published one Relay completion. Its implementation and remaining
-operator boundary are recorded in
+event history, and published one Relay completion. The subsequent kernel-lock
+checkpoint removed the original operator cleanup while preserving that Capsule proof.
+The current boundary is recorded in
 [`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md). The next
 runtime gate is the first pinned coding-agent adapter.
 
