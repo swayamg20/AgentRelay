@@ -1,5 +1,5 @@
-import { lstat, opendir, readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, opendir, readFile, readlink, realpath } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { isPathWithin } from "./filesystem-path.js";
 
 const MAX_READ_TREE_ENTRIES = 100_000;
@@ -70,6 +70,9 @@ async function assertSafeSymlink(
 	deniedRoots: readonly string[],
 	writableRoots: readonly string[],
 ): Promise<void> {
+	const immediateTarget = resolve(dirname(path), await readlink(path));
+	assertApprovedSymlinkTarget(immediateTarget, readRoots, deniedRoots, writableRoots);
+
 	let target: string;
 	try {
 		target = await realpath(path);
@@ -79,6 +82,15 @@ async function assertSafeSymlink(
 		}
 		throw new Error("Containment read tree symbolic link could not be inspected", { cause: error });
 	}
+	assertApprovedSymlinkTarget(target, readRoots, deniedRoots, writableRoots);
+}
+
+function assertApprovedSymlinkTarget(
+	target: string,
+	readRoots: readonly string[],
+	deniedRoots: readonly string[],
+	writableRoots: readonly string[],
+): void {
 	if (writableRoots.some((root) => isPathWithin(target, root))) {
 		throw new Error("Containment read tree symbolic links cannot target writable roots");
 	}

@@ -96,7 +96,24 @@ describe("containment read tree isolation", () => {
 				deniedRoots: [fixture.deniedRoot],
 				writableRoots: [fixture.writableRoot],
 			}),
-		).rejects.toThrow("must resolve before admission");
+		).rejects.toThrow("cannot target writable roots");
+	});
+
+	it("rejects a writable intermediate symlink even when its final target is approved", async () => {
+		const fixture = await createFixture();
+		const safeTarget = join(fixture.readRoot, "runtime.bin");
+		const writablePivot = join(fixture.writableRoot, "pivot");
+		await writeFile(safeTarget, "runtime");
+		await symlink(safeTarget, writablePivot);
+		await symlink(writablePivot, join(fixture.readRoot, "alias"));
+
+		await expect(
+			assertContainmentReadTreesIsolated({
+				roots: [fixture.readRoot],
+				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
+			}),
+		).rejects.toThrow("cannot target writable roots");
 	});
 
 	it("allows symbolic links that stay within approved read roots", async () => {
