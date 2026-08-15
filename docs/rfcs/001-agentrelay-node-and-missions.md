@@ -1,8 +1,9 @@
 # RFC 001: AgentRelay Node and Missions
 
 - **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
-  persistent fake-Capsule recovery checkpoint, and an unactivated guarded Codex
-  client/journal are implemented; runtime integration and the two-machine proof remain
+  persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
+  ownership, and an unactivated guarded Codex client/journal are implemented; runtime
+  integration and the two-machine proof remain
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -441,8 +442,10 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    failure after host acceptance, lost Relay responses, stale fences, transient
    retry, cancellation, shutdown, local-policy denial, and paginated assignment
    starvation are covered. A detached fake Capsule now proves exact-turn recovery
-   after the Node is killed following host acceptance. Pre-claim/after-claim process
-   cuts, unattended Node restart, busy-session, and full adversarial coverage remain.
+   after the Node is killed following host acceptance. The stable kernel-held Node
+   lock permits direct restart without file deletion and refuses a stopped live
+   contender. Pre-claim/after-claim process cuts, busy-session, and full adversarial
+   coverage remain.
 6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned and the
    unactivated Capsule journal proves local at-most-once barriers, exact-input replay,
    redacted terminal normalization, and cancellation intent. Runtime/server/CLI

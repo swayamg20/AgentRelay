@@ -40,8 +40,9 @@ fake adapter before a real coding-agent adapter is introduced.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
-same live Capsule while the Node is absent, restarts the Node after safe stale-lock
-cleanup, and proves one turn reference, one result message, and one completion audit.
+same live Capsule while the Node is absent, restarts the Node directly after the
+kernel releases ownership, and proves one turn reference, one result message, and one
+completion audit.
 
 ## Current boundary
 
@@ -58,9 +59,10 @@ requires a separate, explicit preflight for every nested repository and its loca
 configuration.
 
 The Capsule checkpoint is experimental and Unix-only because its transport is a Unix
-domain socket. It is not a general local daemon manager: there is no installer,
-service supervisor, automatic Node stale-lock reclamation, or real Codex/Claude
-adapter yet.
+domain socket. It is not a general local daemon manager: there is no installer, OS
+service supervisor, automatic process respawn, or real Codex/Claude adapter yet. The
+foreground Node's singleton ownership is crash-releasable, but an external service
+manager must still start a replacement process.
 
 ## Configuration
 
@@ -143,11 +145,29 @@ Relay request still has its own bounded client timeout.
 
 The Node journal is stored beside the config under `state/journal.json`; Capsule state
 defaults to `state/capsules/<mission-id>/`. Do not run two Node processes against the
-same directory; `run.lock` enforces the single-writer assumption. A `SIGKILL` can
-leave that lock behind even though the detached Capsule continues. The Node refuses
-to remove it automatically. Confirm the recorded process is dead and the file has
-not changed before deleting that exact `run.lock` and restarting. This operator step
-is part of the current crash-recovery proof, not automatic supervision.
+same directory. A stable, mode-0600 `run.lock` is held with a nonblocking kernel
+advisory lock, through exact-pinned `fs-native-extensions@1.5.0`, before the journal or
+Capsule registry is opened. The lock file and inode remain permanently in place;
+ownership is the live kernel lock, not the PID and timestamps written to the
+separate sibling `run.owner.json` diagnostic file beside it. A second live Node
+therefore fails before local state access, while normal exit, `SIGKILL`, and host
+reboot release ownership automatically. A stopped or event-loop-stalled live Node
+keeps ownership: there is no heartbeat or timeout-based stealing. Missing or
+malformed diagnostics never grant or deny ownership.
+
+Keep Node state on a local filesystem with supported advisory-lock semantics. This
+checkpoint validates macOS and glibc Linux; Alpine/musl and network filesystems are
+not established ownership boundaries and are unsupported here.
+
+The Node closes the ownership handle last during graceful shutdown, and detached
+Capsules do not inherit it. Symlinks, insecure or replaced lock paths, unsupported
+lock behavior, and every legacy schema-1 PID lock fail closed with an operator-facing
+error. PID-only evidence cannot exclude a live old Node in another PID namespace. For
+the one-time upgrade, stop every Node that can access this state, verify the state is
+offline, remove only the legacy `run.lock`, and start the new Node. Once schema 2 is
+established, do not delete or replace `run.lock` as part of normal recovery. This
+provides safe direct restart after process death; it does not install or run an OS
+service supervisor.
 
 The current Node journal uses schema 2 to retain the active attempt's exact validated
 start input. Empty schema-1 journals migrate automatically. A schema-1 journal with

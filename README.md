@@ -98,9 +98,12 @@ but no current descriptor or CLI activates Codex for a real model turn.
   replay, and foreground fake-adapter CLIs. Its `run-capsule` path launches one
   detached, Mission-scoped fake Capsule behind a private capability-authenticated
   Unix-socket protocol. The Capsule durably binds the exact start input before
-  exposing acceptance. Real Relay/Postgres E2E coverage kills the Node after host
-  acceptance, proves the Capsule remains reachable, then recovers the same turn and
-  commits exactly one Mission result after an operator-safe stale-lock cleanup.
+  exposing acceptance. A stable private `run.lock` inode is held with a nonblocking
+  kernel advisory lock, so a second live Node fails closed while normal exit,
+  `SIGKILL`, and host reboot release ownership without deleting the file. Real
+  Relay/Postgres E2E coverage kills the Node after host acceptance, proves the
+  Capsule remains reachable, then restarts directly, recovers the same turn, and
+  commits exactly one Mission result.
 - A provider-neutral persistent Capsule server behind the existing versioned,
   capability-authenticated Unix wire. The fake Capsule CLI and Node path retain their
   existing descriptor and wire contract through a compatibility wrapper. Unexpected

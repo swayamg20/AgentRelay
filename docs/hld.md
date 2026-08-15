@@ -1,6 +1,6 @@
 # High-level design: current relay implementation
 
-> **Scope:** Current repository implementation as of 2026-08-03.
+> **Scope:** Current repository implementation as of 2026-08-15.
 > This document describes the existing handoff plane, public Mission delivery
 > control plane, experimental Node, and unactivated Codex Capsule libraries.
 > It does not describe a complete autonomous coding runtime. See
@@ -101,7 +101,10 @@ exact operation intents, renews the Relay lease, and reduces fake-host events. R
 database time controls retry eligibility; transient host failure advances a journaled
 execution attempt while lease-only recovery keeps the same host turn. Its device
 configuration and local journal are mode 0600; the checkout path never enters the
-Relay payload.
+Relay payload. Before opening the journal or Capsule registry, the Node holds a stable
+private `run.lock` with a nonblocking kernel advisory lock. PID and owner metadata are
+written separately to `run.owner.json` and are diagnostic only; they do not grant
+ownership. The `run.lock` inode remains permanently in place.
 
 The original `run` path remains in memory. The `run-capsule` path instead persists
 one fake host process per Mission, authenticates every request with a local capability,
@@ -276,9 +279,9 @@ and the relay-owned idempotency key is not exposed to the model.
 - A production-activated coding-agent runtime session. The Node/Capsule process proof
   still exercises only the deterministic fake; the injected Codex runner is covered
   only by fake-client wire tests and has not executed a model turn.
-- Automatic Node supervision or safe unattended reclamation of a `run.lock` left by
-  `SIGKILL`; restart currently requires an operator to verify the recorded process is
-  dead before removing that exact lock.
+- Automatic Node installation, OS service supervision, or process respawn. The
+  singleton kernel lock now permits direct restart after process death, but it does
+  not start the replacement Node.
 - A production guardian that owns provider quiescence proof and spawn, heartbeat and
   owner-death recovery, and OS-enforced Codex workspace/read-root and secret
   containment.
@@ -322,8 +325,13 @@ section of [`architecture.md`](architecture.md).
   starts it again. A separately running foreground Node can continue Mission polling.
 - A normal Node exit releases its singleton lock and leaves detached Capsules alive.
   During `SIGINT` or `SIGTERM`, an in-flight turn is first asked to cancel. A
-  `SIGKILL` cannot release the Node lock; after operator-safe lock cleanup, the
-  restarted Node can recover the Capsule's exact persisted turn and event history.
+  `SIGKILL` or host reboot releases the kernel lock without deleting the stable
+  `run.lock`, so a replacement Node can restart directly and recover the Capsule's
+  exact persisted turn and event history. A stopped or stalled live Node retains the
+  lock; ownership is never stolen on a heartbeat timeout. Every legacy schema-1 PID
+  lock fails closed before local state is opened because PID-only evidence cannot
+  exclude a live old Node in another PID namespace. Its one-time migration is an
+  explicit offline operator action.
 - The provider-neutral Capsule server authenticates before invoking a runtime. An
   unexpected runtime exception is returned only as a generic internal error; the
   server removes its owned socket and closes that runtime generation. Shutdown starts

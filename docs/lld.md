@@ -1,6 +1,6 @@
 # Low-level design: current relay contracts
 
-> **Scope:** Current repository implementation as of 2026-08-03.
+> **Scope:** Current repository implementation as of 2026-08-15.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Unimplemented local Node runtime behavior remains in
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
@@ -405,11 +405,33 @@ durable intent and the Mission/session scope. The Capsule permits one active tur
 Mission.
 
 This process path is experimental and Unix-only. A normal Node exit leaves detached
-Capsules running. A Node killed with `SIGKILL` cannot remove `run.lock`; the current
-restart proof verifies the recorded PID is dead and removes only that unchanged lock
-before restarting. There is no unattended supervisor or automatic stale-lock
-reclamation. Capsule restart is automatic only after repeated failed authenticated probes
-and ownership-safe removal of the same unchanged stale socket inode. The server binds
+Capsules running. Before opening the journal or Capsule registry, the Node opens a
+stable private mode-0600 `run.lock` and acquires a nonblocking kernel advisory lock
+through exact-pinned `fs-native-extensions@1.5.0`. The file and its inode remain
+stable; PID, timestamps, and owner metadata live in a separate mode-0600
+`run.owner.json` and are diagnostic rather than ownership authority. Normal exit,
+`SIGKILL`, and host reboot release the kernel lock, so the process test and
+Relay/Postgres E2E restart directly without deleting `run.lock`. A second live,
+stopped, or event-loop-stalled Node retains ownership, because there is no heartbeat
+or timeout-based stealing. A missing or malformed `run.owner.json` cannot change the
+kernel decision.
+
+A new schema-2 lock is fully written and synced in a private same-directory temporary
+file, published without overwrite, and followed by a directory sync. Every existing
+schema-1 PID lock fails closed: `ESRCH` inside one PID namespace cannot prove an old
+Node sharing the state is dead in every namespace. Migration therefore requires a
+one-time offline operator check and removal of only the legacy file. Malformed state,
+symlinks, wrong owner/mode/type, unsupported lock semantics, extra hard links, or path
+replacement also fail closed before local state access. Once schema 2 is established,
+its inode is never renamed or unlinked; release closes the held descriptor and leaves
+the file in place. That permanent schema-2 file also prevents a pre-kernel-lock Node
+binary from creating its schema-1 PID lock.
+The validated host boundary is a local macOS or glibc-Linux filesystem; Alpine/musl
+and network-filesystem lock semantics are not established by this checkpoint.
+
+There is no installed OS service supervisor or automatic process respawn. Capsule
+restart is automatic only after repeated failed authenticated probes and
+ownership-safe removal of the same unchanged stale socket inode. The server binds
 through a private alias so closing an old process cannot unlink a replacement socket.
 
 ### Unactivated Codex Capsule library
