@@ -1,8 +1,12 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assertNoAmbientCodexConfiguration } from "./codex-sandbox-policy.js";
+import type { CodexSandboxContainmentInput } from "./codex-sandbox-contract.js";
+import {
+	assertNoAmbientCodexConfiguration,
+	prepareContainmentLayout,
+} from "./codex-sandbox-policy.js";
 
 const temporaryRoots: string[] = [];
 
@@ -29,10 +33,43 @@ describe("Codex sandbox policy", () => {
 			"Ambient Codex configuration is unsupported",
 		);
 	});
+
+	it("stages the probe outside the denied control tree", async () => {
+		const root = await temporaryRoot();
+		const input = fixtureInput(root);
+		const layout = await prepareContainmentLayout(input, "create");
+
+		expect(layout.stagedProbeRoot).toBe(join(input.runtimeDirectory, "probe-runtime"));
+		expect(layout.stagedProbeRoot.startsWith(`${input.controlDirectory}/`)).toBe(false);
+	});
 });
 
+function fixtureInput(root: string): CodexSandboxContainmentInput {
+	const executable = {
+		executable: "/opt/agentrelay/codex",
+		readRoot: "/opt/agentrelay",
+		sha256: "a".repeat(64),
+	};
+	return {
+		controlDirectory: join(root, "control"),
+		runtimeDirectory: join(root, "runtime"),
+		workspace: {
+			repositoryUrl: "https://example.test/repository.git",
+			baseCommit: "b".repeat(40),
+			root: join(root, "workspace"),
+			gitDirectory: join(root, "workspace", ".git"),
+			rootIdentity: { device: "1", inode: "2" },
+			gitIdentity: { device: "1", inode: "3" },
+			reachableFromRef: "refs/heads/main",
+		},
+		launcher: { ...executable, sandboxHelper: executable },
+		provider: executable,
+		policyGrantSha256: "c".repeat(64),
+	};
+}
+
 async function temporaryRoot(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "agentrelay-codex-policy-"));
+	const root = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-codex-policy-")));
 	temporaryRoots.push(root);
 	return root;
 }

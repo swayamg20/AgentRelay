@@ -70,7 +70,7 @@ export async function prepareContainmentLayout(
 	assertDisjoint(input.runtimeDirectory, input.workspace.root, "runtime root and workspace");
 
 	const launcherHome = join(input.controlDirectory, "sandbox-launcher");
-	const stagedProbeRoot = join(launcherHome, "probe-runtime");
+	const stagedProbeRoot = join(input.runtimeDirectory, "probe-runtime");
 	const stagedProbeBin = join(stagedProbeRoot, "bin");
 	const runtimeHome = join(input.runtimeDirectory, "codex-home");
 	const runtimeTmp = join(input.runtimeDirectory, "tmp");
