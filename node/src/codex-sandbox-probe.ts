@@ -5,10 +5,10 @@ import { open, readlink, realpath, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PinnedExecutable } from "./codex-sandbox-contract.js";
+import { assertContainmentProbeAttestation } from "./codex-sandbox-probe-attestation.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_PROBE_OUTPUT_BYTES = 64 * 1_024;
-const EXPECTED_PROBE_OUTPUT = '{"ok":true}\n';
 const MAX_DIAGNOSTIC_OUTPUT_CHARS = 512;
 
 export type ContainmentProbeExecutable = PinnedExecutable;
@@ -28,6 +28,8 @@ export interface CodexSandboxProbeInput {
 export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promise<void> {
 	const sharedTempCanary = join(await realpath(tmpdir()), `.agentrelay-${randomUUID()}.canary`);
 	const ownerHomeCanary = join(await realpath(homedir()), `.agentrelay-${randomUUID()}.canary`);
+	const resultPath = join(input.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
+	const resultToken = randomUUID();
 	await Promise.all([
 		writeHostCanary(sharedTempCanary, "host-temp-canary"),
 		writeHostCanary(ownerHomeCanary, "owner-home-canary"),
@@ -41,6 +43,8 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 		controlRead: input.launcherPath,
 		ownerHomeCanary,
 		sharedTempCanary,
+		resultPath,
+		resultToken,
 		parentNetworkNamespace: await readlink("/proc/self/ns/net"),
 	};
 
@@ -76,13 +80,8 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 			},
 		);
 		const output = await collectProbeOutput(child);
-		if (output.stdout !== EXPECTED_PROBE_OUTPUT) {
-			const bytes = Buffer.byteLength(output.stdout, "utf8");
-			const diagnostic = JSON.stringify(output.stdout.slice(0, MAX_DIAGNOSTIC_OUTPUT_CHARS));
-			throw new Error(
-				`Codex sandbox capability probe returned invalid stdout (${bytes} bytes): ${diagnostic}`,
-			);
-		}
+		assertSilentProbeOutput(output);
+		await assertContainmentProbeAttestation(resultPath, resultToken);
 	} finally {
 		await Promise.all([
 			unlink(sharedTempCanary).catch(() => undefined),
@@ -90,6 +89,7 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 			unlink(probePaths.workspaceWrite).catch(() => undefined),
 			unlink(probePaths.gitWrite).catch(() => undefined),
 			unlink(probePaths.runtimeTmpWrite).catch(() => undefined),
+			unlink(resultPath).catch(() => undefined),
 		]);
 	}
 }
@@ -136,9 +136,26 @@ async function collectProbeOutput(child: ReturnType<typeof spawn>) {
 	if (timedOut) throw new Error("Codex sandbox capability probe timed out");
 	if (exceeded) throw new Error("Codex sandbox capability probe exceeded its output limit");
 	if (status !== 0) {
-		throw new Error(`Codex sandbox capability probe failed (${status}): ${stderr}`);
+		throw new Error(
+			`Codex sandbox capability probe failed (${status}); ${probeOutputDiagnostic({ stdout, stderr })}`,
+		);
 	}
 	return { stdout, stderr };
+}
+
+function assertSilentProbeOutput(output: { stdout: string; stderr: string }): void {
+	if (output.stdout.length === 0 && output.stderr.length === 0) return;
+	throw new Error(
+		`Codex sandbox capability probe emitted unexpected output; ${probeOutputDiagnostic(output)}`,
+	);
+}
+
+function probeOutputDiagnostic(output: { stdout: string; stderr: string }): string {
+	const stdoutBytes = Buffer.byteLength(output.stdout, "utf8");
+	const stderrBytes = Buffer.byteLength(output.stderr, "utf8");
+	const stdout = JSON.stringify(output.stdout.slice(0, MAX_DIAGNOSTIC_OUTPUT_CHARS));
+	const stderr = JSON.stringify(output.stderr.slice(0, MAX_DIAGNOSTIC_OUTPUT_CHARS));
+	return `stdout (${stdoutBytes} bytes): ${stdout}; stderr (${stderrBytes} bytes): ${stderr}`;
 }
 
 function killProcessGroup(pid: number | undefined): void {
@@ -193,6 +210,6 @@ if (!ok) {
   process.stderr.write("Codex sandbox capability probe contradicted the required policy\n");
   process.exitCode = 1;
 } else {
-  process.stdout.write('{"ok":true}\n');
+  await writeFile(paths.resultPath, paths.resultToken, { flag: "wx", mode: 0o600 });
 }
 `;
