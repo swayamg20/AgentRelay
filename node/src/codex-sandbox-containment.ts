@@ -2,21 +2,29 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize, relative } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import type { CodexProcessBoundary, CodexProcessRequest } from "./codex-process-boundary.js";
-import { writeDurableText } from "./durable-file.js";
+import {
+	type ContainmentProbeExecutable,
+	resolveContainmentProbe,
+	runCodexSandboxProbe,
+} from "./codex-sandbox-probe.js";
+import { writeDurableTextExclusive } from "./durable-file.js";
 import {
 	type LocalFilesystemIdentity,
 	type PreparedMissionWorkspace,
+	assertMissionWorkspaceClean,
 	revalidateMissionWorkspaceIsolation,
 } from "./mission-workspace.js";
-import { ensurePrivateStateDirectory } from "./private-state-file.js";
+import { assertPrivateStateDirectory, ensurePrivateStateDirectory } from "./private-state-file.js";
 import {
 	type RuntimeContainmentBinding,
 	type RuntimeContainmentEvidence,
 	boundPath,
 	containmentEvidence,
+	createRuntimeContainmentManifest,
 	openRuntimeContainmentManifest,
+	readRuntimeContainmentManifest,
 	workspaceBinding,
 } from "./runtime-containment-manifest.js";
 
@@ -33,11 +41,15 @@ export interface PinnedExecutable {
 	readonly sha256: string;
 }
 
+export interface PinnedCodexLauncher extends PinnedExecutable {
+	readonly sandboxHelper: PinnedExecutable;
+}
+
 export interface CodexSandboxContainmentInput {
 	readonly controlDirectory: string;
 	readonly runtimeDirectory: string;
 	readonly workspace: PreparedMissionWorkspace;
-	readonly launcher: PinnedExecutable;
+	readonly launcher: PinnedCodexLauncher;
 	readonly provider: PinnedExecutable;
 	readonly readOnlyRoots?: readonly string[];
 	readonly forbiddenRoots?: readonly string[];
@@ -51,9 +63,16 @@ export interface CodexSandboxContainment {
 	readonly runtimeTmp: string;
 }
 
+export interface CodexSandboxRecoveryExpectation {
+	readonly manifestPath: string;
+	readonly instanceId: string;
+	readonly bindingSha256: string;
+}
+
 interface ContainmentLayout {
 	readonly controlRoot: string;
 	readonly launcherHome: string;
+	readonly emptyPath: string;
 	readonly launcherPath: string;
 	readonly runtimeRoot: string;
 	readonly runtimeHome: string;
@@ -64,13 +83,46 @@ interface ContainmentLayout {
 export async function prepareCodexSandboxContainment(
 	input: CodexSandboxContainmentInput,
 ): Promise<CodexSandboxContainment> {
+	return prepareContainment(input, "create");
+}
+
+async function prepareContainment(
+	input: CodexSandboxContainmentInput,
+	mode: "create" | "recover",
+): Promise<CodexSandboxContainment> {
 	assertSupportedPlatform();
 	assertInputBounds(input);
-	const layout = await prepareLayout(input);
-	const config = await buildLauncherConfig(input, layout);
-	await openOrCreatePrivateConfig(layout.launcherPath, config);
-	const binding = await buildBinding(input, layout, config);
-	const manifest = await openRuntimeContainmentManifest(layout.manifestPath, binding);
+	await revalidateMissionWorkspaceIsolation(input.workspace);
+	if (mode === "create") await assertMissionWorkspaceClean(input.workspace);
+	const layout = await prepareLayout(input, mode);
+	const probe = await resolveContainmentProbe(sha256File);
+	const config = await buildLauncherConfig(input, layout, probe);
+	if (mode === "create") {
+		await createPrivateConfig(layout.launcherPath, config);
+	} else {
+		await assertPrivateConfig(layout.launcherPath, config);
+	}
+	const binding = await buildBinding(input, layout, config, probe);
+	let manifest =
+		mode === "recover"
+			? await openRuntimeContainmentManifest(layout.manifestPath, binding)
+			: undefined;
+	await runCodexSandboxProbe({
+		launcherExecutable: input.launcher.executable,
+		launcherHome: layout.launcherHome,
+		launcherPath: layout.launcherPath,
+		emptyPath: layout.emptyPath,
+		profileName: PROFILE_NAME,
+		workspaceRoot: input.workspace.root,
+		gitDirectory: input.workspace.gitDirectory,
+		runtimeTmp: layout.runtimeTmp,
+		probe,
+	});
+	if (mode === "create") {
+		await assertMissionWorkspaceClean(input.workspace);
+		manifest = await createRuntimeContainmentManifest(layout.manifestPath, binding);
+	}
+	if (manifest === undefined) throw new Error("Containment manifest was not established");
 
 	return Object.freeze({
 		boundary: new PinnedCodexSandboxBoundary(input, layout),
@@ -80,11 +132,85 @@ export async function prepareCodexSandboxContainment(
 	});
 }
 
+/** Reopens a retained containment binding after process loss and revalidates every local identity. */
+export async function recoverCodexSandboxContainment(
+	expectation: CodexSandboxRecoveryExpectation,
+): Promise<CodexSandboxContainment> {
+	assertSupportedPlatform();
+	const { manifestPath } = expectation;
+	assertAbsoluteNormalized(manifestPath, "containment manifest");
+	if ((await realpath(manifestPath)) !== manifestPath) {
+		throw new Error("Containment manifest must use its canonical path");
+	}
+	const manifest = await readRuntimeContainmentManifest(manifestPath);
+	if (
+		manifest.instance_id !== expectation.instanceId ||
+		manifest.binding_sha256 !== expectation.bindingSha256
+	) {
+		throw new Error("Containment recovery does not match the Node-authorized instance");
+	}
+	const binding = manifest.binding;
+	const controlDirectory = binding.private_paths.control_root.path;
+	if (
+		manifestPath !== join(controlDirectory, MANIFEST_FILE) ||
+		dirname(manifestPath) !== controlDirectory
+	) {
+		throw new Error("Containment manifest is outside its bound control directory");
+	}
+	const workspace: PreparedMissionWorkspace = Object.freeze({
+		repositoryUrl: binding.workspace.repository_url,
+		baseCommit: binding.workspace.base_commit,
+		root: binding.workspace.root.path,
+		gitDirectory: binding.workspace.git_directory.path,
+		rootIdentity: binding.workspace.root.identity,
+		gitIdentity: binding.workspace.git_directory.identity,
+		reachableFromRef: binding.workspace.reachable_from_ref,
+		clean: true,
+	});
+	await revalidateMissionWorkspaceIsolation(workspace);
+	const ownerHome = await realpath(homedir());
+	const deniedRoots = binding.denied_roots.map((root) => root.path);
+	if (!deniedRoots.includes(ownerHome) || !deniedRoots.includes(controlDirectory)) {
+		throw new Error("Containment recovery is missing its default denied roots");
+	}
+	return prepareContainment(
+		{
+			controlDirectory,
+			runtimeDirectory: binding.private_paths.runtime_root.path,
+			workspace,
+			launcher: {
+				executable: binding.launcher.executable.path,
+				readRoot: binding.launcher.read_root.path,
+				sha256: binding.launcher.executable_sha256,
+				sandboxHelper: {
+					executable: binding.launcher.sandbox_helper.executable.path,
+					readRoot: binding.launcher.read_root.path,
+					sha256: binding.launcher.sandbox_helper.executable_sha256,
+				},
+			},
+			provider: {
+				executable: binding.provider.executable.path,
+				readRoot: binding.provider.read_root.path,
+				sha256: binding.provider.executable_sha256,
+			},
+			readOnlyRoots: binding.read_only_roots.map((root) => root.path),
+			forbiddenRoots: deniedRoots.filter((root) => root !== ownerHome && root !== controlDirectory),
+			policyGrantSha256: binding.policy_grant_sha256,
+		},
+		"recover",
+	);
+}
+
 function assertInputBounds(input: CodexSandboxContainmentInput): void {
 	if ((input.readOnlyRoots?.length ?? 0) > 32 || (input.forbiddenRoots?.length ?? 0) > 32) {
 		throw new Error("Containment supports at most 32 additional read or denied roots");
 	}
-	for (const digest of [input.launcher.sha256, input.provider.sha256, input.policyGrantSha256]) {
+	for (const digest of [
+		input.launcher.sha256,
+		input.launcher.sandboxHelper.sha256,
+		input.provider.sha256,
+		input.policyGrantSha256,
+	]) {
 		if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error("Containment digests must use SHA-256");
 	}
 }
@@ -118,31 +244,38 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 			env: {
 				HOME: this.layout.launcherHome,
 				CODEX_HOME: this.layout.launcherHome,
-				PATH: join(this.layout.launcherHome, "empty-path"),
+				PATH: this.layout.emptyPath,
 			},
 		};
 	}
 }
 
-async function prepareLayout(input: CodexSandboxContainmentInput): Promise<ContainmentLayout> {
-	await ensurePrivateStateDirectory(input.controlDirectory);
-	await ensurePrivateStateDirectory(input.runtimeDirectory);
+async function prepareLayout(
+	input: CodexSandboxContainmentInput,
+	mode: "create" | "recover",
+): Promise<ContainmentLayout> {
+	const prepareDirectory =
+		mode === "create" ? ensurePrivateStateDirectory : assertPrivateStateDirectory;
+	await prepareDirectory(input.controlDirectory);
+	await prepareDirectory(input.runtimeDirectory);
 	assertDisjoint(input.controlDirectory, input.runtimeDirectory, "control and runtime roots");
 	assertDisjoint(input.controlDirectory, input.workspace.root, "control root and workspace");
 	assertDisjoint(input.runtimeDirectory, input.workspace.root, "runtime root and workspace");
 
 	const launcherHome = join(input.controlDirectory, "sandbox-launcher");
+	const emptyPath = join(launcherHome, "empty-path");
 	const runtimeHome = join(input.runtimeDirectory, "codex-home");
 	const runtimeTmp = join(input.runtimeDirectory, "tmp");
 	await Promise.all([
-		ensurePrivateStateDirectory(launcherHome),
-		ensurePrivateStateDirectory(join(launcherHome, "empty-path")),
-		ensurePrivateStateDirectory(runtimeHome),
-		ensurePrivateStateDirectory(runtimeTmp),
+		prepareDirectory(launcherHome),
+		prepareDirectory(emptyPath),
+		prepareDirectory(runtimeHome),
+		prepareDirectory(runtimeTmp),
 	]);
 	return {
 		controlRoot: input.controlDirectory,
 		launcherHome,
+		emptyPath,
 		launcherPath: join(launcherHome, CONFIG_FILE),
 		runtimeRoot: input.runtimeDirectory,
 		runtimeHome,
@@ -154,10 +287,12 @@ async function prepareLayout(input: CodexSandboxContainmentInput): Promise<Conta
 async function buildLauncherConfig(
 	input: CodexSandboxContainmentInput,
 	layout: ContainmentLayout,
+	probe: ContainmentProbeExecutable,
 ): Promise<string> {
 	const readRoots = await canonicalRoots([
 		input.launcher.readRoot,
 		input.provider.readRoot,
+		probe.readRoot,
 		...(input.readOnlyRoots ?? []),
 	]);
 	const deniedRoots = await canonicalRoots([
@@ -213,12 +348,15 @@ async function buildBinding(
 	input: CodexSandboxContainmentInput,
 	layout: ContainmentLayout,
 	config: string,
+	probeInput?: ContainmentProbeExecutable,
 ): Promise<RuntimeContainmentBinding> {
-	const [workspace, launcher, provider, privatePaths, readOnlyRoots, deniedRoots] =
+	const probe = probeInput ?? (await resolveContainmentProbe(sha256File));
+	const [workspace, launcher, provider, inspectedProbe, privatePaths, readOnlyRoots, deniedRoots] =
 		await Promise.all([
 			inspectWorkspace(input.workspace),
-			inspectExecutable(input.launcher),
+			inspectLauncher(input.launcher),
 			inspectExecutable(input.provider),
+			inspectExecutable(probe),
 			inspectPrivatePaths(layout),
 			inspectRoots(input.readOnlyRoots ?? []),
 			inspectRoots([
@@ -235,6 +373,10 @@ async function buildBinding(
 			executable: launcher.executable,
 			executable_sha256: input.launcher.sha256,
 			read_root: launcher.readRoot,
+			sandbox_helper: {
+				executable: launcher.sandboxHelper,
+				executable_sha256: input.launcher.sandboxHelper.sha256,
+			},
 			config_path: layout.launcherPath,
 			config_sha256: sha256(config),
 		},
@@ -243,11 +385,30 @@ async function buildBinding(
 			executable_sha256: input.provider.sha256,
 			read_root: provider.readRoot,
 		},
+		probe: {
+			executable: inspectedProbe.executable,
+			executable_sha256: probe.sha256,
+			read_root: inspectedProbe.readRoot,
+		},
 		private_paths: privatePaths,
 		read_only_roots: readOnlyRoots,
 		denied_roots: deniedRoots,
 		policy_grant_sha256: input.policyGrantSha256,
 	};
+}
+
+async function inspectLauncher(launcher: PinnedCodexLauncher) {
+	const [runtime, sandboxHelper] = await Promise.all([
+		inspectExecutable(launcher),
+		inspectExecutable(launcher.sandboxHelper),
+	]);
+	if (
+		sandboxHelper.readRoot.path !== runtime.readRoot.path ||
+		sandboxHelper.executable.path !== join(runtime.readRoot.path, "codex-resources", "bwrap")
+	) {
+		throw new Error("Pinned Codex sandbox helper must use the exact packaged location");
+	}
+	return { ...runtime, sandboxHelper: sandboxHelper.executable };
 }
 
 async function inspectWorkspace(workspace: PreparedMissionWorkspace) {
@@ -372,12 +533,12 @@ function assertAbsoluteNormalized(path: string, label: string): void {
 	}
 }
 
-async function openOrCreatePrivateConfig(path: string, expected: string): Promise<void> {
-	const existing = await readPrivateConfig(path, true);
-	if (existing === null) {
-		await writeDurableText(path, expected, { fileMode: 0o600, directoryMode: 0o700 });
-		return;
-	}
+async function createPrivateConfig(path: string, expected: string): Promise<void> {
+	await writeDurableTextExclusive(path, expected, { fileMode: 0o600, directoryMode: 0o700 });
+}
+
+async function assertPrivateConfig(path: string, expected: string): Promise<void> {
+	const existing = await readPrivateConfig(path);
 	if (existing !== expected) throw new Error("Containment launcher config changed after creation");
 }
 

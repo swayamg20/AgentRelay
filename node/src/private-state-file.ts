@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
-import { writeDurableJson } from "./durable-file.js";
+import { writeDurableText, writeDurableTextExclusive } from "./durable-file.js";
 
 export const MAX_PRIVATE_STATE_FILE_BYTES = 16 * 1_048_576;
 
@@ -13,6 +13,13 @@ export async function ensurePrivateStateDirectory(directory: string): Promise<vo
 		await mkdir(directory, { recursive: true, mode: 0o700 });
 	} catch (error) {
 		if (errorCode(error) !== "EEXIST") throw error;
+	}
+	await assertPrivateStateDirectory(directory);
+}
+
+export async function assertPrivateStateDirectory(directory: string): Promise<void> {
+	if (!isAbsolute(directory) || normalize(directory) !== directory || directory.includes("\0")) {
+		throw new Error(`Private state directory must be an absolute normalized path: ${directory}`);
 	}
 	const stats = await lstat(directory);
 	if (!stats.isDirectory() || stats.isSymbolicLink()) {
@@ -60,6 +67,21 @@ export async function readPrivateJsonIfPresent(path: string): Promise<unknown | 
 }
 
 export async function writePrivateJson(path: string, value: unknown): Promise<void> {
+	const serialized = serializePrivateJson(path, value);
+	await ensurePrivateStateDirectory(dirname(path));
+	await writeDurableText(path, `${serialized}\n`, { fileMode: 0o600, directoryMode: 0o700 });
+}
+
+export async function writePrivateJsonExclusive(path: string, value: unknown): Promise<void> {
+	const serialized = serializePrivateJson(path, value);
+	await ensurePrivateStateDirectory(dirname(path));
+	await writeDurableTextExclusive(path, `${serialized}\n`, {
+		fileMode: 0o600,
+		directoryMode: 0o700,
+	});
+}
+
+function serializePrivateJson(path: string, value: unknown): string {
 	const serialized = JSON.stringify(value, null, 2);
 	if (
 		serialized === undefined ||
@@ -67,8 +89,7 @@ export async function writePrivateJson(path: string, value: unknown): Promise<vo
 	) {
 		throw new Error(`Private state file exceeds the byte limit: ${path}`);
 	}
-	await ensurePrivateStateDirectory(dirname(path));
-	await writeDurableJson(path, value, { fileMode: 0o600, directoryMode: 0o700 });
+	return serialized;
 }
 
 function errorCode(error: unknown): string | undefined {

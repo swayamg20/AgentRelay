@@ -1,5 +1,5 @@
-import { realpath as fsRealpath, lstat, opendir } from "node:fs/promises";
-import { join } from "node:path";
+import { realpath as fsRealpath, lstat, opendir, readFile } from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 import type { WorkspaceConfig } from "./config.js";
 import {
 	type MissionWorkspaceExpectation,
@@ -18,6 +18,7 @@ export type MissionWorkspaceErrorCode =
 	| "workspace_mounts_unsupported"
 	| "workspace_special_files_unsupported"
 	| "workspace_identity_changed"
+	| "workspace_dirty"
 	| "git_command_failed";
 
 export class MissionWorkspaceError extends Error {
@@ -113,6 +114,7 @@ export async function prepareMissionWorkspace(
 		clean: true,
 	});
 	await revalidateMissionWorkspaceIsolation(prepared, { runCommand, realpath });
+	await assertMissionWorkspaceClean(prepared, { runCommand });
 	return prepared;
 }
 
@@ -180,18 +182,60 @@ export async function revalidateMissionWorkspaceIsolation(
 	}
 
 	await rejectAlternates(gitDirectory);
+	await rejectNestedLinuxMounts(workspace.root);
 	await inspectWritableWorkspaceTree(workspace.root, workspace.rootIdentity.device);
 }
 
+export async function assertMissionWorkspaceClean(
+	workspace: PreparedMissionWorkspace,
+	dependencies: Pick<MissionWorkspaceDependencies, "runCommand"> = {},
+): Promise<void> {
+	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
+	const argv = ["status", "--porcelain=v1", "--untracked-files=all"] as const;
+	const result = await runCommand({ file: "git", argv, cwd: workspace.root, shell: false });
+	if (result.exitCode !== 0) {
+		throw new MissionWorkspaceError("git_command_failed", "Git cleanliness inspection failed", {
+			argv: [...argv],
+			exit_code: result.exitCode,
+		});
+	}
+	if (result.stdout.length > 0) {
+		throw new MissionWorkspaceError(
+			"workspace_dirty",
+			"A fresh Mission containment requires the admitted clean workspace",
+		);
+	}
+	const ignoredArgv = ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] as const;
+	const ignored = await runCommand({
+		file: "git",
+		argv: ignoredArgv,
+		cwd: workspace.root,
+		shell: false,
+	});
+	if (ignored.exitCode !== 0) {
+		throw new MissionWorkspaceError("git_command_failed", "Git ignored-file inspection failed", {
+			argv: [...ignoredArgv],
+			exit_code: ignored.exitCode,
+		});
+	}
+	if (ignored.stdout.length > 0) {
+		throw new MissionWorkspaceError(
+			"workspace_dirty",
+			"A fresh Mission workspace cannot contain ignored files or directories",
+		);
+	}
+}
+
 async function inspectWritableWorkspaceTree(root: string, rootDevice: string): Promise<void> {
-	const pending = [root];
+	const pending = [{ directory: root, gitMetadata: false }];
 	while (pending.length > 0) {
-		const directory = pending.pop();
-		if (directory === undefined) break;
+		const current = pending.pop();
+		if (current === undefined) break;
+		const { directory, gitMetadata } = current;
 		const entries = await opendir(directory);
 		for await (const entry of entries) {
-			if (directory === root && entry.name === ".git") continue;
 			const path = join(directory, entry.name);
+			const isGitMetadata = gitMetadata || (directory === root && entry.name === ".git");
 			const stats = await lstat(path, { bigint: true });
 			if (stats.dev.toString() !== rootDevice) {
 				throw new MissionWorkspaceError(
@@ -200,10 +244,18 @@ async function inspectWritableWorkspaceTree(root: string, rootDevice: string): P
 				);
 			}
 			if (stats.isDirectory()) {
-				pending.push(path);
+				pending.push({ directory: path, gitMetadata: isGitMetadata });
 				continue;
 			}
-			if (stats.isSymbolicLink()) continue;
+			if (stats.isSymbolicLink()) {
+				if (isGitMetadata) {
+					throw new MissionWorkspaceError(
+						"git_metadata_not_isolated",
+						"Mission workspace Git metadata cannot contain symbolic links",
+					);
+				}
+				continue;
+			}
 			if (!stats.isFile()) {
 				throw new MissionWorkspaceError(
 					"workspace_special_files_unsupported",
@@ -218,6 +270,40 @@ async function inspectWritableWorkspaceTree(root: string, rootDevice: string): P
 			}
 		}
 	}
+}
+
+async function rejectNestedLinuxMounts(root: string): Promise<void> {
+	if (process.platform !== "linux") return;
+	const mountInfo = await readFile("/proc/self/mountinfo", "utf8");
+	for (const line of mountInfo.split("\n")) {
+		if (line.length === 0) continue;
+		const fields = line.split(" ");
+		const encodedMountPoint = fields[4];
+		if (encodedMountPoint === undefined) {
+			throw new MissionWorkspaceError(
+				"workspace_mounts_unsupported",
+				"Linux mount metadata was malformed",
+			);
+		}
+		const mountPoint = decodeMountInfoPath(encodedMountPoint);
+		if (mountPoint !== root && isWithin(mountPoint, root)) {
+			throw new MissionWorkspaceError(
+				"workspace_mounts_unsupported",
+				"Mission workspace cannot contain nested mounts",
+			);
+		}
+	}
+}
+
+function decodeMountInfoPath(value: string): string {
+	return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
+		String.fromCharCode(Number.parseInt(octal, 8)),
+	);
+}
+
+function isWithin(path: string, root: string): boolean {
+	const child = relative(root, path);
+	return child === "" || (!child.startsWith("..") && !isAbsolute(child));
 }
 
 async function singleGitLine(

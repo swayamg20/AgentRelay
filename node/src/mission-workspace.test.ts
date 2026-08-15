@@ -7,6 +7,7 @@ import {
 	realpath,
 	rename,
 	rm,
+	symlink,
 	unlink,
 	writeFile,
 } from "node:fs/promises";
@@ -115,6 +116,17 @@ describe.skipIf(process.platform === "win32" || process.getuid === undefined)(
 			).rejects.toMatchObject({ code: "workspace_hardlinks_unsupported" });
 		});
 
+		it("rejects a Git-metadata hardlink to an external file", async () => {
+			const repository = await createRepository();
+			const externalPath = join(repository.temporaryRoot, "git-secret-canary");
+			await writeFile(externalPath, "secret\n");
+			await link(externalPath, join(repository.root, ".git", "leak"));
+
+			await expect(
+				prepareMissionWorkspace(repository.workspace, repository.expectation),
+			).rejects.toMatchObject({ code: "workspace_hardlinks_unsupported" });
+		});
+
 		it("revalidates storage aliases and Git alternates after admission", async () => {
 			const repository = await createRepository();
 			const prepared = await prepareMissionWorkspace(repository.workspace, repository.expectation);
@@ -146,6 +158,31 @@ describe.skipIf(process.platform === "win32" || process.getuid === undefined)(
 			await expect(revalidateMissionWorkspaceIsolation(prepared)).rejects.toMatchObject({
 				code: "workspace_identity_changed",
 			});
+		});
+
+		it.each([
+			["case", "REPOSITORY"],
+			["Unicode normalization", "repositóry".normalize("NFD")],
+		])("rejects a %s alias even when it points at the approved root", async (_kind, alias) => {
+			const repository = await createRepository();
+			const aliasPath = join(repository.temporaryRoot, alias);
+			await symlink(repository.root, aliasPath).catch((error: unknown) => {
+				if (
+					typeof error !== "object" ||
+					error === null ||
+					!("code" in error) ||
+					error.code !== "EEXIST"
+				) {
+					throw error;
+				}
+			});
+
+			await expect(
+				prepareMissionWorkspace(
+					{ ...repository.workspace, path: aliasPath },
+					repository.expectation,
+				),
+			).rejects.toMatchObject({ code: "workspace_root_not_canonical" });
 		});
 
 		it.each([

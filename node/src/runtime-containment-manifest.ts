@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { digestCanonicalJson } from "./capsule-correlation.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
-import { readPrivateJsonIfPresent, writePrivateJson } from "./private-state-file.js";
+import { readPrivateJsonIfPresent, writePrivateJsonExclusive } from "./private-state-file.js";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const filesystemIdentitySchema = z
@@ -29,6 +29,7 @@ export const runtimeContainmentBindingSchema = z
 			.object({
 				repository_url: z.string().min(1).max(2_048),
 				base_commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+				reachable_from_ref: z.string().min(1).max(1_024),
 				root: boundPathSchema,
 				git_directory: boundPathSchema,
 			})
@@ -38,11 +39,24 @@ export const runtimeContainmentBindingSchema = z
 				executable: boundPathSchema,
 				executable_sha256: sha256Schema,
 				read_root: boundPathSchema,
+				sandbox_helper: z
+					.object({
+						executable: boundPathSchema,
+						executable_sha256: sha256Schema,
+					})
+					.strict(),
 				config_path: localPathSchema,
 				config_sha256: sha256Schema,
 			})
 			.strict(),
 		provider: z
+			.object({
+				executable: boundPathSchema,
+				executable_sha256: sha256Schema,
+				read_root: boundPathSchema,
+			})
+			.strict(),
+		probe: z
 			.object({
 				executable: boundPathSchema,
 				executable_sha256: sha256Schema,
@@ -87,35 +101,45 @@ export interface RuntimeContainmentEvidence {
 	readonly retention: "retain_for_review";
 }
 
-export async function openRuntimeContainmentManifest(
+export async function createRuntimeContainmentManifest(
 	path: string,
 	bindingValue: RuntimeContainmentBinding,
 	now: () => Date = () => new Date(),
 ): Promise<RuntimeContainmentManifest> {
 	const binding = runtimeContainmentBindingSchema.parse(bindingValue);
 	const bindingSha256 = digestCanonicalJson(binding);
-	const decoded = await readPrivateJsonIfPresent(path);
-	if (decoded === null) {
-		const manifest = runtimeContainmentManifestSchema.parse({
-			schema_version: 1,
-			instance_id: randomUUID(),
-			created_at: now().toISOString(),
-			retention: "retain_for_review",
-			binding_sha256: bindingSha256,
-			binding,
-		});
-		await writePrivateJson(path, manifest);
-		return manifest;
-	}
+	const manifest = runtimeContainmentManifestSchema.parse({
+		schema_version: 1,
+		instance_id: randomUUID(),
+		created_at: now().toISOString(),
+		retention: "retain_for_review",
+		binding_sha256: bindingSha256,
+		binding,
+	});
+	await writePrivateJsonExclusive(path, manifest);
+	return manifest;
+}
 
-	const manifest = runtimeContainmentManifestSchema.parse(decoded);
-	if (
-		manifest.binding_sha256 !== digestCanonicalJson(manifest.binding) ||
-		manifest.binding_sha256 !== bindingSha256 ||
-		!isDeepStrictEqual(manifest.binding, binding)
-	) {
+export async function openRuntimeContainmentManifest(
+	path: string,
+	bindingValue: RuntimeContainmentBinding,
+): Promise<RuntimeContainmentManifest> {
+	const binding = runtimeContainmentBindingSchema.parse(bindingValue);
+	const bindingSha256 = digestCanonicalJson(binding);
+	const manifest = await readRuntimeContainmentManifest(path);
+	if (manifest.binding_sha256 !== bindingSha256 || !isDeepStrictEqual(manifest.binding, binding)) {
 		throw new Error("Containment manifest does not authorize this exact workspace and policy");
 	}
+	return manifest;
+}
+
+export async function readRuntimeContainmentManifest(
+	path: string,
+): Promise<RuntimeContainmentManifest> {
+	const decoded = await readPrivateJsonIfPresent(path);
+	if (decoded === null) throw new Error("Containment manifest is missing");
+	const manifest = runtimeContainmentManifestSchema.parse(decoded);
+	assertValidManifestDigest(manifest);
 	return manifest;
 }
 
@@ -140,7 +164,14 @@ export function workspaceBinding(workspace: PreparedMissionWorkspace) {
 	return {
 		repository_url: workspace.repositoryUrl,
 		base_commit: workspace.baseCommit,
+		reachable_from_ref: workspace.reachableFromRef,
 		root: boundPath(workspace.root, workspace.rootIdentity),
 		git_directory: boundPath(workspace.gitDirectory, workspace.gitIdentity),
 	};
+}
+
+function assertValidManifestDigest(manifest: RuntimeContainmentManifest): void {
+	if (manifest.binding_sha256 !== digestCanonicalJson(manifest.binding)) {
+		throw new Error("Containment manifest binding digest is invalid");
+	}
 }
