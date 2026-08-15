@@ -143,7 +143,9 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+      # The containment scanner deliberately rejects package trees that are
+      # hard-linked back into pnpm's content-addressed store.
+      - run: pnpm install --frozen-lockfile --package-import-method=copy
 
       - run: pnpm --filter @agentrelay/protocol build
 
