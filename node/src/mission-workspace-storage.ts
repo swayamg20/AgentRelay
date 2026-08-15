@@ -1,5 +1,6 @@
 import { lstat, opendir, readFile } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { join } from "node:path";
+import { isPathWithin } from "./filesystem-path.js";
 import {
 	type LocalFilesystemIdentity,
 	MissionWorkspaceError,
@@ -41,6 +42,14 @@ export async function assertMissionWorkspaceStorageIsolated(input: {
 	readonly rootDevice: string;
 }): Promise<void> {
 	const { root, gitDirectory, rootDevice } = input;
+	const currentUid = process.getuid?.();
+	if (currentUid === undefined) {
+		throw new MissionWorkspaceError(
+			"unsupported_platform",
+			"Mission workspace ownership inspection requires Unix",
+		);
+	}
+	const ownerUid = BigInt(currentUid);
 	await rejectAlternates(gitDirectory);
 	await rejectNestedLinuxMounts(root);
 	const pending = [{ directory: root, gitMetadata: false }];
@@ -57,6 +66,18 @@ export async function assertMissionWorkspaceStorageIsolated(input: {
 				throw new MissionWorkspaceError(
 					"workspace_mounts_unsupported",
 					"Mission workspace cannot contain another filesystem",
+				);
+			}
+			if (stats.uid !== ownerUid) {
+				throw new MissionWorkspaceError(
+					"workspace_not_owned",
+					"Mission workspace entries must be owner-controlled",
+				);
+			}
+			if (!stats.isSymbolicLink() && (stats.mode & 0o22n) !== 0n) {
+				throw new MissionWorkspaceError(
+					"workspace_permissions_unsafe",
+					"Mission workspace entries cannot be group- or world-writable",
 				);
 			}
 			if (stats.isDirectory()) {
@@ -115,7 +136,7 @@ async function rejectNestedLinuxMounts(root: string): Promise<void> {
 			);
 		}
 		const mountPoint = decodeMountInfoPath(encodedMountPoint);
-		if (mountPoint !== root && isWithin(mountPoint, root)) {
+		if (mountPoint !== root && isPathWithin(mountPoint, root)) {
 			throw new MissionWorkspaceError(
 				"workspace_mounts_unsupported",
 				"Mission workspace cannot contain nested mounts",
@@ -128,11 +149,6 @@ function decodeMountInfoPath(value: string): string {
 	return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
 		String.fromCharCode(Number.parseInt(octal, 8)),
 	);
-}
-
-function isWithin(path: string, root: string): boolean {
-	const child = relative(root, path);
-	return child === "" || (!child.startsWith("..") && !isAbsolute(child));
 }
 
 function errorCode(error: unknown): string | undefined {

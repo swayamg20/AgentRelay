@@ -10,13 +10,10 @@ import type {
 	PinnedCodexLauncher,
 	PinnedExecutable,
 } from "./codex-sandbox-contract.js";
-import {
-	assertAbsoluteNormalizedPath,
-	canonicalContainmentRoots,
-	isPathWithin,
-} from "./codex-sandbox-policy.js";
+import { assertAbsoluteNormalizedPath, canonicalContainmentRoots } from "./codex-sandbox-policy.js";
 import type { ContainmentProbeExecutable } from "./codex-sandbox-probe.js";
 import { assertContainmentReadTreesIsolated } from "./containment-read-tree.js";
+import { isPathWithin } from "./filesystem-path.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
 import { revalidateMissionWorkspaceIsolation } from "./mission-workspace.js";
 import {
@@ -54,6 +51,11 @@ export async function buildRuntimeContainmentBinding(
 			...readOnlyRoots.map((root) => root.path),
 		],
 		deniedRoots: deniedRoots.map((root) => root.path),
+		writableRoots: [
+			workspace.root.path,
+			privatePaths.runtime_home.path,
+			privatePaths.runtime_tmp.path,
+		],
 	});
 	return {
 		backend: RUNTIME_CONTAINMENT_BACKEND,

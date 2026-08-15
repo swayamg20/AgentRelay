@@ -8,6 +8,8 @@ import type { PinnedExecutable } from "./codex-sandbox-contract.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_PROBE_OUTPUT_BYTES = 64 * 1_024;
+const EXPECTED_PROBE_OUTPUT = '{"ok":true}\n';
+const MAX_DIAGNOSTIC_OUTPUT_CHARS = 512;
 
 export type ContainmentProbeExecutable = PinnedExecutable;
 
@@ -74,8 +76,12 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 			},
 		);
 		const output = await collectProbeOutput(child);
-		if (output.stdout.trim() !== '{"ok":true}') {
-			throw new Error("Codex sandbox capability probe returned an invalid result");
+		if (output.stdout !== EXPECTED_PROBE_OUTPUT) {
+			const bytes = Buffer.byteLength(output.stdout, "utf8");
+			const diagnostic = JSON.stringify(output.stdout.slice(0, MAX_DIAGNOSTIC_OUTPUT_CHARS));
+			throw new Error(
+				`Codex sandbox capability probe returned invalid stdout (${bytes} bytes): ${diagnostic}`,
+			);
 		}
 	} finally {
 		await Promise.all([

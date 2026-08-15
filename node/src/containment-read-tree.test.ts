@@ -21,6 +21,7 @@ describe("containment read tree isolation", () => {
 			assertContainmentReadTreesIsolated({
 				roots: [fixture.readRoot],
 				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
 			}),
 		).resolves.toBeUndefined();
 	});
@@ -35,6 +36,7 @@ describe("containment read tree isolation", () => {
 			assertContainmentReadTreesIsolated({
 				roots: [fixture.readRoot],
 				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
 			}),
 		).rejects.toThrow("hard-linked elsewhere");
 	});
@@ -49,6 +51,7 @@ describe("containment read tree isolation", () => {
 			assertContainmentReadTreesIsolated({
 				roots: [fixture.readRoot],
 				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
 			}),
 		).rejects.toThrow("cannot target denied roots");
 	});
@@ -63,8 +66,52 @@ describe("containment read tree isolation", () => {
 			assertContainmentReadTreesIsolated({
 				roots: [fixture.readRoot],
 				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
 			}),
 		).rejects.toThrow("writable host entries");
+	});
+
+	it("rejects symbolic links into writable roots", async () => {
+		const fixture = await createFixture();
+		const target = join(fixture.writableRoot, "mutable-runtime");
+		await writeFile(target, "mutable");
+		await symlink(target, join(fixture.readRoot, "alias"));
+
+		await expect(
+			assertContainmentReadTreesIsolated({
+				roots: [fixture.readRoot],
+				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
+			}),
+		).rejects.toThrow("cannot target writable roots");
+	});
+
+	it("rejects dangling symbolic links that could become writable aliases", async () => {
+		const fixture = await createFixture();
+		await symlink(join(fixture.writableRoot, "future-runtime"), join(fixture.readRoot, "alias"));
+
+		await expect(
+			assertContainmentReadTreesIsolated({
+				roots: [fixture.readRoot],
+				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
+			}),
+		).rejects.toThrow("must resolve before admission");
+	});
+
+	it("allows symbolic links that stay within approved read roots", async () => {
+		const fixture = await createFixture();
+		const target = join(fixture.readRoot, "runtime.bin");
+		await writeFile(target, "runtime");
+		await symlink(target, join(fixture.readRoot, "alias"));
+
+		await expect(
+			assertContainmentReadTreesIsolated({
+				roots: [fixture.readRoot],
+				deniedRoots: [fixture.deniedRoot],
+				writableRoots: [fixture.writableRoot],
+			}),
+		).resolves.toBeUndefined();
 	});
 });
 
@@ -73,6 +120,7 @@ async function createFixture() {
 	temporaryRoots.push(root);
 	const readRoot = join(root, "read");
 	const deniedRoot = join(root, "denied");
-	await Promise.all([mkdir(readRoot), mkdir(deniedRoot)]);
-	return { root, readRoot, deniedRoot };
+	const writableRoot = join(root, "writable");
+	await Promise.all([mkdir(readRoot), mkdir(deniedRoot), mkdir(writableRoot)]);
+	return { root, readRoot, deniedRoot, writableRoot };
 }

@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize, relative } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 import {
 	CODEX_SANDBOX_CONFIG_FILE,
 	CODEX_SANDBOX_MANIFEST_FILE,
@@ -12,6 +12,7 @@ import {
 } from "./codex-sandbox-contract.js";
 import type { ContainmentProbeExecutable } from "./codex-sandbox-probe.js";
 import { writeDurableTextExclusive } from "./durable-file.js";
+import { isPathWithin } from "./filesystem-path.js";
 import { assertPrivateStateDirectory, ensurePrivateStateDirectory } from "./private-state-file.js";
 
 const SAFE_CHILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -121,17 +122,37 @@ export async function buildCodexSandboxConfig(
 		probe.readRoot,
 		...(input.readOnlyRoots ?? []),
 	]);
-	const deniedRoots = await canonicalContainmentRoots([
-		await realpath(homedir()),
+	const ownerHome = await realpath(homedir());
+	const explicitDeniedRoots = await canonicalContainmentRoots([
 		layout.controlRoot,
 		...(input.forbiddenRoots ?? []),
 	]);
+	const deniedRoots = [...new Set([ownerHome, ...explicitDeniedRoots])].sort();
+	const writableRoots = [input.workspace.root, layout.runtimeHome, layout.runtimeTmp];
+	for (const readRoot of readRoots) {
+		for (const writableRoot of writableRoots) {
+			assertDisjoint(readRoot, writableRoot, "trusted read and writable roots");
+		}
+		for (const deniedRoot of explicitDeniedRoots) {
+			assertDisjoint(readRoot, deniedRoot, "trusted read and explicitly denied roots");
+		}
+	}
+	if (deniedRoots.some((deniedRoot) => writableRoots.includes(deniedRoot))) {
+		throw new Error("A denied containment root cannot equal a writable root");
+	}
+	if (
+		explicitDeniedRoots.some((deniedRoot) =>
+			writableRoots.some((writableRoot) => isPathWithin(writableRoot, deniedRoot)),
+		)
+	) {
+		throw new Error("An explicitly denied containment root cannot contain a writable root");
+	}
 	if (readRoots.some((readRoot) => deniedRoots.some((denied) => isPathWithin(denied, readRoot)))) {
 		throw new Error("A readable root cannot contain a denied containment root");
 	}
 	const explicitDenyRoots = deniedRoots.filter((deniedRoot) =>
-		[...LINUX_VISIBLE_BASE_ROOTS, input.workspace.root, layout.runtimeHome, layout.runtimeTmp].some(
-			(visibleRoot) => isPathWithin(deniedRoot, visibleRoot),
+		[...LINUX_VISIBLE_BASE_ROOTS, ...writableRoots].some((visibleRoot) =>
+			isPathWithin(deniedRoot, visibleRoot),
 		),
 	);
 
@@ -215,11 +236,6 @@ export function assertAbsoluteNormalizedPath(path: string, label: string): void 
 	if (!isAbsolute(path) || normalize(path) !== path || path.includes("\0")) {
 		throw new Error(`${label} must be an absolute normalized path without NUL`);
 	}
-}
-
-export function isPathWithin(path: string, root: string): boolean {
-	const child = relative(root, path);
-	return child === "" || (!child.startsWith("..") && !isAbsolute(child));
 }
 
 export async function canonicalContainmentRoots(paths: readonly string[]): Promise<string[]> {

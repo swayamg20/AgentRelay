@@ -199,6 +199,26 @@ describe.skipIf(process.platform === "win32" || process.getuid === undefined)(
 				await chmod(repository.root, 0o700);
 			}
 		});
+
+		it("rejects a nested group- or world-writable directory", async () => {
+			const repository = await createRepository();
+			const nested = join(repository.root, "unsafe-directory");
+			await mkdir(nested, { mode: 0o777 });
+			await chmod(nested, 0o777);
+
+			await expect(
+				prepareMissionWorkspace(repository.workspace, repository.expectation),
+			).rejects.toMatchObject({ code: "workspace_permissions_unsafe" });
+		});
+
+		it("rejects a group- or world-writable Git metadata entry", async () => {
+			const repository = await createRepository();
+			await chmod(join(repository.root, ".git", "config"), 0o666);
+
+			await expect(
+				prepareMissionWorkspace(repository.workspace, repository.expectation),
+			).rejects.toMatchObject({ code: "workspace_permissions_unsafe" });
+		});
 	},
 );
 

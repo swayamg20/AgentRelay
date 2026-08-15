@@ -1,5 +1,6 @@
 import { lstat, opendir, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { join } from "node:path";
+import { isPathWithin } from "./filesystem-path.js";
 
 const MAX_READ_TREE_ENTRIES = 100_000;
 
@@ -7,13 +8,20 @@ const MAX_READ_TREE_ENTRIES = 100_000;
 export async function assertContainmentReadTreesIsolated(input: {
 	readonly roots: readonly string[];
 	readonly deniedRoots: readonly string[];
+	readonly writableRoots: readonly string[];
 }): Promise<void> {
-	for (const root of minimalRoots(input.roots)) {
-		await assertReadTreeIsolated(root, input.deniedRoots);
+	const readRoots = minimalRoots(input.roots);
+	for (const root of readRoots) {
+		await assertReadTreeIsolated(root, readRoots, input.deniedRoots, input.writableRoots);
 	}
 }
 
-async function assertReadTreeIsolated(root: string, deniedRoots: readonly string[]): Promise<void> {
+async function assertReadTreeIsolated(
+	root: string,
+	readRoots: readonly string[],
+	deniedRoots: readonly string[],
+	writableRoots: readonly string[],
+): Promise<void> {
 	await rejectNestedLinuxMounts(root);
 	const rootStats = await lstat(root, { bigint: true });
 	const rootDevice = rootStats.dev;
@@ -34,14 +42,14 @@ async function assertReadTreeIsolated(root: string, deniedRoots: readonly string
 			if (stats.dev !== rootDevice) {
 				throw new Error("Containment read tree cannot cross filesystem boundaries");
 			}
+			assertOwnerControlled(stats.uid);
 			if (stats.isSymbolicLink()) {
-				await assertSafeSymlink(path, deniedRoots);
+				await assertSafeSymlink(path, readRoots, deniedRoots, writableRoots);
 				continue;
 			}
 			if ((stats.mode & 0o22n) !== 0n) {
 				throw new Error("Containment read tree cannot contain writable host entries");
 			}
-			assertOwnerControlled(stats.uid);
 			if (stats.isDirectory()) {
 				pending.push(path);
 				continue;
@@ -56,17 +64,29 @@ async function assertReadTreeIsolated(root: string, deniedRoots: readonly string
 	}
 }
 
-async function assertSafeSymlink(path: string, deniedRoots: readonly string[]): Promise<void> {
+async function assertSafeSymlink(
+	path: string,
+	readRoots: readonly string[],
+	deniedRoots: readonly string[],
+	writableRoots: readonly string[],
+): Promise<void> {
 	let target: string;
 	try {
 		target = await realpath(path);
 	} catch (error) {
-		if (errorCode(error) === "ENOENT") return;
+		if (errorCode(error) === "ENOENT") {
+			throw new Error("Containment read tree symbolic links must resolve before admission");
+		}
 		throw new Error("Containment read tree symbolic link could not be inspected", { cause: error });
 	}
-	if (deniedRoots.some((root) => isWithin(target, root))) {
+	if (writableRoots.some((root) => isPathWithin(target, root))) {
+		throw new Error("Containment read tree symbolic links cannot target writable roots");
+	}
+	if (readRoots.some((root) => isPathWithin(target, root))) return;
+	if (deniedRoots.some((root) => isPathWithin(target, root))) {
 		throw new Error("Containment read tree symbolic links cannot target denied roots");
 	}
+	throw new Error("Containment read tree symbolic links must stay within approved read roots");
 }
 
 function assertOwnerControlled(uid: bigint): void {
@@ -86,7 +106,7 @@ async function rejectNestedLinuxMounts(root: string): Promise<void> {
 			throw new Error("Linux mount metadata was malformed");
 		}
 		const mountPoint = decodeMountInfoPath(encodedMountPoint);
-		if (mountPoint !== root && isWithin(mountPoint, root)) {
+		if (mountPoint !== root && isPathWithin(mountPoint, root)) {
 			throw new Error("Containment read tree cannot contain nested mounts");
 		}
 	}
@@ -95,7 +115,7 @@ async function rejectNestedLinuxMounts(root: string): Promise<void> {
 function minimalRoots(roots: readonly string[]): string[] {
 	const ordered = [...new Set(roots)].sort((left, right) => left.length - right.length);
 	return ordered.filter(
-		(root, index) => !ordered.slice(0, index).some((parent) => isWithin(root, parent)),
+		(root, index) => !ordered.slice(0, index).some((parent) => isPathWithin(root, parent)),
 	);
 }
 
@@ -103,11 +123,6 @@ function decodeMountInfoPath(value: string): string {
 	return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
 		String.fromCharCode(Number.parseInt(octal, 8)),
 	);
-}
-
-function isWithin(path: string, root: string): boolean {
-	const child = relative(root, path);
-	return child === "" || (!child.startsWith("..") && !isAbsolute(child));
 }
 
 function errorCode(error: unknown): string | undefined {

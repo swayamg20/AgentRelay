@@ -81,6 +81,130 @@ describe("Codex sandbox policy", () => {
 		expect(config).not.toContain(`${JSON.stringify(rootlessDeny)} = "deny"`);
 		expect(config).not.toContain(`${JSON.stringify(input.controlDirectory)} = "deny"`);
 	});
+
+	it.each(["inside", "around"] as const)(
+		"rejects a trusted read root %s a writable workspace",
+		async (relationship) => {
+			const root = await temporaryRoot();
+			const workspaceRoot = join(root, "workspace");
+			const nestedReadRoot = join(workspaceRoot, "trusted-runtime");
+			await Promise.all([
+				mkdir(join(workspaceRoot, ".git"), { recursive: true }),
+				mkdir(nestedReadRoot, { recursive: true }),
+			]);
+			const readRoot = relationship === "inside" ? nestedReadRoot : root;
+			const executable = {
+				executable: join(readRoot, "codex"),
+				readRoot,
+				sha256: "a".repeat(64),
+			};
+			const input: CodexSandboxContainmentInput = {
+				...fixtureInput(root),
+				launcher: { ...executable, sandboxHelper: executable },
+				provider: executable,
+			};
+			const layout = await prepareContainmentLayout(input, "create");
+
+			await expect(
+				buildCodexSandboxConfig(input, layout, {
+					executable: layout.stagedProbeExecutable,
+					readRoot: layout.stagedProbeRoot,
+					sha256: "d".repeat(64),
+				}),
+			).rejects.toThrow("disjoint trusted read and writable roots");
+		},
+	);
+
+	it("rejects a denied root equal to the writable workspace", async () => {
+		const root = await temporaryRoot();
+		const toolRoot = join(root, "tool-runtime");
+		const workspaceRoot = join(root, "workspace");
+		await Promise.all([mkdir(toolRoot), mkdir(join(workspaceRoot, ".git"), { recursive: true })]);
+		const executable = {
+			executable: join(toolRoot, "codex"),
+			readRoot: toolRoot,
+			sha256: "a".repeat(64),
+		};
+		const input: CodexSandboxContainmentInput = {
+			...fixtureInput(root),
+			launcher: { ...executable, sandboxHelper: executable },
+			provider: executable,
+			forbiddenRoots: [workspaceRoot],
+		};
+		const layout = await prepareContainmentLayout(input, "create");
+
+		await expect(
+			buildCodexSandboxConfig(input, layout, {
+				executable: layout.stagedProbeExecutable,
+				readRoot: layout.stagedProbeRoot,
+				sha256: "d".repeat(64),
+			}),
+		).rejects.toThrow("denied containment root cannot equal a writable root");
+	});
+
+	it("rejects an explicitly denied ancestor of the writable workspace", async () => {
+		const root = await temporaryRoot();
+		const toolRoot = join(root, "tool-runtime");
+		const deniedRoot = join(root, "tenant");
+		const workspaceRoot = join(deniedRoot, "workspace");
+		await Promise.all([mkdir(toolRoot), mkdir(join(workspaceRoot, ".git"), { recursive: true })]);
+		const executable = {
+			executable: join(toolRoot, "codex"),
+			readRoot: toolRoot,
+			sha256: "a".repeat(64),
+		};
+		const baseInput = fixtureInput(root);
+		const input: CodexSandboxContainmentInput = {
+			...baseInput,
+			workspace: {
+				...baseInput.workspace,
+				root: workspaceRoot,
+				gitDirectory: join(workspaceRoot, ".git"),
+			},
+			launcher: { ...executable, sandboxHelper: executable },
+			provider: executable,
+			forbiddenRoots: [deniedRoot],
+		};
+		const layout = await prepareContainmentLayout(input, "create");
+
+		await expect(
+			buildCodexSandboxConfig(input, layout, {
+				executable: layout.stagedProbeExecutable,
+				readRoot: layout.stagedProbeRoot,
+				sha256: "d".repeat(64),
+			}),
+		).rejects.toThrow("explicitly denied containment root cannot contain a writable root");
+	});
+
+	it("rejects an explicitly denied ancestor of a trusted read root", async () => {
+		const root = await temporaryRoot();
+		const deniedRoot = join(root, "forbidden-runtime");
+		const toolRoot = join(deniedRoot, "tool-runtime");
+		await Promise.all([
+			mkdir(toolRoot, { recursive: true }),
+			mkdir(join(root, "workspace", ".git"), { recursive: true }),
+		]);
+		const executable = {
+			executable: join(toolRoot, "codex"),
+			readRoot: toolRoot,
+			sha256: "a".repeat(64),
+		};
+		const input: CodexSandboxContainmentInput = {
+			...fixtureInput(root),
+			launcher: { ...executable, sandboxHelper: executable },
+			provider: executable,
+			forbiddenRoots: [deniedRoot],
+		};
+		const layout = await prepareContainmentLayout(input, "create");
+
+		await expect(
+			buildCodexSandboxConfig(input, layout, {
+				executable: layout.stagedProbeExecutable,
+				readRoot: layout.stagedProbeRoot,
+				sha256: "d".repeat(64),
+			}),
+		).rejects.toThrow("disjoint trusted read and explicitly denied roots");
+	});
 });
 
 function fixtureInput(root: string): CodexSandboxContainmentInput {
