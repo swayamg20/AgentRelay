@@ -4,21 +4,17 @@ import { constants } from "node:fs";
 import { open, readlink, realpath, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { PinnedExecutable } from "./codex-sandbox-contract.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_PROBE_OUTPUT_BYTES = 64 * 1_024;
 
-export interface ContainmentProbeExecutable {
-	readonly executable: string;
-	readonly readRoot: string;
-	readonly sha256: string;
-}
+export type ContainmentProbeExecutable = PinnedExecutable;
 
 export interface CodexSandboxProbeInput {
 	readonly launcherExecutable: string;
 	readonly launcherHome: string;
 	readonly launcherPath: string;
-	readonly emptyPath: string;
 	readonly profileName: string;
 	readonly workspaceRoot: string;
 	readonly gitDirectory: string;
@@ -68,6 +64,8 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 			input.launcherExecutable,
 			[
 				"sandbox",
+				"--disable",
+				"use_legacy_landlock",
 				"--permission-profile",
 				input.profileName,
 				"--cd",
@@ -85,7 +83,7 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 				env: {
 					HOME: input.launcherHome,
 					CODEX_HOME: input.launcherHome,
-					PATH: input.emptyPath,
+					PATH: "/dev/null",
 					AGENTRELAY_CONTAINMENT_PROBE_SECRET: "must-not-cross",
 				},
 				stdio: ["ignore", "pipe", "pipe"],

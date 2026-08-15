@@ -3,6 +3,7 @@ import { isAbsolute, normalize } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { digestCanonicalJson } from "./capsule-correlation.js";
+import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
 import { readPrivateJsonIfPresent, writePrivateJsonExclusive } from "./private-state-file.js";
 
@@ -21,10 +22,12 @@ const boundPathSchema = z
 	.object({ path: localPathSchema, identity: filesystemIdentitySchema })
 	.strict();
 
+export const RUNTIME_CONTAINMENT_BACKEND = "codex_bubblewrap_0_146";
+
 export const runtimeContainmentBindingSchema = z
 	.object({
-		backend: z.literal("codex_bubblewrap_0_146"),
-		runtime_version: z.literal("0.146.0"),
+		backend: z.literal(RUNTIME_CONTAINMENT_BACKEND),
+		runtime_version: z.literal(SUPPORTED_CODEX_CLI_VERSION),
 		workspace: z
 			.object({
 				repository_url: z.string().min(1).max(2_048),
@@ -94,8 +97,8 @@ export type RuntimeContainmentManifest = z.infer<typeof runtimeContainmentManife
 
 export interface RuntimeContainmentEvidence {
 	readonly instanceId: string;
-	readonly backend: "codex_bubblewrap_0_146";
-	readonly runtimeVersion: "0.146.0";
+	readonly backend: typeof RUNTIME_CONTAINMENT_BACKEND;
+	readonly runtimeVersion: typeof SUPPORTED_CODEX_CLI_VERSION;
 	readonly baseCommit: string;
 	readonly bindingSha256: string;
 	readonly retention: "retain_for_review";

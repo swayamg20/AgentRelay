@@ -119,11 +119,7 @@ describe.runIf(
 		await expect(readFile(paths.siblingWrite, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 		expect(JSON.stringify(containment.evidence)).not.toContain(fixture.root);
 
-		const recoveryExpectation = {
-			manifestPath: join(fixture.control, "containment.json"),
-			instanceId: containment.evidence.instanceId,
-			bindingSha256: containment.evidence.bindingSha256,
-		};
+		const recoveryExpectation = containment.recovery;
 		const recovered = await recoverCodexSandboxContainment(recoveryExpectation);
 		expect(recovered.evidence).toEqual(containment.evidence);
 		const freshRecovery = await execFileAsync(

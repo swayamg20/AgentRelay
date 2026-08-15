@@ -1,6 +1,16 @@
-import { realpath as fsRealpath, lstat, opendir, readFile } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { realpath as fsRealpath, lstat } from "node:fs/promises";
+import { join } from "node:path";
 import type { WorkspaceConfig } from "./config.js";
+import {
+	type LocalFilesystemIdentity,
+	type MissionWorkspaceDependencies,
+	MissionWorkspaceError,
+	type PreparedMissionWorkspace,
+} from "./mission-workspace-contract.js";
+import {
+	assertMissionWorkspaceStorageIsolated,
+	assertOwnedDirectoryIdentity,
+} from "./mission-workspace-storage.js";
 import {
 	type MissionWorkspaceExpectation,
 	type WorkspaceCommandRunner,
@@ -8,55 +18,15 @@ import {
 	preflightWorkspace,
 } from "./workspace.js";
 
-export type MissionWorkspaceErrorCode =
-	| "unsupported_platform"
-	| "workspace_not_owned"
-	| "workspace_permissions_unsafe"
-	| "git_metadata_not_isolated"
-	| "git_alternates_unsupported"
-	| "workspace_hardlinks_unsupported"
-	| "workspace_mounts_unsupported"
-	| "workspace_special_files_unsupported"
-	| "workspace_identity_changed"
-	| "workspace_dirty"
-	| "git_command_failed";
+export {
+	MissionWorkspaceError,
+	type LocalFilesystemIdentity,
+	type MissionWorkspaceDependencies,
+	type MissionWorkspaceErrorCode,
+	type PreparedMissionWorkspace,
+} from "./mission-workspace-contract.js";
 
-export class MissionWorkspaceError extends Error {
-	constructor(
-		readonly code: MissionWorkspaceErrorCode,
-		message: string,
-		readonly details: Readonly<Record<string, unknown>> = {},
-	) {
-		super(message);
-		this.name = "MissionWorkspaceError";
-	}
-}
-
-export interface LocalFilesystemIdentity {
-	readonly device: string;
-	readonly inode: string;
-}
-
-export interface PreparedMissionWorkspace {
-	readonly repositoryUrl: string;
-	readonly baseCommit: string;
-	readonly root: string;
-	readonly gitDirectory: string;
-	readonly rootIdentity: LocalFilesystemIdentity;
-	readonly gitIdentity: LocalFilesystemIdentity;
-	readonly reachableFromRef: string;
-	readonly clean: true;
-}
-
-export interface MissionWorkspaceDependencies {
-	readonly runCommand?: WorkspaceCommandRunner;
-	readonly realpath?: (path: string) => Promise<string>;
-}
-
-/**
- * Validates an owner-prepared standalone checkout. Linked worktrees are rejected because their
- * Git control directory reaches back into another checkout outside the Mission boundary.
- */
+/** Validates one owner-prepared standalone checkout at the frozen Mission base. */
 export async function prepareMissionWorkspace(
 	workspace: WorkspaceConfig,
 	expectation: MissionWorkspaceExpectation,
@@ -72,96 +42,41 @@ export async function prepareMissionWorkspace(
 	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
 	const realpath = dependencies.realpath ?? fsRealpath;
 	const preflight = await preflightWorkspace(workspace, expectation, { runCommand, realpath });
-	const rootStats = await ownedDirectoryIdentity(preflight.root, "workspace root");
-
-	const expectedGitDirectory = join(preflight.root, ".git");
-	const gitEntry = await lstat(expectedGitDirectory).catch(() => null);
-	if (gitEntry === null || !gitEntry.isDirectory() || gitEntry.isSymbolicLink()) {
-		throw new MissionWorkspaceError(
-			"git_metadata_not_isolated",
-			"Mission workspace must use a real, checkout-local .git directory",
-		);
-	}
-
-	const gitDirectory = await canonicalGitPath(
-		runCommand,
-		preflight.root,
-		["rev-parse", "--absolute-git-dir"],
-		realpath,
-	);
-	const commonDirectory = await canonicalGitPath(
-		runCommand,
-		preflight.root,
-		["rev-parse", "--path-format=absolute", "--git-common-dir"],
-		realpath,
-	);
-	if (gitDirectory !== expectedGitDirectory || commonDirectory !== expectedGitDirectory) {
-		throw new MissionWorkspaceError(
-			"git_metadata_not_isolated",
-			"Mission workspace Git metadata must be fully contained in its own checkout",
-		);
-	}
-
-	const gitStats = await ownedDirectoryIdentity(gitDirectory, "workspace Git directory");
+	const rootIdentity = await assertOwnedDirectoryIdentity(preflight.root, "workspace root");
+	const gitDirectory = await inspectStandaloneGitDirectory(preflight.root, runCommand, realpath);
+	const gitIdentity = await assertOwnedDirectoryIdentity(gitDirectory, "workspace Git directory");
 	const prepared = Object.freeze({
 		repositoryUrl: preflight.repository_url,
 		baseCommit: preflight.head_commit,
 		root: preflight.root,
 		gitDirectory,
-		rootIdentity: rootStats,
-		gitIdentity: gitStats,
+		rootIdentity,
+		gitIdentity,
 		reachableFromRef: preflight.reachable_from_ref,
-		clean: true,
 	});
 	await revalidateMissionWorkspaceIsolation(prepared, { runCommand, realpath });
 	await assertMissionWorkspaceClean(prepared, { runCommand });
 	return prepared;
 }
 
-/**
- * Revalidates the durable workspace identity without requiring a clean worktree. Mission edits are
- * expected after first admission, but new storage aliases or repository-identity changes are not.
- */
+/** Revalidates durable identity while permitting expected dirty Mission edits. */
 export async function revalidateMissionWorkspaceIsolation(
 	workspace: PreparedMissionWorkspace,
 	dependencies: MissionWorkspaceDependencies = {},
 ): Promise<void> {
 	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
 	const realpath = dependencies.realpath ?? fsRealpath;
-	const rootIdentity = await ownedDirectoryIdentity(workspace.root, "workspace root");
+	const rootIdentity = await assertOwnedDirectoryIdentity(workspace.root, "workspace root");
 	assertSameIdentity(rootIdentity, workspace.rootIdentity, "Mission workspace root changed");
 
-	const expectedGitDirectory = join(workspace.root, ".git");
-	const gitEntry = await lstat(expectedGitDirectory).catch(() => null);
-	if (gitEntry === null || !gitEntry.isDirectory() || gitEntry.isSymbolicLink()) {
-		throw new MissionWorkspaceError(
-			"git_metadata_not_isolated",
-			"Mission workspace must use a real, checkout-local .git directory",
-		);
-	}
-	const gitDirectory = await canonicalGitPath(
-		runCommand,
-		workspace.root,
-		["rev-parse", "--absolute-git-dir"],
-		realpath,
-	);
-	const commonDirectory = await canonicalGitPath(
-		runCommand,
-		workspace.root,
-		["rev-parse", "--path-format=absolute", "--git-common-dir"],
-		realpath,
-	);
-	if (
-		gitDirectory !== workspace.gitDirectory ||
-		commonDirectory !== workspace.gitDirectory ||
-		gitDirectory !== expectedGitDirectory
-	) {
+	const gitDirectory = await inspectStandaloneGitDirectory(workspace.root, runCommand, realpath);
+	if (gitDirectory !== workspace.gitDirectory) {
 		throw new MissionWorkspaceError(
 			"git_metadata_not_isolated",
 			"Mission workspace Git metadata changed or escaped its checkout",
 		);
 	}
-	const gitIdentity = await ownedDirectoryIdentity(gitDirectory, "workspace Git directory");
+	const gitIdentity = await assertOwnedDirectoryIdentity(gitDirectory, "workspace Git directory");
 	assertSameIdentity(gitIdentity, workspace.gitIdentity, "Mission workspace Git directory changed");
 
 	const repositoryUrl = await singleGitLine(runCommand, workspace.root, [
@@ -180,10 +95,11 @@ export async function revalidateMissionWorkspaceIsolation(
 			"Mission workspace repository identity changed after admission",
 		);
 	}
-
-	await rejectAlternates(gitDirectory);
-	await rejectNestedLinuxMounts(workspace.root);
-	await inspectWritableWorkspaceTree(workspace.root, workspace.rootIdentity.device);
+	await assertMissionWorkspaceStorageIsolated({
+		root: workspace.root,
+		gitDirectory: workspace.gitDirectory,
+		rootDevice: workspace.rootIdentity.device,
+	});
 }
 
 export async function assertMissionWorkspaceClean(
@@ -191,20 +107,21 @@ export async function assertMissionWorkspaceClean(
 	dependencies: Pick<MissionWorkspaceDependencies, "runCommand"> = {},
 ): Promise<void> {
 	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
-	const argv = ["status", "--porcelain=v1", "--untracked-files=all"] as const;
-	const result = await runCommand({ file: "git", argv, cwd: workspace.root, shell: false });
-	if (result.exitCode !== 0) {
-		throw new MissionWorkspaceError("git_command_failed", "Git cleanliness inspection failed", {
-			argv: [...argv],
-			exit_code: result.exitCode,
-		});
-	}
-	if (result.stdout.length > 0) {
+	const statusArgv = ["status", "--porcelain=v1", "--untracked-files=all"] as const;
+	const status = await runCommand({
+		file: "git",
+		argv: statusArgv,
+		cwd: workspace.root,
+		shell: false,
+	});
+	assertGitSuccess(status.exitCode, statusArgv, "Git cleanliness inspection failed");
+	if (status.stdout.length > 0) {
 		throw new MissionWorkspaceError(
 			"workspace_dirty",
 			"A fresh Mission containment requires the admitted clean workspace",
 		);
 	}
+
 	const ignoredArgv = ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] as const;
 	const ignored = await runCommand({
 		file: "git",
@@ -212,12 +129,7 @@ export async function assertMissionWorkspaceClean(
 		cwd: workspace.root,
 		shell: false,
 	});
-	if (ignored.exitCode !== 0) {
-		throw new MissionWorkspaceError("git_command_failed", "Git ignored-file inspection failed", {
-			argv: [...ignoredArgv],
-			exit_code: ignored.exitCode,
-		});
-	}
+	assertGitSuccess(ignored.exitCode, ignoredArgv, "Git ignored-file inspection failed");
 	if (ignored.stdout.length > 0) {
 		throw new MissionWorkspaceError(
 			"workspace_dirty",
@@ -226,84 +138,53 @@ export async function assertMissionWorkspaceClean(
 	}
 }
 
-async function inspectWritableWorkspaceTree(root: string, rootDevice: string): Promise<void> {
-	const pending = [{ directory: root, gitMetadata: false }];
-	while (pending.length > 0) {
-		const current = pending.pop();
-		if (current === undefined) break;
-		const { directory, gitMetadata } = current;
-		const entries = await opendir(directory);
-		for await (const entry of entries) {
-			const path = join(directory, entry.name);
-			const isGitMetadata = gitMetadata || (directory === root && entry.name === ".git");
-			const stats = await lstat(path, { bigint: true });
-			if (stats.dev.toString() !== rootDevice) {
-				throw new MissionWorkspaceError(
-					"workspace_mounts_unsupported",
-					"Mission workspace cannot contain another filesystem",
-				);
-			}
-			if (stats.isDirectory()) {
-				pending.push({ directory: path, gitMetadata: isGitMetadata });
-				continue;
-			}
-			if (stats.isSymbolicLink()) {
-				if (isGitMetadata) {
-					throw new MissionWorkspaceError(
-						"git_metadata_not_isolated",
-						"Mission workspace Git metadata cannot contain symbolic links",
-					);
-				}
-				continue;
-			}
-			if (!stats.isFile()) {
-				throw new MissionWorkspaceError(
-					"workspace_special_files_unsupported",
-					"Mission workspace cannot contain device, socket, or pipe entries",
-				);
-			}
-			if (stats.nlink > 1n) {
-				throw new MissionWorkspaceError(
-					"workspace_hardlinks_unsupported",
-					"Mission workspace files cannot share storage with another path",
-				);
-			}
-		}
+async function inspectStandaloneGitDirectory(
+	root: string,
+	runCommand: WorkspaceCommandRunner,
+	realpath: (path: string) => Promise<string>,
+): Promise<string> {
+	const expected = join(root, ".git");
+	const entry = await lstat(expected).catch(() => null);
+	if (entry === null || !entry.isDirectory() || entry.isSymbolicLink()) {
+		throw new MissionWorkspaceError(
+			"git_metadata_not_isolated",
+			"Mission workspace must use a real, checkout-local .git directory",
+		);
 	}
-}
-
-async function rejectNestedLinuxMounts(root: string): Promise<void> {
-	if (process.platform !== "linux") return;
-	const mountInfo = await readFile("/proc/self/mountinfo", "utf8");
-	for (const line of mountInfo.split("\n")) {
-		if (line.length === 0) continue;
-		const fields = line.split(" ");
-		const encodedMountPoint = fields[4];
-		if (encodedMountPoint === undefined) {
-			throw new MissionWorkspaceError(
-				"workspace_mounts_unsupported",
-				"Linux mount metadata was malformed",
-			);
-		}
-		const mountPoint = decodeMountInfoPath(encodedMountPoint);
-		if (mountPoint !== root && isWithin(mountPoint, root)) {
-			throw new MissionWorkspaceError(
-				"workspace_mounts_unsupported",
-				"Mission workspace cannot contain nested mounts",
-			);
-		}
-	}
-}
-
-function decodeMountInfoPath(value: string): string {
-	return value.replace(/\\([0-7]{3})/g, (_match, octal: string) =>
-		String.fromCharCode(Number.parseInt(octal, 8)),
+	const gitDirectory = await canonicalGitPath(
+		runCommand,
+		root,
+		["rev-parse", "--absolute-git-dir"],
+		realpath,
 	);
+	const commonDirectory = await canonicalGitPath(
+		runCommand,
+		root,
+		["rev-parse", "--path-format=absolute", "--git-common-dir"],
+		realpath,
+	);
+	if (gitDirectory !== expected || commonDirectory !== expected) {
+		throw new MissionWorkspaceError(
+			"git_metadata_not_isolated",
+			"Mission workspace Git metadata must be fully contained in its own checkout",
+		);
+	}
+	return gitDirectory;
 }
 
-function isWithin(path: string, root: string): boolean {
-	const child = relative(root, path);
-	return child === "" || (!child.startsWith("..") && !isAbsolute(child));
+async function canonicalGitPath(
+	runCommand: WorkspaceCommandRunner,
+	cwd: string,
+	argv: readonly string[],
+	realpath: (path: string) => Promise<string>,
+): Promise<string> {
+	const result = await runCommand({ file: "git", argv, cwd, shell: false });
+	assertGitSuccess(result.exitCode, argv, "Git metadata inspection failed");
+	const value = result.stdout.replace(/\r?\n$/, "");
+	if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
+		throw new MissionWorkspaceError("git_command_failed", "Git returned an invalid metadata path");
+	}
+	return realpath(value);
 }
 
 async function singleGitLine(
@@ -312,17 +193,21 @@ async function singleGitLine(
 	argv: readonly string[],
 ): Promise<string> {
 	const result = await runCommand({ file: "git", argv, cwd, shell: false });
-	if (result.exitCode !== 0) {
-		throw new MissionWorkspaceError("git_command_failed", "Git identity inspection failed", {
-			argv: [...argv],
-			exit_code: result.exitCode,
-		});
-	}
+	assertGitSuccess(result.exitCode, argv, "Git identity inspection failed");
 	const value = result.stdout.replace(/\r?\n$/, "");
 	if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
 		throw new MissionWorkspaceError("git_command_failed", "Git returned invalid identity output");
 	}
 	return value;
+}
+
+function assertGitSuccess(exitCode: number, argv: readonly string[], message: string): void {
+	if (exitCode !== 0) {
+		throw new MissionWorkspaceError("git_command_failed", message, {
+			argv: [...argv],
+			exit_code: exitCode,
+		});
+	}
 }
 
 function assertSameIdentity(
@@ -333,74 +218,4 @@ function assertSameIdentity(
 	if (actual.device !== expected.device || actual.inode !== expected.inode) {
 		throw new MissionWorkspaceError("workspace_identity_changed", message);
 	}
-}
-
-async function canonicalGitPath(
-	runCommand: WorkspaceCommandRunner,
-	cwd: string,
-	argv: readonly string[],
-	realpath: (path: string) => Promise<string>,
-): Promise<string> {
-	const result = await runCommand({ file: "git", argv, cwd, shell: false });
-	if (result.exitCode !== 0) {
-		throw new MissionWorkspaceError("git_command_failed", "Git metadata inspection failed", {
-			argv: [...argv],
-			exit_code: result.exitCode,
-		});
-	}
-	const value = result.stdout.replace(/\r?\n$/, "");
-	if (value.length === 0 || value.includes("\n") || value.includes("\r")) {
-		throw new MissionWorkspaceError("git_command_failed", "Git returned an invalid metadata path");
-	}
-	return realpath(value);
-}
-
-async function ownedDirectoryIdentity(
-	path: string,
-	label: string,
-): Promise<LocalFilesystemIdentity> {
-	const currentUid = process.getuid?.();
-	if (currentUid === undefined) {
-		throw new MissionWorkspaceError(
-			"unsupported_platform",
-			"Mission workspace ownership inspection requires Unix",
-		);
-	}
-	const stats = await lstat(path, { bigint: true });
-	if (!stats.isDirectory() || stats.isSymbolicLink()) {
-		throw new MissionWorkspaceError(
-			"git_metadata_not_isolated",
-			`${label} must be a real directory`,
-		);
-	}
-	if (stats.uid !== BigInt(currentUid)) {
-		throw new MissionWorkspaceError("workspace_not_owned", `${label} must be owner-controlled`);
-	}
-	if ((stats.mode & 0o22n) !== 0n) {
-		throw new MissionWorkspaceError(
-			"workspace_permissions_unsafe",
-			`${label} cannot be group- or world-writable`,
-		);
-	}
-	return Object.freeze({ device: stats.dev.toString(), inode: stats.ino.toString() });
-}
-
-async function rejectAlternates(gitDirectory: string): Promise<void> {
-	const alternatesPath = join(gitDirectory, "objects", "info", "alternates");
-	const stats = await lstat(alternatesPath).catch((error: unknown) => {
-		if (errorCode(error) === "ENOENT") return null;
-		throw error;
-	});
-	if (stats !== null) {
-		throw new MissionWorkspaceError(
-			"git_alternates_unsupported",
-			"Mission workspace cannot borrow Git objects from another repository",
-		);
-	}
-}
-
-function errorCode(error: unknown): string | undefined {
-	return typeof error === "object" && error !== null && "code" in error
-		? String(error.code)
-		: undefined;
 }

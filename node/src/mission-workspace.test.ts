@@ -43,7 +43,6 @@ describe.skipIf(process.platform === "win32" || process.getuid === undefined)(
 				root: repository.root,
 				gitDirectory: join(repository.root, ".git"),
 				reachableFromRef: "refs/heads/main",
-				clean: true,
 				rootIdentity: {
 					device: expect.stringMatching(/^\d+$/),
 					inode: expect.stringMatching(/^\d+$/),
