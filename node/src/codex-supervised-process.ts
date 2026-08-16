@@ -171,7 +171,7 @@ export class CodexSupervisedProcess {
 
 		await Promise.race([
 			ready,
-			delay(this.#options.startupTimeoutMs).then(() => {
+			delay(this.#options.startupTimeoutMs, undefined, { ref: false }).then(() => {
 				throw new Error("Codex provider supervisor timed out during startup");
 			}),
 		]);
@@ -184,7 +184,7 @@ export class CodexSupervisedProcess {
 			this.#child,
 			terminateSupervisorCommand(this.#options.generationId, cause),
 		).catch(() => undefined);
-		await Promise.race([this.#closed, delay(STOP_GRACE_MS + 250)]);
+		await Promise.race([this.#closed, delay(STOP_GRACE_MS + 250, undefined, { ref: false })]);
 		if (this.#child.pid !== undefined && isSupervisorProcessGroupAlive(this.#child.pid)) {
 			await stopSupervisorProcessGroup(this.#child, this.#exited, this.#closed);
 		}

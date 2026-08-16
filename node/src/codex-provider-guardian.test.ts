@@ -117,6 +117,31 @@ describe("SupervisedCodexProviderGuardian", () => {
 		});
 	});
 
+	it("does not admit a provider when authority is revoked during preparation", async () => {
+		const fixture = await fakeAppServer();
+		const authority = new AbortController();
+		let prepareCalls = 0;
+		const boundary = {
+			async prepare(request: Parameters<typeof directCodexProcessBoundaryForTests.prepare>[0]) {
+				prepareCalls += 1;
+				if (prepareCalls === 1) authority.abort();
+				return directCodexProcessBoundaryForTests.prepare(request);
+			},
+		};
+
+		await expect(
+			createGuardian(fixture, {
+				authoritySignal: authority.signal,
+				boundary,
+			}).openGeneration(),
+		).rejects.toMatchObject({
+			name: "CodexProviderGuardianError",
+			reason: "authority",
+			message: "Codex provider authority is revoked",
+		});
+		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	it("enforces its absolute deadline against an unresponsive provider tree", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
 		const generation = await openGeneration(fixture, { deadlineAtMs: Date.now() + 1_000 });
@@ -180,7 +205,10 @@ describe("SupervisedCodexProviderGuardian", () => {
 });
 
 type GuardianOverrides = Partial<
-	Pick<CodexProviderGuardianOptions, "authoritySignal" | "deadlineAtMs" | "requestTimeoutMs">
+	Pick<
+		CodexProviderGuardianOptions,
+		"authoritySignal" | "boundary" | "deadlineAtMs" | "requestTimeoutMs"
+	>
 >;
 
 function createGuardian(

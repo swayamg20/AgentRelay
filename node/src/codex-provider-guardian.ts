@@ -140,6 +140,10 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 				},
 			});
 			const supervised = requireSupervisedProcess(supervisedRef.value);
+			if (this.#options.authoritySignal?.aborted === true) {
+				await supervised.stop("authority_revoked");
+				throw new CodexProviderGuardianError("authority", "Codex provider authority is revoked");
+			}
 			supervised.activate();
 			const generation = providerGeneration(generationId, client, supervised);
 			this.#active = generation;
@@ -154,13 +158,19 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 				},
 			);
 			return generation;
-		} catch {
+		} catch (error) {
 			removeAuthorityListener();
 			const supervised = supervisedRef.value;
 			if (supervised === null) {
 				await lock.release().catch(() => undefined);
 			} else {
 				await supervised.stop("startup_failure").catch(() => undefined);
+			}
+			if (
+				error instanceof CodexProviderGuardianError ||
+				this.#options.authoritySignal?.aborted === true
+			) {
+				throw new CodexProviderGuardianError("authority", "Codex provider authority is revoked");
 			}
 			throw new CodexProviderGuardianError("startup", "Codex provider generation failed to start");
 		}

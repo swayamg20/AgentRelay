@@ -42,7 +42,7 @@ export async function stopSupervisorProcessGroup(
 	const pid = child.pid;
 	if (pid === undefined) return;
 	signalProcessGroup(pid, "SIGTERM");
-	await Promise.race([exited, delay(STOP_GRACE_MS)]);
+	await Promise.race([exited, delay(STOP_GRACE_MS, undefined, { ref: false })]);
 	if (isSupervisorProcessGroupAlive(pid)) signalProcessGroup(pid, "SIGKILL");
 	const deadline = Date.now() + STOP_GRACE_MS;
 	while (isSupervisorProcessGroupAlive(pid)) {
@@ -51,7 +51,7 @@ export async function stopSupervisorProcessGroup(
 	}
 	await Promise.race([
 		closed,
-		delay(STOP_GRACE_MS).then(() => {
+		delay(STOP_GRACE_MS, undefined, { ref: false }).then(() => {
 			throw new Error("Codex provider supervisor pipes did not close");
 		}),
 	]);

@@ -37,6 +37,10 @@ export class CodexProviderSupervisor {
 	#deadlineAtMs: number | null = null;
 	#deadlineTimer: NodeJS.Timeout | null = null;
 	#stopCause: CodexProviderStopCause | null = null;
+	#pendingTermination: {
+		readonly generationId: string;
+		readonly cause: CodexProviderStopCause;
+	} | null = null;
 	#stopping: Promise<never> | null = null;
 	#initialized = false;
 
@@ -65,7 +69,16 @@ export class CodexProviderSupervisor {
 			await this.initialize(command);
 			return;
 		}
-		if (this.#generationId === null || command.generation_id !== this.#generationId) return;
+		if (this.#generationId === null) {
+			if (command.kind === "terminate") {
+				this.#pendingTermination ??= {
+					generationId: command.generation_id,
+					cause: command.cause,
+				};
+			}
+			return;
+		}
+		if (command.generation_id !== this.#generationId) return;
 		if (command.kind === "heartbeat") {
 			await this.recordHeartbeat();
 			return;
@@ -77,6 +90,15 @@ export class CodexProviderSupervisor {
 		this.#generationId = command.generation_id;
 		this.#ownerPid = command.owner_pid;
 		try {
+			if (this.#pendingTermination !== null) {
+				if (this.#pendingTermination.generationId !== command.generation_id) {
+					throw new Error("Codex provider supervisor termination generation did not match");
+				}
+				return this.stop(
+					this.#pendingTermination.cause,
+					terminationObservation(this.#pendingTermination.cause),
+				);
+			}
 			assertInheritedProviderLock(command.lock_path);
 			this.assertOwnerAlive();
 			this.#store = await CodexProviderGenerationStore.open(

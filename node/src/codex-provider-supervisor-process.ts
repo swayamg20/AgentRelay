@@ -32,7 +32,7 @@ export async function verifyPreparedCodexVersion(command: CodexPreparedProcess):
 		await waitForSpawn(child);
 		const result = await Promise.race([
 			closed,
-			delay(VERSION_PROBE_TIMEOUT_MS).then(() => {
+			delay(VERSION_PROBE_TIMEOUT_MS, undefined, { ref: false }).then(() => {
 				throw new CodexSupervisorProcessError("version", "Codex version probe timed out");
 			}),
 		]);
@@ -69,7 +69,7 @@ export async function startPreparedCodexProvider(
 export async function requestProviderStop(child: ChildProcess | null): Promise<void> {
 	if (child?.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
 	child.kill("SIGTERM");
-	await Promise.race([childClose(child), delay(PROVIDER_STOP_GRACE_MS)]);
+	await Promise.race([childClose(child), delay(PROVIDER_STOP_GRACE_MS, undefined, { ref: false })]);
 }
 
 /** The supervisor is the group leader; this terminates it and every remaining descendant. */
