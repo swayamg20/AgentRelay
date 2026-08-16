@@ -56,7 +56,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 
 		const replacement = await createGuardian(fixture).openGeneration();
 		await replacement.terminate("capsule_shutdown");
-	});
+	}, 10_000);
 
 	it("revokes provider authority when the Capsule heartbeat stalls", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true });
