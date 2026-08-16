@@ -119,6 +119,9 @@ through the public control plane.
 - [x] Validate repository URL, exact base commit, allowed base ref, canonical root,
   and dirty-worktree policy before each turn.
 - [x] Validate a pre-registered clean checkout.
+- [x] Add stricter unactivated Mission-workspace admission for Linux containment:
+  current-user ownership, a standalone checkout-local `.git`, no Git alternates,
+  nested mounts, special files, or extra hard links, and stable root/Git identities.
 - [ ] Enforce local path, command, network, budget, expiry, and revocation policy.
 - [x] Reduce and persist normalized fake-runtime events with acceptance-first ordering,
   replay equality, usage, output, artifact, and token limits.
@@ -167,17 +170,25 @@ service.
   outcome when present, otherwise record a transient failure, and never reissue it.
 - [x] Allowlist the Codex child environment and derive its home locally beneath the
   Capsule as a canonical, current-user-owned exact-mode-0700 directory.
-- [ ] Add a production guardian that owns quiescence proof and provider spawn as one
-  lifecycle. The current recovery authority is only an injected assertion seam.
-- [ ] Wire a locally selected Codex descriptor/runtime factory into the Capsule and
-  Node CLI, then execute a real model turn. Current commands still select the fake.
-- [ ] Add heartbeat/liveness ownership and close deadline, revocation, and
-  process-death races against a real provider.
-- [ ] Enforce OS-level workspace/read-root and secret isolation; environment filtering
-  and output redaction are not filesystem containment.
-- [ ] Require the RFC's structured turn dispositions: `reply`, `propose_contract`,
-  `ready`, `blocked` (with optional requested input), or `failed`.
-- [ ] Run the two-machine backend-and-Android Mission.
+- [x] Implement a Linux-only Codex `0.146.0` containment library with a writable
+  workspace, read-only `.git`, explicit read/deny roots, private home/temp, rejected
+  ambient system Codex configuration, disabled legacy Landlock and network,
+  recursive read-tree alias checks, a mandatory runtime canary, exact pinned
+  executable/helper identity, and a private `retain_for_review` manifest.
+- [x] Pass the dedicated Linux containment process job, including the policy canaries
+  and pinned Codex app-server handshake. Keep macOS and every unsupported platform
+  fail-closed rather than claiming parity.
+- [ ] Complete contract/verification delivery handling and bounded provenance-marked
+  Mission artifact carriage.
+- [ ] Add a production guardian for provider generations, heartbeat, teardown, and
+  quiescence proof; then enforce local capability grants outside the model.
+- [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI.
+  Before provider start, durably store `{manifestPath, instanceId, bindingSha256}` and
+  recover only that exact containment instance.
+- [ ] Require the RFC's structured turn dispositions and bounded local execution
+  evidence.
+- [ ] Pass Guarded Real Mission 0 through the public pipeline.
+- [ ] Run the two-machine backend-and-Android Mission only after that integration gate.
 
 Schema v2 has no migration from the earlier unactivated schema-v1 development
 checkpoint. No production path writes either format, so compatibility must be decided

@@ -1,6 +1,7 @@
 import { access, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { directCodexProcessBoundaryForTests } from "../test-support/direct-codex-process-boundary.js";
 import {
 	type FakeAppServerFixture,
 	createFakeAppServer,
@@ -297,6 +298,7 @@ async function openClient(fixture: FakeAppServerFixture): Promise<CodexAppServer
 		cwd: fixture.directory,
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
+		boundary: directCodexProcessBoundaryForTests,
 	});
 	clients.push(client);
 	return client;

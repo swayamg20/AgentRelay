@@ -1,6 +1,6 @@
 # High-level design: current relay implementation
 
-> **Scope:** Current repository implementation as of 2026-08-15.
+> **Scope:** Current repository implementation as of 2026-08-16.
 > This document describes the existing handoff plane, public Mission delivery
 > control plane, experimental Node, and unactivated Codex Capsule libraries.
 > It does not describe a complete autonomous coding runtime. See
@@ -19,7 +19,9 @@ Mission assignment, durably lease one turn, and drive either an in-process fake
 adapter or a detached persistent fake Mission Capsule. A provider-neutral Capsule
 server and injected Codex runner now exist behind that wire as a tested library
 checkpoint, but the descriptor and CLI still choose the fake. No current command
-activates a real model turn or turns Mission work into repository changes.
+activates a real model turn or turns Mission work into repository changes. A separate
+Linux-only containment library can construct the pinned Codex `0.146.0` Bubblewrap
+boundary, but no Mission lifecycle or runtime descriptor selects it.
 
 ## Components
 
@@ -41,6 +43,9 @@ agentrelay-node -> atomic local journal
         `-- private Unix socket -> provider-neutral Capsule server
                                       |-- selected today: deterministic fake
                                       `-- tested only: injected Codex runner + fake client
+
+Unactivated Linux composition:
+owner-prepared checkout -> containment library -> pinned Codex sandbox/app-server
 ```
 
 ### Relay
@@ -123,13 +128,20 @@ drain so `close()` can release and fence admitted work; detached background work
 request the same retirement through the runtime lifecycle.
 
 This Codex path is tested through the real Unix wire with fake app-server clients. It
-has no descriptor/CLI selection, production process guardian, heartbeat, OS workspace
-or secret containment, real model-turn proof, or Claude equivalent. The Codex child
-environment is allowlisted, and its private home is derived locally beneath the
-Capsule and revalidated as canonical, current-user-owned, and exactly mode 0700. For
-an inherited uncertain-interrupt barrier, a fresh generation reads the exact intent
-once, persists a terminal provider outcome when present, or records a transient
-failure without resending the interrupt.
+has no descriptor/CLI selection, production process guardian, heartbeat, real
+model-turn proof, or Claude equivalent. The Codex child environment is allowlisted,
+and its private home is derived locally beneath the Capsule and revalidated as
+canonical, current-user-owned, and exactly mode 0700. For an inherited uncertain-
+interrupt barrier, a fresh generation reads the exact intent once, persists a
+terminal provider outcome when present, or records a transient failure without
+resending the interrupt.
+
+The separate Linux containment library binds an owner-controlled standalone checkout
+to an explicit Bubblewrap policy, mandatory runtime canary, and private
+`retain_for_review` manifest. Recovery requires the exact manifest path, instance ID,
+and binding digest. Future Mission lifecycle wiring must store that handle durably;
+current commands do not. Detailed mechanics live in
+[research 006](research/006-mission-workspace-containment.md).
 
 ## Core data model
 
@@ -267,6 +279,11 @@ and the relay-owned idempotency key is not exposed to the model.
   schema-v2 journal, stable pre-binding turn, exact fresh-generation reconciliation,
   bounded zero-match terminalization, pre-binding cancellation, and conservative
   inherited-interrupt terminalization are durable.
+- At a second unactivated library boundary, the exclusive Linux Codex containment
+  manifest durably binds the workspace, pinned runtime, private paths, policy grant,
+  and `retain_for_review` decision. The API returns an exact recovery handle, but the
+  Mission lifecycle does not persist it. The dedicated Linux process job passes as
+  evidence for this library boundary, not as Mission activation evidence.
 
 ### Best effort today
 
@@ -283,8 +300,10 @@ and the relay-owned idempotency key is not exposed to the model.
   singleton kernel lock now permits direct restart after process death, but it does
   not start the replacement Node.
 - A production guardian that owns provider quiescence proof and spawn, heartbeat and
-  owner-death recovery, and OS-enforced Codex workspace/read-root and secret
-  containment.
+  owner-death recovery.
+- Descriptor/CLI and Mission-lifecycle wiring for the Linux containment boundary,
+  including durable storage of its exact recovery handle before provider start. The
+  dedicated Linux process proof passes, but macOS has no supported equivalent.
 - Automatic worktree isolation and complete per-Mission command/network mediation.
 - Contract-acknowledgement and registered verification-command delivery handlers.
 - Local command, edit, test, and permission-decision audit.
@@ -301,6 +320,12 @@ creation, acceptance, event publication, and delivery execution, current routing
 revalidation, revocation-driven delivery cancellation, scoped relay audit, provenance
 wrappers or markers on teammate-originated mailbox fields, static host permission
 recommendations, and per-acceptance local trust loading.
+
+At an unactivated Linux library boundary, the Node can also require an owner-controlled
+standalone checkout, a writable worktree with read-only Git metadata, explicit read
+and denied roots, private home/temp, no network, rejected ambient Codex configuration,
+disabled legacy Landlock, recursive read-tree alias inspection, and a mandatory
+runtime canary. No active Mission receives these protections yet.
 
 They are not yet one end-to-end enforcement system:
 
@@ -346,6 +371,11 @@ section of [`architecture.md`](architecture.md).
   that fresh generation inherits `interrupt_maybe_sent`, it performs one exact-intent
   read, persists an exact terminal outcome when present, or records a transient
   failure without issuing a second interrupt.
+- The Linux containment library fails before returning a provider boundary when the
+  platform, workspace identity, pinned runtime/helper, private configuration,
+  approved read tree, ambient system configuration, runtime canary, manifest, or
+  exact recovery handle does not match. Recovery permits expected dirty Mission edits
+  but never resets or deletes the retained checkout.
 - If a handoff creation or message append is retried with the same client idempotency
   key and matching checked fields, the relay returns the recorded result even after a
   later block or terminal transition. Same-key concurrent retries are serialized.
@@ -393,6 +423,9 @@ separate, authenticated Mission and delivery control plane without stretching th
 handoff row into a scheduler. The foreground Node now consumes one turn through that
 API with either an in-process fake or a detached persistent fake Capsule. A pinned
 Codex client and injected runner now pass the provider-neutral Capsule wire with fake
-app-server clients, but remain unactivated. The next runtime checkpoint is
-guardian-owned, OS-contained CLI activation and a real model turn, followed by a
-two-machine run.
+app-server clients, and a Linux-only containment library now defines the workspace
+boundary. Its dedicated Linux process proof passes; both runtime libraries remain
+unactivated. The next gates are contract/artifact carriage, guardian and local
+capability enforcement, descriptor/CLI composition with durable recovery-handle
+storage, structured execution evidence, and Guarded Real Mission 0 through the public
+pipeline. The two-machine proof follows; see the roadmap for the dependency order.

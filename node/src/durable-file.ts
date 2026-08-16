@@ -21,7 +21,14 @@ export async function writeDurableJson(
 	if (serialized === undefined) {
 		throw new TypeError("Durable JSON value is not serializable");
 	}
+	await writeDurableText(path, `${serialized}\n`, options);
+}
 
+export async function writeDurableText(
+	path: string,
+	serialized: string,
+	options: DurableJsonWriteOptions = {},
+): Promise<void> {
 	const directory = dirname(path);
 	const fileMode = options.fileMode ?? 0o600;
 	const directoryMode = options.directoryMode ?? 0o700;
@@ -42,7 +49,7 @@ export async function writeDurableJson(
 		temporaryExists = true;
 		try {
 			await handle.chmod(fileMode);
-			await handle.writeFile(`${serialized}\n`, "utf8");
+			await handle.writeFile(serialized, "utf8");
 			await handle.sync();
 		} finally {
 			await handle.close();
@@ -54,6 +61,45 @@ export async function writeDurableJson(
 	} catch (error) {
 		if (temporaryExists) {
 			await unlink(temporaryPath).catch(() => undefined);
+		}
+		throw error;
+	}
+}
+
+/** Creates one durable file without ever replacing an existing authorization record. */
+export async function writeDurableTextExclusive(
+	path: string,
+	serialized: string,
+	options: DurableJsonWriteOptions = {},
+): Promise<void> {
+	const directory = dirname(path);
+	const fileMode = options.fileMode ?? 0o600;
+	const directoryMode = options.directoryMode ?? 0o700;
+	const firstCreatedDirectory = await mkdir(directory, { recursive: true, mode: directoryMode });
+	if (firstCreatedDirectory !== undefined) {
+		await syncCreatedDirectoryEntries(firstCreatedDirectory, directory);
+	}
+
+	let created = false;
+	try {
+		const handle = await open(
+			path,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+			fileMode,
+		);
+		created = true;
+		try {
+			await handle.chmod(fileMode);
+			await handle.writeFile(serialized, "utf8");
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await syncDirectory(directory);
+	} catch (error) {
+		if (created) {
+			await unlink(path).catch(() => undefined);
+			await syncDirectory(directory).catch(() => undefined);
 		}
 		throw error;
 	}

@@ -31,8 +31,10 @@
 >
 > **Not usable today:** autonomous Missions. Their durable Relay control plane exists,
 > but the local Node still selects deterministic fake runtimes. The guarded Codex path
-> has not been activated for a real model turn, and production runtime supervision,
-> policy enforcement, OS containment, and the two-machine proof remain incomplete.
+> has not been activated for a real model turn. A Linux-only Codex `0.146.0`
+> containment library now exists, but no Capsule descriptor or CLI selects it, its
+> recovery handle is not yet stored by the Mission lifecycle, and macOS parity,
+> production runtime supervision, and the two-machine proof remain incomplete.
 
 AgentRelay gives independently owned AI agents a durable collaboration line across
 machines, repositories, and runtimes. They can exchange questions, contracts, and
@@ -54,8 +56,8 @@ repositories is the first proof, not the final product boundary.
 | --- | --- | --- |
 | **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.1: identities, invites, typed handoffs, messages, blocks, trust, and audit |
 | **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
-| **Experimental** | Node and persistent Capsule | Local policy and crash-recovery foundations, currently exercised with deterministic fake runtimes |
-| **Next gate** | Guarded real Codex activation | One contained real turn, then a two-machine backend ↔ Android Mission |
+| **Experimental** | Node, persistent Capsule, and containment | Local policy, crash recovery, and an unactivated Linux containment library; current commands still select deterministic fake runtimes |
+| **Next gate** | Guarded real Codex activation | Guarded Real Mission 0 through the public pipeline, then the two-machine backend ↔ Android proof |
 
 The repository does not yet ship the full autonomous runtime described above. The
 Node CLI still consumes one turn at a time through either its in-process deterministic
@@ -119,6 +121,11 @@ but no current descriptor or CLI activates Codex for a real model turn.
   current-user-owned mode-0700 home. For an inherited uncertain interrupt, a fresh
   generation reads the exact intent once, persists an authoritative terminal outcome
   when present, or records a transient failure; it never repeats the interrupt.
+- An unactivated Linux containment library for pinned Codex `0.146.0`. It binds one
+  owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
+  mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
+  process gate passes; current commands still do not select it. See
+  [research 006](docs/research/006-mission-workspace-containment.md).
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
@@ -128,11 +135,13 @@ but no current descriptor or CLI activates Codex for a real model turn.
 - Production descriptor and CLI activation for persistent real-runtime sessions. The
   generic Capsule server and injected Codex runner exist as libraries, but the
   current persistent command still selects only the deterministic fake runtime.
+- Mission-lifecycle wiring that durably stores the exact containment recovery handle
+  before provider start and reopens only that retained instance after a crash.
 - Complete local verification, contract-artifact carriage, and policy/evidence
   enforcement outside the model.
-- A production provider-process guardian, heartbeat/liveness ownership, and
-  OS-enforced workspace and secret containment for Codex; then a Claude runtime
-  adapter.
+- A production provider-process guardian, heartbeat/liveness ownership, complete
+  command/network mediation, and a supported containment boundary beyond Linux;
+  then a Claude runtime adapter.
 - A real two-machine, two-repository proof using the public control plane.
 
 The design is in
@@ -147,6 +156,8 @@ The guarded client and journal checkpoint is recorded in
 [`Guarded Codex client and durable Capsule journal`](docs/research/004-codex-capsule-journal.md).
 The provider-neutral server and injected-runner checkpoint is recorded in
 [`Injected Codex Capsule runner`](docs/research/005-codex-capsule-runner.md).
+The Linux-first workspace boundary and its remaining activation gates are recorded in
+[`Mission workspace containment`](docs/research/006-mission-workspace-containment.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -336,12 +347,12 @@ They are not yet a complete autonomous security boundary:
   local denial active and can be repaired by retrying the command.
 
 The current Node enforces repository preflight, accepted local-policy identity, and
-reported host-event bounds outside the model. The unactivated Codex library also
-allowlists its child environment, derives a private exact-mode-0700 home locally, and
-retires a Capsule server generation after an unexpected internal runtime failure. It
-still lacks a production guardian and OS-enforced workspace and secret containment,
-and the Node must enforce the effective command, network, time, path, side-effect,
-budget, and revocation policy before real autonomous writes are safe to claim. See
+reported host-event bounds outside the model. The unactivated Codex libraries also
+allowlist the child environment, derive a private exact-mode-0700 home locally,
+retire a failed Capsule generation, and can construct the Linux boundary described
+above. They are not wired to the Mission lifecycle. The Node must still enforce the
+effective command, network, time, path, side-effect, budget, and revocation policy
+before real autonomous writes are safe to claim. See
 [`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
 acceptance tests.
 
@@ -387,7 +398,8 @@ this README does not claim full A2A conformance.
     │   ├── 002-foreground-node-runtime.md
     │   ├── 003-persistent-mission-capsule.md
     │   ├── 004-codex-capsule-journal.md
-    │   └── 005-codex-capsule-runner.md
+    │   ├── 005-codex-capsule-runner.md
+    │   └── 006-mission-workspace-containment.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```

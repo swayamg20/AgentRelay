@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-15. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-16. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -16,8 +16,11 @@ journals Relay authority and starts or resumes either an in-process fake-host tu
 an independently persistent fake Mission Capsule. The detached Capsule and Node-
 process restart proof are implemented. The first pinned Codex client, durable journal,
 provider-neutral Capsule server, and injected runner now exist as an unactivated
-library checkpoint. The next runtime milestone is guarded production activation, not
-another protocol abstraction.
+library checkpoint. A Linux-only Codex `0.146.0` containment library now adds
+owner-controlled standalone-workspace admission, an explicit Bubblewrap policy,
+mandatory runtime canary, and exact retained-manifest recovery. It is not selected by
+the Capsule/Node CLI, but its dedicated Linux process proof now passes. The next
+runtime milestone is guarded production activation, not another protocol abstraction.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -106,8 +109,8 @@ fake-compatible. An injected Codex runner is tested through that real Unix wire.
 Runtime shutdown concurrently fences admitted work, and background runtime failures
 can retire their server generation, but no production path selects Codex. OS service
 installation and automatic process respawn, contract acknowledgement, verification
-execution, guarded real-runtime activation, and the two-machine exit gate remain
-open.
+execution, durable containment-handle lifecycle wiring, guarded real-runtime
+activation, and the two-machine exit gate remain open.
 
 - Add a `node/` pnpm workspace and daemon CLI.
 - Register device-scoped credentials and capabilities.
@@ -115,6 +118,8 @@ open.
 - Persist the event cursor, processing journal, and Mission-to-session mapping.
 - Validate a pre-registered clean checkout or operator-created worktree, including
   repository identity, base commit, and dirty state before each run.
+- Require an owner-controlled standalone checkout for the Linux Codex boundary and
+  retain it for review; linked worktrees and automatic disposal remain unsupported.
 - Apply local path, command, network, approval, budget, expiry, and revocation policy
   outside the model.
 - Record runtime, tool, artifact, test, and policy-decision evidence.
@@ -133,19 +138,22 @@ wire with fake app-server clients. For an inherited uncertain interrupt, the fre
 generation reads the exact intent once, persists a terminal provider outcome when
 available, or records a transient failure, without issuing another interrupt. Tests
 do not execute a model turn. The current descriptor and CLI still select the fake
-runtime, and no production guardian supplies the quiescence proof.
+runtime, and no production guardian supplies the quiescence proof. A separate
+Linux-only containment library now validates a standalone workspace, constructs the
+pinned Bubblewrap boundary, runs a mandatory child canary, and binds recovery to an
+exact `retain_for_review` manifest. No Mission lifecycle stores its returned recovery
+handle. Its dedicated Linux process job passes, while every unsupported platform
+continues to fail closed.
 
-- Activate the pinned Codex app-server adapter through a locally selected Capsule
-  descriptor without exposing Relay or Node credentials.
-- Add guardian-owned provider generations, liveness/heartbeat handling, and closed
-  owner-death, deadline, and revocation races.
-- Enforce OS-level workspace/read-root and secret containment in addition to the
-  implemented child-environment allowlist and locally derived private Codex home.
-- Start or resume a dedicated thread per Mission through the production path,
-  serialize turns, normalize lifecycle events, handle busy sessions, and cancel
-  safely.
-- Run the backend-and-Android scenario with each agent limited to its own repository.
-- Deny push, merge, publish, deploy, arbitrary network access, and secrets.
+- Implement contract/verification deliveries and bounded provenance-marked artifact
+  carriage.
+- Add guardian-owned provider generations and a local capability reference monitor;
+  deny push, merge, publish, deploy, arbitrary network access, and secrets.
+- Activate the pinned Codex adapter through an explicit descriptor, compose the Linux
+  boundary, and durably store its exact recovery handle before provider start.
+- Require one structured turn disposition with bounded local execution evidence.
+- Pass Guarded Real Mission 0 through the public pipeline before attempting the
+  backend-and-Android two-machine scenario.
 
 The proof must include:
 

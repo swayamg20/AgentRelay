@@ -128,6 +128,43 @@ jobs:
           pnpm --filter agentrelay-node exec vitest run
           src/process-lock.test.ts src/process-lock.process.test.ts
 
+  containment-linux:
+    name: containment-linux
+    needs: lint-typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Ubuntu 24.04 gates unprivileged user namespaces behind AppArmor. This
+      # disposable proof host must expose the namespace primitive that the
+      # production boundary probes and otherwise fails closed on.
+      - name: Enable the Linux namespace prerequisite
+        run: |
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      # The containment scanner deliberately rejects package trees that are
+      # hard-linked back into pnpm's content-addressed store.
+      - run: pnpm install --frozen-lockfile --package-import-method=copy
+
+      - run: pnpm --filter @agentrelay/protocol build
+
+      - name: Prove the Linux Mission containment boundary
+        env:
+          AGENTRELAY_RUN_CONTAINMENT_TESTS: '1'
+        run: >-
+          pnpm --filter agentrelay-node exec vitest run
+          src/runtime-containment.process.test.ts
+
   relay-image:
     needs: lint-typecheck
     runs-on: ubuntu-latest
