@@ -51,6 +51,7 @@ export class CodexSupervisedProcess {
 	#observation: CodexProviderObservation | null = null;
 	#stopCause: CodexProviderStopCause | null = null;
 	#stopPromise: Promise<void> | null = null;
+	#allowMissingGenerationState = false;
 
 	private constructor(
 		options: ResolvedCodexSupervisedProcessOptions,
@@ -129,11 +130,16 @@ export class CodexSupervisedProcess {
 				return;
 			}
 			if (event.generation_id !== this.#options.generationId) return;
-			if (event.kind === "ready") resolveReady();
+			if (event.kind === "ready") {
+				this.#allowMissingGenerationState = false;
+				resolveReady();
+			}
 			if (event.kind === "failure") {
+				this.#allowMissingGenerationState = event.code === "invalid_startup";
 				rejectReady(new Error(`Codex provider supervisor failed during ${event.code}`));
 			}
 			if (event.kind === "terminal") {
+				this.#allowMissingGenerationState = false;
 				this.setStopCause(event.cause);
 				this.#observation ??= event.observation;
 			}
@@ -200,6 +206,7 @@ export class CodexSupervisedProcess {
 			const finalized = await waitForReaperFinalization(
 				this.#options.store,
 				this.#options.generationId,
+				this.#allowMissingGenerationState,
 			);
 			const observation =
 				finalized?.observation ?? this.#observation ?? observationForProviderStopCause(cause);
@@ -216,11 +223,15 @@ export class CodexSupervisedProcess {
 async function waitForReaperFinalization(
 	store: ResolvedCodexSupervisedProcessOptions["store"],
 	generationId: string,
+	allowMissingGenerationState: boolean,
 ): Promise<Awaited<ReturnType<typeof store.snapshot>>> {
 	const deadline = Date.now() + REAPER_FINALIZATION_TIMEOUT_MS;
 	for (;;) {
 		const state = await store.snapshot();
-		if (state === null || state.generation_id !== generationId) return null;
+		if (state === null || state.generation_id !== generationId) {
+			if (allowMissingGenerationState) return null;
+			throw new Error("Codex provider generation state changed before teardown was proven");
+		}
 		if (state.phase === "quiescent") return state;
 		if (Date.now() >= deadline) {
 			throw new Error("Codex provider reaper did not finalize quiescence");

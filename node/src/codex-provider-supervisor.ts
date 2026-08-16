@@ -160,7 +160,7 @@ export class CodexProviderSupervisor {
 			const code =
 				error instanceof CodexSupervisorProcessError
 					? error.code
-					: this.#store === null
+					: this.#reaper === null
 						? "invalid_startup"
 						: "state";
 			await this.fail(code, "startup_failure", "crashed");

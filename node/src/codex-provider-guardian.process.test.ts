@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -9,6 +9,7 @@ import { directCodexProcessBoundaryForTests } from "../test-support/direct-codex
 import {
 	type FakeAppServerFixture,
 	createFakeAppServer,
+	isProcessAlive,
 	waitForPid,
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
@@ -28,6 +29,7 @@ const GUARDIAN_TEST_TIMEOUT_MS = 30_000;
 const fixtures: FakeAppServerFixture[] = [];
 const owners: ChildProcess[] = [];
 const generations: CodexProviderGeneration[] = [];
+const failClosedReapers = new Set<number>();
 
 afterEach(async () => {
 	for (const owner of owners.splice(0)) {
@@ -39,6 +41,7 @@ afterEach(async () => {
 	await Promise.allSettled(
 		generations.splice(0).map((generation) => generation.terminate("capsule_shutdown")),
 	);
+	await Promise.all([...failClosedReapers].map(stopFailClosedReaper));
 	await Promise.all(fixtures.splice(0).map((fixture) => fixture.remove()));
 });
 
@@ -215,7 +218,71 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
 	);
+
+	it.runIf(process.platform === "linux")(
+		"retains ownership when durable generation state disappears after startup",
+		async () => {
+			await expectCorruptedStateToFailClosed("missing");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it.runIf(process.platform === "linux")(
+		"retains ownership when durable generation identity changes after startup",
+		async () => {
+			await expectCorruptedStateToFailClosed("replaced");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 });
+
+async function expectCorruptedStateToFailClosed(mode: "missing" | "replaced"): Promise<void> {
+	const fixture = await fakeAppServer({ spawnDescendant: true });
+	const owner = startOwner(fixture);
+	await waitForOwner(fixture);
+	const guardianPid = await directChildPid(owner.pid!);
+	const reaperPid = await childPidContaining(guardianPid, "--reaper");
+	failClosedReapers.add(reaperPid);
+
+	owner.kill("SIGSTOP");
+	await waitForStoppedProcess(owner.pid!);
+	await corruptGenerationState(fixture, mode);
+	owner.kill("SIGKILL");
+	await childClose(owner);
+	await waitForProcessExit(guardianPid, 5_000);
+
+	await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
+		reason: "ownership",
+	});
+	expect(isProcessAlive(reaperPid)).toBe(true);
+
+	await stopFailClosedReaper(reaperPid);
+	const replacement = await openGenerationWhenAvailable(fixture);
+	await replacement.terminate("capsule_shutdown");
+}
+
+async function corruptGenerationState(
+	fixture: FakeAppServerFixture,
+	mode: "missing" | "replaced",
+): Promise<void> {
+	const path = join(fixture.directory, CODEX_PROVIDER_GENERATION_FILE);
+	if (mode === "missing") {
+		await rm(path);
+		return;
+	}
+	const state = JSON.parse(await readFile(path, "utf8")) as CodexProviderGenerationState;
+	await writeFile(
+		path,
+		`${JSON.stringify({
+			...state,
+			generation_id: "10000000-0000-4000-8000-000000000099",
+			phase: "quiescent",
+			stop_cause: "owner_lost",
+			observation: "stopped",
+		})}\n`,
+		{ mode: 0o600 },
+	);
+}
 
 function startOwner(
 	fixture: FakeAppServerFixture,
@@ -342,6 +409,29 @@ async function directChildPid(ownerPid: number): Promise<number> {
 		await delay(10);
 	}
 	throw new Error("Could not identify the direct guardian child");
+}
+
+async function childPidContaining(parentPid: number, marker: string): Promise<number> {
+	const path = `/proc/${parentPid}/task/${parentPid}/children`;
+	const deadline = Date.now() + 2_000;
+	while (Date.now() < deadline) {
+		const children = (await readFile(path, "utf8")).trim().split(/\s+/).filter(Boolean).map(Number);
+		for (const pid of children) {
+			const command = await readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "");
+			if (command.includes(marker)) return pid;
+		}
+		await delay(10);
+	}
+	throw new Error(`Could not identify child process containing ${marker}`);
+}
+
+async function stopFailClosedReaper(pid: number): Promise<void> {
+	const command = await readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "");
+	if (command.includes("--reaper")) {
+		process.kill(pid, "SIGKILL");
+		await waitForProcessExit(pid, 5_000);
+	}
+	failClosedReapers.delete(pid);
 }
 
 async function waitForStoppedProcess(pid: number): Promise<void> {

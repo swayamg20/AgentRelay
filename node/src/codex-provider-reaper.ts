@@ -116,7 +116,10 @@ export class CodexProviderReaper {
 			await delay(GROUP_POLL_MS);
 		}
 		await stopRequested;
-		await store.finalizeQuiescentAsCurrent(init.generation_id, cause);
+		const finalized = await store.finalizeQuiescentAsCurrent(init.generation_id, cause);
+		if (finalized === null) {
+			throw new Error("Codex provider generation state changed before quiescence was recorded");
+		}
 		closeSync(INHERITED_PROVIDER_LOCK_FD);
 		if (process.connected) process.disconnect();
 	}
