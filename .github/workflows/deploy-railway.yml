@@ -1,0 +1,90 @@
+name: Deploy Railway production
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-railway-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: railway-production
+      url: ${{ vars.RELAY_PUBLIC_URL }}
+
+    steps:
+      - name: Checkout tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Reject a superseded revision
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_sha=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq '.object.sha')
+          if [[ "$current_sha" != "$EXPECTED_SHA" ]]; then
+            echo '::error::A newer main revision exists; refusing a stale deployment.'
+            exit 1
+          fi
+
+      - name: Install verified Railway CLI
+        env:
+          RAILWAY_CLI_VERSION: 4.58.0
+          RAILWAY_CLI_SHA256: 6695f3864f00a5518af33676a73436e7e70f9e96324d0f0405c2c3f76effec6c
+        run: |
+          archive="$RUNNER_TEMP/railway.tar.gz"
+          install_dir="$RUNNER_TEMP/railway-bin"
+          curl --fail --silent --show-error --location \
+            "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$RAILWAY_CLI_SHA256" "$archive" | sha256sum --check
+          mkdir -p "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$install_dir" railway
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Deploy tested revision
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: |
+          railway up \
+            --ci \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --message "GitHub Actions ${DEPLOY_SHA}"
+
+      - name: Verify public Relay
+        env:
+          RELAY_PUBLIC_URL: ${{ vars.RELAY_PUBLIC_URL }}
+        run: |
+          relay_url=${RELAY_PUBLIC_URL%/}
+          health=$(curl --fail --silent --show-error --max-time 15 "$relay_url/healthz")
+          [[ "$health" == '{"status":"ok"}' ]]
+          ready=$(curl --fail --silent --show-error --max-time 15 "$relay_url/readyz")
+          [[ "$ready" == '{"status":"ready"}' ]]

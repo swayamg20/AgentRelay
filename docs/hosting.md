@@ -20,7 +20,7 @@ platform — pick what matches your team's posture.
 | Platform | Realistic monthly | Free tier? | Setup effort | Notes |
 |---|---|---|---|---|
 | **Your own VPS** (Hetzner, DigitalOcean, OVH, Linode, etc.) | €4–6 / $5–6 | ❌ | medium | Manual Linux ops; `docker compose --profile selfhost up -d`; reverse proxy via Caddy. Cheapest reliable path. |
-| **Railway Hobby** | $5 (flat sub + $5 usage credit) | trial only ($5 credit) | low | Push to GitHub, auto-detect Dockerfile, one-click Postgres add-on, custom domain + auto SSL. AgentRelay's tiny load fits inside the included credit. |
+| **Railway Hobby** | $5 (flat sub + $5 usage credit) | trial only ($5 credit) | low | Auto-detect Dockerfile, one-click Postgres add-on, custom domain + auto SSL. Use the guarded workflow rather than native auto-deploy for production. |
 | **Fly.io** | ~$5–10 | ❌ (retired Oct 2024) | medium | Pay-as-you-go: ~$2 VM + ~$5 Postgres dev cluster. New signups need a credit card. Fast deploy via `flyctl`. |
 | **Render Starter** | ~$7 per service | free web service sleeps after 15min | low | Always-on at Starter tier. Postgres add-on extra. Free tier's idle-sleep makes inbox checks slow. |
 | **Azure Container Apps + PostgreSQL** | usage-based | limited grants vary | medium | Managed HTTPS compute plus private managed Postgres. See the repository's explicit pilot template and limitations. |
@@ -65,6 +65,7 @@ not the primary path:
 
 - **`fly.toml`** at the repo root and **`docs/deploy-fly.md`** — a complete Fly walkthrough, kept as a reference for users who already use Fly.
 - **`infra/azure/`** and **`docs/deploy-azure.md`** — a reviewable Azure Container Apps + private PostgreSQL team-pilot deployment.
+- **`.github/workflows/deploy-railway.yml`** and **`docs/deploy-railway.md`** — a Railway deployment path that runs only after `main` CI and a protected-environment approval.
 - **`.github/workflows/deploy.yml`** — auto-deploy to Fly on `v*.*.*` tag push. Adapt the steps for your platform if it's different.
 - **`docker-compose.yml`** with the `selfhost` profile — the canonical "everything on one box" setup. It forwards all required Relay secrets from `.env`; use it on any VPS.
 
