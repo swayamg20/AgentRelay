@@ -285,10 +285,6 @@ function createGuardian(
 		boundary: directCodexProcessBoundaryForTests,
 		deadlineAtMs: Date.now() + 60_000,
 		supervisor: sourceSupervisorCommand(),
-		startupTimeoutMs: 5_000,
-		heartbeatIntervalMs: 50,
-		heartbeatTimeoutMs: 500,
-		heartbeatRecordMs: 100,
 		...overrides,
 	});
 }

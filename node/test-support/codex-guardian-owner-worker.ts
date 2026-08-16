@@ -38,10 +38,6 @@ const guardian = new SupervisedCodexProviderGuardian({
 			fileURLToPath(new URL("../src/bin/agentrelay-codex-guardian.ts", import.meta.url)),
 		],
 	},
-	startupTimeoutMs: 5_000,
-	heartbeatIntervalMs: 50,
-	heartbeatTimeoutMs: 500,
-	heartbeatRecordMs: 100,
 });
 
 const generation = await guardian.openGeneration();

@@ -17,7 +17,10 @@ import {
 	CODEX_PROVIDER_GENERATION_FILE,
 	type CodexProviderGenerationState,
 } from "./codex-provider-generation-state.js";
-import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
+import {
+	CodexProviderGuardianError,
+	SupervisedCodexProviderGuardian,
+} from "./codex-provider-guardian.js";
 import type { CodexSupervisorCommand } from "./codex-supervised-process.js";
 
 const CAPSULE_ID = "10000000-0000-4000-8000-000000000001";
@@ -53,7 +56,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			await expect(
 				readFile(join(fixture.directory, CODEX_PROVIDER_GENERATION_FILE), "utf8"),
 			).rejects.toMatchObject({ code: "ENOENT" });
-			const replacement = await openGeneration(fixture);
+			const replacement = await openGenerationWhenAvailable(fixture);
 			await replacement.terminate("capsule_shutdown");
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
@@ -77,7 +80,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 					stop_cause: "owner_lost",
 					observation: "stopped",
 				});
-			const replacement = await openGeneration(fixture);
+			const replacement = await openGenerationWhenAvailable(fixture);
 			await replacement.terminate("capsule_shutdown");
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
@@ -111,7 +114,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 					observation: "stopped",
 				});
 
-			const replacement = await openGeneration(fixture);
+			const replacement = await openGenerationWhenAvailable(fixture);
 			await replacement.terminate("capsule_shutdown");
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
@@ -126,7 +129,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			const descendantPid = await waitForPid(fixture.childPidPath);
 
 			owner.kill("SIGSTOP");
-			await waitForProcessExit(descendantPid);
+			await waitForProcessExit(descendantPid, 5_000);
 			await expect
 				.poll(() => generationState(fixture))
 				.toMatchObject({
@@ -148,7 +151,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 				});
 			owner.kill("SIGKILL");
 			await childClose(owner);
-			const replacement = await openGeneration(fixture);
+			const replacement = await openGenerationWhenAvailable(fixture);
 			await replacement.terminate("capsule_shutdown");
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
@@ -173,7 +176,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 					observation: "crashed",
 				});
 
-			const replacement = await openGeneration(fixture);
+			const replacement = await openGenerationWhenAvailable(fixture);
 			await replacement.terminate("capsule_shutdown");
 			owner.kill("SIGKILL");
 			await childClose(owner);
@@ -207,7 +210,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 					observation: "crashed",
 				});
 
-			const replacement = await openGeneration(fixture);
+			const replacement = await openGenerationWhenAvailable(fixture);
 			await replacement.terminate("capsule_shutdown");
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
@@ -272,10 +275,6 @@ function createGuardian(fixture: FakeAppServerFixture): SupervisedCodexProviderG
 		boundary: directCodexProcessBoundaryForTests,
 		deadlineAtMs: Date.now() + 60_000,
 		supervisor: sourceSupervisorCommand(),
-		startupTimeoutMs: 5_000,
-		heartbeatIntervalMs: 50,
-		heartbeatTimeoutMs: 500,
-		heartbeatRecordMs: 100,
 	});
 }
 
@@ -283,6 +282,23 @@ async function openGeneration(fixture: FakeAppServerFixture): Promise<CodexProvi
 	const generation = await createGuardian(fixture).openGeneration();
 	generations.push(generation);
 	return generation;
+}
+
+async function openGenerationWhenAvailable(
+	fixture: FakeAppServerFixture,
+): Promise<CodexProviderGeneration> {
+	const deadline = Date.now() + 5_000;
+	for (;;) {
+		try {
+			return await openGeneration(fixture);
+		} catch (error) {
+			if (!(error instanceof CodexProviderGuardianError) || error.reason !== "ownership") {
+				throw error;
+			}
+			if (Date.now() >= deadline) throw error;
+			await delay(10);
+		}
+	}
 }
 
 function sourceSupervisorCommand(): CodexSupervisorCommand {
