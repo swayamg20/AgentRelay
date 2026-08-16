@@ -30,7 +30,13 @@ export interface CodexAppServerProcess {
 	readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	readonly closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	readonly inputError: Promise<Error>;
+	/** Optional lifecycle owner used when the visible child is a supervising process. */
+	readonly stop?: () => Promise<void>;
 }
+
+export type CodexAppServerProcessFactory = (
+	options: CodexAppServerProcessOptions,
+) => Promise<CodexAppServerProcess>;
 
 export class CodexAppServerError extends Error {
 	constructor(
@@ -90,7 +96,8 @@ export async function startCodexAppServerProcess(
 export function stopCodexAppServerProcess(processRef: CodexAppServerProcess): Promise<void> {
 	const existingStop = processStops.get(processRef.child);
 	if (existingStop !== undefined) return existingStop;
-	const stop = stopProcessGroup(processRef.child, processRef.exited, processRef.closed);
+	const stop =
+		processRef.stop?.() ?? stopProcessGroup(processRef.child, processRef.exited, processRef.closed);
 	processStops.set(processRef.child, stop);
 	return stop;
 }

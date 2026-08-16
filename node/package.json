@@ -12,7 +12,8 @@
 	"types": "dist/index.d.ts",
 	"bin": {
 		"agentrelay-node": "dist/bin/agentrelay-node.js",
-		"agentrelay-capsule": "dist/bin/agentrelay-capsule.js"
+		"agentrelay-capsule": "dist/bin/agentrelay-capsule.js",
+		"agentrelay-codex-guardian": "dist/bin/agentrelay-codex-guardian.js"
 	},
 	"files": ["dist"],
 	"scripts": {
