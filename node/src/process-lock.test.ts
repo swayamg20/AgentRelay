@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { kernelFileLock } from "./kernel-file-lock.js";
-import { acquireProcessLock } from "./process-lock.js";
+import { PROVIDER_GENERATION_LOCK_KIND, acquireProcessLock } from "./process-lock.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -81,6 +81,28 @@ describe("acquireProcessLock", () => {
 		});
 
 		await first.release();
+	});
+
+	it("keeps provider generation ownership distinct from Node ownership", async () => {
+		const root = await temporaryDirectory();
+		const path = join(root, "provider.lock");
+		const provider = await acquireProcessLock(path, {
+			...fixedOptions(),
+			kind: PROVIDER_GENERATION_LOCK_KIND,
+		});
+
+		expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+			schema_version: 2,
+			kind: PROVIDER_GENERATION_LOCK_KIND,
+		});
+		expect(provider.inheritFileDescriptor()).toBeGreaterThanOrEqual(0);
+		await expect(acquireProcessLock(path, fixedOptions())).rejects.toMatchObject({
+			name: "ProcessLockError",
+			reason: "invalid_lock",
+		});
+
+		await provider.release();
+		expect(() => provider.inheritFileDescriptor()).toThrow("already releasing");
 	});
 
 	it("fails closed on schema-1 ownership even when its PID appears absent", async () => {

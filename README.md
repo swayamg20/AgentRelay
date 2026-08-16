@@ -34,7 +34,8 @@
 > has not been activated for a real model turn. A Linux-only Codex `0.146.0`
 > containment library now exists, but no Capsule descriptor or CLI selects it, its
 > recovery handle is not yet stored by the Mission lifecycle, and macOS parity,
-> production runtime supervision, and the two-machine proof remain incomplete.
+> verified local authority wiring, installed service supervision, and the two-machine
+> proof remain incomplete.
 
 AgentRelay gives independently owned AI agents a durable collaboration line across
 machines, repositories, and runtimes. They can exchange questions, contracts, and
@@ -56,7 +57,7 @@ repositories is the first proof, not the final product boundary.
 | --- | --- | --- |
 | **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.1: identities, invites, typed handoffs, messages, blocks, trust, and audit |
 | **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
-| **Experimental** | Node, persistent Capsule, and containment | Local policy, crash recovery, and an unactivated Linux containment library; current commands still select deterministic fake runtimes |
+| **Experimental** | Node, persistent Capsule, guardian, and containment | Local recovery and provider supervision libraries; current commands still select deterministic fake runtimes |
 | **Next gate** | Guarded real Codex activation | Guarded Real Mission 0 through the public pipeline, then the two-machine backend ↔ Android proof |
 
 The repository does not yet ship the full autonomous runtime described above. The
@@ -126,6 +127,16 @@ but no current descriptor or CLI activates Codex for a real model turn.
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
   process gate passes; current commands still do not select it. See
   [research 006](docs/research/006-mission-workspace-containment.md).
+- An unactivated provider guardian that atomically owns one Codex generation behind a
+  stable kernel lock. Before the durable start barrier or provider spawn, its detached
+  guardian prearms an out-of-group teardown witness that retains the same lock. The
+  witness independently enforces heartbeat and deadline loss, removes the complete
+  guardian/provider process group, and is the only same-boot teardown writer of
+  durable quiescence after proving group absence. Ambiguous same-boot ownership fails
+  closed; changed kernel boot identity permits safe reboot recovery. Linux CI also
+  starts pinned Codex
+  through this guardian and the containment boundary. See
+  [research 007](docs/research/007-codex-provider-guardian.md).
 - CLI setup, invite/join, install, doctor/fix, key rotation, audit, relay-synchronized
   block/unblock, and local trust management.
 - An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
@@ -139,8 +150,8 @@ but no current descriptor or CLI activates Codex for a real model turn.
   before provider start and reopens only that retained instance after a crash.
 - Complete local verification, contract-artifact carriage, and policy/evidence
   enforcement outside the model.
-- A production provider-process guardian, heartbeat/liveness ownership, complete
-  command/network mediation, and a supported containment boundary beyond Linux;
+- Mission-authority wiring for the guardian, complete command/network mediation, an
+  installed OS service boundary, and a supported containment boundary beyond Linux;
   then a Claude runtime adapter.
 - A real two-machine, two-repository proof using the public control plane.
 
@@ -158,6 +169,8 @@ The provider-neutral server and injected-runner checkpoint is recorded in
 [`Injected Codex Capsule runner`](docs/research/005-codex-capsule-runner.md).
 The Linux-first workspace boundary and its remaining activation gates are recorded in
 [`Mission workspace containment`](docs/research/006-mission-workspace-containment.md).
+The provider-generation ownership and teardown checkpoint is recorded in
+[`Codex provider guardian`](docs/research/007-codex-provider-guardian.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -399,7 +412,8 @@ this README does not claim full A2A conformance.
     │   ├── 003-persistent-mission-capsule.md
     │   ├── 004-codex-capsule-journal.md
     │   ├── 005-codex-capsule-runner.md
-    │   └── 006-mission-workspace-containment.md
+    │   ├── 006-mission-workspace-containment.md
+    │   └── 007-codex-provider-guardian.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```

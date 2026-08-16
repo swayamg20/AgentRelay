@@ -135,9 +135,10 @@ through the public control plane.
   `run.owner.json` PID metadata as diagnostic, keep the `run.lock` inode permanently
   in place, never steal ownership on a heartbeat timeout, and fail closed on every
   legacy schema-1 PID lock until an explicit offline migration.
-- [ ] Package the Node as an installed background service with OS supervision and
-  automatic process respawn. Crash-releasable ownership makes restart safe; it does
-  not start the replacement process.
+- [ ] Package the Node as an installed background service with OS/cgroup supervision
+  (#120), automatic process respawn, bounded restart/upgrade/rollback, and cleanup for
+  witness/all-owner loss or descendants that escape the supervised process group.
+  Crash-releasable ownership makes restart safe; it does not start the replacement.
 
 Start with one eligible Node per logical agent and one active turn per Mission. The
 Capsule path is experimental and Unix-only; it is not yet an installed background
@@ -162,7 +163,7 @@ service.
   one event consumer, cancellation, and recovery. Exercise it through the real
   Capsule Unix wire using fake app-server clients; this is not production activation.
 - [x] Reconcile an ambiguous `turn/start` by exact `clientUserMessageId` and text only
-  in a fresh provider generation after a mandatory injected quiescence proof. Carry
+  in a fresh guardian-owned provider generation. Carry
   cancellation across pre-binding recovery, durably terminalize a bounded zero match,
   and never resend an uncertain start.
 - [x] Resolve an inherited `interrupt_maybe_sent` barrier only in the fresh provider
@@ -180,9 +181,14 @@ service.
   fail-closed rather than claiming parity.
 - [ ] Complete contract/verification delivery handling and bounded provenance-marked
   Mission artifact carriage.
-- [ ] Add a production guardian for provider generations, heartbeat, teardown, and
-  quiescence proof; then enforce local capability grants outside the model.
-- [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI.
+- [x] Add a provider guardian that atomically owns one kernel-locked generation,
+  heartbeat and provider liveness, absolute deadline, local revocation, a prearmed
+  out-of-group teardown witness, and durable quiescence only after process-group
+  absence (#96).
+- [ ] Continuously derive guardian authority and enforce local capability grants
+  outside the model (#97).
+- [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI
+  (#98).
   Before provider start, durably store `{manifestPath, instanceId, bindingSha256}` and
   recover only that exact containment instance.
 - [ ] Require the RFC's structured turn dispositions and bounded local execution

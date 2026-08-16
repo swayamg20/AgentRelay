@@ -23,18 +23,34 @@ export interface CodexCapsuleClient {
 	startReadOnlyTurn(input: StartCodexTurnInput): Promise<CodexTurn>;
 	interruptTurn(threadId: string, turnId: string): Promise<void>;
 	events(): AsyncIterable<CodexAppServerClientEvent>;
-	close(): Promise<void>;
 }
 
-export interface CodexRecoveryAuthority {
-	assertPreviousProviderProcessQuiescent(reason: "provider_generation_start"): Promise<void>;
+export type CodexProviderTerminationReason =
+	| "capsule_shutdown"
+	| "startup_failure"
+	| "provider_failure"
+	| "authority_revoked"
+	| "deadline_exceeded";
+
+export interface CodexProviderTermination {
+	readonly kind: "stopped" | "crashed" | "unresponsive";
+}
+
+export interface CodexProviderGeneration {
+	readonly generationId: string;
+	readonly client: CodexCapsuleClient;
+	readonly termination: Promise<CodexProviderTermination>;
+	terminate(reason: CodexProviderTerminationReason): Promise<void>;
+}
+
+export interface CodexProviderGuardian {
+	openGeneration(): Promise<CodexProviderGeneration>;
 }
 
 export interface CodexCapsuleRunnerOptions {
 	readonly store: CodexCapsuleStore;
 	readonly cwd: string;
-	readonly clientFactory: () => Promise<CodexCapsuleClient>;
-	readonly recoveryAuthority: CodexRecoveryAuthority;
+	readonly guardian: CodexProviderGuardian;
 	/** Retires the owning Capsule without exposing a provider failure over the wire. */
 	readonly retireGeneration: () => void;
 	readonly eventPollMs?: number;

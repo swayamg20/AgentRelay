@@ -7,6 +7,8 @@ export * from "./codex-capsule-prompt.js";
 export * from "./codex-capsule-runner.js";
 export * from "./codex-capsule-store.js";
 export * from "./codex-capsule-types.js";
+export * from "./codex-provider-generation-state.js";
+export * from "./codex-provider-guardian.js";
 export * from "./codex-process-boundary.js";
 export * from "./codex-sandbox-containment.js";
 export * from "./daemon.js";

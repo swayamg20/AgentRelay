@@ -4,6 +4,7 @@ import {
 	type CodexAppServerCommand,
 	CodexAppServerError,
 	type CodexAppServerProcess,
+	type CodexAppServerProcessFactory,
 	readCodexLines,
 	startCodexAppServerProcess,
 	stopCodexAppServerProcess,
@@ -24,6 +25,7 @@ export interface CodexAppServerTransportOptions {
 	readonly boundary: CodexProcessBoundary;
 	readonly requestTimeoutMs?: number;
 	readonly handleServerRequest: (request: CodexServerRequest) => CodexServerRequestDecision;
+	readonly processFactory?: CodexAppServerProcessFactory;
 }
 
 export interface CodexServerRequest {
@@ -102,7 +104,7 @@ export class CodexAppServerTransport {
 		});
 		void processRef.exited.then(() => {
 			if (!this.#closing && this.#failure === null) {
-				void stopCodexAppServerProcess(processRef).catch((error) =>
+				void stopCodexAppServerProcess(processRef, "failure").catch((error) =>
 					this.fail(error instanceof Error ? error : new Error(String(error))),
 				);
 			}
@@ -116,7 +118,7 @@ export class CodexAppServerTransport {
 			.min(100)
 			.max(120_000)
 			.parse(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
-		const processRef = await startCodexAppServerProcess(options);
+		const processRef = await (options.processFactory ?? startCodexAppServerProcess)(options);
 		return new CodexAppServerTransport(processRef, requestTimeoutMs, options.handleServerRequest);
 	}
 
@@ -136,7 +138,7 @@ export class CodexAppServerTransport {
 					`Timed out waiting for Codex app-server method ${method}`,
 				);
 				reject(error);
-				this.fail(error);
+				this.fail(error, "unresponsive");
 			}, this.#requestTimeoutMs);
 			this.#pending.set(id, { method, resolve, reject, timeout });
 		});
@@ -265,12 +267,12 @@ export class CodexAppServerTransport {
 		);
 	}
 
-	private fail(error: Error): void {
+	private fail(error: Error, stopReason: "failure" | "unresponsive" = "failure"): void {
 		if (this.#failure !== null) return;
 		this.#failure = error;
 		this.rejectPending(error);
 		this.#events.close(error);
-		void stopCodexAppServerProcess(this.#process).catch(() => undefined);
+		void stopCodexAppServerProcess(this.#process, stopReason).catch(() => undefined);
 	}
 
 	private rejectPending(error: Error): void {

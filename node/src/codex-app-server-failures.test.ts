@@ -8,6 +8,7 @@ import { CodexAppServerClient } from "./codex-app-server-client.js";
 
 const fixtures: FakeAppServerFixture[] = [];
 const clients: CodexAppServerClient[] = [];
+const IGNORED_REQUEST_TIMEOUT_MS = 1_000;
 
 afterEach(async () => {
 	await Promise.all(clients.splice(0).map((client) => client.close().catch(() => undefined)));
@@ -30,7 +31,7 @@ describe("Codex app-server failure boundaries", () => {
 
 	it("times out one ignored request and poisons the client", async () => {
 		const fixture = await fakeAppServer({ ignoreRead: true });
-		const client = await openClient(fixture, 100);
+		const client = await openClient(fixture, IGNORED_REQUEST_TIMEOUT_MS);
 		await expect(client.readThread("thread-1")).rejects.toMatchObject({
 			name: "CodexAppServerError",
 			reason: "transport",

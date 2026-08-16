@@ -102,8 +102,8 @@ jobs:
           pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp
           --filter agentrelay-node test
 
-  node-lock-macos:
-    name: node-lock-macos (${{ matrix.node }})
+  node-process-macos:
+    name: node-process-macos (${{ matrix.node }})
     needs: lint-typecheck
     runs-on: macos-latest
     timeout-minutes: 10
@@ -123,10 +123,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Exercise native Node ownership
+      - run: pnpm --filter @agentrelay/protocol build
+
+      - name: Exercise native Node and guardian ownership
         run: >-
           pnpm --filter agentrelay-node exec vitest run
           src/process-lock.test.ts src/process-lock.process.test.ts
+          src/codex-provider-guardian.process.test.ts
 
   containment-linux:
     name: containment-linux
@@ -158,12 +161,12 @@ jobs:
 
       - run: pnpm --filter @agentrelay/protocol build
 
-      - name: Prove the Linux Mission containment boundary
+      - name: Prove Linux containment and guardian owner death
         env:
           AGENTRELAY_RUN_CONTAINMENT_TESTS: '1'
         run: >-
           pnpm --filter agentrelay-node exec vitest run
-          src/runtime-containment.process.test.ts
+          src/runtime-containment.process.test.ts src/codex-provider-guardian.process.test.ts
 
   relay-image:
     needs: lint-typecheck

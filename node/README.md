@@ -38,10 +38,14 @@ unactivated.
   correlation, separately bounded 128 MiB request and 4 MiB response frames,
   mode-0700 directories, mode-0600 files and sockets, and an allowlisted child
   environment that excludes Relay, Node, and coding-runtime credentials.
-- An unactivated guarded Codex client and injected Capsule runner, plus a Linux-only
-  Codex `0.146.0` containment library. The dedicated Linux process job proves its
-  workspace/read/deny/network boundary and pinned app-server handshake; no current
-  descriptor, CLI, or Mission lifecycle selects it.
+- An unactivated guarded Codex client, injected Capsule runner, and provider guardian,
+  plus a Linux-only Codex `0.146.0` containment library. The guardian owns one
+  kernel-locked provider generation, absolute deadline, local revocation signal,
+  and liveness classification. It prearms a detached out-of-group witness before the
+  start barrier; that witness retains the lock, removes the guardian/provider process
+  group, and alone records same-boot teardown quiescence after proving the group absent.
+  The dedicated Linux process job starts pinned Codex through both boundaries; no
+  current descriptor, CLI, or Mission lifecycle selects them.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
@@ -66,9 +70,13 @@ configuration.
 The Capsule checkpoint is experimental and Unix-only because its transport is a Unix
 domain socket. It is not a general local daemon manager: there is no installer, OS
 service supervisor, automatic process respawn, or production Codex/Claude activation.
-The guarded Codex client, injected runner, and Linux containment boundary exist only
-as unactivated libraries; see
+The guarded Codex client, injected runner, guardian, and Linux containment boundary
+exist only as unactivated libraries; see
+[`Codex provider guardian`](../docs/research/007-codex-provider-guardian.md) and
 [`Mission workspace containment`](../docs/research/006-mission-workspace-containment.md).
+`agentrelay-codex-guardian` is the guardian's internal child-process entry point, not
+a supported operator command or an activation path. Its internal `--reaper` mode is
+the persistent teardown witness, not another public command.
 The foreground Node's singleton ownership is crash-releasable, but an external
 service manager must still start a replacement process.
 
@@ -117,8 +125,10 @@ explicit loopback host during local development.
 At this checkpoint, `max_reported_tokens` feeds the host-event reducer. The other
 policy fields are validated and included in the acceptance grant hash, but turn
 deadlines, network sandboxing, and registered verification-command execution are not
-enforced by the active fake-runtime commands. The separate unactivated Linux
-containment library denies network access for processes launched through its boundary.
+enforced by the active fake-runtime commands. The unactivated guardian enforces a
+caller-supplied absolute deadline, and the separate Linux containment library denies
+network access for processes launched through its boundary. The Mission lifecycle does
+not yet supply either boundary with verified authority.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this

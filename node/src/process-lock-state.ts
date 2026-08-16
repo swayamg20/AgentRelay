@@ -22,10 +22,17 @@ const legacyLockMetadataSchema = z
 	})
 	.strict();
 
+export const PROCESS_LOCK_KINDS = [
+	"agentrelay_node_kernel_lock",
+	"agentrelay_provider_generation_lock",
+] as const;
+
+export type ProcessLockKind = (typeof PROCESS_LOCK_KINDS)[number];
+
 const kernelLockFileSchema = z
 	.object({
 		schema_version: z.literal(2),
-		kind: z.literal("agentrelay_node_kernel_lock"),
+		kind: z.enum(PROCESS_LOCK_KINDS),
 	})
 	.strict();
 
@@ -41,10 +48,8 @@ export const ownerMetadataSchema = z
 export type LegacyLockMetadata = z.infer<typeof legacyLockMetadataSchema>;
 export type OwnerMetadata = z.infer<typeof ownerMetadataSchema>;
 
-const KERNEL_LOCK_FILE = Object.freeze({
-	schema_version: 2 as const,
-	kind: "agentrelay_node_kernel_lock" as const,
-});
+export const NODE_PROCESS_LOCK_KIND: ProcessLockKind = "agentrelay_node_kernel_lock";
+export const PROVIDER_GENERATION_LOCK_KIND: ProcessLockKind = "agentrelay_provider_generation_lock";
 
 interface OpenLockFile {
 	readonly handle: FileHandle;
@@ -66,12 +71,15 @@ export class ProcessLockError extends Error {
 	}
 }
 
-export async function openStableProcessLock(path: string): Promise<FileHandle> {
+export async function openStableProcessLock(
+	path: string,
+	kind: ProcessLockKind = NODE_PROCESS_LOCK_KIND,
+): Promise<FileHandle> {
 	await prepareLockDirectory(path);
 	for (let attempt = 0; attempt < ACQUISITION_ATTEMPTS; attempt += 1) {
-		const existing = await openLockFile(path);
+		const existing = await openLockFile(path, kind);
 		if (existing === null) {
-			await publishKernelLockFile(path);
+			await publishKernelLockFile(path, kind);
 			continue;
 		}
 		if (existing.contents.kind === "kernel") return existing.handle;
@@ -136,7 +144,7 @@ export async function writeOwnerMetadata(path: string, metadata: OwnerMetadata):
 	await writePrivateJson(ownerMetadataPath(path), metadata);
 }
 
-async function openLockFile(path: string): Promise<OpenLockFile | null> {
+async function openLockFile(path: string, kind: ProcessLockKind): Promise<OpenLockFile | null> {
 	let handle: FileHandle;
 	try {
 		handle = await open(path, constants.O_RDWR | constants.O_NOFOLLOW);
@@ -156,7 +164,8 @@ async function openLockFile(path: string): Promise<OpenLockFile | null> {
 		await assertPathReferencesHandle(path, handle);
 		const decoded = await readLockJson(path, handle, stats.size);
 
-		if (kernelLockFileSchema.safeParse(decoded).success) {
+		const kernelFile = kernelLockFileSchema.safeParse(decoded);
+		if (kernelFile.success && kernelFile.data.kind === kind) {
 			if (stats.nlink !== 1) await removePublishedTemporaryLinks(path, handle);
 			return { handle, contents: { kind: "kernel" } };
 		}
@@ -171,7 +180,7 @@ async function openLockFile(path: string): Promise<OpenLockFile | null> {
 	}
 }
 
-async function publishKernelLockFile(path: string): Promise<void> {
+async function publishKernelLockFile(path: string, kind: ProcessLockKind): Promise<void> {
 	const directory = dirname(path);
 	const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
 	let temporaryExists = false;
@@ -185,7 +194,7 @@ async function publishKernelLockFile(path: string): Promise<void> {
 		temporaryExists = true;
 		try {
 			await handle.chmod(0o600);
-			await handle.writeFile(`${JSON.stringify(KERNEL_LOCK_FILE, null, 2)}\n`, "utf8");
+			await handle.writeFile(`${JSON.stringify({ schema_version: 2, kind }, null, 2)}\n`, "utf8");
 			await handle.sync();
 		} finally {
 			await handle.close();

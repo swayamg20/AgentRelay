@@ -16,13 +16,14 @@ import {
 	unlink,
 	writeFile,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { resolvePinnedCodex, sha256File } from "../test-support/pinned-codex.js";
-import { CodexAppServerClient } from "./codex-app-server-client.js";
+import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
 import {
 	prepareCodexSandboxContainment,
 	recoverCodexSandboxContainment,
@@ -161,7 +162,7 @@ describe.runIf(
 		).rejects.toThrow("authorize this exact workspace and policy");
 	}, 60_000);
 
-	it("starts the pinned Codex version probe and app-server inside the real boundary", async () => {
+	it("starts pinned Codex through the guardian and real boundary", async () => {
 		const fixture = await createFixture();
 		const launcher = await resolvePinnedCodex();
 		const containment = await prepareCodexSandboxContainment({
@@ -174,15 +175,25 @@ describe.runIf(
 			policyGrantSha256: "b".repeat(64),
 		});
 
-		const client = await CodexAppServerClient.start({
+		const generation = await new SupervisedCodexProviderGuardian({
+			capsuleId: randomUUID(),
 			command: { executable: launcher.executable },
 			cwd: fixture.workspace.root,
 			capsuleDirectory: fixture.runtime,
 			env: {},
 			boundary: containment.boundary,
+			deadlineAtMs: Date.now() + 55_000,
 			requestTimeoutMs: PROCESS_TIMEOUT_MS,
-		});
-		await client.close();
+			supervisor: {
+				executable: process.execPath,
+				args: [
+					"--import",
+					createRequire(import.meta.url).resolve("tsx"),
+					fileURLToPath(new URL("./bin/agentrelay-codex-guardian.ts", import.meta.url)),
+				],
+			},
+		}).openGeneration();
+		await generation.terminate("capsule_shutdown");
 	}, 60_000);
 });
 

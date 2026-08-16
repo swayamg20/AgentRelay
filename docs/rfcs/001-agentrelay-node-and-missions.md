@@ -2,8 +2,9 @@
 
 - **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
   persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
-  ownership, and an unactivated guarded Codex client/journal are implemented; runtime
-  integration and the two-machine proof remain
+  ownership, and unactivated Codex client, journal, runner, guardian, and Linux
+  containment checkpoints are implemented; authority wiring, descriptor/CLI
+  activation, and the two-machine proof remain
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -446,10 +447,12 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    lock permits direct restart without file deletion and refuses a stopped live
    contender. Pre-claim/after-claim process cuts, busy-session, and full adversarial
    coverage remain.
-6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned and the
-   unactivated Capsule journal proves local at-most-once barriers, exact-input replay,
-   redacted terminal normalization, and cancellation intent. Runtime/server/CLI
-   integration and ambiguous-start recovery remain.
+6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned. The
+   unactivated provider-neutral Capsule server, schema-v2 journal, injected runner,
+   provider guardian, and Linux containment boundary prove local at-most-once
+   barriers, ambiguous-start recovery without resend, exact-input replay, redacted
+   terminal normalization, cancellation intent, and provider teardown. Verified
+   Mission authority, descriptor/CLI activation, and a real model turn remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or
