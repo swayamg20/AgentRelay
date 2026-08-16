@@ -18,6 +18,7 @@ import {
 	CODEX_CAPSULE_ADAPTER_INFO,
 	type CodexCapsuleClient,
 	type CodexCapsuleRunnerOptions,
+	type CodexProviderGeneration,
 	boundedRunnerMilliseconds,
 	isTerminalHostEvent,
 	sessionInputFromRef,
@@ -32,12 +33,16 @@ export {
 	CODEX_CAPSULE_ADAPTER_INFO,
 	type CodexCapsuleClient,
 	type CodexCapsuleRunnerOptions,
-	type CodexRecoveryAuthority,
+	type CodexProviderGeneration,
+	type CodexProviderGuardian,
+	type CodexProviderTermination,
+	type CodexProviderTerminationReason,
 } from "./codex-capsule-runner-contract.js";
 
 /** Injected Codex orchestration inside one Mission Capsule; not wired to a production CLI. */
 export class CodexCapsuleRunner implements CapsuleRuntime {
 	readonly #store: CodexCapsuleStore;
+	readonly #generation: CodexProviderGeneration;
 	readonly #client: CodexCapsuleClient;
 	readonly #cwd: string;
 	readonly #eventPollMs: number;
@@ -53,9 +58,10 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 	#retirementRequested = false;
 	#closing: Promise<void> | null = null;
 
-	private constructor(options: CodexCapsuleRunnerOptions, client: CodexCapsuleClient) {
+	private constructor(options: CodexCapsuleRunnerOptions, generation: CodexProviderGeneration) {
 		this.#store = options.store;
-		this.#client = client;
+		this.#generation = generation;
+		this.#client = generation.client;
 		this.#cwd = validateCodexRunnerCwd(options.cwd);
 		this.#eventPollMs = boundedRunnerMilliseconds(options.eventPollMs ?? 20);
 		this.#providerPollMs = boundedRunnerMilliseconds(options.providerPollMs ?? 500);
@@ -66,27 +72,25 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 			.max(20)
 			.parse(options.zeroMatchReads ?? 3);
 		this.#retireGeneration = options.retireGeneration;
-		this.#providerEvents = new CodexProviderEventSource(client);
+		this.#providerEvents = new CodexProviderEventSource(this.#client);
 		this.#turnExecutor = new CodexTurnExecutor({
 			store: options.store,
-			client,
+			client: this.#client,
 			providerEvents: this.#providerEvents,
 			cwd: this.#cwd,
 			providerPollMs: this.#providerPollMs,
 			zeroMatchReads: this.#zeroMatchReads,
 			shutdownSignal: this.#shutdown.signal,
 		});
+		this.observeProviderTermination();
 	}
 
 	static async open(options: CodexCapsuleRunnerOptions): Promise<CodexCapsuleRunner> {
-		await options.recoveryAuthority.assertPreviousProviderProcessQuiescent(
-			"provider_generation_start",
-		);
-		const client = await options.clientFactory();
+		const generation = await options.guardian.openGeneration();
 		try {
-			return new CodexCapsuleRunner(options, client);
+			return new CodexCapsuleRunner(options, generation);
 		} catch (error) {
-			await client.close().catch(() => undefined);
+			await generation.terminate("startup_failure").catch(() => undefined);
 			throw error;
 		}
 	}
@@ -160,13 +164,21 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 	private async performClose(): Promise<void> {
 		const failures: unknown[] = [];
 		this.#shutdown.abort();
-		await captureFailure(this.#client.close(), failures);
+		await captureFailure(this.#generation.terminate("capsule_shutdown"), failures);
 		await Promise.allSettled(this.#turnDrivers.values());
 		await captureFailure(this.#providerEvents.close(), failures);
 		await captureFailure(this.#store.close(), failures);
 		if (failures.length > 0) {
 			throw new AggregateError(failures, "Codex Capsule runner shutdown failed");
 		}
+	}
+
+	private observeProviderTermination(): void {
+		void this.#generation.termination.then(
+			() => this.retireAfterFatalFailure(new Error("Codex provider generation terminated")),
+			() =>
+				this.retireAfterFatalFailure(new Error("Codex provider termination was not observable")),
+		);
 	}
 
 	private async openSession(): Promise<HostSessionRef> {

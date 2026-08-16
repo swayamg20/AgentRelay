@@ -25,7 +25,10 @@ import { PersistentCapsuleServer } from "./capsule-server.js";
 import {
 	CODEX_CAPSULE_ADAPTER_INFO,
 	CodexCapsuleRunner,
-	type CodexRecoveryAuthority,
+	type CodexProviderGeneration,
+	type CodexProviderGuardian,
+	type CodexProviderTermination,
+	type CodexProviderTerminationReason,
 } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
 
@@ -109,10 +112,7 @@ describe("CodexCapsuleRunner", () => {
 		expect(firstClient.turnStarts).toHaveLength(1);
 		expect(fixture.client.turnStarts).toHaveLength(0);
 		expect(fixture.client.readCalls).toBe(1);
-		expect(fixture.authority.calls).toEqual([
-			"provider_generation_start",
-			"provider_generation_start",
-		]);
+		expect(fixture.guardian.openCalls).toBe(2);
 	});
 
 	it("fails a bounded zero-match only after provider quiescence and never resends", async () => {
@@ -129,7 +129,7 @@ describe("CodexCapsuleRunner", () => {
 		expect(eventKinds(frames)).toEqual(["accepted", "usage", "failed"]);
 		expect(fixture.client.turnStarts).toHaveLength(0);
 		expect(fixture.client.readCalls).toBe(3);
-		expect(fixture.authority.calls).toEqual(["provider_generation_start"]);
+		expect(fixture.guardian.openCalls).toBe(1);
 
 		const next = turnInput(session, IDS.delivery2);
 		await fixture.store.prepareTurn(next);
@@ -217,10 +217,7 @@ describe("CodexCapsuleRunner", () => {
 		expect(fixture.client.interrupts).toEqual([]);
 		expect(fixture.client.readCalls).toBe(1);
 		expect(JSON.stringify(recovered)).not.toContain(providerTurn.id);
-		expect(fixture.authority.calls).toEqual([
-			"provider_generation_start",
-			"provider_generation_start",
-		]);
+		expect(fixture.guardian.openCalls).toBe(2);
 	});
 
 	it("retires when a detached cancel request loses its interrupt response", async () => {
@@ -260,10 +257,7 @@ describe("CodexCapsuleRunner", () => {
 		expect(firstClient.interrupts).toHaveLength(1);
 		expect(fixture.client.interrupts).toEqual([]);
 		expect(fixture.client.readCalls).toBe(1);
-		expect(fixture.authority.calls).toEqual([
-			"provider_generation_start",
-			"provider_generation_start",
-		]);
+		expect(fixture.guardian.openCalls).toBe(2);
 	});
 
 	it("replaces an unresolved empty session only behind a quiescence proof", async () => {
@@ -277,7 +271,7 @@ describe("CodexCapsuleRunner", () => {
 		expect(session).toMatchObject({ sessionId: expect.stringMatching(/^capsule-session-/) });
 		expect(fixture.client.calls).toContain("startThread");
 		expect(fixture.client.calls).not.toContain("resumeThread");
-		expect(fixture.authority.calls).toEqual(["provider_generation_start"]);
+		expect(fixture.guardian.openCalls).toBe(1);
 	});
 
 	it("retires when detached session startup fails after crossing its durable barrier", async () => {
@@ -307,19 +301,70 @@ describe("CodexCapsuleRunner", () => {
 		expect(session).toMatchObject({ sessionId: expect.stringMatching(/^capsule-session-/) });
 		expect(firstClient.calls.filter((call) => call === "startThread")).toHaveLength(1);
 		expect(fixture.client.calls.filter((call) => call === "startThread")).toHaveLength(1);
-		expect(fixture.authority.calls).toEqual([
-			"provider_generation_start",
-			"provider_generation_start",
-		]);
+		expect(fixture.guardian.openCalls).toBe(2);
 	});
 
-	it("does not create a provider client before generation quiescence is proven", async () => {
+	it("does not receive a provider client when the guardian refuses a generation", async () => {
 		const fixture = await createFixture();
-		fixture.authority.failure = new Error("previous provider may still be live");
+		fixture.guardian.failure = new Error("previous provider may still be live");
 
 		await expect(fixture.startServer()).rejects.toThrow("previous provider may still be live");
-		expect(fixture.clientFactoryCalls).toBe(0);
+		expect(fixture.guardian.openCalls).toBe(1);
+		expect(fixture.guardian.generations).toHaveLength(0);
 		expect(fixture.client.calls).toEqual([]);
+	});
+
+	it("terminates an acquired generation when runner construction fails", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-startup-failure-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const client = new FakeCodexCapsuleClient(directory);
+		const guardian = new RecordingProviderGuardian(() => client);
+
+		await expect(
+			CodexCapsuleRunner.open({
+				store,
+				cwd: "relative",
+				guardian,
+				retireGeneration: () => undefined,
+			}),
+		).rejects.toThrow("Codex Capsule working directory must be absolute and normalized");
+
+		expect(guardian.openCalls).toBe(1);
+		expect(guardian.generations[0]?.terminationReasons).toEqual(["startup_failure"]);
+		expect(client.closeCalls).toBe(1);
+		await store.close();
+	});
+
+	it("terminates one acquired generation on close without retiring it", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-shutdown-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const client = new FakeCodexCapsuleClient(directory);
+		const guardian = new RecordingProviderGuardian(() => client);
+		let retireCalls = 0;
+		const runner = await CodexCapsuleRunner.open({
+			store,
+			cwd: directory,
+			guardian,
+			retireGeneration: () => {
+				retireCalls += 1;
+			},
+		});
+
+		await runner.close();
+		await Promise.resolve();
+
+		expect(guardian.openCalls).toBe(1);
+		expect(guardian.generations[0]?.terminationReasons).toEqual(["capsule_shutdown"]);
+		expect(client.closeCalls).toBe(1);
+		expect(retireCalls).toBe(0);
 	});
 
 	it("fences same-generation admission synchronously after a provider failure", async () => {
@@ -330,13 +375,13 @@ describe("CodexCapsuleRunner", () => {
 			session: sessionInput(),
 		});
 		const client = new FakeCodexCapsuleClient(directory);
+		const guardian = new RecordingProviderGuardian(() => client);
 		client.threadStartFailure = new Error("provider thread/start failed");
 		let retireCalls = 0;
 		const runner = await CodexCapsuleRunner.open({
 			store,
 			cwd: directory,
-			clientFactory: async () => client,
-			recoveryAuthority: new RecordingRecoveryAuthority(),
+			guardian,
 			retireGeneration: () => {
 				retireCalls += 1;
 			},
@@ -354,7 +399,22 @@ describe("CodexCapsuleRunner", () => {
 		expect(client.calls.filter((call) => call === "startThread")).toHaveLength(1);
 		expect(retireCalls).toBe(1);
 		await runner.close();
+		expect(guardian.generations[0]?.terminationReasons).toEqual(["capsule_shutdown"]);
 	});
+
+	it.each<CodexProviderTermination["kind"]>(["stopped", "crashed", "unresponsive"])(
+		"retires when the provider generation terminates unexpectedly as %s",
+		async (kind) => {
+			const fixture = await createFixture();
+			const server = await fixture.startServer();
+
+			fixture.guardian.generations[0]?.finish(kind);
+			await server.waitUntilClosed();
+
+			expect(fixture.guardian.generations[0]?.terminationReasons).toEqual(["capsule_shutdown"]);
+			expect(fixture.client.closeCalls).toBe(1);
+		},
+	);
 
 	it("retires the generation when a detached turn driver later fails", async () => {
 		const fixture = await createFixture();
@@ -409,8 +469,7 @@ async function createFixture(options: FixtureOptions = {}) {
 	}
 	const providerState: FakeCodexProviderState = { turns: [] };
 	let client = new FakeCodexCapsuleClient(directory, "thread-1", providerState);
-	let clientFactoryCalls = 0;
-	const authority = new RecordingRecoveryAuthority();
+	const guardian = new RecordingProviderGuardian(() => client);
 	const startServer = async () => {
 		const server = await PersistentCapsuleServer.start({
 			identity,
@@ -418,11 +477,7 @@ async function createFixture(options: FixtureOptions = {}) {
 				CodexCapsuleRunner.open({
 					store,
 					cwd: directory,
-					clientFactory: async () => {
-						clientFactoryCalls += 1;
-						return client;
-					},
-					recoveryAuthority: authority,
+					guardian,
 					retireGeneration: retire,
 					eventPollMs: 1,
 					providerPollMs: 1,
@@ -435,14 +490,11 @@ async function createFixture(options: FixtureOptions = {}) {
 	return {
 		identity,
 		store,
-		authority,
+		guardian,
 		session,
 		startServer,
 		get client() {
 			return client;
-		},
-		get clientFactoryCalls() {
-			return clientFactoryCalls;
 		},
 		replaceClient() {
 			client = new FakeCodexCapsuleClient(directory, "thread-1", providerState);
@@ -450,13 +502,59 @@ async function createFixture(options: FixtureOptions = {}) {
 	};
 }
 
-class RecordingRecoveryAuthority implements CodexRecoveryAuthority {
-	readonly calls: Array<"provider_generation_start"> = [];
+class RecordingProviderGuardian implements CodexProviderGuardian {
+	readonly generations: RecordingProviderGeneration[] = [];
+	readonly #client: () => FakeCodexCapsuleClient;
 	failure: Error | null = null;
+	openCalls = 0;
 
-	async assertPreviousProviderProcessQuiescent(reason: "provider_generation_start"): Promise<void> {
-		this.calls.push(reason);
+	constructor(client: () => FakeCodexCapsuleClient) {
+		this.#client = client;
+	}
+
+	async openGeneration(): Promise<CodexProviderGeneration> {
+		this.openCalls += 1;
 		if (this.failure !== null) throw this.failure;
+		const generation = new RecordingProviderGeneration(
+			`generation-${this.openCalls}`,
+			this.#client(),
+		);
+		this.generations.push(generation);
+		return generation;
+	}
+}
+
+class RecordingProviderGeneration implements CodexProviderGeneration {
+	readonly termination: Promise<CodexProviderTermination>;
+	readonly terminationReasons: CodexProviderTerminationReason[] = [];
+	readonly #termination: Deferred<CodexProviderTermination>;
+	#terminated = false;
+	#terminating: Promise<void> | null = null;
+
+	constructor(
+		readonly generationId: string,
+		readonly client: FakeCodexCapsuleClient,
+	) {
+		this.#termination = deferred<CodexProviderTermination>();
+		this.termination = this.#termination.promise;
+	}
+
+	terminate(reason: CodexProviderTerminationReason): Promise<void> {
+		if (this.#terminating !== null) return this.#terminating;
+		this.terminationReasons.push(reason);
+		this.#terminating = this.stop();
+		return this.#terminating;
+	}
+
+	finish(kind: CodexProviderTermination["kind"]): void {
+		if (this.#terminated) return;
+		this.#terminated = true;
+		this.#termination.resolve({ kind });
+	}
+
+	private async stop(): Promise<void> {
+		await this.client.close();
+		this.finish("stopped");
 	}
 }
 
