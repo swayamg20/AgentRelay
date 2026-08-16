@@ -96,12 +96,13 @@ durable state or returned events. Per-turn usage uses `tokenUsage.last`, not the
 thread-wide total. An interrupted provider turn becomes `cancelled` only when a durable
 local cancellation intent exists.
 
-## Implemented crash rule
+## Crash rule at this checkpoint
 
-`clientUserMessageId` is correlation, not idempotency. The injected runner now:
+`clientUserMessageId` is correlation, not idempotency. At this journal checkpoint,
+the injected runner:
 
-1. requires a fresh provider generation and an injected assertion that the previous
-   generation is quiescent before creating the client;
+1. required a fresh provider generation and an injected assertion that the previous
+   generation was quiescent before creating the client;
 2. persists `start_maybe_sent` before invoking `turn/start`;
 3. after an uncertain result, reads the bound thread with full turns;
 4. finds exactly one user message with the persisted client ID and exact text;
@@ -109,13 +110,13 @@ local cancellation intent exists.
    a bounded zero match as `failed` or already-requested `cancelled`; and
 6. never sends a second start merely because no match is visible.
 
-The stable local turn remains discoverable and cancellable before provider binding.
-Pre-binding cancellation survives reconciliation and produces one interrupt after an
-exact provider match. At this journal checkpoint, quiescence authority was only an
-injected seam. Research 007 records the later guardian boundary: the guardian owns
-spawn and live supervision while its detached reaper owns final quiescence proof. If a
-fresh generation inherits `interrupt_maybe_sent`, the
-runner does not send it again. It reads the exact intent once, persists an exact
+The stable local turn was already discoverable and cancellable before provider
+binding. Pre-binding cancellation survived reconciliation and produced one interrupt
+after an exact provider match. Quiescence authority was only an injected seam at this
+journal checkpoint. Research 007 records the later implemented boundary:
+`CodexProviderGuardian.openGeneration()` owns spawn and live supervision while its
+detached reaper owns final quiescence proof. The current runner still does not resend
+an inherited `interrupt_maybe_sent`; it reads the exact intent once, persists an exact
 terminal provider outcome when present, or records a redacted transient failure and
 releases the active-turn slot. A rejection of the first interrupt RPC retires that
 provider generation before this recovery.

@@ -81,12 +81,14 @@ This change makes lookup, replay, and cancellation possible during the pre-provi
 binding window. Schema v2 does not migrate the earlier schema-v1 development format.
 Neither format is activated by a production descriptor today.
 
-## Fresh-generation recovery invariant
+## Fresh-generation recovery invariant at this checkpoint
 
-`CodexCapsuleRunner.open` requires an injected `CodexRecoveryAuthority` to assert that
-the previous provider generation is quiescent before the client factory runs. An
-unresolved thread or turn is therefore inspected only from a fresh provider
-generation.
+At this checkpoint, `CodexCapsuleRunner.open` required an injected
+`CodexRecoveryAuthority` to assert that the previous provider generation was
+quiescent before the client factory ran. An unresolved thread or turn was therefore
+inspected only from a fresh provider generation. Research 007 records the later
+implemented contract, where `CodexProviderGuardian.openGeneration()` owns that proof
+and returns the client inside a supervised generation.
 
 For a `turn/start` whose response may have been lost, the runner:
 
@@ -115,8 +117,8 @@ If the first interrupt RPC rejects after its durable barrier, the turn driver re
 the failed generation does not continue serving or retry the interrupt.
 
 At this runner checkpoint, recovery authority was an interface supplied by the test
-harness; there was no production guardian, durable provider-generation owner, or
-owner-death proof. Research 007 records the later guardian implementation.
+harness; there was no provider guardian, durable provider-generation owner, or
+owner-death proof. Research 007 records the later unactivated guardian implementation.
 
 ## Child environment and private home
 
