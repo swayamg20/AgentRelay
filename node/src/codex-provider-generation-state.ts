@@ -157,44 +157,9 @@ export class CodexProviderGenerationStore {
 		});
 	}
 
-	markQuiescent(
-		generationId: string,
-		cause: CodexProviderStopCause,
-		observation: CodexProviderObservation,
-	): Promise<void> {
-		return this.mutate(generationId, (state) => {
-			state.phase = "quiescent";
-			state.stop_cause ??= cause;
-			state.observation ??= observation;
-		});
-	}
-
 	async snapshot(): Promise<CodexProviderGenerationState | null> {
 		await this.#pendingWrite;
 		return this.readIfPresent();
-	}
-
-	async markQuiescentIfCurrent(
-		generationIdValue: string,
-		cause: CodexProviderStopCause,
-		observation: CodexProviderObservation,
-	): Promise<boolean> {
-		const generationId = uuidSchema.parse(generationIdValue);
-		let updated = false;
-		const write = this.#pendingWrite.then(async () => {
-			const state = await this.readIfPresent();
-			if (state === null || state.generation_id !== generationId) return;
-			const timestamp = this.#now().toISOString();
-			state.phase = "quiescent";
-			state.stop_cause ??= cause;
-			state.observation ??= observation;
-			state.updated_at = timestamp;
-			await writePrivateJson(this.#path, providerGenerationStateSchema.parse(state));
-			updated = true;
-		});
-		this.#pendingWrite = write.catch(() => undefined);
-		await write;
-		return updated;
 	}
 
 	/** Called by the surviving reaper after process-group absence has been proven. */

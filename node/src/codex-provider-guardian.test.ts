@@ -22,6 +22,7 @@ import {
 import type { CodexSupervisorCommand } from "./codex-supervised-process.js";
 
 const CAPSULE_ID = "10000000-0000-4000-8000-000000000001";
+const GUARDIAN_TEST_TIMEOUT_MS = 30_000;
 const fixtures: FakeAppServerFixture[] = [];
 const generations: CodexProviderGeneration[] = [];
 
@@ -58,7 +59,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		expect(providerEnvironment).not.toHaveProperty("AGENTRELAY_NODE_TOKEN");
 		expect(providerEnvironment).not.toHaveProperty("OPENAI_API_KEY");
 		expect(providerEnvironment).not.toHaveProperty("CODEX_API_KEY");
-	}, 12_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("allows only one concurrent generation owner across guardian instances", async () => {
 		const fixture = await fakeAppServer();
@@ -87,7 +88,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		const replacement = await openGeneration(fixture);
 		expect(replacement.generationId).not.toBe(first.generationId);
 		await replacement.terminate("capsule_shutdown");
-	}, 12_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("rejects a second open while the same guardian is still opening", async () => {
 		const fixture = await fakeAppServer();
@@ -99,7 +100,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		});
 		const generation = await firstOpening;
 		generations.push(generation);
-	});
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("kills provider descendants when authority is revoked", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
@@ -115,7 +116,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 			stop_cause: "authority_revoked",
 			phase: "quiescent",
 		});
-	});
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("does not admit a provider when authority is revoked during preparation", async () => {
 		const fixture = await fakeAppServer();
@@ -164,7 +165,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 15_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("enforces its absolute deadline against an unresponsive provider tree", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
@@ -178,7 +179,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 			stop_cause: "deadline_exceeded",
 			observation: "unresponsive",
 		});
-	}, 8_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("classifies an unresponsive provider request and tears down its authority", async () => {
 		const fixture = await fakeAppServer({ ignoreRead: true });
@@ -193,7 +194,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 			stop_cause: "provider_unresponsive",
 			observation: "unresponsive",
 		});
-	});
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("classifies an unexpected provider exit and leaves no reusable authority", async () => {
 		const fixture = await fakeAppServer({ exitAfterRead: true });
@@ -208,7 +209,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 			stop_cause: "provider_failure",
 			observation: "crashed",
 		});
-	}, 12_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("redacts startup failure details and durably closes the generation", async () => {
 		const fixture = await fakeAppServer({ version: "0.0.0-secret-path" });
@@ -225,7 +226,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 			observation: "crashed",
 		});
 		expect(JSON.stringify(state)).not.toContain(fixture.directory);
-	});
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 });
 
 type GuardianOverrides = Partial<

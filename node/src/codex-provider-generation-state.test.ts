@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("CodexProviderGenerationStore", () => {
-	it("persists a bounded lifecycle and preserves its first stop cause", async () => {
+	it("persists a bounded lifecycle and authoritative stop cause", async () => {
 		const directory = await temporaryDirectory();
 		const times = [
 			"2026-08-17T00:00:00.000Z",
@@ -39,7 +39,7 @@ describe("CodexProviderGenerationStore", () => {
 		await store.markRunning(FIRST_GENERATION);
 		await store.recordHeartbeat(FIRST_GENERATION);
 		await store.requestStop(FIRST_GENERATION, "deadline_exceeded");
-		await store.markQuiescent(FIRST_GENERATION, "provider_failure", "stopped");
+		await store.finalizeQuiescentAsCurrent(FIRST_GENERATION, "deadline_exceeded");
 
 		expect(await store.snapshot()).toEqual({
 			schema_version: 1,
@@ -52,7 +52,7 @@ describe("CodexProviderGenerationStore", () => {
 			updated_at: "2026-08-17T00:00:04.000Z",
 			last_heartbeat_at: "2026-08-17T00:00:02.000Z",
 			stop_cause: "deadline_exceeded",
-			observation: "stopped",
+			observation: "unresponsive",
 		});
 		const decoded = JSON.parse(
 			await readFile(join(directory, CODEX_PROVIDER_GENERATION_FILE), "utf8"),
@@ -71,7 +71,7 @@ describe("CodexProviderGenerationStore", () => {
 			"Previous Codex provider generation is not durably quiescent",
 		);
 
-		await first.markQuiescent(FIRST_GENERATION, "owner_lost", "stopped");
+		await first.finalizeQuiescentAsCurrent(FIRST_GENERATION, "owner_lost");
 		await expect(
 			replacement.begin(SECOND_GENERATION, FIRST_BOOT, DEADLINE_AT_MS),
 		).resolves.toMatchObject({
@@ -91,22 +91,6 @@ describe("CodexProviderGenerationStore", () => {
 		).resolves.toMatchObject({
 			generation_id: SECOND_GENERATION,
 			boot_session_id: SECOND_BOOT,
-			phase: "spawn_maybe_started",
-		});
-	});
-
-	it("does not rewrite another generation during pre-start cleanup", async () => {
-		const directory = await temporaryDirectory();
-		const store = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
-		await expect(
-			store.markQuiescentIfCurrent(FIRST_GENERATION, "startup_failure", "crashed"),
-		).resolves.toBe(false);
-		await store.begin(SECOND_GENERATION, FIRST_BOOT, DEADLINE_AT_MS);
-		await expect(
-			store.markQuiescentIfCurrent(FIRST_GENERATION, "startup_failure", "crashed"),
-		).resolves.toBe(false);
-		expect(await store.snapshot()).toMatchObject({
-			generation_id: SECOND_GENERATION,
 			phase: "spawn_maybe_started",
 		});
 	});

@@ -33,7 +33,7 @@ import {
 } from "./codex-supervisor-owner.js";
 
 const STOP_GRACE_MS = 2_000;
-const REAPER_FINALIZATION_TIMEOUT_MS = 10_000;
+const REAPER_FINALIZATION_TIMEOUT_MS = 20_000;
 
 export type { CodexSupervisedProcessOptions, CodexSupervisorCommand };
 

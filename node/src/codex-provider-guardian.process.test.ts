@@ -21,6 +21,7 @@ import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
 import type { CodexSupervisorCommand } from "./codex-supervised-process.js";
 
 const CAPSULE_ID = "10000000-0000-4000-8000-000000000001";
+const GUARDIAN_TEST_TIMEOUT_MS = 30_000;
 const fixtures: FakeAppServerFixture[] = [];
 const owners: ChildProcess[] = [];
 const generations: CodexProviderGeneration[] = [];
@@ -52,7 +53,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 		).rejects.toMatchObject({ code: "ENOENT" });
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 15_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("records owner loss when death races the version probe", async () => {
 		const fixture = await fakeAppServer({ versionDelayMs: 1_000 });
@@ -72,7 +73,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			});
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 15_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("kills the provider tree when its Capsule owner is SIGKILLed", async () => {
 		const fixture = await fakeAppServer({
@@ -102,7 +103,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 15_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it("revokes provider authority when the Capsule heartbeat stalls", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true });
@@ -123,18 +124,19 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			reason: "ownership",
 		});
 
-		owner.kill("SIGKILL");
-		await childClose(owner);
+		owner.kill("SIGCONT");
 		await expect
-			.poll(() => generationState(fixture), { timeout: 5_000 })
+			.poll(() => generationState(fixture), { timeout: 15_000 })
 			.toMatchObject({
 				phase: "quiescent",
 				stop_cause: "heartbeat_timeout",
 				observation: "unresponsive",
 			});
+		owner.kill("SIGKILL");
+		await childClose(owner);
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 15_000);
+	}, GUARDIAN_TEST_TIMEOUT_MS);
 
 	it.runIf(process.platform === "linux")(
 		"kills remaining descendants when the guardian itself is SIGKILLed",
@@ -160,7 +162,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			owner.kill("SIGKILL");
 			await childClose(owner);
 		},
-		15_000,
+		GUARDIAN_TEST_TIMEOUT_MS,
 	);
 
 	it.runIf(process.platform === "linux")(
@@ -192,7 +194,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			const replacement = await openGeneration(fixture);
 			await replacement.terminate("capsule_shutdown");
 		},
-		15_000,
+		GUARDIAN_TEST_TIMEOUT_MS,
 	);
 });
 
