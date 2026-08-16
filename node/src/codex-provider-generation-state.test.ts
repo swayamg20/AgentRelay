@@ -10,6 +10,9 @@ import {
 const CAPSULE_ID = "10000000-0000-4000-8000-000000000001";
 const FIRST_GENERATION = "10000000-0000-4000-8000-000000000002";
 const SECOND_GENERATION = "10000000-0000-4000-8000-000000000003";
+const FIRST_BOOT = "10000000-0000-4000-8000-000000000004";
+const SECOND_BOOT = "10000000-0000-4000-8000-000000000005";
+const DEADLINE_AT_MS = Date.parse("2026-08-17T01:00:00.000Z");
 const directories: string[] = [];
 
 afterEach(async () => {
@@ -32,7 +35,7 @@ describe("CodexProviderGenerationStore", () => {
 			() => new Date(times.shift()!),
 		);
 
-		await store.begin(FIRST_GENERATION);
+		await store.begin(FIRST_GENERATION, FIRST_BOOT, DEADLINE_AT_MS);
 		await store.markRunning(FIRST_GENERATION);
 		await store.recordHeartbeat(FIRST_GENERATION);
 		await store.requestStop(FIRST_GENERATION, "deadline_exceeded");
@@ -42,8 +45,10 @@ describe("CodexProviderGenerationStore", () => {
 			schema_version: 1,
 			capsule_id: CAPSULE_ID,
 			generation_id: FIRST_GENERATION,
+			boot_session_id: FIRST_BOOT,
 			phase: "quiescent",
 			started_at: "2026-08-17T00:00:00.000Z",
+			deadline_at: "2026-08-17T01:00:00.000Z",
 			updated_at: "2026-08-17T00:00:04.000Z",
 			last_heartbeat_at: "2026-08-17T00:00:02.000Z",
 			stop_cause: "deadline_exceeded",
@@ -59,15 +64,48 @@ describe("CodexProviderGenerationStore", () => {
 	it("admits a replacement only after durable quiescence", async () => {
 		const directory = await temporaryDirectory();
 		const first = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
-		await first.begin(FIRST_GENERATION);
+		await first.begin(FIRST_GENERATION, FIRST_BOOT, DEADLINE_AT_MS);
 
 		const replacement = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
-		await expect(replacement.begin(SECOND_GENERATION)).rejects.toThrow(
+		await expect(replacement.begin(SECOND_GENERATION, FIRST_BOOT, DEADLINE_AT_MS)).rejects.toThrow(
 			"Previous Codex provider generation is not durably quiescent",
 		);
 
 		await first.markQuiescent(FIRST_GENERATION, "owner_lost", "stopped");
-		await expect(replacement.begin(SECOND_GENERATION)).resolves.toMatchObject({
+		await expect(
+			replacement.begin(SECOND_GENERATION, FIRST_BOOT, DEADLINE_AT_MS),
+		).resolves.toMatchObject({
+			generation_id: SECOND_GENERATION,
+			phase: "spawn_maybe_started",
+		});
+	});
+
+	it("reconciles an unowned generation only after the host boot changes", async () => {
+		const directory = await temporaryDirectory();
+		const first = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
+		await first.begin(FIRST_GENERATION, FIRST_BOOT, DEADLINE_AT_MS);
+
+		const replacement = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
+		await expect(
+			replacement.begin(SECOND_GENERATION, SECOND_BOOT, DEADLINE_AT_MS),
+		).resolves.toMatchObject({
+			generation_id: SECOND_GENERATION,
+			boot_session_id: SECOND_BOOT,
+			phase: "spawn_maybe_started",
+		});
+	});
+
+	it("does not rewrite another generation during pre-start cleanup", async () => {
+		const directory = await temporaryDirectory();
+		const store = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
+		await expect(
+			store.markQuiescentIfCurrent(FIRST_GENERATION, "startup_failure", "crashed"),
+		).resolves.toBe(false);
+		await store.begin(SECOND_GENERATION, FIRST_BOOT, DEADLINE_AT_MS);
+		await expect(
+			store.markQuiescentIfCurrent(FIRST_GENERATION, "startup_failure", "crashed"),
+		).resolves.toBe(false);
+		expect(await store.snapshot()).toMatchObject({
 			generation_id: SECOND_GENERATION,
 			phase: "spawn_maybe_started",
 		});
@@ -78,7 +116,9 @@ describe("CodexProviderGenerationStore", () => {
 		const malformedPath = join(malformedDirectory, CODEX_PROVIDER_GENERATION_FILE);
 		await writeFile(malformedPath, "not-json", { mode: 0o600 });
 		const malformed = await CodexProviderGenerationStore.open(malformedDirectory, CAPSULE_ID);
-		await expect(malformed.begin(FIRST_GENERATION)).rejects.toBeDefined();
+		await expect(
+			malformed.begin(FIRST_GENERATION, FIRST_BOOT, DEADLINE_AT_MS),
+		).rejects.toBeDefined();
 
 		const publicDirectory = await temporaryDirectory();
 		const publicPath = join(publicDirectory, CODEX_PROVIDER_GENERATION_FILE);

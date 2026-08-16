@@ -31,8 +31,10 @@ export interface CodexAppServerProcess {
 	readonly closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	readonly inputError: Promise<Error>;
 	/** Optional lifecycle owner used when the visible child is a supervising process. */
-	readonly stop?: () => Promise<void>;
+	readonly stop?: (reason?: CodexAppServerStopReason) => Promise<void>;
 }
+
+export type CodexAppServerStopReason = "closed" | "failure" | "unresponsive";
 
 export type CodexAppServerProcessFactory = (
 	options: CodexAppServerProcessOptions,
@@ -93,11 +95,15 @@ export async function startCodexAppServerProcess(
 	return { child, cwd, exited, closed, inputError };
 }
 
-export function stopCodexAppServerProcess(processRef: CodexAppServerProcess): Promise<void> {
+export function stopCodexAppServerProcess(
+	processRef: CodexAppServerProcess,
+	reason: CodexAppServerStopReason = "closed",
+): Promise<void> {
 	const existingStop = processStops.get(processRef.child);
 	if (existingStop !== undefined) return existingStop;
 	const stop =
-		processRef.stop?.() ?? stopProcessGroup(processRef.child, processRef.exited, processRef.closed);
+		processRef.stop?.(reason) ??
+		stopProcessGroup(processRef.child, processRef.exited, processRef.closed);
 	processStops.set(processRef.child, stop);
 	return stop;
 }

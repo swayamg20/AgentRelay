@@ -45,6 +45,7 @@ const initSchema = z
 		owner_pid: z.number().int().positive(),
 		lock_path: absolutePathSchema,
 		state_directory: absolutePathSchema,
+		deadline_at_ms: z.number().int().safe().positive(),
 		heartbeat_timeout_ms: z.number().int().min(250).max(60_000),
 		heartbeat_record_ms: z.number().int().min(100).max(60_000),
 		version_probe: codexPreparedProcessSchema,
@@ -91,6 +92,7 @@ const terminalSchema = z
 		version: z.literal(1),
 		kind: z.literal("terminal"),
 		generation_id: uuidSchema,
+		cause: z.enum(CODEX_PROVIDER_STOP_CAUSES),
 		observation: z.enum(["stopped", "crashed", "unresponsive"]),
 	})
 	.strict();
@@ -124,12 +126,14 @@ export function parseCodexProviderSupervisorEvent(value: unknown): CodexProvider
 
 export function terminalSupervisorEvent(
 	generationId: string,
+	cause: CodexProviderStopCause,
 	observation: CodexProviderObservation,
 ): CodexProviderSupervisorEvent {
 	return terminalSchema.parse({
 		version: 1,
 		kind: "terminal",
 		generation_id: generationId,
+		cause,
 		observation,
 	});
 }

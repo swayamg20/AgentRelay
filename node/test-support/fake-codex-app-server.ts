@@ -9,6 +9,7 @@ import {
 
 export interface FakeAppServerOptions {
 	readonly version?: string;
+	readonly versionDelayMs?: number;
 	readonly codexHome?: string;
 	readonly mismatchedThreadId?: boolean;
 	readonly readErrorCode?: number;
@@ -49,6 +50,7 @@ export async function createFakeAppServer(
 		configPath,
 		JSON.stringify({
 			version: options.version ?? SUPPORTED_CODEX_CLI_VERSION,
+			versionDelayMs: options.versionDelayMs ?? 0,
 			codexHome: options.codexHome ?? null,
 			threadId: options.mismatchedThreadId ? "thread-other" : "thread-1",
 			readErrorCode: options.readErrorCode ?? null,
@@ -168,9 +170,14 @@ const config = JSON.parse(readFileSync(
 const version = config.version;
 writeFileSync(config.environmentPath, JSON.stringify(process.env), { mode: 0o600 });
 if (process.argv.includes("--version")) {
-  process.stdout.write("codex-cli " + version + "\\n");
-  process.exit(0);
+  setTimeout(() => {
+    process.stdout.write("codex-cli " + version + "\\n");
+    process.exit(0);
+  }, config.versionDelayMs);
+} else {
+  startAppServer();
 }
+function startAppServer() {
 writeFileSync(config.argvPath, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });
 const logPath = config.logPath;
 const cwd = process.cwd();
@@ -203,6 +210,7 @@ const baseThread = (turns = []) => ({
   cliVersion: version,
   turns,
 });
+
 const turn = (id, status, items = []) => ({
   id,
   items,
@@ -310,6 +318,7 @@ rl.on("line", (line) => {
       }
   }
 });
+}
 `;
 
 function errorCode(error: unknown): string | undefined {

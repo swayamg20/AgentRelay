@@ -27,6 +27,7 @@ export interface CodexSupervisedProcessOptions {
 	readonly process: CodexAppServerProcessOptions;
 	readonly lock: ProcessLock;
 	readonly store: CodexProviderGenerationStore;
+	readonly deadlineAtMs: number;
 	readonly startupTimeoutMs?: number;
 	readonly heartbeatIntervalMs?: number;
 	readonly heartbeatTimeoutMs?: number;
@@ -70,6 +71,7 @@ export function resolveSupervisedProcessOptions(
 	);
 	return {
 		...options,
+		deadlineAtMs: deadlineMilliseconds(options.deadlineAtMs),
 		startupTimeoutMs: boundedMilliseconds(
 			options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
 			500,
@@ -87,6 +89,13 @@ export function resolveSupervisedProcessOptions(
 			60_000,
 		),
 	};
+}
+
+function deadlineMilliseconds(value: number): number {
+	if (!Number.isSafeInteger(value) || value <= 0) {
+		throw new Error("Codex provider guardian deadline is invalid");
+	}
+	return value;
 }
 
 export function supervisorEnvironment(extra: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {

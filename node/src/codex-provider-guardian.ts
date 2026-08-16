@@ -23,6 +23,8 @@ export const CODEX_PROVIDER_LOCK_FILE = "provider.lock";
 
 export interface CodexProviderGuardianOptions extends CodexAppServerClientOptions {
 	readonly capsuleId: string;
+	readonly deadlineAtMs: number;
+	readonly authoritySignal?: AbortSignal;
 	readonly supervisor?: CodexSupervisorCommand;
 	readonly startupTimeoutMs?: number;
 	readonly heartbeatIntervalMs?: number;
@@ -32,7 +34,7 @@ export interface CodexProviderGuardianOptions extends CodexAppServerClientOption
 
 export class CodexProviderGuardianError extends Error {
 	constructor(
-		readonly reason: "ownership" | "startup" | "state",
+		readonly reason: "authority" | "ownership" | "startup" | "state",
 		message: string,
 	) {
 		super(message);
@@ -51,15 +53,21 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 	}
 
 	openGeneration(): Promise<CodexProviderGeneration> {
-		if (this.#active !== null) {
+		if (this.#options.authoritySignal?.aborted === true) {
+			return Promise.reject(
+				new CodexProviderGuardianError("authority", "Codex provider authority is revoked"),
+			);
+		}
+		if (this.#opening !== null || this.#active !== null) {
 			return Promise.reject(
 				new CodexProviderGuardianError("ownership", "Codex provider generation is already active"),
 			);
 		}
-		this.#opening ??= this.performOpen().finally(() => {
-			this.#opening = null;
+		const opening = this.performOpen();
+		this.#opening = opening;
+		return opening.finally(() => {
+			if (this.#opening === opening) this.#opening = null;
 		});
-		return this.#opening;
 	}
 
 	private async performOpen(): Promise<CodexProviderGeneration> {
@@ -83,7 +91,6 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 				this.#options.capsuleDirectory,
 				this.#options.capsuleId,
 			);
-			await store.begin(generationId);
 		} catch {
 			await lock.release().catch(() => undefined);
 			throw new CodexProviderGuardianError(
@@ -93,6 +100,7 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 		}
 
 		const supervisedRef: { value: CodexSupervisedProcess | null } = { value: null };
+		let removeAuthorityListener: () => void = () => undefined;
 		try {
 			const client = await CodexAppServerClient.start({
 				command: this.#options.command,
@@ -105,19 +113,29 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 					if (supervisedRef.value !== null) {
 						throw new Error("Codex provider process was requested twice");
 					}
-					supervisedRef.value = await CodexSupervisedProcess.start({
-						capsuleId: this.#options.capsuleId,
-						capsuleDirectory: this.#options.capsuleDirectory,
-						generationId,
-						supervisor: this.#options.supervisor ?? defaultSupervisorCommand(),
-						process: processOptions,
-						lock,
-						store,
-						startupTimeoutMs: this.#options.startupTimeoutMs,
-						heartbeatIntervalMs: this.#options.heartbeatIntervalMs,
-						heartbeatTimeoutMs: this.#options.heartbeatTimeoutMs,
-						heartbeatRecordMs: this.#options.heartbeatRecordMs,
-					});
+					supervisedRef.value = await CodexSupervisedProcess.start(
+						{
+							capsuleId: this.#options.capsuleId,
+							capsuleDirectory: this.#options.capsuleDirectory,
+							generationId,
+							supervisor: this.#options.supervisor ?? defaultSupervisorCommand(),
+							process: processOptions,
+							lock,
+							store,
+							deadlineAtMs: this.#options.deadlineAtMs,
+							startupTimeoutMs: this.#options.startupTimeoutMs,
+							heartbeatIntervalMs: this.#options.heartbeatIntervalMs,
+							heartbeatTimeoutMs: this.#options.heartbeatTimeoutMs,
+							heartbeatRecordMs: this.#options.heartbeatRecordMs,
+						},
+						(supervised) => {
+							supervisedRef.value = supervised;
+							removeAuthorityListener = bindAuthoritySignal(
+								this.#options.authoritySignal,
+								supervised,
+							);
+						},
+					);
 					return supervisedRef.value.process;
 				},
 			});
@@ -125,16 +143,21 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 			supervised.activate();
 			const generation = providerGeneration(generationId, client, supervised);
 			this.#active = generation;
-			void generation.termination.then(() => {
-				if (this.#active === generation) this.#active = null;
-			});
+			void generation.termination.then(
+				() => {
+					removeAuthorityListener();
+					if (this.#active === generation) this.#active = null;
+				},
+				() => {
+					removeAuthorityListener();
+					if (this.#active === generation) this.#active = null;
+				},
+			);
 			return generation;
 		} catch {
+			removeAuthorityListener();
 			const supervised = supervisedRef.value;
 			if (supervised === null) {
-				await store
-					.markQuiescent(generationId, "startup_failure", "crashed")
-					.catch(() => undefined);
 				await lock.release().catch(() => undefined);
 			} else {
 				await supervised.stop("startup_failure").catch(() => undefined);
@@ -142,6 +165,19 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 			throw new CodexProviderGuardianError("startup", "Codex provider generation failed to start");
 		}
 	}
+}
+
+function bindAuthoritySignal(
+	signal: AbortSignal | undefined,
+	supervised: CodexSupervisedProcess,
+): () => void {
+	if (signal === undefined) return () => undefined;
+	const revoke = () => {
+		void supervised.stop("authority_revoked").catch(() => undefined);
+	};
+	signal.addEventListener("abort", revoke, { once: true });
+	if (signal.aborted) revoke();
+	return () => signal.removeEventListener("abort", revoke);
 }
 
 function requireSupervisedProcess(value: CodexSupervisedProcess | null): CodexSupervisedProcess {

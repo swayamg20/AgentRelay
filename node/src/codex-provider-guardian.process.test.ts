@@ -12,6 +12,7 @@ import {
 	waitForPid,
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
+import type { CodexProviderGeneration } from "./codex-capsule-runner-contract.js";
 import {
 	CODEX_PROVIDER_GENERATION_FILE,
 	type CodexProviderGenerationState,
@@ -22,6 +23,7 @@ import type { CodexSupervisorCommand } from "./codex-supervised-process.js";
 const CAPSULE_ID = "10000000-0000-4000-8000-000000000001";
 const fixtures: FakeAppServerFixture[] = [];
 const owners: ChildProcess[] = [];
+const generations: CodexProviderGeneration[] = [];
 
 afterEach(async () => {
 	for (const owner of owners.splice(0)) {
@@ -30,10 +32,45 @@ afterEach(async () => {
 		owner.kill("SIGKILL");
 		await Promise.race([childClose(owner), delay(2_000)]);
 	}
+	await Promise.allSettled(
+		generations.splice(0).map((generation) => generation.terminate("capsule_shutdown")),
+	);
 	await Promise.all(fixtures.splice(0).map((fixture) => fixture.remove()));
 });
 
 describe.runIf(process.platform !== "win32")("Codex provider guardian owner death", () => {
+	it("leaves no durable start barrier when its owner dies before guardian spawn", async () => {
+		const fixture = await fakeAppServer();
+		const prepareStartedPath = join(fixture.directory, "prepare-started");
+		const owner = startOwner(fixture, { prepareDelayMs: 5_000, prepareStartedPath });
+		await waitForFile(prepareStartedPath);
+
+		owner.kill("SIGKILL");
+		await childClose(owner);
+		const replacement = await openGeneration(fixture);
+		await replacement.terminate("capsule_shutdown");
+	}, 10_000);
+
+	it("records owner loss when death races the version probe", async () => {
+		const fixture = await fakeAppServer({ versionDelayMs: 1_000 });
+		const owner = startOwner(fixture);
+		await expect
+			.poll(() => generationState(fixture))
+			.toMatchObject({ phase: "spawn_maybe_started" });
+
+		owner.kill("SIGKILL");
+		await childClose(owner);
+		await expect
+			.poll(() => generationState(fixture))
+			.toMatchObject({
+				phase: "quiescent",
+				stop_cause: "owner_lost",
+				observation: "stopped",
+			});
+		const replacement = await openGeneration(fixture);
+		await replacement.terminate("capsule_shutdown");
+	}, 10_000);
+
 	it("kills the provider tree when its Capsule owner is SIGKILLed", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
 		const owner = startOwner(fixture);
@@ -54,7 +91,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 				observation: "stopped",
 			});
 
-		const replacement = await createGuardian(fixture).openGeneration();
+		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
 	}, 10_000);
 
@@ -79,7 +116,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 
 		owner.kill("SIGKILL");
 		await childClose(owner);
-		const replacement = await createGuardian(fixture).openGeneration();
+		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
 	});
 
@@ -102,7 +139,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 					observation: "crashed",
 				});
 
-			const replacement = await createGuardian(fixture).openGeneration();
+			const replacement = await openGeneration(fixture);
 			await replacement.terminate("capsule_shutdown");
 			owner.kill("SIGKILL");
 			await childClose(owner);
@@ -110,7 +147,10 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 	);
 });
 
-function startOwner(fixture: FakeAppServerFixture): ChildProcess {
+function startOwner(
+	fixture: FakeAppServerFixture,
+	options: { readonly prepareDelayMs?: number; readonly prepareStartedPath?: string } = {},
+): ChildProcess {
 	const owner = spawn(
 		process.execPath,
 		[
@@ -129,6 +169,8 @@ function startOwner(fixture: FakeAppServerFixture): ChildProcess {
 				AGENTRELAY_TEST_CAPSULE_DIRECTORY: fixture.directory,
 				AGENTRELAY_TEST_CODEX_BIN: fixture.scriptPath,
 				AGENTRELAY_TEST_READY_PATH: join(fixture.directory, "owner-ready.json"),
+				AGENTRELAY_TEST_PREPARE_DELAY_MS: String(options.prepareDelayMs ?? 0),
+				AGENTRELAY_TEST_PREPARE_STARTED_PATH: options.prepareStartedPath,
 				AGENTRELAY_NODE_TOKEN: "owner-death-token-canary",
 				OPENAI_API_KEY: "owner-death-openai-canary",
 			},
@@ -140,14 +182,17 @@ function startOwner(fixture: FakeAppServerFixture): ChildProcess {
 }
 
 async function waitForOwner(fixture: FakeAppServerFixture): Promise<void> {
-	const path = join(fixture.directory, "owner-ready.json");
+	await waitForFile(join(fixture.directory, "owner-ready.json"));
+}
+
+async function waitForFile(path: string): Promise<void> {
 	const deadline = Date.now() + 5_000;
 	while (Date.now() < deadline) {
 		const ready = await readFile(path, "utf8").catch(() => "");
 		if (ready !== "") return;
 		await delay(10);
 	}
-	throw new Error("Timed out waiting for the guardian owner worker");
+	throw new Error(`Timed out waiting for ${path}`);
 }
 
 function createGuardian(fixture: FakeAppServerFixture): SupervisedCodexProviderGuardian {
@@ -158,12 +203,19 @@ function createGuardian(fixture: FakeAppServerFixture): SupervisedCodexProviderG
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,
+		deadlineAtMs: Date.now() + 60_000,
 		supervisor: sourceSupervisorCommand(),
 		startupTimeoutMs: 5_000,
 		heartbeatIntervalMs: 50,
 		heartbeatTimeoutMs: 500,
 		heartbeatRecordMs: 100,
 	});
+}
+
+async function openGeneration(fixture: FakeAppServerFixture): Promise<CodexProviderGeneration> {
+	const generation = await createGuardian(fixture).openGeneration();
+	generations.push(generation);
+	return generation;
 }
 
 function sourceSupervisorCommand(): CodexSupervisorCommand {

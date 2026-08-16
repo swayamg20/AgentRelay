@@ -10,7 +10,13 @@ const STOP_GRACE_MS = 2_000;
 const GROUP_POLL_MS = 10;
 
 export function observationForCause(cause: CodexProviderStopCause): CodexProviderObservation {
-	if (cause === "heartbeat_timeout") return "unresponsive";
+	if (
+		cause === "deadline_exceeded" ||
+		cause === "heartbeat_timeout" ||
+		cause === "provider_unresponsive"
+	) {
+		return "unresponsive";
+	}
 	if (cause === "provider_failure" || cause === "startup_failure") return "crashed";
 	return "stopped";
 }

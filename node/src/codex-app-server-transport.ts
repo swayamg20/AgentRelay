@@ -104,7 +104,7 @@ export class CodexAppServerTransport {
 		});
 		void processRef.exited.then(() => {
 			if (!this.#closing && this.#failure === null) {
-				void stopCodexAppServerProcess(processRef).catch((error) =>
+				void stopCodexAppServerProcess(processRef, "failure").catch((error) =>
 					this.fail(error instanceof Error ? error : new Error(String(error))),
 				);
 			}
@@ -138,7 +138,7 @@ export class CodexAppServerTransport {
 					`Timed out waiting for Codex app-server method ${method}`,
 				);
 				reject(error);
-				this.fail(error);
+				this.fail(error, "unresponsive");
 			}, this.#requestTimeoutMs);
 			this.#pending.set(id, { method, resolve, reject, timeout });
 		});
@@ -267,12 +267,12 @@ export class CodexAppServerTransport {
 		);
 	}
 
-	private fail(error: Error): void {
+	private fail(error: Error, stopReason: "failure" | "unresponsive" = "failure"): void {
 		if (this.#failure !== null) return;
 		this.#failure = error;
 		this.rejectPending(error);
 		this.#events.close(error);
-		void stopCodexAppServerProcess(this.#process).catch(() => undefined);
+		void stopCodexAppServerProcess(this.#process, stopReason).catch(() => undefined);
 	}
 
 	private rejectPending(error: Error): void {

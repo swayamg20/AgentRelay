@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { fstatSync, lstatSync, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { currentBootSessionId } from "./boot-session.js";
 import { CodexProviderGenerationStore } from "./codex-provider-generation-state.js";
 import type {
 	CodexProviderObservation,
@@ -33,6 +34,8 @@ export class CodexProviderSupervisor {
 	#lastHeartbeat = performance.now();
 	#lastRecordedHeartbeat = performance.now();
 	#heartbeatTimer: NodeJS.Timeout | null = null;
+	#deadlineAtMs: number | null = null;
+	#deadlineTimer: NodeJS.Timeout | null = null;
 	#stopCause: CodexProviderStopCause | null = null;
 	#stopping: Promise<never> | null = null;
 	#initialized = false;
@@ -80,15 +83,19 @@ export class CodexProviderSupervisor {
 				command.state_directory,
 				command.capsule_id,
 			);
-			const state = await this.#store.snapshot();
-			if (state?.generation_id !== command.generation_id || state.phase !== "spawn_maybe_started") {
-				throw new Error("Codex provider generation start barrier is missing");
-			}
+			await this.#store.begin(
+				command.generation_id,
+				await currentBootSessionId(),
+				command.deadline_at_ms,
+			);
+			this.startDeadlineWatchdog(command.deadline_at_ms);
+			this.assertAuthorityActive();
 			this.startHeartbeatWatchdog(command);
 			await verifyPreparedCodexVersion(command.version_probe);
-			this.assertOwnerAlive();
+			this.assertAuthorityActive();
 			const provider = await startPreparedCodexProvider(command.app_server);
 			this.#provider = provider;
+			this.assertAuthorityActive();
 			provider.stderr.resume();
 			process.stdin.pipe(provider.stdin);
 			provider.stdout.pipe(process.stdout);
@@ -128,6 +135,25 @@ export class CodexProviderSupervisor {
 		this.#heartbeatRecordMs = command.heartbeat_record_ms;
 	}
 
+	private startDeadlineWatchdog(deadlineAtMs: number): void {
+		this.#deadlineAtMs = deadlineAtMs;
+		this.armDeadlineTimer();
+	}
+
+	private armDeadlineTimer(): void {
+		if (this.#deadlineAtMs === null || this.#stopping !== null) return;
+		const remainingMs = this.#deadlineAtMs - Date.now();
+		if (remainingMs <= 0) {
+			void this.stop("deadline_exceeded", "unresponsive");
+			return;
+		}
+		this.#deadlineTimer = setTimeout(
+			() => this.armDeadlineTimer(),
+			Math.min(remainingMs, 2_147_483_647),
+		);
+		this.#deadlineTimer.unref();
+	}
+
 	#heartbeatRecordMs = 1_000;
 
 	private async recordHeartbeat(): Promise<void> {
@@ -146,6 +172,16 @@ export class CodexProviderSupervisor {
 	private assertOwnerAlive(): void {
 		if (this.#ownerPid === null || process.ppid !== this.#ownerPid || !process.connected) {
 			throw new Error("Codex provider supervisor owner disappeared during startup");
+		}
+	}
+
+	private assertAuthorityActive(): void {
+		this.assertOwnerAlive();
+		if (this.#deadlineAtMs !== null && Date.now() >= this.#deadlineAtMs) {
+			void this.stop("deadline_exceeded", "unresponsive");
+		}
+		if (this.#stopping !== null) {
+			throw new Error("Codex provider authority ended during startup");
 		}
 	}
 
@@ -179,6 +215,7 @@ export class CodexProviderSupervisor {
 		observation: CodexProviderObservation,
 	): Promise<never> {
 		if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
+		if (this.#deadlineTimer !== null) clearTimeout(this.#deadlineTimer);
 		const generationId = this.#generationId;
 		if (generationId !== null && this.#store !== null) {
 			await this.#store.requestStop(generationId, cause).catch(() => undefined);
@@ -186,7 +223,9 @@ export class CodexProviderSupervisor {
 		await requestProviderStop(this.#provider).catch(() => undefined);
 		if (generationId !== null && this.#store !== null) {
 			await this.#store.markQuiescent(generationId, cause, observation).catch(() => undefined);
-			await this.send(terminalSupervisorEvent(generationId, observation)).catch(() => undefined);
+			await this.send(terminalSupervisorEvent(generationId, cause, observation)).catch(
+				() => undefined,
+			);
 		}
 		return killSupervisorProcessGroup();
 	}
@@ -223,7 +262,13 @@ function assertInheritedProviderLock(path: string): void {
 }
 
 function terminationObservation(cause: CodexProviderStopCause): CodexProviderObservation {
-	if (cause === "heartbeat_timeout") return "unresponsive";
+	if (
+		cause === "deadline_exceeded" ||
+		cause === "heartbeat_timeout" ||
+		cause === "provider_unresponsive"
+	) {
+		return "unresponsive";
+	}
 	if (cause === "provider_failure" || cause === "startup_failure") return "crashed";
 	return "stopped";
 }
