@@ -130,6 +130,7 @@ Capsule wire exposes only its existing generic runtime failure.
 | Provider dies | Guardian requests teardown; the witness records a provider crash after cleaning descendants. |
 | Provider ignores revocation or deadline | Witness grace expires and process-group `SIGKILL` removes provider authority and descendants. |
 | Witness fails after the start barrier | Guardian and Capsule remove the group, but no process invents quiescence; ownership remains fail-closed until reboot or OS-owned recovery. |
+| Generation state disappears or changes identity after the start barrier | Witness removes the process group but retains its kernel lock because matching-generation quiescence cannot be recorded. |
 | Host reboots | Changed boot-session identity reconciles the now-dead prior generation. |
 | Witness or every local lifecycle owner is lost | Replacement fails closed unless host reboot or an OS-owned containment boundary proves cleanup. |
 
@@ -157,6 +158,8 @@ The database-free test suite covers:
   readiness, including continuous-output pipe failure;
 - owner heartbeat stall, guardian death, joint Capsule/guardian death on Linux,
   provider crash, and request timeout;
+- missing or replaced durable generation state after provider startup, with the
+  witness retaining ownership instead of admitting a replacement;
 - authoritative same-generation reaper finalization without rewriting another
   generation;
 - local revocation and absolute deadline against a provider that ignores `SIGTERM`;
