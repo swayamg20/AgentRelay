@@ -31,7 +31,7 @@ export class CodexProviderReaper {
 		startupTimer.unref();
 		process.on("message", (value) => {
 			void this.handleMessage(value, startupTimer).catch(() =>
-				this.reap("provider_failure", false).catch(() => this.failClosed()),
+				this.reap("provider_failure").catch(() => this.failClosed()),
 			);
 		});
 		process.once("disconnect", () => {
@@ -39,7 +39,7 @@ export class CodexProviderReaper {
 				process.exit(1);
 				return;
 			}
-			void this.reap("provider_failure", false).catch(() => this.failClosed());
+			void this.reap("provider_failure").catch(() => this.failClosed());
 		});
 	}
 
@@ -66,7 +66,7 @@ export class CodexProviderReaper {
 			this.#lastHeartbeat = performance.now();
 			return;
 		}
-		await this.reap(command.cause, false);
+		await this.reap(command.cause);
 	}
 
 	private armWatchdogs(command: CodexProviderReaperInit): void {
@@ -74,7 +74,7 @@ export class CodexProviderReaper {
 		const intervalMs = Math.max(50, Math.floor(command.heartbeat_timeout_ms / 4));
 		this.#heartbeatTimer = setInterval(() => {
 			if (performance.now() - this.#lastHeartbeat >= command.heartbeat_timeout_ms) {
-				void this.reap("heartbeat_timeout", false).catch(() => this.failClosed());
+				void this.reap("heartbeat_timeout").catch(() => this.failClosed());
 			}
 		}, intervalMs);
 		this.#heartbeatTimer.unref();
@@ -84,7 +84,7 @@ export class CodexProviderReaper {
 	private armDeadline(deadlineAtMs: number): void {
 		const remainingMs = deadlineAtMs - Date.now();
 		if (remainingMs <= 0) {
-			void this.reap("deadline_exceeded", false).catch(() => this.failClosed());
+			void this.reap("deadline_exceeded").catch(() => this.failClosed());
 			return;
 		}
 		this.#deadlineTimer = setTimeout(
@@ -94,15 +94,12 @@ export class CodexProviderReaper {
 		this.#deadlineTimer.unref();
 	}
 
-	private reap(cause: CodexProviderStopCause, providerGraceElapsed: boolean): Promise<void> {
-		this.#reaping ??= this.performReap(cause, providerGraceElapsed);
+	private reap(cause: CodexProviderStopCause): Promise<void> {
+		this.#reaping ??= this.performReap(cause);
 		return this.#reaping;
 	}
 
-	private async performReap(
-		cause: CodexProviderStopCause,
-		providerGraceElapsed: boolean,
-	): Promise<void> {
+	private async performReap(cause: CodexProviderStopCause): Promise<void> {
 		if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
 		if (this.#deadlineTimer !== null) clearTimeout(this.#deadlineTimer);
 		const init = this.#init;
@@ -110,10 +107,8 @@ export class CodexProviderReaper {
 		if (init === null || store === null) throw new Error("Codex provider reaper is not armed");
 
 		await store.requestStop(init.generation_id, cause).catch(() => undefined);
-		if (!providerGraceElapsed) {
-			signalProcessGroup(init.target_process_group_id, "SIGTERM");
-			await delay(STOP_GRACE_MS);
-		}
+		signalProcessGroup(init.target_process_group_id, "SIGTERM");
+		await delay(STOP_GRACE_MS);
 		if (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
 			signalProcessGroup(init.target_process_group_id, "SIGKILL");
 		}
