@@ -138,6 +138,10 @@ provider authority and descendants, but it does not record quiescence while the 
 Capsule has not reaped its guardian zombie. State remains `stop_requested` and the lock
 remains held until complete process-group absence becomes provable.
 
+For the POSIX group probe, only `ESRCH` proves absence. Darwin can return `EPERM` for
+a zombie-only group; the witness treats that as present but unsignalable, retains its
+lock, and keeps polling instead of either inventing quiescence or failing permanently.
+
 The final row is intentionally not inferred from PIDs. Installed service/cgroup
 containment, restart/upgrade/rollback behavior, and descendants that escape the
 supervised process group remain issue #120.
@@ -156,6 +160,8 @@ The database-free test suite covers:
 - authoritative same-generation reaper finalization without rewriting another
   generation;
 - local revocation and absolute deadline against a provider that ignores `SIGTERM`;
+- Darwin `EPERM` handling that keeps zombie-only process groups fail-closed until a
+  later probe proves absence;
 - descendant cleanup, durable authoritative-cause state, reboot-gated recovery,
   startup-error redaction, and provider environment filtering;
 - fresh-generation uncertain-start and inherited-interrupt recovery through the real
