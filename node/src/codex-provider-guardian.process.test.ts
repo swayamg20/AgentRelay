@@ -172,7 +172,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			process.kill(guardianPid, "SIGKILL");
 			await waitForProcessExit(descendantPid);
 			await expect
-				.poll(() => generationState(fixture))
+				.poll(() => generationState(fixture), { timeout: 5_000 })
 				.toMatchObject({
 					phase: "quiescent",
 					stop_cause: "provider_failure",
