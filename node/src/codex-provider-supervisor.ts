@@ -1,17 +1,19 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { fstatSync, lstatSync, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { currentBootSessionId } from "./boot-session.js";
-import { CodexProviderGenerationStore } from "./codex-provider-generation-state.js";
+import {
+	CodexProviderGenerationStore,
+	observationForProviderStopCause,
+} from "./codex-provider-generation-state.js";
 import type {
 	CodexProviderObservation,
 	CodexProviderStopCause,
 } from "./codex-provider-generation-state.js";
+import { assertInheritedProviderLock } from "./codex-provider-lock.js";
+import { CodexProviderReaperClient } from "./codex-provider-reaper-client.js";
 import {
 	CodexSupervisorProcessError,
 	assertSupervisorProcessGroup,
-	killSupervisorProcessGroup,
-	requestProviderStop,
 	startPreparedCodexProvider,
 	verifyPreparedCodexVersion,
 } from "./codex-provider-supervisor-process.js";
@@ -21,8 +23,6 @@ import {
 	parseCodexProviderSupervisorCommand,
 	terminalSupervisorEvent,
 } from "./codex-provider-supervisor-protocol.js";
-
-const PROVIDER_LOCK_FD = 4;
 const STARTUP_MESSAGE_TIMEOUT_MS = 5_000;
 
 /** Runs only in the dedicated guardian process started by CodexProviderGuardian. */
@@ -30,6 +30,7 @@ export class CodexProviderSupervisor {
 	#generationId: string | null = null;
 	#ownerPid: number | null = null;
 	#store: CodexProviderGenerationStore | null = null;
+	#reaper: CodexProviderReaperClient | null = null;
 	#provider: ChildProcessWithoutNullStreams | null = null;
 	#lastHeartbeat = performance.now();
 	#lastRecordedHeartbeat = performance.now();
@@ -43,19 +44,22 @@ export class CodexProviderSupervisor {
 	} | null = null;
 	#stopping: Promise<never> | null = null;
 	#initialized = false;
+	#readyPublished = false;
 
 	run(): void {
 		assertSupervisorProcessGroup();
 		const startupTimer = setTimeout(() => process.exit(1), STARTUP_MESSAGE_TIMEOUT_MS);
 		startupTimer.unref();
 		process.on("message", (value) => {
-			void this.handleMessage(value, startupTimer).catch(() =>
-				this.fail("internal", "startup_failure", "crashed"),
-			);
+			void this.handleMessage(value, startupTimer).catch(() => {
+				const cause = this.#readyPublished ? "provider_failure" : "startup_failure";
+				return this.fail("internal", cause, "crashed");
+			});
 		});
 		process.once("disconnect", () => void this.stop("owner_lost", "stopped"));
 		process.stdin.once("end", () => void this.stop("owner_lost", "stopped"));
 		process.stdin.once("error", () => void this.stop("owner_lost", "stopped"));
+		process.stdout.once("error", () => void this.stop("owner_lost", "stopped"));
 		process.once("SIGINT", () => void this.stop("owner_lost", "stopped"));
 		process.once("SIGTERM", () => void this.stop(this.#stopCause ?? "owner_lost", "stopped"));
 	}
@@ -80,10 +84,10 @@ export class CodexProviderSupervisor {
 		}
 		if (command.generation_id !== this.#generationId) return;
 		if (command.kind === "heartbeat") {
-			await this.recordHeartbeat();
+			await Promise.all([this.recordHeartbeat(), this.#reaper?.heartbeat()]);
 			return;
 		}
-		await this.stop(command.cause, terminationObservation(command.cause));
+		await this.stop(command.cause, observationForProviderStopCause(command.cause));
 	}
 
 	private async initialize(command: CodexProviderSupervisorInit): Promise<void> {
@@ -96,10 +100,24 @@ export class CodexProviderSupervisor {
 				}
 				return this.stop(
 					this.#pendingTermination.cause,
-					terminationObservation(this.#pendingTermination.cause),
+					observationForProviderStopCause(this.#pendingTermination.cause),
 				);
 			}
 			assertInheritedProviderLock(command.lock_path);
+			this.assertOwnerAlive();
+			const reaper = await CodexProviderReaperClient.start({
+				command: command.reaper,
+				capsuleId: command.capsule_id,
+				generationId: command.generation_id,
+				lockPath: command.lock_path,
+				stateDirectory: command.state_directory,
+				deadlineAtMs: command.deadline_at_ms,
+				heartbeatTimeoutMs: command.heartbeat_timeout_ms,
+			});
+			this.#reaper = reaper;
+			void reaper.termination.then(() => {
+				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
+			});
 			this.assertOwnerAlive();
 			this.#store = await CodexProviderGenerationStore.open(
 				command.state_directory,
@@ -127,12 +145,16 @@ export class CodexProviderSupervisor {
 			provider.stdin.once("error", () => {
 				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
 			});
+			provider.stdout.once("error", () => {
+				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
+			});
 			await this.#store.markRunning(command.generation_id);
 			await this.send({
 				version: 1,
 				kind: "ready",
 				generation_id: command.generation_id,
 			});
+			this.#readyPublished = true;
 		} catch (error) {
 			const code =
 				error instanceof CodexSupervisorProcessError
@@ -239,17 +261,20 @@ export class CodexProviderSupervisor {
 		if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
 		if (this.#deadlineTimer !== null) clearTimeout(this.#deadlineTimer);
 		const generationId = this.#generationId;
+		const reaper = this.#reaper;
+		if (generationId === null || reaper === null) process.exit(1);
+		const reaping = reaper.stop(cause);
 		if (generationId !== null && this.#store !== null) {
 			await this.#store.requestStop(generationId, cause).catch(() => undefined);
 		}
-		await requestProviderStop(this.#provider).catch(() => undefined);
-		if (generationId !== null && this.#store !== null) {
-			await this.#store.markQuiescent(generationId, cause, observation).catch(() => undefined);
-			await this.send(terminalSupervisorEvent(generationId, cause, observation)).catch(
-				() => undefined,
-			);
+		await this.send(terminalSupervisorEvent(generationId, cause, observation)).catch(
+			() => undefined,
+		);
+		try {
+			return await reaping;
+		} catch {
+			process.exit(1);
 		}
-		return killSupervisorProcessGroup();
 	}
 
 	private send(event: CodexProviderSupervisorEvent): Promise<void> {
@@ -261,36 +286,4 @@ export class CodexProviderSupervisor {
 			process.send(event, (error) => (error === null ? resolve() : reject(error)));
 		});
 	}
-}
-
-function assertInheritedProviderLock(path: string): void {
-	const descriptor = fstatSync(PROVIDER_LOCK_FD);
-	const published = lstatSync(path);
-	if (
-		published.isSymbolicLink() ||
-		!published.isFile() ||
-		descriptor.dev !== published.dev ||
-		descriptor.ino !== published.ino ||
-		descriptor.nlink !== 1 ||
-		(published.mode & 0o777) !== 0o600 ||
-		(process.getuid !== undefined && published.uid !== process.getuid())
-	) {
-		throw new Error("Codex provider supervisor did not inherit the expected private lock");
-	}
-	const decoded = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-	if (decoded.schema_version !== 2 || decoded.kind !== "agentrelay_provider_generation_lock") {
-		throw new Error("Codex provider supervisor lock kind is invalid");
-	}
-}
-
-function terminationObservation(cause: CodexProviderStopCause): CodexProviderObservation {
-	if (
-		cause === "deadline_exceeded" ||
-		cause === "heartbeat_timeout" ||
-		cause === "provider_unresponsive"
-	) {
-		return "unresponsive";
-	}
-	if (cause === "provider_failure" || cause === "startup_failure") return "crashed";
-	return "stopped";
 }

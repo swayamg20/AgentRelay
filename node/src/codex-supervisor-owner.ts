@@ -1,25 +1,9 @@
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import type {
-	CodexProviderObservation,
-	CodexProviderStopCause,
-} from "./codex-provider-generation-state.js";
 import type { CodexProviderSupervisorCommand } from "./codex-provider-supervisor-protocol.js";
 
 const STOP_GRACE_MS = 2_000;
 const GROUP_POLL_MS = 10;
-
-export function observationForCause(cause: CodexProviderStopCause): CodexProviderObservation {
-	if (
-		cause === "deadline_exceeded" ||
-		cause === "heartbeat_timeout" ||
-		cause === "provider_unresponsive"
-	) {
-		return "unresponsive";
-	}
-	if (cause === "provider_failure" || cause === "startup_failure") return "crashed";
-	return "stopped";
-}
 
 export async function sendSupervisorCommand(
 	child: ChildProcess,
@@ -90,7 +74,7 @@ export function writableError(child: ChildProcessWithoutNullStreams): Promise<Er
 	return new Promise((resolve) => child.stdin.once("error", resolve));
 }
 
-function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+export function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
 	try {
 		process.kill(-pid, signal);
 	} catch (error) {

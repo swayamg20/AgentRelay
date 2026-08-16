@@ -26,6 +26,7 @@ export interface CodexProviderGuardianOptions extends CodexAppServerClientOption
 	readonly deadlineAtMs: number;
 	readonly authoritySignal?: AbortSignal;
 	readonly supervisor?: CodexSupervisorCommand;
+	readonly reaper?: CodexSupervisorCommand;
 	readonly startupTimeoutMs?: number;
 	readonly heartbeatIntervalMs?: number;
 	readonly heartbeatTimeoutMs?: number;
@@ -47,12 +48,21 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 	readonly #options: CodexProviderGuardianOptions;
 	#opening: Promise<CodexProviderGeneration> | null = null;
 	#active: CodexProviderGeneration | null = null;
+	#failedClosed = false;
 
 	constructor(options: CodexProviderGuardianOptions) {
 		this.#options = { ...options, capsuleId: uuidSchema.parse(options.capsuleId) };
 	}
 
 	openGeneration(): Promise<CodexProviderGeneration> {
+		if (this.#failedClosed) {
+			return Promise.reject(
+				new CodexProviderGuardianError(
+					"state",
+					"Codex provider guardian is fail-closed after unproven teardown",
+				),
+			);
+		}
 		if (this.#options.authoritySignal?.aborted === true) {
 			return Promise.reject(
 				new CodexProviderGuardianError("authority", "Codex provider authority is revoked"),
@@ -119,6 +129,7 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 							capsuleDirectory: this.#options.capsuleDirectory,
 							generationId,
 							supervisor: this.#options.supervisor ?? defaultSupervisorCommand(),
+							reaper: this.#options.reaper,
 							process: processOptions,
 							lock,
 							store,
@@ -153,6 +164,7 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 					if (this.#active === generation) this.#active = null;
 				},
 				() => {
+					this.#failedClosed = true;
 					removeAuthorityListener();
 					if (this.#active === generation) this.#active = null;
 				},
@@ -164,7 +176,9 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 			if (supervised === null) {
 				await lock.release().catch(() => undefined);
 			} else {
-				await supervised.stop("startup_failure").catch(() => undefined);
+				await supervised.stop("startup_failure").catch(() => {
+					this.#failedClosed = true;
+				});
 			}
 			if (
 				error instanceof CodexProviderGuardianError ||

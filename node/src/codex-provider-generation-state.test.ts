@@ -111,6 +111,25 @@ describe("CodexProviderGenerationStore", () => {
 		});
 	});
 
+	it("lets the surviving reaper authoritatively finalize only its generation", async () => {
+		const directory = await temporaryDirectory();
+		const store = await CodexProviderGenerationStore.open(directory, CAPSULE_ID);
+		await store.begin(FIRST_GENERATION, FIRST_BOOT, DEADLINE_AT_MS);
+		await store.requestStop(FIRST_GENERATION, "owner_lost");
+
+		await expect(
+			store.finalizeQuiescentAsCurrent(SECOND_GENERATION, "provider_failure"),
+		).resolves.toBeNull();
+		await expect(
+			store.finalizeQuiescentAsCurrent(FIRST_GENERATION, "deadline_exceeded"),
+		).resolves.toMatchObject({
+			generation_id: FIRST_GENERATION,
+			phase: "quiescent",
+			stop_cause: "deadline_exceeded",
+			observation: "unresponsive",
+		});
+	});
+
 	it("fails closed on malformed or non-private lifecycle state", async () => {
 		const malformedDirectory = await temporaryDirectory();
 		const malformedPath = join(malformedDirectory, CODEX_PROVIDER_GENERATION_FILE);

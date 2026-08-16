@@ -24,6 +24,7 @@ export interface CodexSupervisedProcessOptions {
 	readonly capsuleDirectory: string;
 	readonly generationId: string;
 	readonly supervisor: CodexSupervisorCommand;
+	readonly reaper?: CodexSupervisorCommand;
 	readonly process: CodexAppServerProcessOptions;
 	readonly lock: ProcessLock;
 	readonly store: CodexProviderGenerationStore;
@@ -36,8 +37,9 @@ export interface CodexSupervisedProcessOptions {
 
 export type ResolvedCodexSupervisedProcessOptions = Omit<
 	CodexSupervisedProcessOptions,
-	"startupTimeoutMs" | "heartbeatIntervalMs" | "heartbeatTimeoutMs" | "heartbeatRecordMs"
+	"reaper" | "startupTimeoutMs" | "heartbeatIntervalMs" | "heartbeatTimeoutMs" | "heartbeatRecordMs"
 > & {
+	readonly reaper: CodexSupervisorCommand;
 	readonly startupTimeoutMs: number;
 	readonly heartbeatIntervalMs: number;
 	readonly heartbeatTimeoutMs: number;
@@ -71,6 +73,10 @@ export function resolveSupervisedProcessOptions(
 	);
 	return {
 		...options,
+		reaper: options.reaper ?? {
+			executable: options.supervisor.executable,
+			args: [...options.supervisor.args, "--reaper"],
+		},
 		deadlineAtMs: deadlineMilliseconds(options.deadlineAtMs),
 		startupTimeoutMs: boundedMilliseconds(
 			options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,

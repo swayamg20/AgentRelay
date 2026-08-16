@@ -6,10 +6,12 @@ import type {
 	CodexProviderObservation,
 	CodexProviderStopCause,
 } from "./codex-provider-generation-state.js";
+import { observationForProviderStopCause } from "./codex-provider-generation-state.js";
 import {
 	type CodexPreparedProcess,
 	type CodexProviderSupervisorEvent,
 	parseCodexProviderSupervisorEvent,
+	sanitizePreparedEnvironment,
 	terminateSupervisorCommand,
 } from "./codex-provider-supervisor-protocol.js";
 import {
@@ -24,7 +26,6 @@ import {
 	childClose,
 	childExit,
 	isSupervisorProcessGroupAlive,
-	observationForCause,
 	sendSupervisorCommand,
 	stopSupervisorProcessGroup,
 	waitForChildSpawn,
@@ -32,6 +33,7 @@ import {
 } from "./codex-supervisor-owner.js";
 
 const STOP_GRACE_MS = 2_000;
+const REAPER_FINALIZATION_TIMEOUT_MS = 10_000;
 
 export type { CodexSupervisedProcessOptions, CodexSupervisorCommand };
 
@@ -155,6 +157,12 @@ export class CodexSupervisedProcess {
 			deadline_at_ms: this.#options.deadlineAtMs,
 			heartbeat_timeout_ms: this.#options.heartbeatTimeoutMs,
 			heartbeat_record_ms: this.#options.heartbeatRecordMs,
+			reaper: {
+				executable: this.#options.reaper.executable,
+				argv: [...this.#options.reaper.args],
+				cwd: this.#options.capsuleDirectory,
+				env: sanitizePreparedEnvironment(supervisorEnvironment(this.#options.reaper.env)),
+			},
 			version_probe: commands.versionProbe,
 			app_server: commands.appServer,
 		});
@@ -180,42 +188,44 @@ export class CodexSupervisedProcess {
 	private async performStop(): Promise<void> {
 		if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
 		const cause = this.#stopCause ?? "provider_failure";
-		await sendSupervisorCommand(
-			this.#child,
-			terminateSupervisorCommand(this.#options.generationId, cause),
-		).catch(() => undefined);
-		await Promise.race([this.#closed, delay(STOP_GRACE_MS + 250, undefined, { ref: false })]);
-		if (this.#child.pid !== undefined && isSupervisorProcessGroupAlive(this.#child.pid)) {
-			await stopSupervisorProcessGroup(this.#child, this.#exited, this.#closed);
-		}
-		const observation = this.#observation ?? observationForCause(cause);
-		let failure: unknown;
 		try {
-			await this.#options.store.markQuiescentIfCurrent(
-				this.#options.generationId,
-				cause,
-				observation,
-			);
-		} catch (error) {
-			failure = error;
-		} finally {
-			try {
-				await this.#options.lock.release();
-			} catch (error) {
-				failure =
-					failure === undefined
-						? error
-						: new AggregateError([failure, error], "Codex guardian finalization failed");
+			await sendSupervisorCommand(
+				this.#child,
+				terminateSupervisorCommand(this.#options.generationId, cause),
+			).catch(() => undefined);
+			await Promise.race([this.#closed, delay(STOP_GRACE_MS + 250, undefined, { ref: false })]);
+			if (this.#child.pid !== undefined && isSupervisorProcessGroupAlive(this.#child.pid)) {
+				await stopSupervisorProcessGroup(this.#child, this.#exited, this.#closed);
 			}
-		}
-		if (failure !== undefined) {
-			const error = new Error("Codex provider termination could not be recorded", {
-				cause: failure,
-			});
+			const finalized = await waitForReaperFinalization(
+				this.#options.store,
+				this.#options.generationId,
+			);
+			const observation =
+				finalized?.observation ?? this.#observation ?? observationForProviderStopCause(cause);
+			await this.#options.lock.release();
+			this.#resolveTermination({ kind: observation });
+		} catch (cause) {
+			const error = new Error("Codex provider termination could not be proven", { cause });
 			this.#rejectTermination(error);
 			throw error;
 		}
-		this.#resolveTermination({ kind: observation });
+	}
+}
+
+async function waitForReaperFinalization(
+	store: ResolvedCodexSupervisedProcessOptions["store"],
+	generationId: string,
+): Promise<Awaited<ReturnType<typeof store.snapshot>>> {
+	const deadline = Date.now() + REAPER_FINALIZATION_TIMEOUT_MS;
+	for (;;) {
+		const state = await store.snapshot();
+		if (state === null || state.generation_id !== generationId) return null;
+		if (state.phase === "quiescent") return state;
+		if (Date.now() >= deadline) {
+			throw new Error("Codex provider reaper did not finalize quiescence");
+		}
+		await delay(10);
 	}
 }
 

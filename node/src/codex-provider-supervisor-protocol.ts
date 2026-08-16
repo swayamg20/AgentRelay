@@ -7,7 +7,7 @@ import {
 	type CodexProviderStopCause,
 } from "./codex-provider-generation-state.js";
 
-const absolutePathSchema = z
+export const absolutePathSchema = z
 	.string()
 	.min(1)
 	.max(4_096)
@@ -48,6 +48,7 @@ const initSchema = z
 		deadline_at_ms: z.number().int().safe().positive(),
 		heartbeat_timeout_ms: z.number().int().min(250).max(60_000),
 		heartbeat_record_ms: z.number().int().min(100).max(60_000),
+		reaper: codexPreparedProcessSchema,
 		version_probe: codexPreparedProcessSchema,
 		app_server: codexPreparedProcessSchema,
 	})

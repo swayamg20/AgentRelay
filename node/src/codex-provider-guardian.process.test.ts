@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -47,21 +47,24 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 
 		owner.kill("SIGKILL");
 		await childClose(owner);
+		await expect(
+			readFile(join(fixture.directory, CODEX_PROVIDER_GENERATION_FILE), "utf8"),
+		).rejects.toMatchObject({ code: "ENOENT" });
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 10_000);
+	}, 15_000);
 
 	it("records owner loss when death races the version probe", async () => {
 		const fixture = await fakeAppServer({ versionDelayMs: 1_000 });
 		const owner = startOwner(fixture);
 		await expect
-			.poll(() => generationState(fixture))
+			.poll(() => generationState(fixture), { timeout: 5_000 })
 			.toMatchObject({ phase: "spawn_maybe_started" });
 
 		owner.kill("SIGKILL");
 		await childClose(owner);
 		await expect
-			.poll(() => generationState(fixture))
+			.poll(() => generationState(fixture), { timeout: 5_000 })
 			.toMatchObject({
 				phase: "quiescent",
 				stop_cause: "owner_lost",
@@ -69,22 +72,28 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			});
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 10_000);
+	}, 15_000);
 
 	it("kills the provider tree when its Capsule owner is SIGKILLed", async () => {
-		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
+		const fixture = await fakeAppServer({
+			spawnDescendant: true,
+			ignoreSigterm: true,
+			continuousOutput: true,
+			gateContinuousOutput: true,
+		});
 		const owner = startOwner(fixture);
 		await waitForOwner(fixture);
 		const descendantPid = await waitForPid(fixture.childPidPath);
 
 		owner.kill("SIGKILL");
 		await childClose(owner);
+		await writeFile(fixture.continuousOutputGatePath, "go", { mode: 0o600 });
 		await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
 			reason: "ownership",
 		});
 		await waitForProcessExit(descendantPid, 5_000);
 		await expect
-			.poll(() => generationState(fixture))
+			.poll(() => generationState(fixture), { timeout: 5_000 })
 			.toMatchObject({
 				phase: "quiescent",
 				stop_cause: "owner_lost",
@@ -93,7 +102,7 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	}, 10_000);
+	}, 15_000);
 
 	it("revokes provider authority when the Capsule heartbeat stalls", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true });
@@ -106,9 +115,9 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 		await expect
 			.poll(() => generationState(fixture))
 			.toMatchObject({
-				phase: "quiescent",
+				phase: "stop_requested",
 				stop_cause: "heartbeat_timeout",
-				observation: "unresponsive",
+				observation: null,
 			});
 		await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
 			reason: "ownership",
@@ -116,9 +125,16 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 
 		owner.kill("SIGKILL");
 		await childClose(owner);
+		await expect
+			.poll(() => generationState(fixture), { timeout: 5_000 })
+			.toMatchObject({
+				phase: "quiescent",
+				stop_cause: "heartbeat_timeout",
+				observation: "unresponsive",
+			});
 		const replacement = await openGeneration(fixture);
 		await replacement.terminate("capsule_shutdown");
-	});
+	}, 15_000);
 
 	it.runIf(process.platform === "linux")(
 		"kills remaining descendants when the guardian itself is SIGKILLed",
@@ -144,6 +160,39 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 			owner.kill("SIGKILL");
 			await childClose(owner);
 		},
+		15_000,
+	);
+
+	it.runIf(process.platform === "linux")(
+		"uses the teardown witness when Capsule and guardian die together",
+		async () => {
+			const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
+			const owner = startOwner(fixture);
+			await waitForOwner(fixture);
+			const descendantPid = await waitForPid(fixture.childPidPath);
+			const guardianPid = await directChildPid(owner.pid!);
+
+			owner.kill("SIGSTOP");
+			await waitForStoppedProcess(owner.pid!);
+			process.kill(guardianPid, "SIGKILL");
+			owner.kill("SIGKILL");
+			await childClose(owner);
+			await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
+				reason: "ownership",
+			});
+			await waitForProcessExit(descendantPid, 5_000);
+			await expect
+				.poll(() => generationState(fixture), { timeout: 5_000 })
+				.toMatchObject({
+					phase: "quiescent",
+					stop_cause: "provider_failure",
+					observation: "crashed",
+				});
+
+			const replacement = await openGeneration(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		15_000,
 	);
 });
 
@@ -259,4 +308,15 @@ async function directChildPid(ownerPid: number): Promise<number> {
 		await delay(10);
 	}
 	throw new Error("Could not identify the direct guardian child");
+}
+
+async function waitForStoppedProcess(pid: number): Promise<void> {
+	const path = `/proc/${pid}/status`;
+	const deadline = Date.now() + 2_000;
+	while (Date.now() < deadline) {
+		const status = await readFile(path, "utf8");
+		if (/^State:\s+T/m.test(status)) return;
+		await delay(10);
+	}
+	throw new Error(`Process ${pid} did not stop`);
 }

@@ -24,6 +24,22 @@ export const CODEX_PROVIDER_STOP_CAUSES = [
 export type CodexProviderStopCause = (typeof CODEX_PROVIDER_STOP_CAUSES)[number];
 export type CodexProviderObservation = "stopped" | "crashed" | "unresponsive";
 
+export function observationForProviderStopCause(
+	cause: CodexProviderStopCause,
+): CodexProviderObservation {
+	if (
+		cause === "deadline_exceeded" ||
+		cause === "heartbeat_timeout" ||
+		cause === "provider_unresponsive"
+	) {
+		return "unresponsive";
+	}
+	if (cause === "provider_failure" || cause === "startup_failure" || cause === "host_reboot") {
+		return "crashed";
+	}
+	return "stopped";
+}
+
 const timestampSchema = z.string().datetime({ offset: true });
 
 const providerGenerationStateSchema = z
@@ -179,6 +195,30 @@ export class CodexProviderGenerationStore {
 		this.#pendingWrite = write.catch(() => undefined);
 		await write;
 		return updated;
+	}
+
+	/** Called by the surviving reaper after process-group absence has been proven. */
+	async finalizeQuiescentAsCurrent(
+		generationIdValue: string,
+		cause: CodexProviderStopCause,
+	): Promise<CodexProviderGenerationState | null> {
+		const generationId = uuidSchema.parse(generationIdValue);
+		let finalized: CodexProviderGenerationState | null = null;
+		const write = this.#pendingWrite.then(async () => {
+			const state = await this.readIfPresent();
+			if (state === null || state.generation_id !== generationId) return;
+			const timestamp = this.#now().toISOString();
+			state.phase = "quiescent";
+			state.stop_cause = cause;
+			state.observation = observationForProviderStopCause(cause);
+			state.updated_at = timestamp;
+			const parsed = providerGenerationStateSchema.parse(state);
+			await writePrivateJson(this.#path, parsed);
+			finalized = structuredClone(parsed);
+		});
+		this.#pendingWrite = write.catch(() => undefined);
+		await write;
+		return finalized;
 	}
 
 	private async mutate(

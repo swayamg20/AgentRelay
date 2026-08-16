@@ -58,7 +58,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		expect(providerEnvironment).not.toHaveProperty("AGENTRELAY_NODE_TOKEN");
 		expect(providerEnvironment).not.toHaveProperty("OPENAI_API_KEY");
 		expect(providerEnvironment).not.toHaveProperty("CODEX_API_KEY");
-	});
+	}, 12_000);
 
 	it("allows only one concurrent generation owner across guardian instances", async () => {
 		const fixture = await fakeAppServer();
@@ -87,7 +87,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		const replacement = await openGeneration(fixture);
 		expect(replacement.generationId).not.toBe(first.generationId);
 		await replacement.terminate("capsule_shutdown");
-	});
+	}, 12_000);
 
 	it("rejects a second open while the same guardian is still opening", async () => {
 		const fixture = await fakeAppServer();
@@ -142,6 +142,30 @@ describe("SupervisedCodexProviderGuardian", () => {
 		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
+	it("writes no start barrier when the teardown witness cannot arm", async () => {
+		const fixture = await fakeAppServer();
+
+		await expect(
+			createGuardian(fixture, {
+				reaper: {
+					executable: process.execPath,
+					args: ["--eval", "process.exit(1)"],
+				},
+			}).openGeneration(),
+		).rejects.toMatchObject({
+			name: "CodexProviderGuardianError",
+			reason: "startup",
+			message: "Codex provider generation failed to start",
+		});
+		await expect(
+			readFile(`${fixture.directory}/${CODEX_PROVIDER_GENERATION_FILE}`, "utf8"),
+		).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+		const replacement = await openGeneration(fixture);
+		await replacement.terminate("capsule_shutdown");
+	}, 15_000);
+
 	it("enforces its absolute deadline against an unresponsive provider tree", async () => {
 		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
 		const generation = await openGeneration(fixture, { deadlineAtMs: Date.now() + 1_000 });
@@ -184,7 +208,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 			stop_cause: "provider_failure",
 			observation: "crashed",
 		});
-	});
+	}, 12_000);
 
 	it("redacts startup failure details and durably closes the generation", async () => {
 		const fixture = await fakeAppServer({ version: "0.0.0-secret-path" });
@@ -207,7 +231,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 type GuardianOverrides = Partial<
 	Pick<
 		CodexProviderGuardianOptions,
-		"authoritySignal" | "boundary" | "deadlineAtMs" | "requestTimeoutMs"
+		"authoritySignal" | "boundary" | "deadlineAtMs" | "reaper" | "requestTimeoutMs"
 	>
 >;
 

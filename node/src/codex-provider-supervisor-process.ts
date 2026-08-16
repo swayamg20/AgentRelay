@@ -4,7 +4,6 @@ import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import type { CodexPreparedProcess } from "./codex-provider-supervisor-protocol.js";
 
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
-export const PROVIDER_STOP_GRACE_MS = 2_000;
 
 export class CodexSupervisorProcessError extends Error {
 	constructor(
@@ -64,18 +63,6 @@ export async function startPreparedCodexProvider(
 			cause: error,
 		});
 	}
-}
-
-export async function requestProviderStop(child: ChildProcess | null): Promise<void> {
-	if (child?.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
-	child.kill("SIGTERM");
-	await Promise.race([childClose(child), delay(PROVIDER_STOP_GRACE_MS, undefined, { ref: false })]);
-}
-
-/** The supervisor is the group leader; this terminates it and every remaining descendant. */
-export function killSupervisorProcessGroup(): never {
-	process.kill(-process.pid, "SIGKILL");
-	throw new Error("Codex supervisor process group survived SIGKILL");
 }
 
 export function assertSupervisorProcessGroup(): void {

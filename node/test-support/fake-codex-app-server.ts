@@ -22,6 +22,8 @@ export interface FakeAppServerOptions {
 	readonly requestApproval?: boolean;
 	readonly spawnDescendant?: boolean;
 	readonly ignoreSigterm?: boolean;
+	readonly continuousOutput?: boolean;
+	readonly gateContinuousOutput?: boolean;
 }
 
 export interface FakeAppServerFixture {
@@ -31,6 +33,7 @@ export interface FakeAppServerFixture {
 	readonly childPidPath: string;
 	readonly argvPath: string;
 	readonly environmentPath: string;
+	readonly continuousOutputGatePath: string;
 	readonly env: NodeJS.ProcessEnv;
 	remove(): Promise<void>;
 }
@@ -44,6 +47,7 @@ export async function createFakeAppServer(
 	const childPidPath = join(directory, "child.pid");
 	const argvPath = join(directory, "argv.json");
 	const environmentPath = join(directory, "environment.json");
+	const continuousOutputGatePath = join(directory, "continuous-output-go");
 	const configPath = join(directory, "fake-app-server-config.json");
 	await writeFile(scriptPath, `#!${process.execPath}\n${FAKE_APP_SERVER_SOURCE}`, { mode: 0o700 });
 	await writeFile(
@@ -63,6 +67,8 @@ export async function createFakeAppServer(
 			requestApproval: options.requestApproval ?? false,
 			spawnDescendant: options.spawnDescendant ?? false,
 			ignoreSigterm: options.ignoreSigterm ?? false,
+			continuousOutput: options.continuousOutput ?? false,
+			continuousOutputGatePath: options.gateContinuousOutput ? continuousOutputGatePath : null,
 			logPath,
 			childPidPath,
 			argvPath,
@@ -77,6 +83,7 @@ export async function createFakeAppServer(
 		childPidPath,
 		argvPath,
 		environmentPath,
+		continuousOutputGatePath,
 		env: {
 			PATH: process.env.PATH,
 			TMPDIR: process.env.TMPDIR,
@@ -159,7 +166,7 @@ export function isProcessAlive(pid: number): boolean {
 
 const FAKE_APP_SERVER_SOURCE = `
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
 
@@ -192,6 +199,7 @@ const closeInputAfterRead = config.closeInputAfterRead;
 const unsafePolicy = config.unsafePolicy;
 const requestApproval = config.requestApproval;
 if (config.ignoreSigterm) process.on("SIGTERM", () => undefined);
+let continuousOutputStarted = false;
 if (config.spawnDescendant) {
   const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",
@@ -259,6 +267,21 @@ rl.on("line", (line) => {
     case "thread/resume":
       send({ id: message.id, result: threadResult() });
       send({ method: "thread/started", params: { thread: baseThread() } });
+      if (config.continuousOutput && !continuousOutputStarted) {
+        continuousOutputStarted = true;
+        process.stdout.on("error", () => undefined);
+        const startContinuousOutput = () =>
+          setInterval(() => process.stdout.write("x".repeat(4096)), 1);
+        if (config.continuousOutputGatePath === null) {
+          setTimeout(startContinuousOutput, 100);
+        } else {
+          const gate = setInterval(() => {
+            if (!existsSync(config.continuousOutputGatePath)) return;
+            clearInterval(gate);
+            startContinuousOutput();
+          }, 10);
+        }
+      }
       if (notificationMode === "valid") {
         send({
           method: "turn/completed",
