@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-16. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-17. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -15,12 +15,16 @@ Mission and delivery control plane, and an experimental foreground Node. The Nod
 journals Relay authority and starts or resumes either an in-process fake-host turn or
 an independently persistent fake Mission Capsule. The detached Capsule and Node-
 process restart proof are implemented. The first pinned Codex client, durable journal,
-provider-neutral Capsule server, and injected runner now exist as an unactivated
-library checkpoint. A Linux-only Codex `0.146.0` containment library now adds
+provider-neutral Capsule server, injected runner, and provider guardian now exist as
+an unactivated library checkpoint. The guardian owns provider-generation spawn,
+liveness, and local authority inputs; its prearmed persistent out-of-group witness owns
+process-group removal and post-absence quiescence proof. A Linux-only Codex `0.146.0`
+containment library adds
 owner-controlled standalone-workspace admission, an explicit Bubblewrap policy,
 mandatory runtime canary, and exact retained-manifest recovery. It is not selected by
-the Capsule/Node CLI, but its dedicated Linux process proof now passes. The next
-runtime milestone is guarded production activation, not another protocol abstraction.
+the Capsule/Node CLI, but its dedicated Linux process proof now starts pinned Codex
+through both boundaries. The next runtime milestone is verified capability enforcement
+and guarded activation, not another protocol abstraction.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -107,10 +111,12 @@ migration because PID-only evidence cannot rule out another namespace. The Capsu
 server is now provider-neutral while the existing descriptor, CLI, and wire remain
 fake-compatible. An injected Codex runner is tested through that real Unix wire.
 Runtime shutdown concurrently fences admitted work, and background runtime failures
-can retire their server generation, but no production path selects Codex. OS service
-installation and automatic process respawn, contract acknowledgement, verification
-execution, durable containment-handle lifecycle wiring, guarded real-runtime
-activation, and the two-machine exit gate remain open.
+can retire their server generation, but no production path selects Codex. OS
+service/cgroup containment, automatic process respawn, witness/all-owner loss,
+escaped-descendant cleanup, and restart/upgrade/rollback behavior remain #120.
+Contract acknowledgement, verification execution, durable containment-handle
+lifecycle wiring, guarded real-runtime activation, and the two-machine exit gate also
+remain open.
 
 - Add a `node/` pnpm workspace and daemon CLI.
 - Register device-scoped credentials and capabilities.
@@ -129,28 +135,35 @@ one Node is killed and restarted mid-run.
 
 ## Stage 4: Codex vertical slice
 
-**Status:** unactivated runner checkpoint implemented. The pinned read-only client and
-schema-v2 journal now sit behind a provider-neutral Capsule server. The injected
-runner publishes a stable logical turn before provider binding, consumes one provider
-event stream, and reconciles an uncertain start only in a fresh provider generation
-after a mandatory injected quiescence proof. Tests exercise the real Capsule Unix
-wire with fake app-server clients. For an inherited uncertain interrupt, the fresh
-generation reads the exact intent once, persists a terminal provider outcome when
-available, or records a transient failure, without issuing another interrupt. Tests
-do not execute a model turn. The current descriptor and CLI still select the fake
-runtime, and no production guardian supplies the quiescence proof. A separate
-Linux-only containment library now validates a standalone workspace, constructs the
-pinned Bubblewrap boundary, runs a mandatory child canary, and binds recovery to an
-exact `retain_for_review` manifest. No Mission lifecycle stores its returned recovery
-handle. Its dedicated Linux process job passes, while every unsupported platform
-continues to fail closed.
+**Status:** unactivated guardian checkpoint implemented. The pinned read-only client,
+schema-v2 journal, injected runner, and provider guardian now sit behind a
+provider-neutral Capsule server. The runner publishes a stable logical turn before
+provider binding, consumes one provider event stream, and reconciles an uncertain
+start only in a guardian-owned fresh generation. The guardian owns the kernel-locked
+start barrier, Capsule and provider liveness, absolute deadline, and local revocation.
+Before the barrier it prearms an out-of-group witness that retains the same lock,
+removes the guardian/provider group, and records durable quiescence only after proving
+absence. Tests exercise the real Capsule Unix wire with fake app-server clients and
+real OS process trees, including joint Capsule/guardian loss on Linux. For an inherited
+uncertain interrupt, the fresh generation reads the exact intent once, persists a
+terminal provider outcome when available, or records a transient failure without
+issuing another interrupt. A separate Linux-only containment library validates a standalone
+workspace, constructs the pinned Bubblewrap boundary, runs a mandatory child canary,
+and binds recovery to an exact `retain_for_review` manifest. Its process job starts
+pinned Codex through both unactivated boundaries. No Mission lifecycle supplies
+verified authority or stores the recovery handle, the current descriptor and CLI
+still select the fake, and no test executes a model turn.
 
 - Implement contract/verification deliveries and bounded provenance-marked artifact
   carriage.
-- Add guardian-owned provider generations and a local capability reference monitor;
-  deny push, merge, publish, deploy, arbitrary network access, and secrets.
-- Activate the pinned Codex adapter through an explicit descriptor, compose the Linux
-  boundary, and durably store its exact recovery handle before provider start.
+- [x] Add guardian-owned provider generations, liveness, deadline/revocation inputs,
+  a prearmed teardown witness, durable post-absence quiescence, and process-group
+  teardown (#96).
+- [ ] Add a local capability reference monitor; deny push, merge, publish, deploy,
+  arbitrary network access, and secrets (#97).
+- [ ] Activate the pinned Codex adapter through an explicit descriptor, compose the
+  Linux boundary, and durably store its exact recovery handle before provider start
+  (#98).
 - Require one structured turn disposition with bounded local execution evidence.
 - Pass Guarded Real Mission 0 through the public pipeline before attempting the
   backend-and-Android two-machine scenario.

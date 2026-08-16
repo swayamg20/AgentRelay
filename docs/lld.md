@@ -1,6 +1,6 @@
 # Low-level design: current relay contracts
 
-> **Scope:** Current repository implementation as of 2026-08-16.
+> **Scope:** Current repository implementation as of 2026-08-17.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Unimplemented local Node runtime behavior remains in
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
@@ -13,7 +13,7 @@
 ├── protocol/            Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/               Hono, Drizzle, Postgres relay
 ├── mcp-server/          agentrelay-mcp package and agentrelay CLI
-├── node/                Node, Capsule wire, fake runtime, and unactivated Codex path
+├── node/                Node, Capsule wire, fake runtime, and unactivated Codex boundaries
 ├── tests/e2e/           relay, MCP, Node, and detached-Capsule process harnesses
 ├── docs/                product, implementation, operations, and RFC docs
 ├── docker-compose.yml   Postgres dev service and self-host relay profile
@@ -24,12 +24,14 @@ The private `agentrelay-node` workspace now provides a foreground daemon and dur
 consumer for fake-adapter turn deliveries. It validates local workspace/policy state,
 journals discovery and operation intent, and can recover exact host events from an
 independently persistent fake Mission Capsule after the Node process is killed. There
-is now a provider-neutral Capsule server and injected Codex runner library, but no
-descriptor or CLI activates it and no test executes a real model turn. There is also
-no contract-acknowledgement or verification-delivery handler, so this still does not
+is now a provider-neutral Capsule server, injected Codex runner, and provider guardian
+library, but no descriptor or CLI activates them and no test executes a real model
+turn. The guardian owns generation spawn and live supervision; its prearmed detached
+reaper owns teardown proof and post-absence quiescence. There is also no
+contract-acknowledgement or verification-delivery handler, so this still does not
 prove execution on two machines. A Linux-only Codex containment library now exists,
-and its dedicated process test passes. It remains unactivated because no descriptor,
-CLI, or Mission lifecycle selects it.
+and its dedicated process test starts pinned Codex through both unactivated boundaries.
+No descriptor, CLI, or Mission lifecycle selects them.
 
 ## Protocol workspace
 
@@ -436,14 +438,16 @@ restart is automatic only after repeated failed authenticated probes and
 ownership-safe removal of the same unchanged stale socket inode. The server binds
 through a private alias so closing an old process cannot unlink a replacement socket.
 
-### Unactivated Codex Capsule library
+### Unactivated Codex Capsule, provider guardian, and teardown-reaper libraries
 
 `CodexCapsuleRunner` implements the same runtime-neutral server contract with an
-injected `CodexCapsuleClient` and `CodexRecoveryAuthority`. It implements probe,
-session start/resume, turn start/recovery, one provider-notification consumer,
-cancellation, and durable event streaming. Tests open it through the real private
-Unix wire using fake app-server clients. `agentrelay-node` and `agentrelay-capsule` do
-not construct it.
+owned `CodexProviderGeneration` supplied by
+`SupervisedCodexProviderGuardian.openGeneration()`. It implements probe, session
+start/resume, turn start/recovery, one provider-notification consumer, cancellation,
+and durable event streaming. Tests open it through the real private Unix wire using
+fake app-server clients. `agentrelay-node` and `agentrelay-capsule` do not construct
+this composition; `agentrelay-codex-guardian` is only its internal child-process entry
+point, including its private `--reaper` mode.
 
 `CodexCapsuleStore` schema v2 records a stable AgentRelay turn reference and its first
 `accepted` event during `prepareTurn`, before `turn/start` or a provider turn ID. The
@@ -452,14 +456,15 @@ exact validated `StartTurnInput`, derived prompt/schema, hashes, and determinist
 start coalesces on that logical turn; a changed duplicate conflicts. Schema-v1
 development state has no migration and is rejected.
 
-`CodexCapsuleRunner.open` requires the injected recovery authority to assert
-`provider_generation_start` quiescence before it calls the client factory. Therefore
-an unresolved start is inspected only from a fresh provider generation. Reconciliation
-reads the bound thread and accepts exactly one turn whose client ID and text match the
-persisted intent. A bounded zero match is durably terminalized as `failed`, or
-`cancelled` when cancellation was already requested; it never resends. Cancellation
-before provider binding survives reconciliation and produces one interrupt after the
-provider turn is found. If a later fresh generation inherits
+`CodexCapsuleRunner.open` obtains one generation from the guardian boundary. Therefore
+an unresolved start is inspected only after the guardian has excluded or reconciled
+its predecessor, armed the detached reaper, and started the new generation.
+Reconciliation reads the bound thread and
+accepts exactly one turn whose client ID and text match the persisted intent. A
+bounded zero match is durably terminalized as `failed`, or `cancelled` when
+cancellation was already requested; it never resends. Cancellation before provider
+binding survives reconciliation and produces one interrupt after the provider turn
+is found. If a later fresh generation inherits
 `interrupt_maybe_sent`, it does not repeat the interrupt. It reads the exact intent
 once: an exact terminal turn is normalized and persisted authoritatively, while an
 absent or still-`inProgress` turn becomes a redacted transient failure because the
@@ -475,10 +480,34 @@ otherwise allowlisted child environment. That client boundary alone does not pro
 filesystem isolation; the separate containment library below must wrap its process
 boundary on Linux.
 
-The recovery authority is only an interface supplied by tests. There is no production
-guardian that atomically owns quiescence proof and provider spawn, no durable provider
-generation owner or heartbeat, no descriptor/CLI wiring, and no real model-turn
-evidence.
+The guardian uses the stable `provider.lock` inode as kernel authority and writes
+bounded private lifecycle evidence to `provider-generation.json`. Its phases are
+`spawn_maybe_started`, `running`, `stop_requested`, and `quiescent`; the record also
+contains the Capsule and generation IDs, kernel boot-session ID, absolute deadline,
+last owner heartbeat, authoritative teardown cause, and one of `stopped`, `crashed`, or
+`unresponsive`. It contains no PID, path, prompt, provider turn ID, stderr, or secret.
+
+The Capsule retains the lock while a detached guardian inherits a validated duplicate
+and a private control channel. Before writing the start barrier or spawning the raw
+provider, the guardian starts a second detached process outside its process group. This
+teardown witness validates and retains the same lock descriptor; the raw provider never
+receives it. Both guardian and witness arm the absolute deadline and observe Capsule
+heartbeats before `ready`, while the guardian owns the provider process group.
+
+Provider exit, request timeout, local authority abort, deadline, heartbeat loss, or
+explicit shutdown latches one stop cause. The witness sends `SIGTERM` to the complete
+guardian/provider group, waits the bounded grace, escalates to group `SIGKILL`, and
+polls until the group is absent. Only then may it authoritatively write matching
+`quiescent` state and close its inherited lock. The Capsule independently proves group
+absence, waits for that durable matching state, and only then releases its own lock and
+settles termination. A same-boot non-quiescent predecessor fails closed, while a
+changed kernel boot-session ID safely reconciles state left by a host reboot.
+
+This still has no production descriptor/CLI wiring, verified Mission-authority input,
+installed service supervisor, or real model-turn evidence. Capsule-plus-guardian death
+converges if the witness survives. Loss of the witness or every local lifecycle owner,
+service restart/upgrade/rollback, cgroup containment, and descendants that escape the
+supervised process group remain #120.
 
 ### Unactivated Linux containment library
 
@@ -633,6 +662,7 @@ pnpm install --frozen-lockfile --package-import-method=copy
 pnpm --filter @agentrelay/protocol build
 AGENTRELAY_RUN_CONTAINMENT_TESTS=1 \
   pnpm --filter agentrelay-node exec vitest run \
+  src/codex-provider-guardian.process.test.ts \
   src/runtime-containment.process.test.ts
 ```
 
@@ -662,10 +692,12 @@ Do not extend `accepted_by_session` or the four-state handoff table into a distr
 runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
 deliveries have a separate model and public control plane. The local Node now proves
 both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
-after Node-process death. The provider-neutral server and injected Codex runner add an
-unactivated wire-level checkpoint; the Linux containment library adds an unactivated
-workspace boundary with exact retained recovery identity and a passing Linux process
-proof. The next gates are contract/verification and artifact carriage, guardian and
-local capability enforcement, descriptor/CLI composition with durable handle
-storage, structured execution evidence, Guarded Real Mission 0, and finally the
-two-machine proof. The mailbox API remains a compatibility and inspection surface.
+after Node-process death. The provider-neutral server, injected Codex runner, and
+provider guardian/reaper add an unactivated wire/process checkpoint; the Linux containment
+library adds an unactivated workspace boundary with exact retained recovery identity
+and a passing Linux process proof. The next gates are contract/verification and
+artifact carriage, verified local capability enforcement, descriptor/CLI composition
+with durable handle storage, structured execution evidence, Guarded Real Mission 0,
+and finally the two-machine proof. Installed service/cgroup containment,
+witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120. The
+mailbox API remains a compatibility and inspection surface.

@@ -126,12 +126,14 @@ boundaries:
 
 The guarded Codex client now requires an external process boundary for both its
 version probe and app-server spawn, but the fake Capsule descriptor and Node CLI do
-not construct this containment boundary. No Mission lifecycle durably stores the
-returned recovery handle, no real model turn uses it, no production guardian owns the
-provider lifecycle, and no macOS equivalent exists. The dedicated Linux process job
-now proves the implemented filesystem/network canaries, dirty recovery, and pinned
-Codex version/app-server handshake. That is evidence for the unactivated library
-boundary, not an activated Mission runtime.
+not construct this containment boundary. A provider guardian plus detached teardown
+reaper now own the unactivated provider lifecycle, as recorded in
+[`research 007`](007-codex-provider-guardian.md), but no Mission lifecycle supplies
+verified authority or durably stores the returned recovery handle, no real model turn
+uses either boundary, and no macOS containment equivalent exists. The dedicated Linux
+process job now proves the implemented filesystem/network canaries, dirty recovery,
+and pinned Codex version/app-server handshake through the guardian. That is evidence
+for the unactivated libraries, not an activated Mission runtime.
 
 ## Why this is the lowest-regret first step
 
@@ -300,7 +302,7 @@ This decision changes no public HTTP, JSON-RPC, MCP, or Mission schema by itself
 8. [x] Pass the dedicated Linux process job, including the policy canaries, dirty
    recovery, and pinned app-server handshake, as library-boundary evidence.
 9. [ ] Wire the boundary into a locally selected descriptor and Mission lifecycle,
-   durably store its exact recovery handle, and execute one guardian-owned real turn.
+   durably store its exact recovery handle, and execute one guarded real turn.
 
 The smallest falsifying experiment is the dedicated Linux process test. It launches a
 trivial descendant and a pinned app-server handshake through the boundary. Any

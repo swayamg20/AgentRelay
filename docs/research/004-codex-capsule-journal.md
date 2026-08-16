@@ -2,7 +2,9 @@
 
 - **Date:** 2026-08-03
 - **Status:** Client and journal implemented; the unactivated runner continuation is
-  recorded in [`005-codex-capsule-runner.md`](005-codex-capsule-runner.md).
+  recorded in [`005-codex-capsule-runner.md`](005-codex-capsule-runner.md), and its
+  guardian is recorded in
+  [`007-codex-provider-guardian.md`](007-codex-provider-guardian.md).
 - **Runtime:** Codex app-server `0.146.0`, read-only policy only.
 - **Scope:** Provider protocol validation, process ownership, durable local correlation,
   structured-output normalization, and crash-window design. No real Mission activation.
@@ -109,12 +111,14 @@ local cancellation intent exists.
 
 The stable local turn remains discoverable and cancellable before provider binding.
 Pre-binding cancellation survives reconciliation and produces one interrupt after an
-exact provider match. The quiescence authority is only an injected seam: there is no
-production guardian that owns proof and process spawn as one lifecycle. If a fresh
-generation inherits `interrupt_maybe_sent`, the runner does not send it again. It
-reads the exact intent once, persists an exact terminal provider outcome when present,
-or records a redacted transient failure and releases the active-turn slot. A rejection
-of the first interrupt RPC retires that provider generation before this recovery.
+exact provider match. At this journal checkpoint, quiescence authority was only an
+injected seam. Research 007 records the later guardian boundary: the guardian owns
+spawn and live supervision while its detached reaper owns final quiescence proof. If a
+fresh generation inherits `interrupt_maybe_sent`, the
+runner does not send it again. It reads the exact intent once, persists an exact
+terminal provider outcome when present, or records a redacted transient failure and
+releases the active-turn slot. A rejection of the first interrupt RPC retires that
+provider generation before this recovery.
 
 ## Evidence
 
@@ -146,12 +150,10 @@ installed `0.146.0` app-server handshake; it does not execute a Mission turn.
 
 ## Activation blockers
 
-Do not wire this checkpoint to a real delivery until all of these are true:
+The provider-generation guardian, detached teardown reaper, and their revocation,
+deadline, liveness, and teardown race proofs are now implemented in research 007. Do
+not wire this checkpoint to a real delivery until the remaining gates are true:
 
-- a production guardian owns provider-generation identity, quiescence proof, and
-  spawn, with heartbeat and owner-death evidence;
-- revocation, deadline, and process-death races have fault tests and closed recovery
-  rules against a real provider;
 - the Linux containment library is composed into the selected descriptor/CLI path,
   and the Mission lifecycle durably stores its exact recovery handle before provider
   start;
@@ -164,7 +166,7 @@ Do not wire this checkpoint to a real delivery until all of these are true:
 - Guarded Real Mission 0 passes before the two-machine Mission proof begins.
 
 The Linux containment process gate now passes. The remaining dependency order,
-through contract/artifact carriage, guardian/descriptor composition, and Guarded Real
-Mission 0, lives in the [roadmap](../roadmap.md). Research 005 records what the
-current injected runner proves; research 006 records containment and its lifecycle
-gates.
+through contract/artifact carriage, capability/descriptor composition, and Guarded
+Real Mission 0, lives in the [roadmap](../roadmap.md). Research 005 records the
+injected runner, research 006 records containment, and research 007 records the
+guardian and its remaining activation gates.

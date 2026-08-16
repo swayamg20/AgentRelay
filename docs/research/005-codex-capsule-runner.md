@@ -1,7 +1,9 @@
 # Provider-neutral Capsule server and injected Codex runner
 
 - **Date:** 2026-08-03
-- **Status:** Implemented and tested as an unactivated Node library checkpoint.
+- **Status:** Implemented and tested as an unactivated Node library checkpoint; the
+  later provider guardian is recorded in
+  [`007-codex-provider-guardian.md`](007-codex-provider-guardian.md).
 - **Runtime under test:** Codex app-server `0.146.0`, read-only policy.
 - **Scope:** Capsule runtime injection, schema-v2 logical turns, exact start recovery,
   child-process input isolation, and real Unix-wire tests with fake provider clients.
@@ -112,9 +114,9 @@ If the first interrupt RPC rejects after its durable barrier, the turn driver re
 `lifecycle.retire()`. The replacement generation then follows the one-read rule above;
 the failed generation does not continue serving or retry the interrupt.
 
-The recovery authority is an interface supplied by the test harness. There is no
-production guardian that atomically owns quiescence proof and process spawn, no
-durable provider-generation owner, and no owner-death proof.
+At this runner checkpoint, recovery authority was an interface supplied by the test
+harness; there was no production guardian, durable provider-generation owner, or
+owner-death proof. Research 007 records the later guardian implementation.
 
 ## Child environment and private home
 
@@ -163,20 +165,20 @@ still handshake-only and opt-in; it does not run a Mission or a model turn.
 
 ## Nonclaims and next gate
 
-This checkpoint does not provide:
+This historical checkpoint did not provide:
 
 - production descriptor, runtime-factory, Node, or Capsule CLI wiring;
 - a real Codex model turn or two-machine Mission;
-- a production provider guardian, atomic quiescence-proof-plus-spawn ownership,
-  heartbeat, or owner-death recovery;
+- provider-generation ownership; research 007 records the later guardian plus detached
+  reaper, heartbeat, deadline/revocation, owner-death, and teardown proof;
 - OS-enforced workspace/read-root or secret containment in this runner checkpoint;
 - deadline and revocation race evidence for a real provider process;
 - structured contract proposal, acknowledgement, readiness, or registered
   verification-command handling; or
 - the complete Node policy, evidence, and supervision boundary required by RFC 001.
 
-The Linux containment process proof now passes. Contract and artifact carriage,
-guardian and capability enforcement, descriptor composition with durable handle
-storage, structured execution evidence, and Guarded Real Mission 0 remain in the
-[roadmap's dependency order](../roadmap.md). Only after that public pipeline gate
-should the two-machine proof begin.
+The Linux containment and provider-guardian process proofs now pass. Contract and
+artifact carriage, verified capability enforcement, descriptor composition with
+durable handle storage, structured execution evidence, and Guarded Real Mission 0
+remain in the [roadmap's dependency order](../roadmap.md). Only after that public
+pipeline gate should the two-machine proof begin.
