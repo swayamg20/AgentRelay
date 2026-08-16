@@ -34,89 +34,105 @@ afterEach(async () => {
 });
 
 describe("SupervisedCodexProviderGuardian", () => {
-	it("owns one OS provider process lifecycle and records redacted quiescence", async () => {
-		const fixture = await fakeAppServer();
-		const generation = await openGeneration(fixture);
+	it(
+		"owns one OS provider process lifecycle and records redacted quiescence",
+		async () => {
+			const fixture = await fakeAppServer();
+			const generation = await openGeneration(fixture);
 
-		expect(await generation.client.startThread()).toMatchObject({
-			thread: { id: "thread-1" },
-		});
-		await generation.terminate("capsule_shutdown");
-		await expect(generation.termination).resolves.toEqual({ kind: "stopped" });
+			expect(await generation.client.startThread()).toMatchObject({
+				thread: { id: "thread-1" },
+			});
+			await generation.terminate("capsule_shutdown");
+			await expect(generation.termination).resolves.toEqual({ kind: "stopped" });
 
-		const state = await generationState(fixture);
-		expect(state).toMatchObject({
-			generation_id: generation.generationId,
-			phase: "quiescent",
-			stop_cause: "capsule_shutdown",
-			observation: "stopped",
-		});
-		const serialized = JSON.stringify(state);
-		expect(serialized).not.toContain(fixture.directory);
-		expect(serialized).not.toContain("pid");
-		expect(serialized).not.toContain("OPENAI_API_KEY");
-		const providerEnvironment = await waitForEnvironment(fixture.environmentPath);
-		expect(providerEnvironment).not.toHaveProperty("AGENTRELAY_NODE_TOKEN");
-		expect(providerEnvironment).not.toHaveProperty("OPENAI_API_KEY");
-		expect(providerEnvironment).not.toHaveProperty("CODEX_API_KEY");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			const state = await generationState(fixture);
+			expect(state).toMatchObject({
+				generation_id: generation.generationId,
+				phase: "quiescent",
+				stop_cause: "capsule_shutdown",
+				observation: "stopped",
+			});
+			const serialized = JSON.stringify(state);
+			expect(serialized).not.toContain(fixture.directory);
+			expect(serialized).not.toContain("pid");
+			expect(serialized).not.toContain("OPENAI_API_KEY");
+			const providerEnvironment = await waitForEnvironment(fixture.environmentPath);
+			expect(providerEnvironment).not.toHaveProperty("AGENTRELAY_NODE_TOKEN");
+			expect(providerEnvironment).not.toHaveProperty("OPENAI_API_KEY");
+			expect(providerEnvironment).not.toHaveProperty("CODEX_API_KEY");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("allows only one concurrent generation owner across guardian instances", async () => {
-		const fixture = await fakeAppServer();
-		const contenders = await Promise.allSettled([
-			createGuardian(fixture).openGeneration(),
-			createGuardian(fixture).openGeneration(),
-		]);
-		const admitted = contenders.filter(
-			(result): result is PromiseFulfilledResult<CodexProviderGeneration> =>
-				result.status === "fulfilled",
-		);
-		const rejected = contenders.filter(
-			(result): result is PromiseRejectedResult => result.status === "rejected",
-		);
-		expect(admitted).toHaveLength(1);
-		expect(rejected).toHaveLength(1);
-		expect(rejected[0]?.reason).toMatchObject({
-			name: "CodexProviderGuardianError",
-			reason: "ownership",
-			message: "Codex provider generation ownership is unavailable",
-		});
-		const first = admitted[0]!.value;
-		generations.push(first);
+	it(
+		"allows only one concurrent generation owner across guardian instances",
+		async () => {
+			const fixture = await fakeAppServer();
+			const contenders = await Promise.allSettled([
+				createGuardian(fixture).openGeneration(),
+				createGuardian(fixture).openGeneration(),
+			]);
+			const admitted = contenders.filter(
+				(result): result is PromiseFulfilledResult<CodexProviderGeneration> =>
+					result.status === "fulfilled",
+			);
+			const rejected = contenders.filter(
+				(result): result is PromiseRejectedResult => result.status === "rejected",
+			);
+			expect(admitted).toHaveLength(1);
+			expect(rejected).toHaveLength(1);
+			expect(rejected[0]?.reason).toMatchObject({
+				name: "CodexProviderGuardianError",
+				reason: "ownership",
+				message: "Codex provider generation ownership is unavailable",
+			});
+			const first = admitted[0]!.value;
+			generations.push(first);
 
-		await first.terminate("capsule_shutdown");
-		const replacement = await openGeneration(fixture);
-		expect(replacement.generationId).not.toBe(first.generationId);
-		await replacement.terminate("capsule_shutdown");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			await first.terminate("capsule_shutdown");
+			const replacement = await openGeneration(fixture);
+			expect(replacement.generationId).not.toBe(first.generationId);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("rejects a second open while the same guardian is still opening", async () => {
-		const fixture = await fakeAppServer();
-		const guardian = createGuardian(fixture);
-		const firstOpening = guardian.openGeneration();
+	it(
+		"rejects a second open while the same guardian is still opening",
+		async () => {
+			const fixture = await fakeAppServer();
+			const guardian = createGuardian(fixture);
+			const firstOpening = guardian.openGeneration();
 
-		await expect(guardian.openGeneration()).rejects.toMatchObject({
-			reason: "ownership",
-		});
-		const generation = await firstOpening;
-		generations.push(generation);
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			await expect(guardian.openGeneration()).rejects.toMatchObject({
+				reason: "ownership",
+			});
+			const generation = await firstOpening;
+			generations.push(generation);
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("kills provider descendants when authority is revoked", async () => {
-		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
-		const authority = new AbortController();
-		const generation = await openGeneration(fixture, { authoritySignal: authority.signal });
-		const descendantPid = await waitForPid(fixture.childPidPath);
+	it(
+		"kills provider descendants when authority is revoked",
+		async () => {
+			const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
+			const authority = new AbortController();
+			const generation = await openGeneration(fixture, { authoritySignal: authority.signal });
+			const descendantPid = await waitForPid(fixture.childPidPath);
 
-		authority.abort();
-		await generation.termination;
-		await waitForProcessExit(descendantPid, 5_000);
-		expect(await generation.termination).toEqual({ kind: "stopped" });
-		expect(await generationState(fixture)).toMatchObject({
-			stop_cause: "authority_revoked",
-			phase: "quiescent",
-		});
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			authority.abort();
+			await generation.termination;
+			await waitForProcessExit(descendantPid, 5_000);
+			expect(await generation.termination).toEqual({ kind: "stopped" });
+			expect(await generationState(fixture)).toMatchObject({
+				stop_cause: "authority_revoked",
+				phase: "quiescent",
+			});
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
 	it("does not admit a provider when authority is revoked during preparation", async () => {
 		const fixture = await fakeAppServer();
@@ -143,90 +159,110 @@ describe("SupervisedCodexProviderGuardian", () => {
 		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
-	it("writes no start barrier when the teardown witness cannot arm", async () => {
-		const fixture = await fakeAppServer();
+	it(
+		"writes no start barrier when the teardown witness cannot arm",
+		async () => {
+			const fixture = await fakeAppServer();
 
-		await expect(
-			createGuardian(fixture, {
-				reaper: {
-					executable: process.execPath,
-					args: ["--eval", "process.exit(1)"],
-				},
-			}).openGeneration(),
-		).rejects.toMatchObject({
-			name: "CodexProviderGuardianError",
-			reason: "startup",
-			message: "Codex provider generation failed to start",
-		});
-		await expect(
-			readFile(`${fixture.directory}/${CODEX_PROVIDER_GENERATION_FILE}`, "utf8"),
-		).rejects.toMatchObject({ code: "ENOENT" });
-		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+			await expect(
+				createGuardian(fixture, {
+					reaper: {
+						executable: process.execPath,
+						args: ["--eval", "process.exit(1)"],
+					},
+				}).openGeneration(),
+			).rejects.toMatchObject({
+				name: "CodexProviderGuardianError",
+				reason: "startup",
+				message: "Codex provider generation failed to start",
+			});
+			await expect(
+				readFile(`${fixture.directory}/${CODEX_PROVIDER_GENERATION_FILE}`, "utf8"),
+			).rejects.toMatchObject({ code: "ENOENT" });
+			await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
-		const replacement = await openGeneration(fixture);
-		await replacement.terminate("capsule_shutdown");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			const replacement = await openGeneration(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("enforces its absolute deadline against an unresponsive provider tree", async () => {
-		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
-		const generation = await openGeneration(fixture, { deadlineAtMs: Date.now() + 1_000 });
-		const descendantPid = await waitForPid(fixture.childPidPath);
+	it(
+		"enforces its absolute deadline against an unresponsive provider tree",
+		async () => {
+			const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
+			const generation = await openGeneration(fixture, { deadlineAtMs: Date.now() + 1_000 });
+			const descendantPid = await waitForPid(fixture.childPidPath);
 
-		await expect(generation.termination).resolves.toEqual({ kind: "unresponsive" });
-		await waitForProcessExit(descendantPid, 5_000);
-		expect(await generationState(fixture)).toMatchObject({
-			phase: "quiescent",
-			stop_cause: "deadline_exceeded",
-			observation: "unresponsive",
-		});
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			await expect(generation.termination).resolves.toEqual({ kind: "unresponsive" });
+			await waitForProcessExit(descendantPid, 5_000);
+			expect(await generationState(fixture)).toMatchObject({
+				phase: "quiescent",
+				stop_cause: "deadline_exceeded",
+				observation: "unresponsive",
+			});
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("classifies an unresponsive provider request and tears down its authority", async () => {
-		const fixture = await fakeAppServer({ ignoreRead: true });
-		const generation = await openGeneration(fixture, { requestTimeoutMs: 100 });
+	it(
+		"classifies an unresponsive provider request and tears down its authority",
+		async () => {
+			const fixture = await fakeAppServer({ ignoreRead: true });
+			const generation = await openGeneration(fixture, { requestTimeoutMs: 100 });
 
-		await expect(generation.client.readThread("thread-1")).rejects.toThrow(
-			"Timed out waiting for Codex app-server method thread/read",
-		);
-		await expect(generation.termination).resolves.toEqual({ kind: "unresponsive" });
-		expect(await generationState(fixture)).toMatchObject({
-			phase: "quiescent",
-			stop_cause: "provider_unresponsive",
-			observation: "unresponsive",
-		});
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			await expect(generation.client.readThread("thread-1")).rejects.toThrow(
+				"Timed out waiting for Codex app-server method thread/read",
+			);
+			await expect(generation.termination).resolves.toEqual({ kind: "unresponsive" });
+			expect(await generationState(fixture)).toMatchObject({
+				phase: "quiescent",
+				stop_cause: "provider_unresponsive",
+				observation: "unresponsive",
+			});
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("classifies an unexpected provider exit and leaves no reusable authority", async () => {
-		const fixture = await fakeAppServer({ exitAfterRead: true });
-		const generation = await openGeneration(fixture);
+	it(
+		"classifies an unexpected provider exit and leaves no reusable authority",
+		async () => {
+			const fixture = await fakeAppServer({ exitAfterRead: true });
+			const generation = await openGeneration(fixture);
 
-		await expect(generation.client.readThread("thread-1")).resolves.toMatchObject({
-			id: "thread-1",
-		});
-		await expect(generation.termination).resolves.toEqual({ kind: "crashed" });
-		expect(await generationState(fixture)).toMatchObject({
-			phase: "quiescent",
-			stop_cause: "provider_failure",
-			observation: "crashed",
-		});
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			await expect(generation.client.readThread("thread-1")).resolves.toMatchObject({
+				id: "thread-1",
+			});
+			await expect(generation.termination).resolves.toEqual({ kind: "crashed" });
+			expect(await generationState(fixture)).toMatchObject({
+				phase: "quiescent",
+				stop_cause: "provider_failure",
+				observation: "crashed",
+			});
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("redacts startup failure details and durably closes the generation", async () => {
-		const fixture = await fakeAppServer({ version: "0.0.0-secret-path" });
+	it(
+		"redacts startup failure details and durably closes the generation",
+		async () => {
+			const fixture = await fakeAppServer({ version: "0.0.0-secret-path" });
 
-		await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
-			name: "CodexProviderGuardianError",
-			reason: "startup",
-			message: "Codex provider generation failed to start",
-		});
-		const state = await generationState(fixture);
-		expect(state).toMatchObject({
-			phase: "quiescent",
-			stop_cause: "startup_failure",
-			observation: "crashed",
-		});
-		expect(JSON.stringify(state)).not.toContain(fixture.directory);
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
+				name: "CodexProviderGuardianError",
+				reason: "startup",
+				message: "Codex provider generation failed to start",
+			});
+			const state = await generationState(fixture);
+			expect(state).toMatchObject({
+				phase: "quiescent",
+				stop_cause: "startup_failure",
+				observation: "crashed",
+			});
+			expect(JSON.stringify(state)).not.toContain(fixture.directory);
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 });
 
 type GuardianOverrides = Partial<

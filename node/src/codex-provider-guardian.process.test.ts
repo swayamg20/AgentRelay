@@ -40,103 +40,119 @@ afterEach(async () => {
 });
 
 describe.runIf(process.platform !== "win32")("Codex provider guardian owner death", () => {
-	it("leaves no durable start barrier when its owner dies before guardian spawn", async () => {
-		const fixture = await fakeAppServer();
-		const prepareStartedPath = join(fixture.directory, "prepare-started");
-		const owner = startOwner(fixture, { prepareDelayMs: 5_000, prepareStartedPath });
-		await waitForFile(prepareStartedPath);
+	it(
+		"leaves no durable start barrier when its owner dies before guardian spawn",
+		async () => {
+			const fixture = await fakeAppServer();
+			const prepareStartedPath = join(fixture.directory, "prepare-started");
+			const owner = startOwner(fixture, { prepareDelayMs: 5_000, prepareStartedPath });
+			await waitForFile(prepareStartedPath);
 
-		owner.kill("SIGKILL");
-		await childClose(owner);
-		await expect(
-			readFile(join(fixture.directory, CODEX_PROVIDER_GENERATION_FILE), "utf8"),
-		).rejects.toMatchObject({ code: "ENOENT" });
-		const replacement = await openGeneration(fixture);
-		await replacement.terminate("capsule_shutdown");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			owner.kill("SIGKILL");
+			await childClose(owner);
+			await expect(
+				readFile(join(fixture.directory, CODEX_PROVIDER_GENERATION_FILE), "utf8"),
+			).rejects.toMatchObject({ code: "ENOENT" });
+			const replacement = await openGeneration(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
-	it("records owner loss when death races the version probe", async () => {
-		const fixture = await fakeAppServer({ versionDelayMs: 1_000 });
-		const owner = startOwner(fixture);
-		await expect
-			.poll(() => generationState(fixture), { timeout: 5_000 })
-			.toMatchObject({ phase: "spawn_maybe_started" });
+	it(
+		"records owner loss when death races the version probe",
+		async () => {
+			const fixture = await fakeAppServer({ versionDelayMs: 1_000 });
+			const owner = startOwner(fixture);
+			await expect
+				.poll(() => generationState(fixture), { timeout: 5_000 })
+				.toMatchObject({ phase: "spawn_maybe_started" });
 
-		owner.kill("SIGKILL");
-		await childClose(owner);
-		await expect
-			.poll(() => generationState(fixture), { timeout: 5_000 })
-			.toMatchObject({
-				phase: "quiescent",
-				stop_cause: "owner_lost",
-				observation: "stopped",
+			owner.kill("SIGKILL");
+			await childClose(owner);
+			await expect
+				.poll(() => generationState(fixture), { timeout: 5_000 })
+				.toMatchObject({
+					phase: "quiescent",
+					stop_cause: "owner_lost",
+					observation: "stopped",
+				});
+			const replacement = await openGeneration(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"kills the provider tree when its Capsule owner is SIGKILLed",
+		async () => {
+			const fixture = await fakeAppServer({
+				spawnDescendant: true,
+				ignoreSigterm: true,
+				continuousOutput: true,
+				gateContinuousOutput: true,
 			});
-		const replacement = await openGeneration(fixture);
-		await replacement.terminate("capsule_shutdown");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			const owner = startOwner(fixture);
+			await waitForOwner(fixture);
+			const descendantPid = await waitForPid(fixture.childPidPath);
 
-	it("kills the provider tree when its Capsule owner is SIGKILLed", async () => {
-		const fixture = await fakeAppServer({
-			spawnDescendant: true,
-			ignoreSigterm: true,
-			continuousOutput: true,
-			gateContinuousOutput: true,
-		});
-		const owner = startOwner(fixture);
-		await waitForOwner(fixture);
-		const descendantPid = await waitForPid(fixture.childPidPath);
+			owner.kill("SIGKILL");
+			await childClose(owner);
+			await writeFile(fixture.continuousOutputGatePath, "go", { mode: 0o600 });
+			await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
+				reason: "ownership",
+			});
+			await waitForProcessExit(descendantPid, 5_000);
+			await expect
+				.poll(() => generationState(fixture), { timeout: 5_000 })
+				.toMatchObject({
+					phase: "quiescent",
+					stop_cause: "owner_lost",
+					observation: "stopped",
+				});
 
-		owner.kill("SIGKILL");
-		await childClose(owner);
-		await writeFile(fixture.continuousOutputGatePath, "go", { mode: 0o600 });
-		await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
-			reason: "ownership",
-		});
-		await waitForProcessExit(descendantPid, 5_000);
-		await expect
-			.poll(() => generationState(fixture), { timeout: 5_000 })
-			.toMatchObject({
-				phase: "quiescent",
-				stop_cause: "owner_lost",
-				observation: "stopped",
+			const replacement = await openGeneration(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"revokes provider authority when the Capsule heartbeat stalls",
+		async () => {
+			const fixture = await fakeAppServer({ spawnDescendant: true });
+			const owner = startOwner(fixture);
+			await waitForOwner(fixture);
+			const descendantPid = await waitForPid(fixture.childPidPath);
+
+			owner.kill("SIGSTOP");
+			await waitForProcessExit(descendantPid);
+			await expect
+				.poll(() => generationState(fixture))
+				.toMatchObject({
+					phase: "stop_requested",
+					stop_cause: "heartbeat_timeout",
+					observation: null,
+				});
+			await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
+				reason: "ownership",
 			});
 
-		const replacement = await openGeneration(fixture);
-		await replacement.terminate("capsule_shutdown");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
-
-	it("revokes provider authority when the Capsule heartbeat stalls", async () => {
-		const fixture = await fakeAppServer({ spawnDescendant: true });
-		const owner = startOwner(fixture);
-		await waitForOwner(fixture);
-		const descendantPid = await waitForPid(fixture.childPidPath);
-
-		owner.kill("SIGSTOP");
-		await waitForProcessExit(descendantPid);
-		await expect
-			.poll(() => generationState(fixture))
-			.toMatchObject({
-				phase: "stop_requested",
-				stop_cause: "heartbeat_timeout",
-				observation: null,
-			});
-		await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
-			reason: "ownership",
-		});
-
-		owner.kill("SIGCONT");
-		await expect
-			.poll(() => generationState(fixture), { timeout: 15_000 })
-			.toMatchObject({
-				phase: "quiescent",
-				stop_cause: "heartbeat_timeout",
-				observation: "unresponsive",
-			});
-		owner.kill("SIGKILL");
-		await childClose(owner);
-		const replacement = await openGeneration(fixture);
-		await replacement.terminate("capsule_shutdown");
-	}, GUARDIAN_TEST_TIMEOUT_MS);
+			owner.kill("SIGCONT");
+			await expect
+				.poll(() => generationState(fixture), { timeout: 15_000 })
+				.toMatchObject({
+					phase: "quiescent",
+					stop_cause: "heartbeat_timeout",
+					observation: "unresponsive",
+				});
+			owner.kill("SIGKILL");
+			await childClose(owner);
+			const replacement = await openGeneration(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 
 	it.runIf(process.platform === "linux")(
 		"kills remaining descendants when the guardian itself is SIGKILLed",
