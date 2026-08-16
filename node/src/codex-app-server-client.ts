@@ -12,7 +12,11 @@ import {
 	parseCodexReference,
 	parseStartCodexTurnInput,
 } from "./codex-app-server-policy.js";
-import { type CodexAppServerCommand, CodexAppServerError } from "./codex-app-server-process.js";
+import {
+	type CodexAppServerCommand,
+	CodexAppServerError,
+	type CodexAppServerProcessFactory,
+} from "./codex-app-server-process.js";
 import {
 	CODEX_APP_SERVER_CLIENT_NAME,
 	type CodexInitializeResponse,
@@ -42,6 +46,7 @@ export interface CodexAppServerClientOptions {
 	readonly env: NodeJS.ProcessEnv;
 	readonly boundary: CodexProcessBoundary;
 	readonly requestTimeoutMs?: number;
+	readonly processFactory?: CodexAppServerProcessFactory;
 }
 
 export interface CodexAppServerClientEvent {
@@ -81,6 +86,7 @@ export class CodexAppServerClient {
 			env,
 			boundary: options.boundary,
 			requestTimeoutMs: options.requestTimeoutMs,
+			processFactory: options.processFactory,
 			handleServerRequest: denyCodexServerRequest,
 		});
 		const client = new CodexAppServerClient(transport, codexHome);

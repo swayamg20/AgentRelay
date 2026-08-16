@@ -158,12 +158,12 @@ jobs:
 
       - run: pnpm --filter @agentrelay/protocol build
 
-      - name: Prove the Linux Mission containment boundary
+      - name: Prove Linux containment and guardian owner death
         env:
           AGENTRELAY_RUN_CONTAINMENT_TESTS: '1'
         run: >-
           pnpm --filter agentrelay-node exec vitest run
-          src/runtime-containment.process.test.ts
+          src/runtime-containment.process.test.ts src/codex-provider-guardian.process.test.ts
 
   relay-image:
     needs: lint-typecheck

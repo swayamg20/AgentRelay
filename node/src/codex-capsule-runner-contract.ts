@@ -23,7 +23,6 @@ export interface CodexCapsuleClient {
 	startReadOnlyTurn(input: StartCodexTurnInput): Promise<CodexTurn>;
 	interruptTurn(threadId: string, turnId: string): Promise<void>;
 	events(): AsyncIterable<CodexAppServerClientEvent>;
-	close(): Promise<void>;
 }
 
 export type CodexProviderTerminationReason =

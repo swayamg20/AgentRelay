@@ -4,6 +4,7 @@ import {
 	type CodexAppServerCommand,
 	CodexAppServerError,
 	type CodexAppServerProcess,
+	type CodexAppServerProcessFactory,
 	readCodexLines,
 	startCodexAppServerProcess,
 	stopCodexAppServerProcess,
@@ -24,6 +25,7 @@ export interface CodexAppServerTransportOptions {
 	readonly boundary: CodexProcessBoundary;
 	readonly requestTimeoutMs?: number;
 	readonly handleServerRequest: (request: CodexServerRequest) => CodexServerRequestDecision;
+	readonly processFactory?: CodexAppServerProcessFactory;
 }
 
 export interface CodexServerRequest {
@@ -116,7 +118,7 @@ export class CodexAppServerTransport {
 			.min(100)
 			.max(120_000)
 			.parse(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
-		const processRef = await startCodexAppServerProcess(options);
+		const processRef = await (options.processFactory ?? startCodexAppServerProcess)(options);
 		return new CodexAppServerTransport(processRef, requestTimeoutMs, options.handleServerRequest);
 	}
 
