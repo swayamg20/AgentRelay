@@ -20,6 +20,7 @@ export interface FakeAppServerOptions {
 	readonly unsafePolicy?: boolean;
 	readonly requestApproval?: boolean;
 	readonly spawnDescendant?: boolean;
+	readonly ignoreSigterm?: boolean;
 }
 
 export interface FakeAppServerFixture {
@@ -59,6 +60,7 @@ export async function createFakeAppServer(
 			unsafePolicy: options.unsafePolicy ?? false,
 			requestApproval: options.requestApproval ?? false,
 			spawnDescendant: options.spawnDescendant ?? false,
+			ignoreSigterm: options.ignoreSigterm ?? false,
 			logPath,
 			childPidPath,
 			argvPath,
@@ -135,8 +137,8 @@ export async function waitForEnvironment(path: string): Promise<Record<string, s
 	throw new Error("Timed out waiting for fake app-server environment");
 }
 
-export async function waitForProcessExit(pid: number): Promise<void> {
-	const deadline = Date.now() + 2_000;
+export async function waitForProcessExit(pid: number, timeoutMs = 2_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		if (!isProcessAlive(pid)) return;
 		await delay(10);
@@ -182,6 +184,7 @@ const exitAfterRead = config.exitAfterRead;
 const closeInputAfterRead = config.closeInputAfterRead;
 const unsafePolicy = config.unsafePolicy;
 const requestApproval = config.requestApproval;
+if (config.ignoreSigterm) process.on("SIGTERM", () => undefined);
 if (config.spawnDescendant) {
   const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",

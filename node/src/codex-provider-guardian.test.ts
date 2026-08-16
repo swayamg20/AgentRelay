@@ -65,12 +65,12 @@ describe("SupervisedCodexProviderGuardian", () => {
 	});
 
 	it("kills provider descendants when authority is revoked", async () => {
-		const fixture = await fakeAppServer({ spawnDescendant: true });
+		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
 		const generation = await createGuardian(fixture).openGeneration();
 		const descendantPid = await waitForPid(fixture.childPidPath);
 
 		await generation.terminate("authority_revoked");
-		await waitForProcessExit(descendantPid);
+		await waitForProcessExit(descendantPid, 5_000);
 		expect(await generation.termination).toEqual({ kind: "stopped" });
 		expect(await generationState(fixture)).toMatchObject({
 			stop_cause: "authority_revoked",

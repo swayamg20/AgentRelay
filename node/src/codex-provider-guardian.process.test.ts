@@ -35,14 +35,17 @@ afterEach(async () => {
 
 describe.runIf(process.platform !== "win32")("Codex provider guardian owner death", () => {
 	it("kills the provider tree when its Capsule owner is SIGKILLed", async () => {
-		const fixture = await fakeAppServer({ spawnDescendant: true });
+		const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
 		const owner = startOwner(fixture);
 		await waitForOwner(fixture);
 		const descendantPid = await waitForPid(fixture.childPidPath);
 
 		owner.kill("SIGKILL");
 		await childClose(owner);
-		await waitForProcessExit(descendantPid);
+		await expect(createGuardian(fixture).openGeneration()).rejects.toMatchObject({
+			reason: "ownership",
+		});
+		await waitForProcessExit(descendantPid, 5_000);
 		await expect
 			.poll(() => generationState(fixture))
 			.toMatchObject({
