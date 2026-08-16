@@ -46,7 +46,11 @@ export function isSupervisorProcessGroupAlive(pid: number): boolean {
 		process.kill(-pid, 0);
 		return true;
 	} catch (error) {
-		if (errorCode(error) === "ESRCH") return false;
+		const code = errorCode(error);
+		if (code === "ESRCH") return false;
+		// macOS can report EPERM while a process group contains only zombies.
+		// That is still a present group, not proof of quiescence.
+		if (code === "EPERM") return true;
 		throw error;
 	}
 }
@@ -78,7 +82,10 @@ export function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
 	try {
 		process.kill(-pid, signal);
 	} catch (error) {
-		if (errorCode(error) !== "ESRCH") throw error;
+		const code = errorCode(error);
+		// EPERM is not absence. The caller must continue polling and fail closed
+		// unless a later liveness probe proves the process group disappeared.
+		if (code !== "ESRCH" && code !== "EPERM") throw error;
 	}
 }
 

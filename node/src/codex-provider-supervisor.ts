@@ -149,6 +149,7 @@ export class CodexProviderSupervisor {
 				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
 			});
 			await this.#store.markRunning(command.generation_id);
+			this.assertAuthorityActive();
 			await this.send({
 				version: 1,
 				kind: "ready",
@@ -264,9 +265,6 @@ export class CodexProviderSupervisor {
 		const reaper = this.#reaper;
 		if (generationId === null || reaper === null) process.exit(1);
 		const reaping = reaper.stop(cause);
-		if (generationId !== null && this.#store !== null) {
-			await this.#store.requestStop(generationId, cause).catch(() => undefined);
-		}
 		await this.send(terminalSupervisorEvent(generationId, cause, observation)).catch(
 			() => undefined,
 		);

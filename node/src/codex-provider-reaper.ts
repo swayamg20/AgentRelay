@@ -106,7 +106,7 @@ export class CodexProviderReaper {
 		const store = this.#store;
 		if (init === null || store === null) throw new Error("Codex provider reaper is not armed");
 
-		await store.requestStop(init.generation_id, cause).catch(() => undefined);
+		const stopRequested = store.requestStop(init.generation_id, cause).catch(() => undefined);
 		signalProcessGroup(init.target_process_group_id, "SIGTERM");
 		await delay(STOP_GRACE_MS);
 		if (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
@@ -115,6 +115,7 @@ export class CodexProviderReaper {
 		while (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
 			await delay(GROUP_POLL_MS);
 		}
+		await stopRequested;
 		await store.finalizeQuiescentAsCurrent(init.generation_id, cause);
 		closeSync(INHERITED_PROVIDER_LOCK_FD);
 		if (process.connected) process.disconnect();
