@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	LocalReferenceMonitor,
-	type RuntimeAuthorityDeniedError,
+	RuntimeAuthorityDeniedError,
 	runtimeAuthorityGrantSchema,
 	runtimeAuthorityRequest,
 } from "./runtime-authority.js";
@@ -224,6 +224,45 @@ describe("LocalReferenceMonitor lifetime", () => {
 		expect(() => monitor.renew(renewal)).not.toThrow();
 		expect(() => monitor.renew(renewal)).not.toThrow();
 		expect(monitor.assert(startRequest())).toEqual({ decision: "allow", code: "allowed" });
+	});
+
+	it("atomically installs an original grant with its latest verified lease", () => {
+		const monitor = new LocalReferenceMonitor(authorityGrant(), noEvidence, {
+			now: () => new Date("2026-08-17T00:02:00.000Z"),
+			currentLease: {
+				grant_id: AUTHORITY_IDS.grant,
+				lease_id: AUTHORITY_IDS.lease,
+				fencing_token: "9007199254740993",
+				lease_expires_at: "2026-08-17T00:03:00.000Z",
+			},
+		});
+
+		expect(monitor.assert(startRequest())).toEqual({ decision: "allow", code: "allowed" });
+	});
+
+	it("rejects a rollback or scope change during atomic lease installation", () => {
+		for (const currentLease of [
+			{
+				grant_id: AUTHORITY_IDS.grant,
+				lease_id: AUTHORITY_IDS.lease,
+				fencing_token: "9007199254740993",
+				lease_expires_at: "2026-08-16T23:59:00.000Z",
+			},
+			{
+				grant_id: AUTHORITY_IDS.grant,
+				lease_id: AUTHORITY_IDS.lease,
+				fencing_token: "9007199254740994",
+				lease_expires_at: "2026-08-17T00:03:00.000Z",
+			},
+		]) {
+			expect(
+				() =>
+					new LocalReferenceMonitor(authorityGrant(), noEvidence, {
+						now: () => new Date(AUTHORITY_NOW),
+						currentLease,
+					}),
+			).toThrowError(RuntimeAuthorityDeniedError);
+		}
 	});
 
 	it("aborts continuously when the local authority timer reaches expiry", async () => {

@@ -7,7 +7,10 @@ import type {
 
 /** Private Node-to-runtime authority control plane; never exposed to a model or peer. */
 export interface RuntimeAuthorityPort {
-	installAuthority(grant: RuntimeAuthorityGrant): Promise<void>;
+	installAuthority(
+		grant: RuntimeAuthorityGrant,
+		currentLease: RuntimeAuthorityRenewal,
+	): Promise<void>;
 	/** Revalidate one exact, scoped action and record its decision before the caller acts. */
 	assertAuthority(request: RuntimeAuthorityRequest): Promise<void>;
 	renewAuthority(missionId: string, renewal: RuntimeAuthorityRenewal): Promise<void>;

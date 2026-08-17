@@ -42,12 +42,22 @@ export class LocalReferenceMonitor {
 	constructor(
 		grantValue: RuntimeAuthorityGrant,
 		evidenceSink: RuntimeAuthorityEvidenceSink,
-		options: { readonly now?: () => Date } = {},
+		options: {
+			readonly now?: () => Date;
+			readonly currentLease?: RuntimeAuthorityRenewal;
+		} = {},
 	) {
 		this.#grant = parseRuntimeAuthorityGrant(grantValue);
 		this.#leaseExpiresAt = this.#grant.lease_expires_at;
 		this.#evidenceSink = evidenceSink;
 		this.#now = options.now ?? (() => new Date());
+		if (options.currentLease !== undefined) {
+			this.#leaseExpiresAt = renewedLeaseExpiry(
+				this.#grant,
+				this.#leaseExpiresAt,
+				options.currentLease,
+			);
+		}
 		this.armExpiry();
 	}
 
@@ -65,19 +75,9 @@ export class LocalReferenceMonitor {
 
 	renew(value: RuntimeAuthorityRenewal): void {
 		this.assertLive();
-		const parsed = runtimeAuthorityRenewalSchema.safeParse(value);
-		if (!parsed.success) this.deny("invalid_request");
-		const renewal = parsed.data;
-		if (renewal.grant_id !== this.#grant.grant_id) this.deny("wrong_grant");
-		if (renewal.lease_id !== this.#grant.lease_id) this.deny("wrong_lease");
-		if (renewal.fencing_token !== this.#grant.fencing_token) this.deny("stale_fence");
-		const renewedExpiry = Date.parse(renewal.lease_expires_at);
-		const currentExpiry = Date.parse(this.#leaseExpiresAt);
-		if (renewedExpiry < currentExpiry) {
-			this.deny("expired");
-		}
-		if (renewedExpiry === currentExpiry) return;
-		this.#leaseExpiresAt = renewal.lease_expires_at;
+		const nextExpiry = renewedLeaseExpiry(this.#grant, this.#leaseExpiresAt, value);
+		if (Date.parse(nextExpiry) === Date.parse(this.#leaseExpiresAt)) return;
+		this.#leaseExpiresAt = nextExpiry;
 		this.armExpiry();
 	}
 
@@ -249,4 +249,23 @@ export class LocalReferenceMonitor {
 		this.#expiryTimer = setTimeout(() => this.armExpiry(), Math.min(remaining, 2_147_483_647));
 		this.#expiryTimer.unref?.();
 	}
+}
+
+function renewedLeaseExpiry(
+	grant: RuntimeAuthorityGrant,
+	currentExpiry: string,
+	value: RuntimeAuthorityRenewal,
+): string {
+	const parsed = runtimeAuthorityRenewalSchema.safeParse(value);
+	if (!parsed.success) throw new RuntimeAuthorityDeniedError("invalid_request");
+	const renewal = parsed.data;
+	if (renewal.grant_id !== grant.grant_id) throw new RuntimeAuthorityDeniedError("wrong_grant");
+	if (renewal.lease_id !== grant.lease_id) throw new RuntimeAuthorityDeniedError("wrong_lease");
+	if (renewal.fencing_token !== grant.fencing_token) {
+		throw new RuntimeAuthorityDeniedError("stale_fence");
+	}
+	if (Date.parse(renewal.lease_expires_at) < Date.parse(currentExpiry)) {
+		throw new RuntimeAuthorityDeniedError("expired");
+	}
+	return renewal.lease_expires_at;
 }
