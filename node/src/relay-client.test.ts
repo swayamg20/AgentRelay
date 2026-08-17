@@ -106,4 +106,65 @@ describe("Node Relay client", () => {
 		expect(error).toBeInstanceOf(RelayHttpError);
 		expect(error).toMatchObject({ status: 401, code: "unauthenticated", requestId: "request-1" });
 	});
+
+	it("aborts completion without retrying an active request", async () => {
+		let calls = 0;
+		const controller = new AbortController();
+		const client = createNodeRelayClient({
+			relayUrl: "https://relay.example.com",
+			credential: "device-secret",
+			fetch: (async (_url, init) => {
+				calls += 1;
+				return new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+						once: true,
+					});
+				});
+			}) as typeof undiciFetch,
+		});
+		const request = client.complete(
+			"40000000-0000-4000-8000-000000000003",
+			{} as never,
+			controller.signal,
+		);
+
+		controller.abort(new Error("authority expired"));
+
+		await expect(request).rejects.toThrow("authority expired");
+		expect(calls).toBe(1);
+	});
+
+	it("aborts completion during retry backoff", async () => {
+		let calls = 0;
+		let backoffStarted: (() => void) | undefined;
+		const backoff = new Promise<void>((resolve) => {
+			backoffStarted = resolve;
+		});
+		const controller = new AbortController();
+		const client = createNodeRelayClient({
+			relayUrl: "https://relay.example.com",
+			credential: "device-secret",
+			fetch: (async () => {
+				calls += 1;
+				return new Response("down", { status: 503 });
+			}) as typeof undiciFetch,
+			sleep: async (_milliseconds, signal) => {
+				backoffStarted?.();
+				await new Promise<void>((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+				});
+			},
+		});
+		const request = client.complete(
+			"40000000-0000-4000-8000-000000000003",
+			{} as never,
+			controller.signal,
+		);
+
+		await backoff;
+		controller.abort(new Error("lease revoked"));
+
+		await expect(request).rejects.toThrow("lease revoked");
+		expect(calls).toBe(1);
+	});
 });

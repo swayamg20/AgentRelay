@@ -66,7 +66,7 @@ export interface NodeRelayClientOptions {
 	readonly maxAttempts?: number;
 	readonly backoffBaseMs?: number;
 	readonly timeoutMs?: number;
-	readonly sleep?: (milliseconds: number) => Promise<void>;
+	readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export class RelayHttpError extends Error {
@@ -104,7 +104,11 @@ export interface NodeRelayClient {
 	claim(deliveryId: string, input: DeliveryClaimInput): Promise<DeliveryClaimResult>;
 	start(deliveryId: string, input: DeliveryStartInput): Promise<DeliveryStartResult>;
 	renew(deliveryId: string, input: DeliveryRenewInput): Promise<DeliveryRenewResult>;
-	complete(deliveryId: string, input: DeliveryCompleteInput): Promise<DeliveryCompleteResult>;
+	complete(
+		deliveryId: string,
+		input: DeliveryCompleteInput,
+		signal?: AbortSignal,
+	): Promise<DeliveryCompleteResult>;
 	release(deliveryId: string, input: DeliveryReleaseInput): Promise<DeliveryReleaseResult>;
 }
 
@@ -114,7 +118,9 @@ export function createNodeRelayClient(options: NodeRelayClientOptions): NodeRela
 	const maxAttempts = parsed.maxAttempts ?? 3;
 	const backoffBaseMs = parsed.backoffBaseMs ?? 100;
 	const timeoutMs = parsed.timeoutMs ?? 15_000;
-	const sleep = options.sleep ?? ((milliseconds: number) => delay(milliseconds));
+	const sleep =
+		options.sleep ??
+		((milliseconds: number, signal?: AbortSignal) => delay(milliseconds, undefined, { signal }));
 	const baseUrl = `${parsed.relayUrl}/node/v1`;
 
 	async function request<TSchema extends z.ZodTypeAny>(
@@ -122,11 +128,15 @@ export function createNodeRelayClient(options: NodeRelayClientOptions): NodeRela
 		path: string,
 		schema: TSchema,
 		body?: unknown,
+		signal?: AbortSignal,
 	): Promise<z.output<TSchema>> {
 		let lastError: unknown;
 		for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+			signal?.throwIfAborted();
 			const controller = new AbortController();
 			const timeout = setTimeout(() => controller.abort(), timeoutMs);
+			const requestSignal =
+				signal === undefined ? controller.signal : AbortSignal.any([signal, controller.signal]);
 			try {
 				const response = await fetchImpl(`${baseUrl}${path}`, {
 					method,
@@ -136,7 +146,7 @@ export function createNodeRelayClient(options: NodeRelayClientOptions): NodeRela
 						...(body === undefined ? {} : { "content-type": "application/json" }),
 					},
 					body: body === undefined ? undefined : JSON.stringify(body),
-					signal: controller.signal,
+					signal: requestSignal,
 				});
 				if (response.ok) {
 					return schema.parse(await response.json());
@@ -145,13 +155,14 @@ export function createNodeRelayClient(options: NodeRelayClientOptions): NodeRela
 				if (response.status < 500 || attempt === maxAttempts) throw error;
 				lastError = error;
 			} catch (error) {
+				if (signal?.aborted) throw signal.reason;
 				if (error instanceof RelayHttpError && error.status < 500) throw error;
 				lastError = error;
 				if (attempt === maxAttempts) throw error;
 			} finally {
 				clearTimeout(timeout);
 			}
-			await sleep(backoffBaseMs * 4 ** (attempt - 1));
+			await sleep(backoffBaseMs * 4 ** (attempt - 1), signal);
 		}
 		throw lastError instanceof Error ? lastError : new Error("Relay request exhausted retries");
 	}
@@ -215,12 +226,13 @@ export function createNodeRelayClient(options: NodeRelayClientOptions): NodeRela
 				deliveryRenewResultSchema,
 				input,
 			),
-		complete: (deliveryId, input) =>
+		complete: (deliveryId, input, signal) =>
 			request(
 				"POST",
 				`/deliveries/${uuidSchema.parse(deliveryId)}/complete`,
 				deliveryCompleteResultSchema,
 				input,
+				signal,
 			),
 		release: (deliveryId, input) =>
 			request(
