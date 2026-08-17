@@ -42,6 +42,10 @@ export class NodeRuntimeAuthoritySession {
 		const session = new NodeRuntimeAuthoritySession(options);
 		try {
 			await options.port.installAuthority(options.grant, options.currentLease);
+			if (session.signal.aborted) {
+				await session.revokeRemote("expired");
+				throw new RuntimeAuthorityDeniedError("expired");
+			}
 			return session;
 		} catch (error) {
 			session.#monitor.revoke(denialReason(error));

@@ -102,6 +102,33 @@ describe("NodeRuntimeAuthoritySession", () => {
 		expect(port.assertions).toHaveLength(0);
 		expect(effect).not.toHaveBeenCalled();
 	});
+
+	it("retires a remote install that finishes after local authority expires", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(AUTHORITY_NOW);
+		try {
+			let finishInstall!: () => void;
+			const port = new FakeAuthorityPort();
+			port.installResult = new Promise<void>((resolve) => {
+				finishInstall = resolve;
+			});
+			const grant = authorityGrant({ lease_expires_at: "2026-08-17T00:00:00.100Z" });
+			const installing = installSession(port, grant, {
+				grant_id: grant.grant_id,
+				lease_id: grant.lease_id,
+				fencing_token: grant.fencing_token,
+				lease_expires_at: grant.lease_expires_at,
+			});
+
+			await vi.advanceTimersByTimeAsync(100);
+			finishInstall();
+
+			await expect(installing).rejects.toMatchObject({ code: "expired" });
+			expect(port.revocations).toEqual(["expired"]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
 
 async function installSession(
@@ -132,13 +159,17 @@ function currentLease(grant: RuntimeAuthorityGrant): RuntimeAuthorityRenewal {
 class FakeAuthorityPort implements RuntimeAuthorityPort {
 	readonly assertions: RuntimeAuthorityRequest[] = [];
 	readonly renewals: RuntimeAuthorityRenewal[] = [];
+	readonly revocations: RuntimeAuthorityDenyCode[] = [];
 	assertError: Error | null = null;
+	installResult: Promise<void> = Promise.resolve();
 	revokeResult: Promise<void> = Promise.resolve();
 
 	async installAuthority(
 		_grant: RuntimeAuthorityGrant,
 		_currentLease: RuntimeAuthorityRenewal,
-	): Promise<void> {}
+	): Promise<void> {
+		return this.installResult;
+	}
 
 	async assertAuthority(request: RuntimeAuthorityRequest): Promise<void> {
 		this.assertions.push(request);
@@ -154,6 +185,7 @@ class FakeAuthorityPort implements RuntimeAuthorityPort {
 		_grantId: string,
 		_reason: RuntimeAuthorityDenyCode,
 	): Promise<void> {
+		this.revocations.push(_reason);
 		return this.revokeResult;
 	}
 }

@@ -11,7 +11,10 @@ export interface RuntimeAuthorityPort {
 		grant: RuntimeAuthorityGrant,
 		currentLease: RuntimeAuthorityRenewal,
 	): Promise<void>;
-	/** Revalidate one exact, scoped action and record its decision before the caller acts. */
+	/**
+	 * Remote preflight for one exact action. Callers must also keep the effect
+	 * inside a local reference-monitor operation; this check alone is not a fence.
+	 */
 	assertAuthority(request: RuntimeAuthorityRequest): Promise<void>;
 	renewAuthority(missionId: string, renewal: RuntimeAuthorityRenewal): Promise<void>;
 	revokeAuthority(
