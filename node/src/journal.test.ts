@@ -5,6 +5,7 @@ import type {
 } from "@agentrelay/protocol";
 import { describe, expect, it } from "vitest";
 import { type JournalStorage, NodeJournal, type NodeJournalState } from "./journal.js";
+import { authorityGrant } from "./runtime-authority.test-support.js";
 
 const IDS = {
 	mission: "10000000-0000-4000-8000-000000000001",
@@ -17,7 +18,7 @@ const IDS = {
 } as const;
 
 describe("NodeJournal", () => {
-	it("migrates an empty v1 journal to schema 2 with a null Mission assignment cursor", async () => {
+	it("migrates an empty v1 journal to schema 3 with a null Mission assignment cursor", async () => {
 		const storage = new MemoryStorage();
 		storage.state = {
 			schema_version: 1,
@@ -29,11 +30,27 @@ describe("NodeJournal", () => {
 
 		const journal = await NodeJournal.open(storage);
 
-		expect(journal.snapshot().schema_version).toBe(2);
+		expect(journal.snapshot().schema_version).toBe(3);
 		expect(journal.snapshot().mission_assignment_cursor).toBeNull();
 		expect(storage.saved).toHaveLength(1);
-		expect(storage.saved[0]?.schema_version).toBe(2);
+		expect(storage.saved[0]?.schema_version).toBe(3);
 		expect(storage.saved[0]?.mission_assignment_cursor).toBeNull();
+	});
+
+	it("migrates populated schema 2 deliveries with no invented runtime authority", async () => {
+		const storage = new MemoryStorage();
+		const current = await NodeJournal.open(storage);
+		await current.ingestCursorPage([storedItem()], "7");
+		const legacy = structuredClone(storage.state) as Record<string, unknown>;
+		legacy.schema_version = 2;
+		const deliveries = legacy.deliveries as Record<string, Record<string, unknown>>;
+		delete deliveries[IDS.delivery]?.runtime_authority;
+		storage.state = legacy;
+
+		const migrated = await NodeJournal.open(storage);
+
+		expect(migrated.snapshot().schema_version).toBe(3);
+		expect(migrated.snapshot().deliveries[IDS.delivery]?.runtime_authority).toBeNull();
 	});
 
 	it("fails closed instead of inventing start inputs for v1 delivery state", async () => {
@@ -117,6 +134,29 @@ describe("NodeJournal", () => {
 		const reopened = await NodeJournal.open(storage);
 
 		expect(reopened.snapshot().deliveries[IDS.delivery]?.start_turn_input).toEqual(input);
+	});
+
+	it("reopens one exact runtime authority checkpoint", async () => {
+		const storage = new MemoryStorage();
+		const journal = await NodeJournal.open(storage);
+		await journal.ingestCursorPage([storedItem()], "7");
+		const grant = authorityGrant({
+			node_id: IDS.node,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			execution_attempt: 1,
+		});
+
+		await journal.checkpointRuntimeAuthority(IDS.delivery, grant);
+		const reopened = await NodeJournal.open(storage);
+
+		expect(reopened.snapshot().deliveries[IDS.delivery]?.runtime_authority).toEqual(grant);
+		await expect(
+			reopened.checkpointRuntimeAuthority(IDS.delivery, {
+				...grant,
+				policy_grant_sha256: "c".repeat(64),
+			}),
+		).rejects.toThrow("changed within execution attempt");
 	});
 
 	it("persists terminal Mission acceptance quarantine and forbids resubmission", async () => {
