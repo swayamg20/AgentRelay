@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { artifactTypeSchema } from "@agentrelay/protocol";
+import { artifactTypeSchema, deliveryLeaseAuthoritySchema } from "@agentrelay/protocol";
 import { z } from "zod";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-const fencingTokenSchema = z.string().regex(/^(?:0|[1-9][0-9]*)$/);
+const activeFencingTokenSchema = deliveryLeaseAuthoritySchema.shape.fencing_token;
 const positiveLimitSchema = z.number().int().safe().positive();
 
 export const RUNTIME_AUTHORITY_PRODUCT_POLICY_VERSION = 1;
@@ -83,7 +83,7 @@ const runtimeAuthorityScopeSchema = z
 		delivery_id: z.string().uuid(),
 		execution_attempt: z.number().int().safe().positive(),
 		lease_id: z.string().uuid(),
-		fencing_token: fencingTokenSchema,
+		fencing_token: activeFencingTokenSchema,
 		policy_profile: z.string().min(1).max(64),
 		policy_grant_sha256: sha256Schema,
 	})
@@ -130,7 +130,7 @@ export const runtimeAuthorityRenewalSchema = z
 	.object({
 		grant_id: runtimeAuthorityScopeSchema.shape.grant_id,
 		lease_id: runtimeAuthorityScopeSchema.shape.lease_id,
-		fencing_token: fencingTokenSchema,
+		fencing_token: activeFencingTokenSchema,
 		lease_expires_at: z.string().datetime({ offset: true }),
 	})
 	.strict();
@@ -185,7 +185,7 @@ export const runtimeAuthorityEvidenceSchema = z
 		mission_id: z.string().uuid(),
 		delivery_id: z.string().uuid(),
 		execution_attempt: z.number().int().safe().positive(),
-		fencing_token: fencingTokenSchema,
+		fencing_token: activeFencingTokenSchema,
 		action: z.union([runtimeActionSchema, z.literal("unknown")]),
 		resource: z.union([runtimeResourceSchema, z.literal("unknown")]),
 		decision: z.enum(["allow", "deny"]),

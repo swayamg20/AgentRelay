@@ -77,6 +77,13 @@ describe("runtime authority grant", () => {
 			}),
 		).toThrow(/do not match/);
 	});
+
+	it.each(["0", "1".repeat(65)])("rejects an invalid active fence %s", (fencingToken) => {
+		const grant = authorityGrant();
+		expect(
+			runtimeAuthorityGrantSchema.safeParse({ ...grant, fencing_token: fencingToken }).success,
+		).toBe(false);
+	});
 });
 
 describe("LocalReferenceMonitor scope", () => {
