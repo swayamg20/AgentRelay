@@ -219,22 +219,29 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 			if (existing?.status === "active" && !exactReplay) {
 				throw authorityDenied("Active runtime authority must be revoked before replacement");
 			}
-			if (existing?.status === "active") {
+			if (existing?.status === "installing" && !exactReplay) {
+				throw authorityDenied("Runtime authority install outcome is unresolved");
+			}
+			if (existing?.status === "active" || existing?.status === "installing") {
 				assertLeaseDoesNotRegress(existing.currentLease, currentLease);
 			}
 			const descriptor = await this.ensureDescriptor(sessionFromGrant(grant));
 			await this.ensureCapsuleReady(descriptor);
+			const installing = this.#authorities.beginInstall(
+				{
+					acceptedInstallSha256: incomingSha256,
+					grant: exactReplay && existing !== undefined ? existing.grant : grant,
+					currentLease,
+				},
+				existing,
+			);
 			capsuleEmptyResultSchema.parse(
 				await this.requestUnary(descriptor, "install_authority", {
 					grant,
 					current_lease: currentLease,
 				}),
 			);
-			this.#authorities.activate({
-				acceptedInstallSha256: incomingSha256,
-				grant: exactReplay && existing !== undefined ? existing.grant : grant,
-				currentLease,
-			});
+			this.#authorities.markActive(installing);
 		});
 	}
 
@@ -281,20 +288,27 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	async revokeAuthority(
-		missionIdValue: string,
-		grantIdValue: string,
+		grantValue: RuntimeAuthorityGrant,
 		reasonValue: RuntimeAuthorityDenyCode,
 	): Promise<void> {
-		const missionId = uuidSchema.parse(missionIdValue);
-		const grantId = uuidSchema.parse(grantIdValue);
+		const grant = parseRuntimeAuthorityGrant(grantValue);
+		const missionId = grant.mission_id;
+		const grantId = grant.grant_id;
 		const reason = runtimeAuthorityDenyCodeSchema.parse(reasonValue);
 		await this.#authorities.runTransition(missionId, async () => {
-			const authority = this.authorityForRevocation(missionId);
-			if (grantId !== authority.grant.grant_id) {
+			const authority = this.#authorities.get(missionId);
+			if (authority === undefined) {
+				if (this.#authorities.isRevoked(missionId, grantId)) return;
+				await this.revokeUncachedAuthority(grant, reason);
+				this.#authorities.recordRevokedGrant(missionId, grantId);
+				return;
+			}
+			if (runtimeAuthorityGrantSha256(grant) !== authority.acceptedInstallSha256) {
 				throw authorityDenied("Runtime authority grant does not match this Mission");
 			}
 			if (authority.status === "revoked") return;
-			const revoking = this.#authorities.markRevoking(authority);
+			const revoking =
+				authority.status === "revoking" ? authority : this.#authorities.markRevoking(authority);
 			const descriptor = await this.requireDescriptor(missionId, sessionFromGrant(authority.grant));
 			try {
 				capsuleEmptyResultSchema.parse(
@@ -305,7 +319,11 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 					}),
 				);
 			} catch (error) {
-				if (!isTransportError(error)) throw error;
+				if (isAuthorityNotInstalled(error)) {
+					await this.shutdownUninstalledCapsule(descriptor);
+				} else if (!isTransportError(error)) {
+					throw error;
+				}
 			}
 			await this.waitForCapsuleRetirement(descriptor);
 			this.#authorities.markRevoked(revoking);
@@ -427,19 +445,14 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		if (authority === undefined) {
 			throw authorityDenied("Runtime authority is not installed for this Mission");
 		}
+		if (authority.status === "installing") {
+			throw authorityDenied("Runtime authority install outcome is unresolved");
+		}
 		if (authority.status === "revoking") {
 			throw authorityDenied("Runtime authority revocation is still in progress");
 		}
 		if (authority.status === "revoked") {
 			throw authorityDenied("Runtime authority grant has been revoked");
-		}
-		return authority;
-	}
-
-	private authorityForRevocation(missionId: string): CachedCapsuleAuthority {
-		const authority = this.#authorities.get(missionId);
-		if (authority === undefined) {
-			throw authorityDenied("Runtime authority is not installed for this Mission");
 		}
 		return authority;
 	}
@@ -779,6 +792,46 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		);
 	}
 
+	private async revokeUncachedAuthority(
+		grant: RuntimeAuthorityGrant,
+		reason: RuntimeAuthorityDenyCode,
+	): Promise<void> {
+		let descriptor: CapsuleLaunchDescriptor;
+		try {
+			descriptor = await this.requireDescriptor(grant.mission_id, sessionFromGrant(grant));
+		} catch (error) {
+			// A durable Node checkpoint can precede descriptor creation. Since the
+			// launcher is never called before launch.json is persisted, exact absence
+			// proves that this adapter could not have started a Capsule generation.
+			if (isMissingCapsuleDescriptor(error)) return;
+			throw error;
+		}
+		try {
+			capsuleEmptyResultSchema.parse(
+				await this.requestUnary(descriptor, "revoke_authority", {
+					mission_id: grant.mission_id,
+					grant_id: grant.grant_id,
+					reason,
+				}),
+			);
+		} catch (error) {
+			if (isAuthorityNotInstalled(error)) {
+				await this.shutdownUninstalledCapsule(descriptor);
+			} else if (!isTransportError(error)) {
+				throw error;
+			}
+		}
+		await this.waitForCapsuleRetirement(descriptor);
+	}
+
+	private async shutdownUninstalledCapsule(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+		try {
+			capsuleEmptyResultSchema.parse(await this.requestUnary(descriptor, "shutdown", {}));
+		} catch (error) {
+			if (!isTransportError(error)) throw error;
+		}
+	}
+
 	private async waitForCapsuleRetirement(descriptor: CapsuleLaunchDescriptor): Promise<void> {
 		const deadline = Date.now() + this.#startupTimeoutMs;
 		let waitMs = 10;
@@ -787,7 +840,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 				await this.probeCapsule(descriptor);
 			} catch (error) {
 				if (isUnavailableTransport(error)) return;
-				if (!isClosingTransport(error)) throw error;
+				if (!isTransportError(error)) throw error;
 			}
 			await delay(waitMs);
 			waitMs = Math.min(waitMs * 2, 100);
@@ -1182,11 +1235,6 @@ function isConnectionRefusedTransport(error: unknown): boolean {
 	return isTransportError(error) && errorCode(error.cause) === "ECONNREFUSED";
 }
 
-function isClosingTransport(error: unknown): boolean {
-	if (!isTransportError(error)) return false;
-	return ["EPIPE", "ECONNRESET", "ENOTCONN"].includes(errorCode(error.cause) ?? "");
-}
-
 function isTransportError(error: unknown): error is CapsuleRpcError {
 	return error instanceof CapsuleRpcError && error.code === "transport";
 }
@@ -1203,4 +1251,12 @@ function errorCode(error: unknown): string | undefined {
 	return typeof error === "object" && error !== null && "code" in error
 		? String(error.code)
 		: undefined;
+}
+
+function isMissingCapsuleDescriptor(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		error.message.startsWith("Cannot open capsule file:") &&
+		errorCode(error.cause) === "ENOENT"
+	);
 }

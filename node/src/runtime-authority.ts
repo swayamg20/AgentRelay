@@ -52,7 +52,7 @@ export class LocalReferenceMonitor {
 		this.#evidenceSink = evidenceSink;
 		this.#now = options.now ?? (() => new Date());
 		if (options.currentLease !== undefined) {
-			this.#leaseExpiresAt = renewedLeaseExpiry(
+			this.#leaseExpiresAt = advanceRuntimeAuthorityLease(
 				this.#grant,
 				this.#leaseExpiresAt,
 				options.currentLease,
@@ -75,7 +75,7 @@ export class LocalReferenceMonitor {
 
 	renew(value: RuntimeAuthorityRenewal): void {
 		this.assertLive();
-		const nextExpiry = renewedLeaseExpiry(this.#grant, this.#leaseExpiresAt, value);
+		const nextExpiry = advanceRuntimeAuthorityLease(this.#grant, this.#leaseExpiresAt, value);
 		if (Date.parse(nextExpiry) === Date.parse(this.#leaseExpiresAt)) return;
 		this.#leaseExpiresAt = nextExpiry;
 		this.armExpiry();
@@ -251,7 +251,7 @@ export class LocalReferenceMonitor {
 	}
 }
 
-function renewedLeaseExpiry(
+export function advanceRuntimeAuthorityLease(
 	grant: RuntimeAuthorityGrant,
 	currentExpiry: string,
 	value: RuntimeAuthorityRenewal,

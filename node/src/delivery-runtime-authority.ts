@@ -5,7 +5,7 @@ import type {
 	DeliveryLease,
 	NodeMissionAssignment,
 } from "@agentrelay/protocol";
-import type { JournalDelivery, NodeJournal } from "./journal.js";
+import { JournalCompareAndSwapError, type JournalDelivery, type NodeJournal } from "./journal.js";
 import type { ResolvedPolicyProfile } from "./policy.js";
 import { createRuntimeAuthorityGrant } from "./runtime-authority-factory.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
@@ -28,6 +28,13 @@ export interface DeliveryRuntimeAuthorityInput {
 	readonly policy: ResolvedPolicyProfile;
 	readonly adapter: AdapterInfo;
 	readonly entry: JournalDelivery;
+}
+
+export class RuntimeAuthorityTransitionPendingError extends Error {
+	constructor(message: string, options: ErrorOptions = {}) {
+		super(message, options);
+		this.name = "RuntimeAuthorityTransitionPendingError";
+	}
 }
 
 /** Reconstructs and installs the exact private authority for one delivery attempt. */
@@ -56,55 +63,148 @@ export class DeliveryRuntimeAuthority {
 		return this.#port !== undefined;
 	}
 
-	async install(input: DeliveryRuntimeAuthorityInput): Promise<NodeRuntimeAuthoritySession | null> {
-		if (this.#port === undefined) return null;
-		const grant = await this.resolveGrant(input);
+	/** Retires the exact durable grant before its journal proof may be discarded. */
+	async retireJournaled(deliveryId: string): Promise<void> {
+		for (let attempt = 0; attempt < 4; attempt += 1) {
+			const current = requireJournaledDelivery(this.#journal, deliveryId);
+			const active = current.runtime_authority;
+			const predecessor = current.runtime_authority_predecessor;
+			const grant = predecessor ?? active;
+			if (grant === null) return;
+			const port = this.#port;
+			if (port === undefined) {
+				throw new RuntimeAuthorityTransitionPendingError(
+					"Journaled runtime authority has no local retirement port",
+				);
+			}
+			try {
+				await port.revokeAuthority(grant, "revoked");
+			} catch (error) {
+				throw new RuntimeAuthorityTransitionPendingError(
+					`Capsule retirement is not yet proven: ${safeError(error)}`,
+					{ cause: error },
+				);
+			}
+			try {
+				await this.#journal.updateDelivery(deliveryId, (entry) => {
+					if (
+						!isDeepStrictEqual(entry.runtime_authority, active) ||
+						!isDeepStrictEqual(entry.runtime_authority_predecessor, predecessor)
+					) {
+						throw new JournalCompareAndSwapError(
+							`Runtime authority changed before retirement checkpoint: ${deliveryId}`,
+						);
+					}
+					entry.runtime_authority = null;
+					entry.runtime_authority_predecessor = null;
+					entry.updated_at = this.#now().toISOString();
+				});
+				return;
+			} catch (error) {
+				if (error instanceof JournalCompareAndSwapError) continue;
+				throw error;
+			}
+		}
+		throw new RuntimeAuthorityTransitionPendingError(
+			"Runtime authority changed repeatedly during retirement",
+		);
+	}
+
+	async install(
+		input: DeliveryRuntimeAuthorityInput,
+		beforeReady?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>,
+	): Promise<NodeRuntimeAuthoritySession | null> {
+		const port = this.#port;
+		if (port === undefined) return null;
+		const grant = await this.resolveGrant(input, port);
 		return NodeRuntimeAuthoritySession.install({
-			port: this.#port,
+			port,
 			grant,
 			currentLease: currentRenewal(
 				grant,
 				requireJournaledDelivery(this.#journal, grant.delivery_id),
 			),
+			readCurrentLease: () =>
+				currentRenewal(grant, requireJournaledDelivery(this.#journal, grant.delivery_id)),
+			...(beforeReady === undefined ? {} : { beforeReady }),
 			evidenceSink: this.#evidenceSink,
 			now: this.#now,
 		});
 	}
 
-	private async resolveGrant(input: DeliveryRuntimeAuthorityInput): Promise<RuntimeAuthorityGrant> {
-		const persisted = input.entry.runtime_authority;
-		const lease = requireActiveLease(input.entry.item.delivery);
-		if (
-			persisted !== null &&
-			(persisted.lease_id !== lease.lease_id || persisted.fencing_token !== lease.fencing_token)
-		) {
-			throw new Error("Persisted runtime authority does not match the current Relay fence");
-		}
-		const compiled = createRuntimeAuthorityGrant({
-			assignment: input.assignment,
-			delivery: authoritySeedDelivery(input.entry, persisted),
-			executionAttempt: input.entry.execution_attempt,
-			nodeId: this.#nodeId,
-			workspaceAlias: input.workspaceAlias,
-			workspace: input.workspace,
-			policy: input.policy,
-			adapter: input.adapter,
-			now: this.#now(),
-			currentLeaseExpiresAt: lease.expires_at,
-			...(persisted === null ? {} : { retainedHardExpiresAt: persisted.hard_expires_at }),
-		});
-		if (persisted !== null) {
-			if (!isDeepStrictEqual(persisted, compiled)) {
-				throw new Error("Persisted runtime authority no longer matches trusted local inputs");
+	private async resolveGrant(
+		input: DeliveryRuntimeAuthorityInput,
+		port: RuntimeAuthorityPort,
+	): Promise<RuntimeAuthorityGrant> {
+		const deliveryId = input.entry.item.delivery.delivery_id;
+		for (let attempt = 0; attempt < 4; attempt += 1) {
+			let current = requireJournaledDelivery(this.#journal, deliveryId);
+			let persisted = current.runtime_authority;
+			let predecessor = current.runtime_authority_predecessor;
+			let lease = requireActiveLease(current.item.delivery);
+			if (
+				persisted !== null &&
+				(persisted.lease_id !== lease.lease_id || persisted.fencing_token !== lease.fencing_token)
+			) {
+				throw new Error("Persisted runtime authority does not match the current Relay fence");
 			}
-			return persisted;
+			if (predecessor !== null) {
+				try {
+					await port.revokeAuthority(predecessor, "revoked");
+				} catch (error) {
+					throw new RuntimeAuthorityTransitionPendingError(
+						`Predecessor Capsule retirement is not yet proven: ${safeError(error)}`,
+						{ cause: error },
+					);
+				}
+				const expectedPredecessorId = predecessor.grant_id;
+				current = requireJournaledDelivery(this.#journal, deliveryId);
+				persisted = current.runtime_authority;
+				predecessor = current.runtime_authority_predecessor;
+				if (persisted !== null || predecessor?.grant_id !== expectedPredecessorId) continue;
+				lease = requireActiveLease(current.item.delivery);
+			}
+			const retained = persisted ?? predecessor;
+			const compiled = createRuntimeAuthorityGrant({
+				assignment: input.assignment,
+				delivery: authoritySeedDelivery(current, persisted),
+				executionAttempt: current.execution_attempt,
+				nodeId: this.#nodeId,
+				workspaceAlias: input.workspaceAlias,
+				workspace: input.workspace,
+				policy: input.policy,
+				adapter: input.adapter,
+				now: this.#now(),
+				currentLeaseExpiresAt: lease.expires_at,
+				...(retained === null ? {} : { retainedHardExpiresAt: retained.hard_expires_at }),
+			});
+			if (persisted !== null) {
+				if (!isDeepStrictEqual(persisted, compiled)) {
+					throw new Error("Persisted runtime authority no longer matches trusted local inputs");
+				}
+				return persisted;
+			}
+			try {
+				return await this.#journal.checkpointRuntimeAuthority(deliveryId, compiled, this.#now(), {
+					lease_id: lease.lease_id,
+					fencing_token: lease.fencing_token,
+					lease_expires_at: lease.expires_at,
+					active_grant_id: null,
+					predecessor_grant_id: predecessor?.grant_id ?? null,
+				});
+			} catch (error) {
+				if (error instanceof JournalCompareAndSwapError) continue;
+				throw error;
+			}
 		}
-		return this.#journal.checkpointRuntimeAuthority(
-			input.entry.item.delivery.delivery_id,
-			compiled,
-			this.#now(),
+		throw new RuntimeAuthorityTransitionPendingError(
+			"Runtime authority inputs did not stabilize before checkpoint",
 		);
 	}
+}
+
+function safeError(error: unknown): string {
+	return (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
 }
 
 function authoritySeedDelivery(

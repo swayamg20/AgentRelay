@@ -4,7 +4,7 @@ export interface CachedCapsuleAuthority {
 	readonly acceptedInstallSha256: string;
 	readonly grant: RuntimeAuthorityGrant;
 	readonly currentLease: RuntimeAuthorityRenewal;
-	readonly status: "active" | "revoking" | "revoked";
+	readonly status: "installing" | "active" | "revoking" | "revoked";
 }
 
 /** Serializes and retains the authority lifecycle for each local Mission Capsule. */
@@ -21,10 +21,21 @@ export class CapsuleAuthorityRegistry {
 		return this.#revokedGrantIds.get(missionId)?.has(grantId) ?? false;
 	}
 
-	activate(value: Omit<CachedCapsuleAuthority, "status">): CachedCapsuleAuthority {
-		const authority = { ...value, status: "active" as const };
+	beginInstall(
+		value: Omit<CachedCapsuleAuthority, "status">,
+		current?: CachedCapsuleAuthority,
+	): CachedCapsuleAuthority {
+		const authority = { ...value, status: "installing" as const };
+		if (current !== undefined) return this.replace(current, authority);
+		if (this.#authorities.has(value.grant.mission_id)) {
+			throw new Error("Capsule authority appeared outside its Mission transition");
+		}
 		this.#authorities.set(value.grant.mission_id, authority);
 		return authority;
+	}
+
+	markActive(authority: CachedCapsuleAuthority): CachedCapsuleAuthority {
+		return this.replace(authority, { ...authority, status: "active" });
 	}
 
 	renew(
@@ -40,13 +51,17 @@ export class CapsuleAuthorityRegistry {
 
 	markRevoked(authority: CachedCapsuleAuthority): CachedCapsuleAuthority {
 		const revoked = this.replace(authority, { ...authority, status: "revoked" });
-		let grantIds = this.#revokedGrantIds.get(authority.grant.mission_id);
+		this.recordRevokedGrant(authority.grant.mission_id, authority.grant.grant_id);
+		return revoked;
+	}
+
+	recordRevokedGrant(missionId: string, grantId: string): void {
+		let grantIds = this.#revokedGrantIds.get(missionId);
 		if (grantIds === undefined) {
 			grantIds = new Set<string>();
-			this.#revokedGrantIds.set(authority.grant.mission_id, grantIds);
+			this.#revokedGrantIds.set(missionId, grantIds);
 		}
-		grantIds.add(authority.grant.grant_id);
-		return revoked;
+		grantIds.add(grantId);
 	}
 
 	async runTransition<T>(missionId: string, operation: () => T | Promise<T>): Promise<T> {

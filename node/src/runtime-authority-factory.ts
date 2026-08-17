@@ -69,14 +69,12 @@ export function createRuntimeAuthorityGrant(
 		Date.parse(manifest.expires_at),
 		Date.parse(manifest.created_at) + manifest.max_wall_time_seconds * 1_000,
 	);
-	const retainedHardExpiresAt =
-		input.retainedHardExpiresAt === undefined
-			? Number.POSITIVE_INFINITY
-			: Date.parse(input.retainedHardExpiresAt);
 	const turnExpiresAt =
-		Date.parse(input.delivery.updated_at) +
-		Math.min(product.turn_ms, local.turn_ms, mission.turn_ms, runtime.turn_ms);
-	const hardExpiresAt = Math.min(missionExpiresAt, retainedHardExpiresAt, turnExpiresAt);
+		input.retainedHardExpiresAt === undefined
+			? input.now.getTime() +
+				Math.min(product.turn_ms, local.turn_ms, mission.turn_ms, runtime.turn_ms)
+			: Date.parse(input.retainedHardExpiresAt);
+	const hardExpiresAt = Math.min(missionExpiresAt, turnExpiresAt);
 	if (!Number.isFinite(hardExpiresAt) || hardExpiresAt <= input.now.getTime()) {
 		throw new Error("Runtime authority has expired before activation");
 	}

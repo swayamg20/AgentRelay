@@ -17,9 +17,6 @@ export interface RuntimeAuthorityPort {
 	 */
 	assertAuthority(request: RuntimeAuthorityRequest): Promise<void>;
 	renewAuthority(missionId: string, renewal: RuntimeAuthorityRenewal): Promise<void>;
-	revokeAuthority(
-		missionId: string,
-		grantId: string,
-		reason: RuntimeAuthorityDenyCode,
-	): Promise<void>;
+	/** Returns only after the exact grant's Capsule generation is retired or unreachable. */
+	revokeAuthority(grant: RuntimeAuthorityGrant, reason: RuntimeAuthorityDenyCode): Promise<void>;
 }

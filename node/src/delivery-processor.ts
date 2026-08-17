@@ -21,11 +21,15 @@ import {
 	deriveHostMissionInputs,
 } from "@agentrelay/protocol";
 import type { NodeConfig } from "./config.js";
-import { DeliveryRuntimeAuthority } from "./delivery-runtime-authority.js";
+import {
+	DeliveryRuntimeAuthority,
+	RuntimeAuthorityTransitionPendingError,
+} from "./delivery-runtime-authority.js";
 import {
 	type JournalDelivery,
 	type NodeJournal,
 	type OperationIntent,
+	stageRuntimeAuthoritySuccessor,
 	startTurnInputDigest,
 	terminalResultFromEvents,
 } from "./journal.js";
@@ -103,21 +107,38 @@ export class DeliveryProcessor {
 	async processNext(signal?: AbortSignal, relayAsOf = this.#now()): Promise<string | null> {
 		if (signal?.aborted) return null;
 		if (!Number.isFinite(relayAsOf.getTime())) throw new Error("Relay as-of time is invalid");
-		const entry = Object.values(this.#journal.snapshot().deliveries)
-			.filter((candidate) => !isTerminal(candidate) && isAvailable(candidate, relayAsOf))
-			.sort((left, right) =>
-				compareCursor(left.item.delivery.cursor, right.item.delivery.cursor),
-			)[0];
-		if (!entry) return null;
-		await this.process(entry.item.delivery.delivery_id, signal, relayAsOf);
-		return entry.item.delivery.delivery_id;
+		const entries = Object.values(this.#journal.snapshot().deliveries)
+			.filter(
+				(candidate) =>
+					(!isTerminal(candidate) || hasJournaledRuntimeAuthority(candidate)) &&
+					isAvailable(candidate, relayAsOf),
+			)
+			.sort((left, right) => compareCursor(left.item.delivery.cursor, right.item.delivery.cursor));
+		const blockedMissions = new Set<string>();
+		for (const entry of entries) {
+			const missionId = entry.item.delivery.mission_id;
+			if (blockedMissions.has(missionId)) continue;
+			const deliveryId = entry.item.delivery.delivery_id;
+			try {
+				await this.process(deliveryId, signal, relayAsOf);
+				return deliveryId;
+			} catch (error) {
+				if (!(error instanceof RuntimeAuthorityTransitionPendingError)) throw error;
+				await this.recordAuthorityTransitionPending(deliveryId, error);
+				blockedMissions.add(missionId);
+			}
+		}
+		return null;
 	}
 
 	async process(deliveryId: string, signal?: AbortSignal, relayAsOf = this.#now()): Promise<void> {
 		if (signal?.aborted) return;
 		if (!Number.isFinite(relayAsOf.getTime())) throw new Error("Relay as-of time is invalid");
 		let entry = requireEntry(this.#journal, deliveryId);
-		if (isTerminal(entry)) return;
+		if (isTerminal(entry)) {
+			await this.#runtimeAuthority.retireJournaled(deliveryId);
+			return;
+		}
 
 		if (entry.operation?.kind === "claim") {
 			try {
@@ -160,7 +181,7 @@ export class DeliveryProcessor {
 			try {
 				authority = await this.installAuthorityForPendingCompletion(entry, signal);
 				await this.publishCompletion(deliveryId, entry.operation, signal, authority);
-				await this.revokeRuntimeAuthority(authority, "revoked");
+				await this.retireCompletedRuntimeAuthority(deliveryId, authority);
 			} catch (error) {
 				if (
 					error instanceof CompletionOutcomeUnknownError ||
@@ -256,7 +277,7 @@ export class DeliveryProcessor {
 			}
 			try {
 				await this.complete(deliveryId, entry.result, signal, authority);
-				await this.revokeRuntimeAuthority(authority, "revoked");
+				await this.retireCompletedRuntimeAuthority(deliveryId, authority);
 			} catch (error) {
 				if (error instanceof CompletionOutcomeUnknownError) {
 					await this.tryRevokeRuntimeAuthority(authority);
@@ -323,8 +344,11 @@ export class DeliveryProcessor {
 				authorization,
 				requireEntry(this.#journal, deliveryId),
 				adapterInfo,
+				async (installing) => {
+					authority = installing;
+					await authorityLeases.bind(installing);
+				},
 			);
-			await authorityLeases.bind(authority);
 			if (authority?.signal.aborted) throw runtimeAuthorityLost(authority.signal);
 			const assertActiveAuthority = () => {
 				leaseKeeper.assertHealthy();
@@ -411,7 +435,7 @@ export class DeliveryProcessor {
 				current.updated_at = this.#now().toISOString();
 			});
 			await this.complete(deliveryId, result, signal, authority);
-			await this.revokeRuntimeAuthority(authority, "revoked");
+			await this.retireCompletedRuntimeAuthority(deliveryId, authority);
 		} catch (error) {
 			await leaseKeeper.stop();
 			await this.tryRevokeRuntimeAuthority(authority);
@@ -488,12 +512,17 @@ export class DeliveryProcessor {
 		}
 		signal?.throwIfAborted();
 		const result = await this.#client.claim(deliveryId, intent.input);
+		if (result.outcome === "dead_lettered") {
+			await this.#runtimeAuthority.retireJournaled(deliveryId);
+		}
 		await this.#journal.updateDelivery(deliveryId, (current) => {
 			current.operation = null;
-			current.item =
-				result.outcome === "claimed"
-					? structuredClone(result.item)
-					: { ...current.item, delivery: structuredClone(result.delivery) };
+			if (result.outcome === "claimed") {
+				stageRuntimeAuthoritySuccessor(current, result.item.delivery);
+				current.item = structuredClone(result.item);
+			} else {
+				current.item = { ...current.item, delivery: structuredClone(result.delivery) };
+			}
 			current.phase = result.outcome === "claimed" ? "claimed" : "dead_lettered";
 			current.updated_at = this.#now().toISOString();
 		});
@@ -792,17 +821,22 @@ export class DeliveryProcessor {
 		authorization: AuthorizedDelivery,
 		entry: JournalDelivery,
 		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
+		beforeReady?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>,
 	): Promise<NodeRuntimeAuthoritySession | null> {
 		try {
-			return await this.#runtimeAuthority.install({
-				assignment: authorization.assignment,
-				workspaceAlias: authorization.participant.workspace_alias,
-				workspace: authorization.preflight,
-				policy: authorization.policy,
-				adapter: adapterInfo,
-				entry,
-			});
+			return await this.#runtimeAuthority.install(
+				{
+					assignment: authorization.assignment,
+					workspaceAlias: authorization.participant.workspace_alias,
+					workspace: authorization.preflight,
+					policy: authorization.policy,
+					adapter: adapterInfo,
+					entry,
+				},
+				beforeReady,
+			);
 		} catch (error) {
+			if (error instanceof RuntimeAuthorityTransitionPendingError) throw error;
 			throw new AuthorityLostError(`Runtime authority installation failed: ${safeError(error)}`);
 		}
 	}
@@ -813,6 +847,14 @@ export class DeliveryProcessor {
 	): Promise<void> {
 		if (authority === null) return;
 		await authority.revoke(reason);
+	}
+
+	private async retireCompletedRuntimeAuthority(
+		deliveryId: string,
+		authority: NodeRuntimeAuthoritySession | null,
+	): Promise<void> {
+		authority?.revokeLocal("revoked");
+		await this.#runtimeAuthority.retireJournaled(deliveryId);
 	}
 
 	private async tryRevokeRuntimeAuthority(
@@ -912,6 +954,8 @@ export class DeliveryProcessor {
 		let result: DeliveryReleaseResult;
 		try {
 			signal?.throwIfAborted();
+			await this.#runtimeAuthority.retireJournaled(deliveryId);
+			signal?.throwIfAborted();
 			result = await this.#client.release(deliveryId, intent.input);
 		} catch (error) {
 			if (isDefinitiveAuthorityLoss(error)) throw new AuthorityLostError(safeError(error));
@@ -972,6 +1016,16 @@ export class DeliveryProcessor {
 			current.item.delivery.available_at = availableAt;
 			current.phase = "ingested";
 			current.operation = null;
+			current.last_error = safeError(error);
+			current.updated_at = this.#now().toISOString();
+		});
+	}
+
+	private async recordAuthorityTransitionPending(
+		deliveryId: string,
+		error: unknown,
+	): Promise<void> {
+		await this.#journal.updateDelivery(deliveryId, (current) => {
 			current.last_error = safeError(error);
 			current.updated_at = this.#now().toISOString();
 		});
@@ -1177,6 +1231,9 @@ function startTurnInput(
 }
 
 function archiveHostExecution(entry: JournalDelivery, now: Date): void {
+	if (hasJournaledRuntimeAuthority(entry)) {
+		throw new Error("Cannot archive host execution before runtime authority retirement");
+	}
 	if (entry.start_turn_input !== null || entry.host_events.length > 0 || entry.result !== null) {
 		if (entry.start_turn_input === null) {
 			throw new Error("Cannot archive host execution without its exact start input");
@@ -1193,7 +1250,6 @@ function archiveHostExecution(entry: JournalDelivery, now: Date): void {
 	entry.start_turn_input = null;
 	entry.host_events = [];
 	entry.result = null;
-	entry.runtime_authority = null;
 }
 
 interface LeaseKeeperOptions {
@@ -1292,12 +1348,12 @@ class LeaseKeeper {
 				const renewed = await this.#options.client.renew(this.#options.deliveryId, input);
 				const responseReceivedAt = this.#options.monotonicNow();
 				window = leaseWindowFromRenewal(renewed, requestStartedAt, responseReceivedAt);
-				await this.#options.onRenewed(window.lease);
 				await this.#options.journal.updateDelivery(this.#options.deliveryId, (candidate) => {
 					candidate.item.delivery = structuredClone(renewed.delivery);
 					candidate.operation = null;
 					candidate.updated_at = this.#options.now().toISOString();
 				});
+				await this.#options.onRenewed(window.lease);
 			} catch (error) {
 				this.#failure = error instanceof Error ? error : new Error(String(error));
 				this.#notifyFailure();
@@ -1400,6 +1456,10 @@ function isTerminal(entry: JournalDelivery): boolean {
 		entry.item.delivery.status === "cancelled" ||
 		entry.item.delivery.status === "dead_lettered"
 	);
+}
+
+function hasJournaledRuntimeAuthority(entry: JournalDelivery): boolean {
+	return entry.runtime_authority !== null || entry.runtime_authority_predecessor !== null;
 }
 
 function isAvailable(entry: JournalDelivery, now: Date): boolean {
