@@ -22,6 +22,7 @@ import {
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
+import { type RuntimeAuthorityGrant, runtimeAuthorityGrantSchema } from "./runtime-authority.js";
 
 const journalPhaseSchema = z.enum([
 	"ingested",
@@ -71,6 +72,7 @@ const journalDeliverySchema = z
 		host_attempt_history: z.array(archivedHostExecutionSchema).max(99),
 		host_events: z.array(hostEventSchema).max(4_096),
 		result: nodeDeliveryResultPayloadSchema.nullable(),
+		runtime_authority: runtimeAuthorityGrantSchema.nullable(),
 		last_error: z.string().max(2_000).nullable(),
 		updated_at: z.string().datetime(),
 	})
@@ -110,6 +112,9 @@ const journalDeliverySchema = z
 					path: ["host_events", index, "turn", "executionAttempt"],
 				});
 			}
+		}
+		if (entry.runtime_authority !== null) {
+			validateRuntimeAuthority(entry, entry.runtime_authority, ctx);
 		}
 		const archivedAttempts = new Set<number>();
 		for (const [historyIndex, attempt] of entry.host_attempt_history.entries()) {
@@ -153,7 +158,7 @@ const missionAcceptanceJournalSchema = z
 
 export const nodeJournalStateSchema = z
 	.object({
-		schema_version: z.literal(2),
+		schema_version: z.literal(3),
 		cursor: z
 			.string()
 			.regex(/^[1-9][0-9]*$/)
@@ -300,6 +305,25 @@ export class NodeJournal {
 		return structuredClone(entry.start_turn_input!);
 	}
 
+	async checkpointRuntimeAuthority(
+		deliveryId: string,
+		grantValue: RuntimeAuthorityGrant,
+		now = new Date(),
+	): Promise<RuntimeAuthorityGrant> {
+		const grant = runtimeAuthorityGrantSchema.parse(grantValue);
+		const entry = await this.updateDelivery(deliveryId, (current) => {
+			if (
+				current.runtime_authority !== null &&
+				!isDeepStrictEqual(current.runtime_authority, grant)
+			) {
+				throw new Error(`Runtime authority changed within execution attempt: ${deliveryId}`);
+			}
+			current.runtime_authority = structuredClone(grant);
+			current.updated_at = now.toISOString();
+		});
+		return structuredClone(entry.runtime_authority!);
+	}
+
 	async recordMissionAcceptance(
 		missionIdInput: string,
 		inputValue: MissionParticipantAcceptanceInput,
@@ -393,6 +417,7 @@ function upsertDelivery(state: NodeJournalState, itemInput: MissionDeliveryItem,
 			host_attempt_history: [],
 			host_events: [],
 			result: null,
+			runtime_authority: null,
 			last_error: null,
 			updated_at: now.toISOString(),
 		};
@@ -410,7 +435,7 @@ function migrateJournalState(stored: unknown | null): JournalMigration {
 	if (stored === null) {
 		return {
 			state: {
-				schema_version: 2,
+				schema_version: 3,
 				cursor: null,
 				mission_assignment_cursor: null,
 				deliveries: {},
@@ -424,6 +449,22 @@ function migrateJournalState(stored: unknown | null): JournalMigration {
 		return { state: stored, changed: false };
 	}
 	const record = stored as Record<string, unknown>;
+	if (record.schema_version === 2) {
+		const migrated = structuredClone(record);
+		migrated.schema_version = 3;
+		if (
+			typeof migrated.deliveries === "object" &&
+			migrated.deliveries !== null &&
+			!Array.isArray(migrated.deliveries)
+		) {
+			for (const entry of Object.values(migrated.deliveries)) {
+				if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+					(entry as Record<string, unknown>).runtime_authority = null;
+				}
+			}
+		}
+		return { state: migrated, changed: true };
+	}
 	if (record.schema_version !== 1) return { state: stored, changed: false };
 	if (
 		typeof record.deliveries === "object" &&
@@ -436,11 +477,43 @@ function migrateJournalState(stored: unknown | null): JournalMigration {
 		);
 	}
 	const migrated = structuredClone(record);
-	migrated.schema_version = 2;
+	migrated.schema_version = 3;
 	if (!Object.hasOwn(migrated, "mission_assignment_cursor")) {
 		migrated.mission_assignment_cursor = null;
 	}
 	return { state: migrated, changed: true };
+}
+
+function validateRuntimeAuthority(
+	entry: JournalDelivery,
+	grant: RuntimeAuthorityGrant,
+	ctx: z.RefinementCtx,
+): void {
+	const delivery = entry.item.delivery;
+	for (const [field, actual, expected] of [
+		["delivery_id", grant.delivery_id, delivery.delivery_id],
+		["mission_id", grant.mission_id, delivery.mission_id],
+		["node_id", grant.node_id, delivery.node_id],
+		["execution_attempt", grant.execution_attempt, entry.execution_attempt],
+	] as const) {
+		if (actual === expected) continue;
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: `Runtime authority ${field} does not match its journaled delivery`,
+			path: ["runtime_authority", field],
+		});
+	}
+	if (
+		delivery.lease !== null &&
+		(grant.lease_id !== delivery.lease.lease_id ||
+			grant.fencing_token !== delivery.lease.fencing_token)
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Runtime authority does not match the journaled lease fence",
+			path: ["runtime_authority", "lease_id"],
+		});
+	}
 }
 
 function validateStartTurnInput(

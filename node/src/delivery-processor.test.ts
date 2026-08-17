@@ -38,6 +38,13 @@ import { type JournalStorage, NodeJournal, type NodeJournalState } from "./journ
 import { resolvePolicyProfile } from "./policy.js";
 import type { NodeRelayClient } from "./relay-client.js";
 import { RelayHttpError } from "./relay-client.js";
+import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
+import type {
+	RuntimeAuthorityDenyCode,
+	RuntimeAuthorityGrant,
+	RuntimeAuthorityRenewal,
+	RuntimeAuthorityRequest,
+} from "./runtime-authority.js";
 
 const IDS = {
 	mission: "20000000-0000-4000-8000-000000000001",
@@ -81,6 +88,190 @@ describe("DeliveryProcessor", () => {
 				message: "fake result",
 			},
 		});
+	});
+
+	it("installs an exact locally bounded authority grant before runtime activation", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const harness = await createHarness({ authorityPort });
+
+		await harness.processor.process(IDS.delivery);
+
+		const grant = authorityPort.installed[0]!;
+		expect(authorityPort.installed).toHaveLength(1);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.runtime_authority).toEqual(grant);
+		expect(grant).toMatchObject({
+			agent_id: IDS.agent,
+			node_id: IDS.node,
+			workspace_binding_id: IDS.binding,
+			workspace_alias: "backend",
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			execution_attempt: 1,
+			lease_id: leaseId(1),
+			fencing_token: "1",
+			policy_profile: "coding",
+			lease_expires_at: TIMES.expires,
+		});
+		expect(grant.workspace_resource_sha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(grant.effective_limits.reported_tokens).toBe(10_000);
+		expect(grant.capabilities).toEqual(
+			expect.arrayContaining([
+				{ action: "runtime_start", resource: "runtime" },
+				{ action: "workspace_read", resource: "workspace" },
+				{ action: "outbound_publish", resource: "relay" },
+			]),
+		);
+		expect(grant.capabilities).not.toEqual(
+			expect.arrayContaining([
+				{ action: "workspace_write", resource: "workspace" },
+				{ action: "repository_push", resource: "repository" },
+			]),
+		);
+		expect(authorityPort.asserted).toHaveLength(1);
+		expect(authorityPort.asserted[0]?.capability).toEqual({
+			action: "outbound_publish",
+			resource: "relay",
+		});
+		expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+	});
+
+	it("recompiles the exact grant across Node recovery time", async () => {
+		const firstPort = new FakeRuntimeAuthorityPort();
+		const first = await createHarness({
+			authorityPort: firstPort,
+			now: () => new Date("2026-08-02T00:03:00.000Z"),
+		});
+		const secondPort = new FakeRuntimeAuthorityPort();
+		const second = await createHarness({
+			authorityPort: secondPort,
+			now: () => new Date("2026-08-02T00:04:00.000Z"),
+		});
+
+		await first.processor.process(IDS.delivery);
+		await second.processor.process(IDS.delivery);
+
+		expect(secondPort.installed[0]).toEqual(firstPort.installed[0]);
+	});
+
+	it("forwards verified Relay lease renewals to the runtime authority monitor", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const harness = await createHarness({ authorityPort });
+		harness.client.renewalExpiresAt = "2026-08-02T00:03:00.300Z";
+		let releaseSession!: () => void;
+		const sessionGate = new Promise<void>((resolve) => {
+			releaseSession = resolve;
+		});
+		const adapter: AgentHostAdapter = {
+			...adapterDelegates(harness.adapter),
+			async ensureSession(input) {
+				await sessionGate;
+				return harness.adapter.ensureSession(input);
+			},
+		};
+		const processor = processorFor({ ...harness, adapter, authorityPort });
+
+		const processing = processor.process(IDS.delivery);
+		await vi.waitFor(() => expect(authorityPort.renewed.length).toBeGreaterThan(0));
+		releaseSession();
+		await processing;
+
+		expect(authorityPort.renewed.length).toBeGreaterThan(0);
+		expect(authorityPort.renewed[0]).toMatchObject({
+			lease_id: leaseId(1),
+			fencing_token: "1",
+		});
+	});
+
+	it("recovers an exact grant after Relay renewal commits before Capsule forwarding", async () => {
+		const state: { harness?: Awaited<ReturnType<typeof createHarness>> } = {};
+		const authorityPort = new FakeRuntimeAuthorityPort((operation) => {
+			if (operation === "install:1" && state.harness !== undefined) {
+				state.harness.client.renewalExpiresAt = TIMES.expires;
+			}
+		});
+		authorityPort.failNextRenew = true;
+		const harness = await createHarness({ authorityPort });
+		state.harness = harness;
+		harness.client.renewalExpiresAt = "2026-08-02T00:03:00.300Z";
+		const interrupted = processorFor({
+			...harness,
+			adapter: stallHostStream(harness.adapter),
+		});
+
+		await expect(interrupted.process(IDS.delivery)).rejects.toThrow(
+			"Runtime lease renewal was not confirmed",
+		);
+		const checkpointed = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		const originalGrant = checkpointed.runtime_authority;
+		expect(originalGrant).not.toBeNull();
+		expect(checkpointed.operation?.kind).toBe("renew");
+		const ambiguousRenewal = structuredClone(checkpointed.operation?.input);
+
+		const restarted = new DeliveryProcessor({
+			config: harness.config,
+			client: harness.client,
+			journal: harness.journal,
+			adapter: harness.adapter,
+			authorityPort,
+			now: () => new Date("2026-08-02T00:04:00.000Z"),
+			preflight: successfulPreflight,
+		});
+		await restarted.process(IDS.delivery);
+
+		expect(harness.client.renewInputs).toContainEqual(ambiguousRenewal);
+		expect(
+			harness.client.renewInputs.filter(
+				(input) => input.idempotency_key === ambiguousRenewal?.idempotency_key,
+			),
+		).toHaveLength(2);
+		expect(authorityPort.installed).toHaveLength(2);
+		expect(authorityPort.installed[1]).toEqual(originalGrant);
+		expect(authorityPort.installedLeases[1]?.lease_expires_at).toBe(TIMES.expires);
+		expect(harness.client.completeInputs).toHaveLength(1);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("does not publish when the runtime rejects the fenced outbound request", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		authorityPort.currentFence = "2";
+		const harness = await createHarness({ authorityPort });
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(harness.client.completeInputs).toHaveLength(0);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+		expect(authorityPort.operations).toContain("assert:1");
+		expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+	});
+
+	it("rejects a structurally valid but locally inconsistent journaled grant", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const harness = await createHarness({ authorityPort });
+		const interrupted = processorFor({
+			...harness,
+			adapter: {
+				...adapterDelegates(harness.adapter),
+				async ensureSession() {
+					throw new Error("crash after authority checkpoint");
+				},
+			},
+		});
+		await expect(interrupted.process(IDS.delivery)).rejects.toThrow(
+			"crash after authority checkpoint",
+		);
+		await harness.journal.updateDelivery(IDS.delivery, (entry) => {
+			if (entry.runtime_authority === null) throw new Error("expected authority checkpoint");
+			entry.runtime_authority = {
+				...entry.runtime_authority,
+				policy_grant_sha256: "f".repeat(64),
+			};
+		});
+
+		await processorFor(harness).process(IDS.delivery);
+
+		expect(authorityPort.installed).toHaveLength(1);
+		expect(harness.client.completeInputs).toHaveLength(0);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
 	});
 
 	it("renews the executing lease while runtime setup is still in progress", async () => {
@@ -573,7 +764,9 @@ describe("DeliveryProcessor", () => {
 	});
 
 	it("preserves a transient host failure as a Relay-backed retry", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
 		const harness = await createHarness({
+			authorityPort,
 			outcome: {
 				kind: "failed",
 				failure: { class: "transient", message: "host temporarily unavailable" },
@@ -591,6 +784,7 @@ describe("DeliveryProcessor", () => {
 		const released = harness.journal.snapshot().deliveries[IDS.delivery]!;
 		expect(released.phase).toBe("ingested");
 		expect(released.execution_attempt).toBe(2);
+		expect(released.runtime_authority).toBeNull();
 		expect(released.start_turn_input).toBeNull();
 		expect(released.host_attempt_history).toHaveLength(1);
 		expect(released.host_attempt_history[0]?.start_input_sha256).toMatch(/^[a-f0-9]{64}$/);
@@ -762,6 +956,29 @@ describe("DeliveryProcessor", () => {
 		expect(harness.adapter.counters.cancelTurnCalls).toBe(1);
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("host_accepted");
 	});
+
+	it("cancels the active turn before retiring authority after lease renewal failure", async () => {
+		const operations: string[] = [];
+		const authorityPort = new FakeRuntimeAuthorityPort((operation) => operations.push(operation));
+		const harness = await createHarness({ outcome: { kind: "pending" }, authorityPort });
+		harness.client.renewalExpiresAt = "2026-08-02T00:03:00.300Z";
+		harness.client.failRenewAtCall = 3;
+		const stalled = stallHostStream(harness.adapter);
+		const adapter: AgentHostAdapter = {
+			...stalled,
+			async cancelTurn(ref) {
+				operations.push("cancel");
+				await stalled.cancelTurn(ref);
+			},
+		};
+		const processor = processorFor({ ...harness, adapter });
+
+		await expect(processor.process(IDS.delivery)).rejects.toThrow("renew transport down");
+
+		expect(operations.indexOf("cancel")).toBeGreaterThanOrEqual(0);
+		expect(operations.indexOf("cancel")).toBeLessThan(operations.indexOf("revoke:revoked"));
+		expect(harness.client.completeInputs).toHaveLength(0);
+	});
 });
 
 interface HarnessOptions {
@@ -771,6 +988,7 @@ interface HarnessOptions {
 	readonly outcome?: FakeTurnOutcome;
 	readonly config?: NodeConfig;
 	readonly mission?: NodeMissionAssignment;
+	readonly authorityPort?: RuntimeAuthorityPort;
 }
 
 async function createHarness(options: HarnessOptions = {}) {
@@ -785,7 +1003,14 @@ async function createHarness(options: HarnessOptions = {}) {
 			disposition: { kind: "reply", message_type: "progress", message: "fake result" },
 		},
 	);
-	const harness = { config: options.config ?? localConfig(), client, adapter, journal, storage };
+	const harness = {
+		config: options.config ?? localConfig(),
+		client,
+		adapter,
+		journal,
+		storage,
+		authorityPort: options.authorityPort,
+	};
 	return {
 		...harness,
 		processor: new DeliveryProcessor({
@@ -805,6 +1030,7 @@ function processorFor(harness: Awaited<ReturnType<typeof createHarness>>): Deliv
 		client: harness.client,
 		journal: harness.journal,
 		adapter: harness.adapter,
+		authorityPort: harness.authorityPort,
 		now: () => new Date(TIMES.renewed),
 		preflight: successfulPreflight,
 	});
@@ -874,6 +1100,57 @@ async function successfulPreflight() {
 		reachable_from_ref: "refs/heads/main",
 		clean: true as const,
 	};
+}
+
+class FakeRuntimeAuthorityPort implements RuntimeAuthorityPort {
+	readonly installed: RuntimeAuthorityGrant[] = [];
+	readonly installedLeases: RuntimeAuthorityRenewal[] = [];
+	readonly renewed: RuntimeAuthorityRenewal[] = [];
+	readonly asserted: RuntimeAuthorityRequest[] = [];
+	readonly operations: string[] = [];
+	currentFence: string | null = null;
+	failNextRenew = false;
+
+	constructor(readonly onOperation: (operation: string) => void = () => undefined) {}
+
+	private record(operation: string): void {
+		this.operations.push(operation);
+		this.onOperation(operation);
+	}
+
+	async installAuthority(
+		grant: RuntimeAuthorityGrant,
+		currentLease: RuntimeAuthorityRenewal,
+	): Promise<void> {
+		this.installed.push(structuredClone(grant));
+		this.installedLeases.push(structuredClone(currentLease));
+		this.record(`install:${grant.fencing_token}`);
+	}
+
+	async renewAuthority(_missionId: string, renewal: RuntimeAuthorityRenewal): Promise<void> {
+		this.renewed.push(structuredClone(renewal));
+		this.record(`renew:${renewal.fencing_token}`);
+		if (this.failNextRenew) {
+			this.failNextRenew = false;
+			throw new Error("Capsule renewal response lost");
+		}
+	}
+
+	async assertAuthority(request: RuntimeAuthorityRequest): Promise<void> {
+		this.asserted.push(structuredClone(request));
+		this.record(`assert:${request.fencing_token}`);
+		if (this.currentFence !== null && request.fencing_token !== this.currentFence) {
+			throw new Error("stale_fence");
+		}
+	}
+
+	async revokeAuthority(
+		_missionId: string,
+		_grantId: string,
+		reason: RuntimeAuthorityDenyCode,
+	): Promise<void> {
+		this.record(`revoke:${reason}`);
+	}
 }
 
 class MemoryStorage implements JournalStorage {

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -27,9 +28,20 @@ import {
 	startTurnInputDigest,
 	terminalResultFromEvents,
 } from "./journal.js";
-import { PolicyError, resolvePolicyProfile } from "./policy.js";
+import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from "./policy.js";
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
-import { WorkspacePreflightError, preflightWorkspace } from "./workspace.js";
+import { createRuntimeAuthorityGrant } from "./runtime-authority-factory.js";
+import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
+import {
+	type RuntimeAuthorityGrant,
+	type RuntimeAuthorityRenewal,
+	runtimeAuthorityRequest,
+} from "./runtime-authority.js";
+import {
+	WorkspacePreflightError,
+	type WorkspacePreflightResult,
+	preflightWorkspace,
+} from "./workspace.js";
 
 const TERMINAL_PHASES = new Set(["acknowledged", "dead_lettered", "authority_lost"]);
 const MIN_SAFE_LEASE_WINDOW_MS = 100;
@@ -40,6 +52,7 @@ export interface DeliveryProcessorOptions {
 	readonly client: NodeRelayClient;
 	readonly journal: NodeJournal;
 	readonly adapter: AgentHostAdapter;
+	readonly authorityPort?: RuntimeAuthorityPort;
 	readonly now?: () => Date;
 	readonly monotonicNow?: () => number;
 	readonly preflight?: typeof preflightWorkspace;
@@ -66,6 +79,7 @@ export class DeliveryProcessor {
 	readonly #client: NodeRelayClient;
 	readonly #journal: NodeJournal;
 	readonly #adapter: AgentHostAdapter;
+	readonly #authorityPort: RuntimeAuthorityPort | undefined;
 	readonly #now: () => Date;
 	readonly #monotonicNow: () => number;
 	readonly #preflight: typeof preflightWorkspace;
@@ -76,6 +90,7 @@ export class DeliveryProcessor {
 		this.#client = options.client;
 		this.#journal = options.journal;
 		this.#adapter = options.adapter;
+		this.#authorityPort = options.authorityPort;
 		this.#now = options.now ?? (() => new Date());
 		this.#monotonicNow = options.monotonicNow ?? (() => performance.now());
 		this.#preflight = options.preflight ?? preflightWorkspace;
@@ -138,10 +153,14 @@ export class DeliveryProcessor {
 			entry = requireEntry(this.#journal, deliveryId);
 		}
 		if (entry.operation?.kind === "complete") {
+			let grant: RuntimeAuthorityGrant | null = null;
 			try {
-				await this.publishCompletion(deliveryId, entry.operation, signal);
+				grant = await this.installAuthorityForPendingCompletion(entry, signal);
+				await this.publishCompletion(deliveryId, entry.operation, signal, grant);
+				await this.revokeRuntimeAuthority(grant, "revoked");
 			} catch (error) {
 				if (!(error instanceof AuthorityLostError)) throw error;
+				await this.tryRevokeRuntimeAuthority(grant);
 				await this.markLeaseLost(deliveryId, error);
 			}
 			entry = requireEntry(this.#journal, deliveryId);
@@ -181,9 +200,9 @@ export class DeliveryProcessor {
 		const executionAttempt = entry.execution_attempt;
 		let hostTurn = journaledHostTurn(entry);
 
-		let assignment: NodeMissionAssignment;
+		let authorization: AuthorizedDelivery;
 		try {
-			assignment = await this.authorize(entry.item, signal);
+			authorization = await this.authorize(entry.item, signal);
 		} catch (error) {
 			if (error instanceof AuthorityLostError || isDefinitiveAuthorityLoss(error)) {
 				await this.cancelAndMarkAuthorityLost(deliveryId, error);
@@ -207,17 +226,29 @@ export class DeliveryProcessor {
 		}
 
 		if (entry.result !== null) {
+			let grant: RuntimeAuthorityGrant | null = null;
 			try {
 				await this.prepareExecutableLease(deliveryId, signal);
+				signal?.throwIfAborted();
+				const adapterInfo = await this.#adapter.probe();
+				signal?.throwIfAborted();
+				grant = await this.installRuntimeAuthority(
+					authorization,
+					requireEntry(this.#journal, deliveryId),
+					adapterInfo,
+				);
 			} catch (error) {
 				if (!(error instanceof AuthorityLostError)) throw error;
+				await this.tryRevokeRuntimeAuthority(grant);
 				await this.cancelAndMarkAuthorityLost(deliveryId, error);
 				return;
 			}
 			try {
-				await this.complete(deliveryId, entry.result, signal);
+				await this.complete(deliveryId, entry.result, signal, grant);
+				await this.revokeRuntimeAuthority(grant, "revoked");
 			} catch (error) {
 				if (!(error instanceof AuthorityLostError)) throw error;
+				await this.tryRevokeRuntimeAuthority(grant);
 				await this.markLeaseLost(deliveryId, error);
 			}
 			return;
@@ -227,11 +258,7 @@ export class DeliveryProcessor {
 			return;
 		}
 		entry = requireEntry(this.#journal, deliveryId);
-		const participant = missionParticipant(assignment, this.#config.node.agent_id);
-		const policy = resolvePolicyProfile(
-			this.#config.policy_profiles,
-			participant.requested_local_policy_profile,
-		);
+		const { assignment, participant, policy } = authorization;
 
 		let leaseWindow: LeaseWindow;
 		try {
@@ -241,7 +268,9 @@ export class DeliveryProcessor {
 			await this.cancelAndMarkAuthorityLost(deliveryId, error);
 			return;
 		}
-		const cancelActiveTurn = () => this.cancelHostExecution(deliveryId, executionAttempt, hostTurn);
+		let grant: RuntimeAuthorityGrant | null = null;
+		const cancelActiveTurn = () =>
+			this.cancelAndRevokeRuntime(grant, deliveryId, executionAttempt, hostTurn);
 		const leaseKeeper = new LeaseKeeper({
 			deliveryId,
 			client: this.#client,
@@ -249,6 +278,21 @@ export class DeliveryProcessor {
 			now: this.#now,
 			monotonicNow: this.#monotonicNow,
 			onAuthorityLost: cancelActiveTurn,
+			onRenewed: async (lease) => {
+				if (grant === null || this.#authorityPort === undefined) return;
+				try {
+					await this.#authorityPort.renewAuthority(grant.mission_id, {
+						grant_id: grant.grant_id,
+						lease_id: lease.lease_id,
+						fencing_token: lease.fencing_token,
+						lease_expires_at: lease.expires_at,
+					});
+				} catch (error) {
+					throw new RuntimeAuthoritySyncError(
+						`Runtime lease renewal was not confirmed: ${safeError(error)}`,
+					);
+				}
+			},
 			shutdownSignal: signal,
 		});
 		leaseKeeper.start(leaseWindow);
@@ -263,6 +307,12 @@ export class DeliveryProcessor {
 				authorityFailure,
 			);
 			leaseKeeper.assertHealthy();
+			await assertHostOperationAllowed(signal, cancelActiveTurn);
+			grant = await this.installRuntimeAuthority(
+				authorization,
+				requireEntry(this.#journal, deliveryId),
+				adapterInfo,
+			);
 			const existingSession = this.#journal.snapshot().mission_sessions[assignment.mission_id];
 			const session = await waitForHostOperation(
 				() =>
@@ -314,7 +364,10 @@ export class DeliveryProcessor {
 				expectedInput: turnInput,
 				policy: {
 					...DEFAULT_HOST_EVENT_STREAM_POLICY,
-					maxTokens: policy.profile.max_reported_tokens,
+					maxTokens: Math.min(
+						policy.profile.max_reported_tokens,
+						assignment.coordinator_config.mission_context.manifest.token_budget,
+					),
 					usage: adapterInfo.capabilities.usage,
 				},
 				now: this.#now,
@@ -336,9 +389,11 @@ export class DeliveryProcessor {
 				current.phase = "host_terminal";
 				current.updated_at = this.#now().toISOString();
 			});
-			await this.complete(deliveryId, result, signal);
+			await this.complete(deliveryId, result, signal, grant);
+			await this.revokeRuntimeAuthority(grant, "revoked");
 		} catch (error) {
 			await leaseKeeper.stop();
+			await this.tryRevokeRuntimeAuthority(grant);
 			if (error instanceof NodeShutdownError) {
 				await this.#journal.updateDelivery(deliveryId, (current) => {
 					current.last_error = error.message;
@@ -507,6 +562,7 @@ export class DeliveryProcessor {
 		deliveryId: string,
 		result: NodeDeliveryResultPayload,
 		signal?: AbortSignal,
+		grant: RuntimeAuthorityGrant | null = null,
 	): Promise<void> {
 		signal?.throwIfAborted();
 		const entry = requireEntry(this.#journal, deliveryId);
@@ -527,7 +583,7 @@ export class DeliveryProcessor {
 			current.updated_at = this.#now().toISOString();
 		});
 		await this.#checkpoint("complete_intent", deliveryId);
-		await this.publishCompletion(deliveryId, intent, signal);
+		await this.publishCompletion(deliveryId, intent, signal, grant);
 	}
 
 	async release(
@@ -641,7 +697,7 @@ export class DeliveryProcessor {
 	private async authorize(
 		item: MissionDeliveryItem,
 		signal?: AbortSignal,
-	): Promise<NodeMissionAssignment> {
+	): Promise<AuthorizedDelivery> {
 		signal?.throwIfAborted();
 		const assignment = await this.#client.getAssignment(item.delivery.mission_id);
 		signal?.throwIfAborted();
@@ -685,8 +741,131 @@ export class DeliveryProcessor {
 				"Current local policy no longer matches the accepted Mission grant",
 			);
 		}
-		await this.#preflight(workspace, participant);
-		return assignment;
+		const preflight = await this.#preflight(workspace, participant);
+		return { assignment, participant, policy, preflight };
+	}
+
+	private async installAuthorityForPendingCompletion(
+		entry: JournalDelivery,
+		signal?: AbortSignal,
+	): Promise<RuntimeAuthorityGrant | null> {
+		if (this.#authorityPort === undefined) return null;
+		const authorization = await this.authorize(entry.item, signal);
+		const lease = requireLease(entry.item.delivery);
+		if (
+			entry.item.delivery.status !== "executing" ||
+			Date.parse(lease.expires_at) <= this.#now().getTime()
+		) {
+			throw new AuthorityLostError("Pending completion has no current executing authority");
+		}
+		const adapterInfo = await this.#adapter.probe();
+		signal?.throwIfAborted();
+		return this.installRuntimeAuthority(authorization, entry, adapterInfo);
+	}
+
+	private async installRuntimeAuthority(
+		authorization: AuthorizedDelivery,
+		entry: JournalDelivery,
+		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
+	): Promise<RuntimeAuthorityGrant | null> {
+		if (this.#authorityPort === undefined) return null;
+		let grant: RuntimeAuthorityGrant;
+		try {
+			grant = await this.resolveRuntimeAuthority(authorization, entry, adapterInfo);
+			await this.#authorityPort.installAuthority(
+				grant,
+				currentRuntimeAuthorityRenewal(grant, requireEntry(this.#journal, grant.delivery_id)),
+			);
+		} catch (error) {
+			throw new AuthorityLostError(`Runtime authority installation failed: ${safeError(error)}`);
+		}
+		return grant;
+	}
+
+	private async resolveRuntimeAuthority(
+		authorization: AuthorizedDelivery,
+		entry: JournalDelivery,
+		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
+	): Promise<RuntimeAuthorityGrant> {
+		const persisted = entry.runtime_authority;
+		const currentLease = requireLease(entry.item.delivery);
+		if (
+			persisted !== null &&
+			(persisted.lease_id !== currentLease.lease_id ||
+				persisted.fencing_token !== currentLease.fencing_token)
+		) {
+			throw new Error("Persisted runtime authority does not match the current Relay fence");
+		}
+		const delivery = authoritySeedDelivery(entry, persisted);
+		const compiled = createRuntimeAuthorityGrant({
+			assignment: authorization.assignment,
+			delivery,
+			executionAttempt: entry.execution_attempt,
+			nodeId: this.#config.node.node_id,
+			workspaceAlias: authorization.participant.workspace_alias,
+			workspace: authorization.preflight,
+			policy: authorization.policy,
+			adapter: adapterInfo,
+			now: this.#now(),
+			currentLeaseExpiresAt: currentLease.expires_at,
+		});
+		if (persisted !== null) {
+			if (!isDeepStrictEqual(persisted, compiled)) {
+				throw new Error("Persisted runtime authority no longer matches trusted local inputs");
+			}
+			return persisted;
+		}
+		return this.#journal.checkpointRuntimeAuthority(
+			entry.item.delivery.delivery_id,
+			compiled,
+			this.#now(),
+		);
+	}
+
+	private async assertRuntimeAuthority(grant: RuntimeAuthorityGrant | null): Promise<void> {
+		if (grant === null || this.#authorityPort === undefined) return;
+		const entry = requireEntry(this.#journal, grant.delivery_id);
+		const result =
+			entry.operation?.kind === "complete" ? entry.operation.input.result : entry.result;
+		if (result === null || result === undefined) {
+			throw new AuthorityLostError("Runtime completion has no journaled result");
+		}
+		try {
+			await this.#authorityPort.assertAuthority(
+				runtimeAuthorityRequest(
+					grant,
+					{ action: "outbound_publish", resource: "relay" },
+					{ output_bytes: Buffer.byteLength(JSON.stringify(result), "utf8") },
+				),
+			);
+		} catch (error) {
+			throw new AuthorityLostError(`Runtime publish authority denied: ${safeError(error)}`);
+		}
+	}
+
+	private async revokeRuntimeAuthority(
+		grant: RuntimeAuthorityGrant | null,
+		reason: "revoked",
+	): Promise<void> {
+		if (grant === null || this.#authorityPort === undefined) return;
+		await this.#authorityPort.revokeAuthority(grant.mission_id, grant.grant_id, reason);
+	}
+
+	private async tryRevokeRuntimeAuthority(grant: RuntimeAuthorityGrant | null): Promise<void> {
+		await this.revokeRuntimeAuthority(grant, "revoked").catch(() => undefined);
+	}
+
+	private async cancelAndRevokeRuntime(
+		grant: RuntimeAuthorityGrant | null,
+		deliveryId: string,
+		executionAttempt: number,
+		knownTurn: HostTurnRef | null,
+	): Promise<void> {
+		try {
+			await this.cancelHostExecution(deliveryId, executionAttempt, knownTurn);
+		} finally {
+			await this.revokeRuntimeAuthority(grant, "revoked");
+		}
 	}
 
 	private async cancelHostExecution(
@@ -710,10 +889,12 @@ export class DeliveryProcessor {
 		deliveryId: string,
 		intent: OperationIntent,
 		signal?: AbortSignal,
+		grant: RuntimeAuthorityGrant | null = null,
 	): Promise<void> {
 		if (intent.kind !== "complete") throw new Error("Expected a completion intent");
 		try {
 			signal?.throwIfAborted();
+			await this.assertRuntimeAuthority(grant);
 			const result = await this.#client.complete(deliveryId, intent.input);
 			await this.#journal.updateDelivery(deliveryId, (current) => {
 				current.item.delivery = structuredClone(result.delivery);
@@ -806,6 +987,13 @@ interface ConsumeHostEventsOptions {
 	readonly authorityFailure: Promise<never>;
 	readonly signal?: AbortSignal;
 	readonly onAbort: () => Promise<void>;
+}
+
+interface AuthorizedDelivery {
+	readonly assignment: NodeMissionAssignment;
+	readonly participant: NodeMissionAssignment["coordinator_config"]["mission_context"]["manifest"]["participants"][number];
+	readonly policy: ResolvedPolicyProfile;
+	readonly preflight: WorkspacePreflightResult;
 }
 
 async function consumeHostEvents(options: ConsumeHostEventsOptions): Promise<readonly HostEvent[]> {
@@ -972,6 +1160,7 @@ function archiveHostExecution(entry: JournalDelivery, now: Date): void {
 	entry.start_turn_input = null;
 	entry.host_events = [];
 	entry.result = null;
+	entry.runtime_authority = null;
 }
 
 interface LeaseKeeperOptions {
@@ -981,6 +1170,7 @@ interface LeaseKeeperOptions {
 	readonly now: () => Date;
 	readonly monotonicNow: () => number;
 	readonly onAuthorityLost: () => Promise<void>;
+	readonly onRenewed: (lease: DeliveryLease) => Promise<void>;
 	readonly shutdownSignal?: AbortSignal;
 }
 
@@ -1069,6 +1259,7 @@ class LeaseKeeper {
 				const renewed = await this.#options.client.renew(this.#options.deliveryId, input);
 				const responseReceivedAt = this.#options.monotonicNow();
 				window = leaseWindowFromRenewal(renewed, requestStartedAt, responseReceivedAt);
+				await this.#options.onRenewed(window.lease);
 				await this.#options.journal.updateDelivery(this.#options.deliveryId, (candidate) => {
 					candidate.item.delivery = structuredClone(renewed.delivery);
 					candidate.operation = null;
@@ -1088,6 +1279,13 @@ class AuthorityLostError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "AuthorityLostError";
+	}
+}
+
+class RuntimeAuthoritySyncError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "RuntimeAuthoritySyncError";
 	}
 }
 
@@ -1125,6 +1323,37 @@ function requireLease(delivery: Delivery): DeliveryLease {
 		throw new AuthorityLostError(`delivery has no active lease: ${delivery.delivery_id}`);
 	}
 	return delivery.lease;
+}
+
+function authoritySeedDelivery(
+	entry: JournalDelivery,
+	persisted: RuntimeAuthorityGrant | null,
+): Delivery {
+	if (persisted === null) return entry.item.delivery;
+	const lease = requireLease(entry.item.delivery);
+	return {
+		...entry.item.delivery,
+		lease: { ...lease, expires_at: persisted.lease_expires_at },
+	};
+}
+
+function currentRuntimeAuthorityRenewal(
+	grant: RuntimeAuthorityGrant,
+	entry: JournalDelivery,
+): RuntimeAuthorityRenewal {
+	const lease = requireLease(entry.item.delivery);
+	if (lease.lease_id !== grant.lease_id || lease.fencing_token !== grant.fencing_token) {
+		throw new Error("Current Relay lease does not match persisted runtime authority");
+	}
+	if (Date.parse(lease.expires_at) < Date.parse(grant.lease_expires_at)) {
+		throw new Error("Current Relay lease is older than persisted runtime authority");
+	}
+	return {
+		grant_id: grant.grant_id,
+		lease_id: lease.lease_id,
+		fencing_token: lease.fencing_token,
+		lease_expires_at: lease.expires_at,
+	};
 }
 
 function leaseWindowFromRenewal(
