@@ -187,6 +187,22 @@ describe("LocalReferenceMonitor lifetime", () => {
 		);
 	});
 
+	it("accepts an exact verified lease-renewal replay without changing authority", () => {
+		const monitor = new LocalReferenceMonitor(authorityGrant(), noEvidence, {
+			now: () => new Date(AUTHORITY_NOW),
+		});
+		const renewal = {
+			grant_id: AUTHORITY_IDS.grant,
+			lease_id: AUTHORITY_IDS.lease,
+			fencing_token: "9007199254740993",
+			lease_expires_at: "2026-08-17T00:01:00.000Z",
+		};
+
+		expect(() => monitor.renew(renewal)).not.toThrow();
+		expect(() => monitor.renew(renewal)).not.toThrow();
+		expect(monitor.assert(startRequest())).toEqual({ decision: "allow", code: "allowed" });
+	});
+
 	it("aborts continuously when the local authority timer reaches expiry", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date(AUTHORITY_NOW));

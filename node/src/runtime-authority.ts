@@ -71,9 +71,12 @@ export class LocalReferenceMonitor {
 		if (renewal.grant_id !== this.#grant.grant_id) this.deny("wrong_grant");
 		if (renewal.lease_id !== this.#grant.lease_id) this.deny("wrong_lease");
 		if (renewal.fencing_token !== this.#grant.fencing_token) this.deny("stale_fence");
-		if (Date.parse(renewal.lease_expires_at) <= Date.parse(this.#leaseExpiresAt)) {
+		const renewedExpiry = Date.parse(renewal.lease_expires_at);
+		const currentExpiry = Date.parse(this.#leaseExpiresAt);
+		if (renewedExpiry < currentExpiry) {
 			this.deny("expired");
 		}
+		if (renewedExpiry === currentExpiry) return;
 		this.#leaseExpiresAt = renewal.lease_expires_at;
 		this.armExpiry();
 	}
