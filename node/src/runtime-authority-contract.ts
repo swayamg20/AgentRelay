@@ -107,23 +107,14 @@ const runtimeAuthorityGrantObjectSchema = runtimeAuthorityScopeSchema
 	})
 	.strict();
 
-const runtimeAuthorityGrantInputSchema = runtimeAuthorityGrantObjectSchema.superRefine(
-	(grant, ctx) => {
-		const unique = new Set(grant.capabilities.map(capabilityKey));
-		if (unique.size !== grant.capabilities.length) {
-			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: "Runtime capabilities must be unique",
-				path: ["capabilities"],
-			});
-		}
-	},
-);
+const runtimeAuthorityGrantInputSchema =
+	runtimeAuthorityGrantObjectSchema.superRefine(validateGrantCapabilities);
 
 export const runtimeAuthorityGrantSchema = runtimeAuthorityGrantObjectSchema
 	.extend({ effective_limits: runtimeAuthorityLimitsSchema })
 	.strict()
 	.superRefine((grant, ctx) => {
+		validateGrantCapabilities(grant, ctx);
 		if (
 			canonicalJson(intersectLimits(grant.limit_sources)) !== canonicalJson(grant.effective_limits)
 		) {
@@ -335,6 +326,28 @@ function scopeFromGrant(grant: RuntimeAuthorityGrant) {
 
 function capabilityKey(capability: RuntimeCapability): string {
 	return `${capability.action}:${capability.resource}`;
+}
+
+function validateGrantCapabilities(
+	grant: { readonly capabilities: readonly RuntimeCapability[] },
+	ctx: z.RefinementCtx,
+): void {
+	const unique = new Set(grant.capabilities.map(capabilityKey));
+	if (unique.size !== grant.capabilities.length) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Runtime capabilities must be unique",
+			path: ["capabilities"],
+		});
+	}
+	for (const [index, capability] of grant.capabilities.entries()) {
+		if (capability.resource === expectedRuntimeResource(capability.action)) continue;
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Runtime capability action and resource do not match",
+			path: ["capabilities", index, "resource"],
+		});
+	}
 }
 
 function canonicalJson(value: unknown): string {

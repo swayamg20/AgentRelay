@@ -61,6 +61,22 @@ describe("runtime authority grant", () => {
 
 		expect(grant.effective_limits.artifact_types).toEqual(["code-patch", "openapi.v3"]);
 	});
+
+	it("rejects duplicate or mismatched capabilities at the wire boundary", () => {
+		const grant = authorityGrant();
+		expect(() =>
+			runtimeAuthorityGrantSchema.parse({
+				...grant,
+				capabilities: [...grant.capabilities, grant.capabilities[0]],
+			}),
+		).toThrow(/unique/);
+		expect(() =>
+			runtimeAuthorityGrantSchema.parse({
+				...grant,
+				capabilities: [{ action: "runtime_start", resource: "secret" }],
+			}),
+		).toThrow(/do not match/);
+	});
 });
 
 describe("LocalReferenceMonitor scope", () => {
