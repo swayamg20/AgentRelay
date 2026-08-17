@@ -115,7 +115,10 @@ The local policy module can resolve a registered verification command ID to a fr
 shell-free executable/argv/cwd/timeout/environment descriptor. That resolver does not
 execute the command and no delivery handler calls it yet. Issue #93 owns the handler
 and the process boundary that must consume the authority signal and terminate the
-whole command process group on loss.
+whole command process group on loss. Before activation, that work must also resolve a
+canonical absolute executable, reject unsafe or relative `PATH` entries, and bind the
+resolved executable identity into the accepted local authority rather than trusting a
+bare command name across restarts.
 
 ## Crash-safe grant and renewal
 
@@ -245,8 +248,8 @@ real turn.
 
 ## Remaining gates
 
-- **#93:** registered verification delivery/handler and signal-aware process-group
-  execution.
+- **#93:** registered verification delivery/handler, canonical grant-bound executable
+  identity, and signal-aware process-group execution.
 - **#94:** bounded, provenance-preserving Mission artifact carriage.
 - **#98:** explicit Codex descriptor/CLI activation plus durable exact containment
   recovery-handle storage.

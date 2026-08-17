@@ -163,7 +163,9 @@ checkpoint is wired only to the persistent fake-Capsule descriptor: it does not 
 the Linux recovery handle or activate the Codex composition, and no test executes a
 model turn.
 
-- [ ] Add registered verification delivery and execution handling (#93).
+- [ ] Add registered verification delivery and execution handling (#93), with a
+  canonical absolute executable identity bound into local authority instead of a
+  restart-sensitive bare `PATH` lookup.
 - [ ] Carry bounded provenance-marked Mission artifacts end to end (#94).
 - [x] Add guardian-owned provider generations, liveness, deadline/revocation inputs,
   a prearmed teardown witness, durable post-absence quiescence, and process-group

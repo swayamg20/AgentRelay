@@ -187,7 +187,9 @@ service.
 - [x] Pass the dedicated Linux containment process job, including the policy canaries
   and pinned Codex app-server handshake. Keep macOS and every unsupported platform
   fail-closed rather than claiming parity.
-- [ ] Add registered verification-command delivery and execution handling (#93).
+- [ ] Add registered verification-command delivery and execution handling (#93),
+  resolving a canonical absolute executable and binding its identity into local
+  authority before any process starts.
 - [ ] Carry bounded provenance-marked Mission artifacts end to end (#94).
 - [x] Add a provider guardian that atomically owns one kernel-locked generation,
   heartbeat and provider liveness, absolute deadline, local revocation, a prearmed
