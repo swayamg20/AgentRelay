@@ -12,8 +12,10 @@
 
 The persistent Capsule wire is no longer coupled to `FakeCapsuleStore`. A
 provider-neutral server accepts a locally constructed runtime, and the existing fake
-Capsule command reaches its old behavior through a compatibility wrapper. The wire,
-descriptor, and CLI contract did not change.
+Capsule command reaches its old behavior through a compatibility wrapper. At this
+checkpoint, the wire, descriptor, and CLI contract did not change. The later partial
+issue #97 checkpoint adds private authority frames only to the selected fake-Capsule
+path; the descriptor and CLI still do not activate Codex.
 
 An injected `CodexCapsuleRunner` now implements the runtime boundary and is exercised
 through the real capability-authenticated Unix socket. Its tests use fake app-server
@@ -45,8 +47,10 @@ recovery behavior.
   runtime state or starts a provider process. Losing duplicate servers never open a
   runtime.
 - Capability and Capsule identity are checked before any runtime method is invoked.
-- The existing `probe`, `ensure_session`, `lookup_turn`, `start_turn`, `recover_turn`,
-  `cancel_turn`, and `shutdown` frames remain unchanged.
+- The original `probe`, `ensure_session`, `lookup_turn`, `start_turn`, `recover_turn`,
+  `cancel_turn`, and `shutdown` frames retain their contract. The later fake-Capsule
+  authority checkpoint adds `install_authority`, `assert_authority`, `renew_authority`,
+  and `revoke_authority` without activating the Codex runner.
 - Every streamed event is revalidated against the expected turn correlation and
   bounded host-event policy. A stream that ends without a terminal event fails closed.
 - Client disconnect detaches the stream consumer; it does not invent runtime

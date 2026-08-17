@@ -1,9 +1,10 @@
 # Persistent Mission Capsule
 
 - **Date:** 2026-08-03
-- **Updated:** 2026-08-15
+- **Updated:** 2026-08-17
 - **Status:** Implemented for a detached deterministic fake runtime on Unix; a real
-  coding-agent adapter and two-machine Mission remain open.
+  coding-agent adapter and two-machine Mission remain open. A later partial issue #97
+  checkpoint adds private runtime-authority enforcement on this fake path.
 - **Decision:** Keep Relay authority and local policy in the foreground Node, while a
   Mission-scoped Capsule owns durable host-session and turn state across Node-process
   death.
@@ -61,12 +62,21 @@ worst-case JSON escaping; response frames are capped separately at 4 MiB. Its
 operations are:
 
 - `probe`
+- `install_authority`
+- `assert_authority`
+- `renew_authority`
+- `revoke_authority`
 - `ensure_session`
 - `lookup_turn`
 - `start_turn`
 - `recover_turn`
 - `cancel_turn`
 - `shutdown`
+
+The four authority operations were added by the later
+[`Local runtime authority`](008-local-runtime-authority.md) checkpoint. They remain a
+private Node-to-Capsule control plane and do not activate Codex or add a public A2A
+surface.
 
 Every request carries the wire version, Capsule ID, random 256-bit local capability,
 and request ID. Every response repeats the Capsule and request IDs. Schema,
@@ -172,10 +182,12 @@ This proves Node-process survival for the deterministic fake host. It does not p
 that a killed real coding-agent process can continue, that the Relay survives a
 restart, or that two physical machines complete a Mission.
 
-Journal schema 2 is required because schema 1 did not retain the exact host start
-input. An empty schema-1 journal migrates automatically. A schema-1 journal containing
-deliveries fails closed: preserve it and reconcile whether any accepted host work is
-still recoverable rather than deleting state or inventing an input.
+At this checkpoint, journal schema 2 was required because schema 1 did not retain the
+exact host start input. The current Node journal is schema 4: schema 2 and 3 migrate
+without inventing authority, while an empty schema-1 journal still migrates. A
+schema-1 journal containing deliveries fails closed; preserve it and reconcile whether
+any accepted host work is still recoverable rather than deleting state or inventing an
+input.
 
 ## Deliberate non-claims
 
@@ -189,6 +201,11 @@ This checkpoint does not provide:
 - contract-acknowledgement or registered verification-command delivery handlers;
 - Mission-wide expiry/dead-letter reconciliation; or
 - a real two-machine, two-repository autonomous completion proof.
+
+The later partial issue #97 checkpoint adds bound time/token/expiry/revocation, stream,
+and final-publication enforcement to this persistent fake path. It still does not
+provide complete command, path, network, verification, or real-runtime mediation, and
+issue #97 remains open.
 
 The fake-runtime CLI continues to reject live Node credentials. The Capsule is a
 correctness scaffold for the runtime boundary, not a production agent worker.

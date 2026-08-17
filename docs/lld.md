@@ -462,17 +462,21 @@ capability appears in an input. The compiled fake-runtime grant includes lifecyc
 workspace-read, usage-report, artifact-publish, and outbound-publish capabilities. It
 does not include workspace write or verification execution.
 
-Before runtime activation, Node journal schema 3 checkpoints the exact grant in the
+Before runtime activation, Node journal schema 4 checkpoints the exact grant in the
 delivery entry. Reopening must reproduce it from the same trusted local inputs; a
 changed lease identity, fence, policy digest, workspace resource, or body fails
-closed. Schema 2 migrates by adding a null checkpoint. Lease renewals retain the
+closed. When trusted Relay recovery advances the fence, the old grant moves atomically
+to a predecessor slot. The Node proves that exact Capsule generation retired before a
+CAS can promote a successor with the same hard deadline and non-fence scope. Schema 2
+and 3 migrate without inventing a predecessor. Lease renewals retain the
 original grant, lease ID, and fence while monotonically extending only the current
 lease expiry; exact replay is idempotent and rollback is denied.
 
 `NodeRuntimeAuthoritySession` and `CapsuleAuthority` each own a
-`LocalReferenceMonitor`. Installation sends the exact grant plus the latest verified
-renewal atomically, so a process can recover after the grant's initial lease deadline
-provided the retained current lease is still valid. The Capsule gates session
+`LocalReferenceMonitor`. Installation replays the exact grant until the Capsule has
+confirmed the latest verified renewal, then creates and binds the local monitor. A
+lease that advances while installation is in flight therefore cannot be lost, and an
+expired earlier lease is never revived in place. The Capsule gates session
 creation, start, recovery, cancellation, and every emitted output/usage/artifact event.
 Measurements are cumulative stream state, not per-frame deltas. Its turn timer and
 lease/hard-expiry timers revoke the monitor and retire the Capsule generation. The
@@ -480,9 +484,9 @@ Node independently revalidates final `outbound_publish`, asks the Capsule to ass
 same request, rechecks locally, and gives the Relay request a continuous abort signal.
 The Node also races local authority loss through live host waits and runs one bounded
 cancellation/revocation path. Lease renewal or revocation is forwarded to both
-monitors; a renewal arriving during installation is buffered until the monitor is
-bound. An aborted completion keeps its exact durable intent because transport
-cancellation cannot prove whether the Relay committed it.
+monitors; a renewal arriving at the final handoff is buffered and drained before the
+session becomes ready. An aborted completion keeps its exact durable intent because
+transport cancellation cannot prove whether the Relay committed it.
 
 Authority decisions contain only bounded identifiers, hashes, workspace alias,
 action/resource, decision, and denial code. They exclude local paths, prompts, command

@@ -127,8 +127,9 @@ That Capsule can remain alive when the Node is killed.
 
 After Relay authorization and workspace preflight, that path compiles a grant bound
 to the Agent, Node, workspace resource, Mission, delivery, execution attempt, active
-lease/fence, accepted local-policy digest, and hard expiry. Node journal schema 3
-checkpoints the exact grant before activation. A private wire extension installs,
+lease/fence, accepted local-policy digest, and hard expiry. Node journal schema 4
+checkpoints the exact grant before activation and retains an older-fence predecessor
+until its Capsule generation is retired. A private wire extension installs,
 renews, revalidates, and revokes it. The Capsule monitor gates session, start,
 recovery, cancellation, and cumulative streamed output, usage, and artifacts. The
 Node monitor separately gates final Relay completion and passes its live abort signal
@@ -156,9 +157,9 @@ This Codex path is tested through the real Unix wire with fake app-server client
 guardian tests use real OS process trees, and the Linux process gate starts pinned
 Codex through the guardian and containment boundary without executing a model turn.
 It has no descriptor/CLI selection, composition with the private authority monitor,
-real model-turn proof, or Claude equivalent. The Codex child environment is allowlisted, and its
-private home is derived locally beneath the Capsule and revalidated as canonical,
-current-user-owned, and exactly mode 0700. For an inherited uncertain-interrupt
+real model-turn proof, or Claude equivalent. The Codex child environment is
+allowlisted, and its private home is derived locally beneath the Capsule and
+revalidated as canonical, current-user-owned, and exactly mode 0700. For an inherited uncertain-interrupt
 barrier, a fresh generation reads the exact intent once, persists a terminal provider
 outcome when present, or records a transient failure without resending the interrupt.
 Detailed guardian mechanics live in
@@ -317,8 +318,9 @@ and the relay-owned idempotency key is not exposed to the model.
   and `retain_for_review` decision. The API returns an exact recovery handle, but the
   Mission lifecycle does not persist it. The dedicated Linux process job passes as
   evidence for this library boundary, not as Mission activation evidence.
-- On the selected persistent fake-Capsule path, Node journal schema 3 durably stores
-  one exact grant. Independent Node and Capsule monitors enforce its scope,
+- On the selected persistent fake-Capsule path, Node journal schema 4 durably stores
+  one exact active grant or one predecessor awaiting proven retirement. Independent
+  Node and Capsule monitors enforce its scope,
   capability set, lease/fence, renewal, expiry, product denials, and aggregate
   output/usage/artifact limits. Authority loss stops streaming and final Relay
   completion. Decision records are emitted only to an injected evidence sink, and no

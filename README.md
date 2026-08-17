@@ -119,9 +119,10 @@ output and final Relay completion when that authority expires or is revoked.
 - A private local-authority checkpoint on the persistent fake-Capsule path. After
   Relay authorization and repository preflight, the Node compiles one grant bound to
   the Agent, Node, workspace resource, Mission, delivery, execution attempt, lease,
-  fence, accepted local-policy digest, and hard expiry. Journal schema 3 stores that
-  exact grant before Capsule activation. The Node and Capsule independently enforce
-  the same product/local/Mission/runtime intersection; product policy always denies push,
+  fence, accepted local-policy digest, and hard expiry. Journal schema 4 stores that
+  exact grant before Capsule activation and preserves an older-fence predecessor until
+  its Capsule retirement is proven. The Node and Capsule independently enforce the
+  same product/local/Mission/runtime intersection; product policy always denies push,
   merge, package publish, deploy, arbitrary network access, secret access, and
   privilege expansion. A private install/renew/revoke channel gates Capsule session,
   start, recovery, cancellation, streamed output, usage, and artifacts. The Node
@@ -449,6 +450,10 @@ this README does not claim full A2A conformance.
 - Code and tests define what is shipped.
 - [`docs/architecture.md`](docs/architecture.md) defines the current/target boundary.
 - [`protocol/README.md`](protocol/README.md) describes the executable protocol package.
+- [`node/README.md`](node/README.md) documents the private experimental Node and its
+  fake-runtime commands.
+- [`protocol/fixtures/backend-android/README.md`](protocol/fixtures/backend-android/README.md)
+  documents the deterministic cross-repository fixture.
 - [`docs/next-steps.md`](docs/next-steps.md) tracks the near-term engineering queue.
 - Accepted RFCs define intended behavior until code lands.
 - Docs must label target behavior instead of presenting it as implemented.

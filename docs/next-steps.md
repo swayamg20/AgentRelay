@@ -127,10 +127,10 @@ public control plane.
   to Agent, Node, workspace resource, Mission, delivery, execution attempt, lease,
   fence, accepted local-policy digest, and hard expiry. Enforce product hard denials,
   aggregate output/usage/artifact limits, expiry, renewal, revocation, and final Relay
-  completion outside the model (#97).
+  completion outside the model as the partial issue #97 reference-monitor checkpoint.
 - [ ] Mediate the remaining concrete filesystem, command, and network effects when
-  their handlers are implemented. The #97 checkpoint does not create those effects or
-  authorize verification execution.
+  their handlers are implemented. The checkpoint does not create those effects or
+  authorize verification execution, so issue #97 remains open.
 - [x] Reduce and persist normalized fake-runtime events with acceptance-first ordering,
   replay equality, usage, output, artifact, and token limits.
 - [ ] Add deterministic contract acknowledgement and registered verification-command
@@ -196,10 +196,11 @@ service.
   out-of-group teardown witness, and durable quiescence only after process-group
   absence (#96).
 - [x] Derive, journal, install, renew, and revoke one fenced capability grant outside
-  the model on the persistent fake-Capsule path (#97). The Capsule gates session,
-  start, recovery, cancellation, streamed output, usage, and artifacts; the Node
-  independently gates final Relay completion with a continuous abort signal. Redacted
-  decisions use injected sinks and are not durably persisted by default.
+  the model on the persistent fake-Capsule path as the partial issue #97 checkpoint.
+  The Capsule gates session, start, recovery, cancellation, streamed output, usage,
+  and artifacts; the Node independently gates final Relay completion with a continuous
+  abort signal. Redacted decisions use injected sinks and are not durably persisted by
+  default. This does not close issue #97 or activate a real runtime.
 - [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI
   (#98).
   Before provider start, durably store `{manifestPath, instanceId, bindingSha256}` and
@@ -212,8 +213,9 @@ service.
 - [ ] Run the two-machine backend-and-Android Mission only after that integration gate.
 
 The Codex Capsule journal remains schema v2 and has no migration from its earlier
-unactivated schema-v1 development checkpoint. Separately, Node journal schema 3 now
-stores the exact runtime-authority grant and migrates schema 2 entries with no grant.
+unactivated schema-v1 development checkpoint. Separately, Node journal schema 4 now
+stores the exact runtime-authority grant plus the bounded predecessor-retirement state,
+and migrates schema 2 or 3 entries without inventing authority.
 No production Codex path writes either Codex format, so its compatibility must be
 decided before descriptor or CLI activation.
 

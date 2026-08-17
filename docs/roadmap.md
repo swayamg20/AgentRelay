@@ -25,9 +25,9 @@ mandatory runtime canary, and exact retained-manifest recovery. It is not select
 the Capsule/Node CLI, but its dedicated Linux process proof now starts pinned Codex
 through both boundaries. The persistent fake-Capsule path now also installs a private,
 fenced capability grant into independent Node and Capsule reference monitors. This is
-the issue #97 enforcement checkpoint, not real-runtime activation. The next runtime
-milestone is guarded Codex activation through an explicit descriptor (#98), not another
-protocol abstraction.
+the partial issue #97 reference-monitor checkpoint, not completion of the still-open
+issue or real-runtime activation. The next runtime milestone is guarded Codex activation
+through an explicit descriptor (#98), not another protocol abstraction.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -119,9 +119,10 @@ service/cgroup containment, automatic process respawn, witness/all-owner loss,
 escaped-descendant cleanup, and restart/upgrade/rollback behavior remain #120.
 Contract acknowledgement, verification execution, durable containment-handle
 lifecycle wiring, guarded real-runtime activation, and the two-machine exit gate also
-remain open. On the persistent fake path, journal schema 3 stores an exact authority
-grant before activation. The Node and Capsule enforce its lease, fence, expiry,
-scope, capabilities, and aggregate output/usage/artifact limits independently; the
+remain open. On the persistent fake path, journal schema 4 stores an exact authority
+grant before activation or a predecessor awaiting proven Capsule retirement. The Node
+and Capsule enforce its lease, fence, expiry, scope, capabilities, and aggregate
+output/usage/artifact limits independently; the
 Node also aborts final Relay completion when authority is lost. Evidence records go to
 injected sinks and are not durably stored by default.
 
@@ -170,10 +171,11 @@ model turn.
 - [x] Add guardian-owned provider generations, liveness, deadline/revocation inputs,
   a prearmed teardown witness, durable post-absence quiescence, and process-group
   teardown (#96).
-- [x] Add a private, bound capability reference monitor to the persistent fake-Capsule
-  checkpoint; deny push, merge, publish, deploy, arbitrary network access, secrets,
-  and privilege expansion, and stop output/final completion on authority loss (#97).
-  This does not activate Codex or provide a verification-command executor.
+- [x] Add the partial issue #97 private, bound capability reference-monitor checkpoint
+  to the persistent fake Capsule; deny push, merge, publish, deploy, arbitrary network
+  access, secrets, and privilege expansion, and stop output/final completion on
+  authority loss. This does not close issue #97, activate Codex, or provide a
+  verification-command executor.
 - [ ] Activate the pinned Codex adapter through an explicit descriptor, compose the
   Linux boundary, and durably store its exact recovery handle before provider start
   (#98).

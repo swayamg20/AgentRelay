@@ -20,10 +20,11 @@ guards runtime lifecycle and streamed events. The Node monitor guards the final 
 completion request and supplies a continuous abort signal to that effect. A peer or
 model cannot create, widen, renew, or override either monitor.
 
-This closes issue #97 only as an unactivated reference-monitor checkpoint. The
-currently selected runtime is still deterministic fake code. Issue #98 owns the
-descriptor and CLI composition that must carry the same authority into the guarded
-Codex and Linux containment path before a real model turn can run.
+This implements the reference-monitor portion of issue #97 as an unactivated
+checkpoint. The currently selected runtime is still deterministic fake code. Issue
+#98 owns the descriptor and CLI composition that must carry the same authority into
+the guarded Codex and Linux containment path before a real model turn can run; the
+broader #97 acceptance boundary remains open across the linked follow-up issues.
 
 ## Private boundary
 
@@ -32,7 +33,7 @@ Relay delivery + lease/fence          trusted local Node inputs
               \                        /
                `-> compile exact grant
                          |
-                   journal schema 3
+                   journal schema 4
                          |
              Node reference monitor
                          |
@@ -122,27 +123,31 @@ bare command name across restarts.
 
 ## Crash-safe grant and renewal
 
-Node journal schema 3 stores the exact compiled grant in the delivery entry before
-Capsule installation. Its journal validation correlates the grant with the current
-delivery, Mission, execution attempt, lease ID, and fence. A second checkpoint for the
-same execution attempt must be byte-for-byte equivalent. A new execution attempt
-clears the old grant before a replacement can be compiled. The hard deadline is the
-minimum of Mission lifetime and the effective per-turn limit, anchored to durable
-Relay execution state, so renewal or process restart cannot reset the turn budget.
+Node journal schema 4 stores either the exact active grant or one older-fence
+predecessor awaiting retirement. Its validation correlates both states with the
+delivery, Mission, and execution attempt; an active grant must match the current lease
+and fence, while a predecessor must have a strictly older fence and different lease.
+A trusted claim or recovery update moves an active grant to the predecessor slot in
+the same durable write that advances the delivery fence. The Node then retires that
+exact Capsule generation through a no-launch path, re-reads the journal, and CAS-promotes
+only a successor whose hard deadline and every non-fence field are unchanged. A new
+execution attempt clears both slots. The hard deadline is the
+minimum of Mission lifetime and the effective per-turn limit, checkpointed from the
+trusted local compilation instant. Relay timestamp skew, renewal, and process restart
+therefore cannot reset or widen the turn budget.
 
-Schema 2 entries migrate with `runtime_authority: null`; the grant is then created from
-current trusted inputs. A persisted grant is reused only when recompilation yields the
-same body. This prevents a restart from silently widening scope because configuration,
-workspace identity, or accepted policy changed.
+Schema 2 and 3 entries migrate without inventing a predecessor or grant. A persisted
+grant is reused only when recompilation yields the same body. This prevents a restart
+from silently widening scope because configuration, workspace identity, or accepted
+policy changed.
 
 A renewal keeps the grant ID, lease ID, and fence fixed and may only move the current
 lease expiry forward. Exact replay is idempotent; expiry rollback, a different lease,
-or a stale fence fails closed. On restart, installation sends both the original grant
-and latest verified renewal in one request. Therefore an initial lease deadline that
-passed while the Node was away does not discard a valid later renewal, while an
-actually expired current lease still cannot activate the runtime. A renewal that
-arrives while Capsule installation is in flight is buffered and forwarded immediately
-after installation rather than being lost in the handoff.
+or a stale fence fails closed. Installation replays the exact grant until the Capsule
+has confirmed the latest verified renewal, then creates the local monitor and drains
+any final buffered renewal before exposing the session. Therefore an earlier lease
+may expire while installation is in flight without discarding a later verified lease,
+while an actually expired latest lease still cannot activate the runtime.
 
 ## Capsule monitor
 
@@ -172,8 +177,10 @@ forwarded as an authorized event.
 
 ## Node monitor and final effect
 
-`NodeRuntimeAuthoritySession` installs its own monitor before asking the Capsule to
-install the same grant. Every guarded Node effect follows this order:
+`NodeRuntimeAuthoritySession` first makes the Capsule converge on the exact grant and
+latest verified renewal. It then constructs and binds the local monitor before the
+session can become ready, so no guarded effect is exposed until both sides agree.
+Every guarded Node effect follows this order:
 
 1. Validate locally and record the local decision.
 2. Ask the Capsule monitor to validate and record the exact same request.
@@ -192,10 +199,12 @@ The same local authority signal is raced through session setup, turn lookup, and
 host-stream wait. Expiry invokes one bounded cancellation/revocation path and prevents
 later host output from being journaled or completed as authorized work.
 
-Renewal succeeds remotely before it updates the local deadline. If either side fails,
-the local monitor revokes and the runtime is not treated as authorized. Cancellation
-first revokes local publication, then calls the still-authorized Capsule cancellation
-operation, and finally revokes the Capsule grant.
+Renewal advances the validated local deadline first, then asks the Capsule to apply
+the same renewal. If local validation or the remote update fails, the local monitor
+revokes and the Node attempts exact remote revocation, so the runtime is not treated
+as authorized. Cancellation first revokes local publication, then calls the
+still-authorized Capsule cancellation operation, and finally revokes the Capsule
+grant.
 
 ## Evidence boundary
 
@@ -240,7 +249,7 @@ Database-free tests cover:
 
 - grant compilation, four-source intersection, strict action/resource pairs, product
   denials, wrong-scope requests, expiry, renewal replay/rollback, and bounded evidence;
-- journal schema-2 migration, schema-3 checkpoint/reopen, exact-input correlation,
+- journal schema-2/3 migration, schema-4 checkpoint/reopen, exact-input correlation,
   and rejection of changed persisted authority;
 - delivery grant installation after authorization and preflight, in-flight-install
   renewal buffering, cancellation/revocation, local-expiry host cancellation, crash

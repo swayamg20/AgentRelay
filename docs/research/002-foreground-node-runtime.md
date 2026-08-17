@@ -123,8 +123,13 @@ adapter's host state remains in memory inside the test process.
 
 ## Deliberate non-claims
 
-For this checkpoint, the following were deliberate non-claims. The later persistent
-fake-Capsule checkpoint closes the host-process item only; the other items remain.
+For this historical checkpoint, the following were deliberate non-claims. The later
+persistent fake-Capsule checkpoint closes the host-process item. Subsequent Relay
+reconciliation closes the Mission terminal-state item, while the partial issue #97
+checkpoint adds controls for turn time, tokens, expiry, revocation, streamed output,
+and final publication on the persistent fake path. The list below describes this first
+checkpoint, not the repository's current boundary; see
+[`Local runtime authority`](008-local-runtime-authority.md).
 
 This checkpoint does not yet provide:
 
