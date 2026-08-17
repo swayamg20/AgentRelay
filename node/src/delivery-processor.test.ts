@@ -183,6 +183,27 @@ describe("DeliveryProcessor", () => {
 		});
 	});
 
+	it("forwards a lease renewal that arrives while runtime authority is installing", async () => {
+		let finishInstall!: () => void;
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		authorityPort.installResult = new Promise<void>((resolve) => {
+			finishInstall = resolve;
+		});
+		const harness = await createHarness({ authorityPort });
+		harness.client.renewalExpiresAt = "2026-08-02T00:03:00.300Z";
+
+		const processing = harness.processor.process(IDS.delivery);
+		await vi.waitFor(() => expect(authorityPort.installed).toHaveLength(1));
+		await vi.waitFor(() => expect(harness.client.renewInputs.length).toBeGreaterThan(2));
+		expect(authorityPort.renewed).toHaveLength(0);
+
+		finishInstall();
+		await processing;
+
+		expect(authorityPort.renewed.at(0)?.lease_expires_at).toBe("2026-08-02T00:03:00.300Z");
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
 	it("recovers an exact grant after Relay renewal commits before Capsule forwarding", async () => {
 		const state: { harness?: Awaited<ReturnType<typeof createHarness>> } = {};
 		const authorityPort = new FakeRuntimeAuthorityPort((operation) => {
@@ -1093,6 +1114,50 @@ describe("DeliveryProcessor", () => {
 		expect(operations.indexOf("cancel")).toBeLessThan(operations.indexOf("revoke:revoked"));
 		expect(harness.client.completeInputs).toHaveLength(0);
 	});
+
+	it("cancels a stalled host turn when Node-local runtime authority expires", async () => {
+		vi.useFakeTimers();
+		let now = new Date(TIMES.renewed);
+		try {
+			const config = localConfig();
+			config.policy_profiles.coding = {
+				...config.policy_profiles.coding!,
+				max_turn_seconds: 1,
+			};
+			const authorityPort = new FakeRuntimeAuthorityPort();
+			const harness = await createHarness({
+				config,
+				mission: assignment({ config }),
+				outcome: { kind: "pending" },
+				authorityPort,
+				now: () => now,
+			});
+			const processor = new DeliveryProcessor({
+				config,
+				client: harness.client,
+				journal: harness.journal,
+				adapter: stallHostStream(harness.adapter),
+				authorityPort,
+				now: () => now,
+				preflight: successfulPreflight,
+			});
+
+			const processing = processor.process(IDS.delivery);
+			await vi.waitFor(() =>
+				expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("host_accepted"),
+			);
+			now = new Date(Date.parse(TIMES.renewed) + 1_000);
+			await vi.advanceTimersByTimeAsync(1_000);
+			await processing;
+
+			expect(harness.adapter.counters.cancelTurnCalls).toBe(1);
+			expect(harness.client.completeInputs).toHaveLength(0);
+			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
 
 interface HarnessOptions {
@@ -1224,6 +1289,7 @@ class FakeRuntimeAuthorityPort implements RuntimeAuthorityPort {
 	readonly operations: string[] = [];
 	currentFence: string | null = null;
 	failNextRenew = false;
+	installResult: Promise<void> = Promise.resolve();
 
 	constructor(readonly onOperation: (operation: string) => void = () => undefined) {}
 
@@ -1239,6 +1305,7 @@ class FakeRuntimeAuthorityPort implements RuntimeAuthorityPort {
 		this.installed.push(structuredClone(grant));
 		this.installedLeases.push(structuredClone(currentLease));
 		this.record(`install:${grant.fencing_token}`);
+		await this.installResult;
 	}
 
 	async renewAuthority(_missionId: string, renewal: RuntimeAuthorityRenewal): Promise<void> {
@@ -1509,9 +1576,13 @@ function localConfig(): NodeConfig {
 }
 
 function assignment(
-	options: { readonly workspaceAlias?: string; readonly peerMessageCount?: number } = {},
+	options: {
+		readonly workspaceAlias?: string;
+		readonly peerMessageCount?: number;
+		readonly config?: NodeConfig;
+	} = {},
 ): NodeMissionAssignment {
-	const config = localConfig();
+	const config = options.config ?? localConfig();
 	const acceptedPolicy = resolvePolicyProfile(config.policy_profiles, "coding");
 	const contract = {
 		artifact_id: IDS.artifact,

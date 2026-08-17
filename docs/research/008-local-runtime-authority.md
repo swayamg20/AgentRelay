@@ -126,7 +126,9 @@ Node journal schema 3 stores the exact compiled grant in the delivery entry befo
 Capsule installation. Its journal validation correlates the grant with the current
 delivery, Mission, execution attempt, lease ID, and fence. A second checkpoint for the
 same execution attempt must be byte-for-byte equivalent. A new execution attempt
-clears the old grant before a replacement can be compiled.
+clears the old grant before a replacement can be compiled. The hard deadline is the
+minimum of Mission lifetime and the effective per-turn limit, anchored to durable
+Relay execution state, so renewal or process restart cannot reset the turn budget.
 
 Schema 2 entries migrate with `runtime_authority: null`; the grant is then created from
 current trusted inputs. A persisted grant is reused only when recompilation yields the
@@ -138,7 +140,9 @@ lease expiry forward. Exact replay is idempotent; expiry rollback, a different l
 or a stale fence fails closed. On restart, installation sends both the original grant
 and latest verified renewal in one request. Therefore an initial lease deadline that
 passed while the Node was away does not discard a valid later renewal, while an
-actually expired current lease still cannot activate the runtime.
+actually expired current lease still cannot activate the runtime. A renewal that
+arrives while Capsule installation is in flight is buffered and forwarded immediately
+after installation rather than being lost in the handoff.
 
 ## Capsule monitor
 
@@ -180,8 +184,13 @@ This closes the local check-then-act window for final publication: the Relay cli
 composes the authority signal with Node shutdown and applies it to fetch, retry, and
 backoff. Expiry or revocation after the last preflight stops the local request, but an
 HTTP abort cannot prove that the Relay did not already commit. The Node therefore
-retains the exact completion intent after an ambiguous abort and reconciles it through
-the Relay's idempotent completion path.
+retains the exact completion intent after an ambiguous abort. It may replay that intent
+only while the exact authority remains valid; otherwise it stays pending instead of
+guessing. An independent Relay receipt/status read does not exist yet.
+
+The same local authority signal is raced through session setup, turn lookup, and every
+host-stream wait. Expiry invokes one bounded cancellation/revocation path and prevents
+later host output from being journaled or completed as authorized work.
 
 Renewal succeeds remotely before it updates the local deadline. If either side fails,
 the local monitor revokes and the runtime is not treated as authorized. Cancellation
@@ -220,7 +229,9 @@ store and its retention/export contract.
 | Renewal replays exactly | Both monitors retain the existing deadline and turn timer. |
 | Renewal rolls back expiry or changes lease/fence | Renewal fails closed and local authority is revoked. |
 | Node restarts after grant checkpoint | Trusted inputs must reproduce the exact stored grant before Capsule recovery. |
-| Authority expires during final Relay completion | The continuous signal aborts local fetch/retry/backoff. Because the Relay may already have committed, the exact completion intent remains durable for idempotent reconciliation. |
+| Authority expires during final Relay completion | The continuous signal aborts local fetch/retry/backoff. Because the Relay may already have committed, the exact completion intent remains durable; it is never erased or blindly republished. |
+| Authority expires while the host stream is stalled | The Node races the signal with the host wait, runs bounded cancellation/revocation once, and records no completion. |
+| Relay renews while Capsule installation is in flight | The latest verified renewal is buffered, then serialized into the installed monitor before host activation continues. |
 | Evidence sink fails on an allow record | The guarded effect does not start. |
 
 ## Evidence exercised
@@ -231,9 +242,9 @@ Database-free tests cover:
   denials, wrong-scope requests, expiry, renewal replay/rollback, and bounded evidence;
 - journal schema-2 migration, schema-3 checkpoint/reopen, exact-input correlation,
   and rejection of changed persisted authority;
-- delivery grant installation after authorization and preflight, renewal forwarding,
-  cancellation/revocation, crash recovery with the latest lease, and final completion
-  abort;
+- delivery grant installation after authorization and preflight, in-flight-install
+  renewal buffering, cancellation/revocation, local-expiry host cancellation, crash
+  recovery with the latest lease, and ambiguous final-completion retention;
 - Node-local effect ordering and Relay-client cancellation across request, retry, and
   backoff; and
 - the real private Capsule socket for install/assert/renew/revoke, lifecycle gating,

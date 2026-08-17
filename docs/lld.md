@@ -478,7 +478,11 @@ Measurements are cumulative stream state, not per-frame deltas. Its turn timer a
 lease/hard-expiry timers revoke the monitor and retire the Capsule generation. The
 Node independently revalidates final `outbound_publish`, asks the Capsule to assert the
 same request, rechecks locally, and gives the Relay request a continuous abort signal.
-Lease renewal or revocation is forwarded to both monitors.
+The Node also races local authority loss through live host waits and runs one bounded
+cancellation/revocation path. Lease renewal or revocation is forwarded to both
+monitors; a renewal arriving during installation is buffered until the monitor is
+bound. An aborted completion keeps its exact durable intent because transport
+cancellation cannot prove whether the Relay committed it.
 
 Authority decisions contain only bounded identifiers, hashes, workspace alias,
 action/resource, decision, and denial code. They exclude local paths, prompts, command

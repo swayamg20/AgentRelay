@@ -31,6 +31,7 @@ import {
 } from "./journal.js";
 import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from "./policy.js";
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
+import { RuntimeAuthorityLeaseSynchronizer } from "./runtime-authority-lease-synchronizer.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
 import type { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
 import { RuntimeAuthorityDeniedError, runtimeAuthorityRequest } from "./runtime-authority.js";
@@ -284,8 +285,17 @@ export class DeliveryProcessor {
 			return;
 		}
 		let authority: NodeRuntimeAuthoritySession | null = null;
-		const cancelActiveTurn = () =>
-			this.cancelAndRevokeRuntime(authority, deliveryId, executionAttempt, hostTurn);
+		const authorityLeases = new RuntimeAuthorityLeaseSynchronizer();
+		let cancellation: Promise<void> | null = null;
+		const cancelActiveTurn = () => {
+			cancellation ??= this.cancelAndRevokeRuntime(
+				authority,
+				deliveryId,
+				executionAttempt,
+				hostTurn,
+			);
+			return cancellation;
+		};
 		const leaseKeeper = new LeaseKeeper({
 			deliveryId,
 			client: this.#client,
@@ -293,21 +303,7 @@ export class DeliveryProcessor {
 			now: this.#now,
 			monotonicNow: this.#monotonicNow,
 			onAuthorityLost: cancelActiveTurn,
-			onRenewed: async (lease) => {
-				if (authority === null) return;
-				try {
-					await authority.renew({
-						grant_id: authority.grant.grant_id,
-						lease_id: lease.lease_id,
-						fencing_token: lease.fencing_token,
-						lease_expires_at: lease.expires_at,
-					});
-				} catch (error) {
-					throw new RuntimeAuthoritySyncError(
-						`Runtime lease renewal was not confirmed: ${safeError(error)}`,
-					);
-				}
-			},
+			onRenewed: (lease) => authorityLeases.forward(lease),
 			shutdownSignal: signal,
 		});
 		leaseKeeper.start(leaseWindow);
@@ -328,6 +324,12 @@ export class DeliveryProcessor {
 				requireEntry(this.#journal, deliveryId),
 				adapterInfo,
 			);
+			await authorityLeases.bind(authority);
+			if (authority?.signal.aborted) throw runtimeAuthorityLost(authority.signal);
+			const assertActiveAuthority = () => {
+				leaseKeeper.assertHealthy();
+				if (authority?.signal.aborted) throw runtimeAuthorityLost(authority.signal);
+			};
 			const existingSession = this.#journal.snapshot().mission_sessions[assignment.mission_id];
 			const session = await waitForHostOperation(
 				() =>
@@ -339,18 +341,19 @@ export class DeliveryProcessor {
 				signal,
 				cancelActiveTurn,
 				authorityFailure,
+				authority?.signal,
 			);
 			if (existingSession !== undefined && !isDeepStrictEqual(existingSession, session)) {
 				throw new Error("Host session identity changed during durable Mission recovery");
 			}
-			leaseKeeper.assertHealthy();
+			assertActiveAuthority();
 			await this.#journal.setMissionSession(session);
-			leaseKeeper.assertHealthy();
+			assertActiveAuthority();
 			await this.#journal.updateDelivery(deliveryId, (current) => {
 				current.host_session = structuredClone(session);
 				current.updated_at = this.#now().toISOString();
 			});
-			leaseKeeper.assertHealthy();
+			assertActiveAuthority();
 
 			const currentEntry = requireEntry(this.#journal, deliveryId);
 			const turnInput =
@@ -365,9 +368,11 @@ export class DeliveryProcessor {
 				signal,
 				cancelActiveTurn,
 				authorityFailure,
+				authority?.signal,
 			);
-			leaseKeeper.assertHealthy();
+			assertActiveAuthority();
 			await assertHostOperationAllowed(signal, cancelActiveTurn);
+			assertActiveAuthority();
 			const stream =
 				hostTurn === null
 					? this.#adapter.startTurn(turnInput)
@@ -391,13 +396,14 @@ export class DeliveryProcessor {
 					await this.#checkpoint("host_accepted", deliveryId);
 				},
 				onTerminal: () => this.#checkpoint("host_terminal", deliveryId),
-				assertAuthority: () => leaseKeeper.assertHealthy(),
+				assertAuthority: assertActiveAuthority,
 				authorityFailure,
+				runtimeAuthoritySignal: authority?.signal,
 				signal,
 				onAbort: cancelActiveTurn,
 			});
 			await leaseKeeper.stop();
-			leaseKeeper.assertHealthy();
+			assertActiveAuthority();
 			const result = terminalResultFromEvents(events);
 			await this.#journal.updateDelivery(deliveryId, (current) => {
 				current.result = result;
@@ -983,6 +989,7 @@ interface ConsumeHostEventsOptions {
 	readonly onTerminal: () => void | Promise<void>;
 	readonly assertAuthority: () => void;
 	readonly authorityFailure: Promise<never>;
+	readonly runtimeAuthoritySignal?: AbortSignal;
 	readonly signal?: AbortSignal;
 	readonly onAbort: () => Promise<void>;
 }
@@ -1014,6 +1021,7 @@ async function consumeHostEvents(options: ConsumeHostEventsOptions): Promise<rea
 			options.signal,
 			options.onAbort,
 			options.authorityFailure,
+			options.runtimeAuthoritySignal,
 		);
 		if (next.done) break;
 		const eventInput = next.value;
@@ -1051,8 +1059,15 @@ async function nextHostEvent(
 	signal: AbortSignal | undefined,
 	onAbort: () => Promise<void>,
 	authorityFailure: Promise<never>,
+	runtimeAuthoritySignal?: AbortSignal,
 ): Promise<IteratorResult<HostEvent>> {
-	return waitForHostOperation(() => iterator.next(), signal, onAbort, authorityFailure);
+	return waitForHostOperation(
+		() => iterator.next(),
+		signal,
+		onAbort,
+		authorityFailure,
+		runtimeAuthoritySignal,
+	);
 }
 
 async function waitForHostOperation<T>(
@@ -1060,29 +1075,44 @@ async function waitForHostOperation<T>(
 	signal: AbortSignal | undefined,
 	onAbort: () => Promise<void>,
 	authorityFailure: Promise<never>,
+	runtimeAuthoritySignal?: AbortSignal,
 ): Promise<T> {
 	if (signal?.aborted) {
 		await runBoundedAbort(onAbort);
 		throw new NodeShutdownError();
 	}
+	if (runtimeAuthoritySignal?.aborted) {
+		await runBoundedAbort(onAbort);
+		throw runtimeAuthorityLost(runtimeAuthoritySignal);
+	}
 	const started = operation();
-	if (signal === undefined) return Promise.race([started, authorityFailure]);
-
-	let abortListener!: () => void;
-	let abortStarted = false;
-	const aborted = new Promise<never>((_resolve, reject) => {
-		abortListener = () => {
-			if (abortStarted) return;
-			abortStarted = true;
-			void runBoundedAbort(onAbort).finally(() => reject(new NodeShutdownError()));
-		};
-		signal.addEventListener("abort", abortListener, { once: true });
-		if (signal.aborted) abortListener();
-	});
+	const listeners: Array<readonly [AbortSignal, () => void]> = [];
+	const abortFailures: Promise<never>[] = [];
+	const registerAbort = (source: AbortSignal, error: () => Error) => {
+		let abortStarted = false;
+		abortFailures.push(
+			new Promise<never>((_resolve, reject) => {
+				const listener = () => {
+					if (abortStarted) return;
+					abortStarted = true;
+					void runBoundedAbort(onAbort).finally(() => reject(error()));
+				};
+				listeners.push([source, listener]);
+				source.addEventListener("abort", listener, { once: true });
+				if (source.aborted) listener();
+			}),
+		);
+	};
+	if (signal !== undefined) registerAbort(signal, () => new NodeShutdownError());
+	if (runtimeAuthoritySignal !== undefined) {
+		registerAbort(runtimeAuthoritySignal, () => runtimeAuthorityLost(runtimeAuthoritySignal));
+	}
 	try {
-		return await Promise.race([started, aborted, authorityFailure]);
+		return await Promise.race([started, authorityFailure, ...abortFailures]);
 	} finally {
-		signal.removeEventListener("abort", abortListener);
+		for (const [source, listener] of listeners) {
+			source.removeEventListener("abort", listener);
+		}
 	}
 }
 
@@ -1093,6 +1123,11 @@ async function assertHostOperationAllowed(
 	if (!signal?.aborted) return;
 	await runBoundedAbort(onAbort);
 	throw new NodeShutdownError();
+}
+
+function runtimeAuthorityLost(signal: AbortSignal): AuthorityLostError {
+	const reason = typeof signal.reason === "string" ? signal.reason : "revoked";
+	return new AuthorityLostError(`Runtime authority lost while host turn was active: ${reason}`);
 }
 
 async function runBoundedAbort(onAbort: () => Promise<void>): Promise<void> {
@@ -1291,13 +1326,6 @@ class CompletionOutcomeUnknownError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "CompletionOutcomeUnknownError";
-	}
-}
-
-class RuntimeAuthoritySyncError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "RuntimeAuthoritySyncError";
 	}
 }
 
