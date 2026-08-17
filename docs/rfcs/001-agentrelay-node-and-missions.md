@@ -3,8 +3,9 @@
 - **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
   persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
   ownership, and unactivated Codex client, journal, runner, guardian, and Linux
-  containment checkpoints are implemented; authority wiring, descriptor/CLI
-  activation, and the two-machine proof remain
+  containment checkpoints are implemented; a private capability reference monitor is
+  wired only to the persistent fake-Capsule path; descriptor/CLI activation and the
+  two-machine proof remain
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -31,10 +32,12 @@ The repository now contains an authenticated mailbox, a durable Mission/delivery
 control plane, and a foreground Node with an independently persistent fake Mission
 Capsule. That Node notices work, checks repository identity and a local policy
 profile, and starts or resumes a deterministic fake-host turn. Its Capsule retains
-host state across Node-process death. It cannot yet activate a real coding-agent
-runtime or enforce the complete command/network/time/path boundary. The repository now
-also has a version-pinned read-only app-server client and a pure durable Codex Capsule
-journal, but neither is reachable from the Node or Capsule CLI.
+host state across Node-process death. That fake-Capsule path now receives one private,
+fenced grant and enforces its lifecycle, output, usage, artifact, expiry, and final
+publication boundary outside the model. It cannot yet activate a real coding-agent
+runtime or mediate command/network/path effects whose handlers do not exist. The
+repository also has a version-pinned read-only app-server client and a pure durable
+Codex Capsule journal, but neither is reachable from the Node or Capsule CLI.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -378,9 +381,15 @@ the implemented boundary and its remaining nonclaims.
 
 The current MCP `trust_overlay` is advisory. The foreground Node consumes a locally
 approved profile for repository preflight and reported-event limits, and its fake
-Capsule receives neither the Relay/Node credentials nor unrelated owner secrets.
-Autonomous writes are not safe to claim until the Node also enforces command,
-network, time, path, and side-effect policy outside the model.
+Capsule receives neither the Relay/Node credentials nor unrelated owner secrets. On
+the persistent fake path, independent Node and Capsule monitors now enforce an exact
+journaled grant derived from current Relay authority and trusted local inputs. The
+grant hard-denies push, merge, publish, deploy, arbitrary network access, secret
+access, and privilege expansion; authority loss stops streamed output and final Relay
+completion. This is not composed with Codex, does not grant verification execution,
+and does not durably persist decision evidence by default. Autonomous writes are not
+safe to claim until the Node activates the boundary and mediates every concrete
+command, network, path, and side effect outside the model.
 
 ## Relay-visible versus local data
 
@@ -399,7 +408,9 @@ AgentRelay envelope for Node delivery. It does not add an A2A gateway yet.
 After the Mission loop is proved, map the public surface explicitly to current A2A
 Agent Cards, Messages, Tasks, Artifacts, and task states, then run a current
 compatibility suite. Internal `awaiting_acceptance`, `verifying`, delivery leases, and
-Node cursors remain AgentRelay implementation details.
+Node cursors remain AgentRelay implementation details. Runtime grants, fencing,
+workspace-resource identity, and effective local policy also remain on the private
+Node-to-Capsule control plane; they are not A2A fields or peer-selectable authority.
 
 ## Acceptance tests
 
@@ -451,8 +462,10 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    unactivated provider-neutral Capsule server, schema-v2 journal, injected runner,
    provider guardian, and Linux containment boundary prove local at-most-once
    barriers, ambiguous-start recovery without resend, exact-input replay, redacted
-   terminal normalization, cancellation intent, and provider teardown. Verified
-   Mission authority, descriptor/CLI activation, and a real model turn remain.
+   terminal normalization, cancellation intent, and provider teardown. One private,
+   crash-safe reference-monitor grant now protects the persistent fake-Capsule path.
+   Descriptor/CLI composition with Codex, registered verification, bounded artifact
+   carriage, durable evidence, adversarial evaluation, and a real model turn remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or

@@ -104,8 +104,9 @@ WebSocket, or the process-local notification queue. Its exact failure matrix is:
 | Old or terminal work publishes late output | Postgres has either a newer active fence or a terminal Mission and acknowledged source delivery. | The old fence is rejected with `state_changed`; a fresh completion after the terminal max-turn transition is rejected with `invalid_transition`. Neither creates a second Mission turn. |
 
 Deterministic terminal reconciliation now closes the remaining delivery-control-plane
-gap. The next cross-device product proof is a real two-machine, two-repository run
-through the public control plane.
+gap. The next runtime gate is guarded Codex descriptor/CLI activation; the later
+cross-device product proof remains a real two-machine, two-repository run through the
+public control plane.
 
 ## 4. Build the local Node
 
@@ -122,7 +123,14 @@ through the public control plane.
 - [x] Add stricter unactivated Mission-workspace admission for Linux containment:
   current-user ownership, a standalone checkout-local `.git`, no Git alternates,
   nested mounts, special files, or extra hard links, and stable root/Git identities.
-- [ ] Enforce local path, command, network, budget, expiry, and revocation policy.
+- [x] Install one private capability grant on the persistent fake-Capsule path, bound
+  to Agent, Node, workspace resource, Mission, delivery, execution attempt, lease,
+  fence, accepted local-policy digest, and hard expiry. Enforce product hard denials,
+  aggregate output/usage/artifact limits, expiry, renewal, revocation, and final Relay
+  completion outside the model (#97).
+- [ ] Mediate the remaining concrete filesystem, command, and network effects when
+  their handlers are implemented. The #97 checkpoint does not create those effects or
+  authorize verification execution.
 - [x] Reduce and persist normalized fake-runtime events with acceptance-first ordering,
   replay equality, usage, output, artifact, and token limits.
 - [ ] Add deterministic contract acknowledgement and registered verification-command
@@ -179,26 +187,33 @@ service.
 - [x] Pass the dedicated Linux containment process job, including the policy canaries
   and pinned Codex app-server handshake. Keep macOS and every unsupported platform
   fail-closed rather than claiming parity.
-- [ ] Complete contract/verification delivery handling and bounded provenance-marked
-  Mission artifact carriage.
+- [ ] Add registered verification-command delivery and execution handling (#93).
+- [ ] Carry bounded provenance-marked Mission artifacts end to end (#94).
 - [x] Add a provider guardian that atomically owns one kernel-locked generation,
   heartbeat and provider liveness, absolute deadline, local revocation, a prearmed
   out-of-group teardown witness, and durable quiescence only after process-group
   absence (#96).
-- [ ] Continuously derive guardian authority and enforce local capability grants
-  outside the model (#97).
+- [x] Derive, journal, install, renew, and revoke one fenced capability grant outside
+  the model on the persistent fake-Capsule path (#97). The Capsule gates session,
+  start, recovery, cancellation, streamed output, usage, and artifacts; the Node
+  independently gates final Relay completion with a continuous abort signal. Redacted
+  decisions use injected sinks and are not durably persisted by default.
 - [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI
   (#98).
   Before provider start, durably store `{manifestPath, instanceId, bindingSha256}` and
   recover only that exact containment instance.
 - [ ] Require the RFC's structured turn dispositions and bounded local execution
-  evidence.
+  evidence (#99).
+- [ ] Run the adversarial capability and recovery matrix against the activated runtime
+  (#104).
 - [ ] Pass Guarded Real Mission 0 through the public pipeline.
 - [ ] Run the two-machine backend-and-Android Mission only after that integration gate.
 
-Schema v2 has no migration from the earlier unactivated schema-v1 development
-checkpoint. No production path writes either format, so compatibility must be decided
-before descriptor or CLI activation.
+The Codex Capsule journal remains schema v2 and has no migration from its earlier
+unactivated schema-v1 development checkpoint. Separately, Node journal schema 3 now
+stores the exact runtime-authority grant and migrates schema 2 entries with no grant.
+No production Codex path writes either Codex format, so its compatibility must be
+decided before descriptor or CLI activation.
 
 Do not use Codex remote control, generic MCP notifications, or preview host channels
 as the activation foundation.

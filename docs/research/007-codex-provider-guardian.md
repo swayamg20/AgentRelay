@@ -14,9 +14,9 @@ receives a generation, not a free-standing client, and cannot construct a second
 client while that generation is active.
 
 This is still an unactivated composition. The current Capsule descriptor and Node CLI
-select deterministic fake runtimes. No Mission lifecycle supplies verified authority,
-stores the Linux containment recovery handle, or executes a real model turn through
-this guardian.
+select deterministic fake runtimes. A verified private grant now protects the
+persistent fake-Capsule path, but no descriptor carries it into this guardian, stores
+the Linux containment recovery handle, or executes a real model turn.
 
 ## Process boundary
 
@@ -100,9 +100,11 @@ The absolute deadline is part of initialization, so `ready` also acknowledges th
 both the guardian and surviving witness watchdogs are armed. Capsule heartbeats are
 forwarded to the witness; the witness therefore retains deadline and heartbeat
 authority if the guardian or Capsule disappears. A local `AbortSignal` can revoke a
-generation without a runner calling `terminate` directly. Issue #97 must still prove
-that Mission lease, fence, expiry, and revocation state are the verified sources for
-these local inputs.
+generation without a runner calling `terminate` directly. The issue #97 checkpoint
+now derives a private, fenced signal from verified Relay and local inputs on the
+persistent fake-Capsule path. Issue #98 must compose that same signal with this
+guardian and the retained Linux containment instance. See
+[`Local runtime authority`](008-local-runtime-authority.md).
 
 ## Recovery behavior
 
@@ -177,10 +179,9 @@ guardian-death, joint-owner-death, and Bubblewrap proofs run in the containment 
 
 ## Remaining activation gates
 
-- **#97:** continuously validate Relay lease/fence/expiry/revocation authority and
-  translate it into the local deadline and revocation signal.
 - **#98:** select the Codex descriptor in the Capsule/Node CLI, persist the exact
-  containment recovery handle before provider start, and run Guarded Real Mission 0.
+  containment recovery handle before provider start, carry the private #97 authority
+  signal into this guardian, and run Guarded Real Mission 0.
 - **#120:** install the Node as an OS-supervised service, add cgroup/process containment,
   and close witness/all-owner loss, escaped-descendant, restart, upgrade, and rollback
   behavior.

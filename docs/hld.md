@@ -23,7 +23,10 @@ guardian owns provider-generation spawn and live supervision; its prearmed detac
 witness owns post-absence quiescence finalization. No current command activates a real
 model turn or turns Mission work into repository changes. A separate Linux-only
 containment library can construct the pinned Codex `0.146.0` Bubblewrap boundary, but
-no Mission lifecycle or runtime descriptor composes it with the guardian.
+no Mission lifecycle or runtime descriptor composes it with the guardian. The
+persistent fake-Capsule path now carries one private, fenced capability grant through
+independent Node and Capsule reference monitors; this is an enforcement checkpoint,
+not Codex activation.
 
 ## Components
 
@@ -42,7 +45,7 @@ agentrelay-mcp                                          agentrelay-mcp
 Experimental path on each machine:
 agentrelay-node -> atomic local journal
         |-- in-process deterministic fake adapter
-        `-- private Unix socket -> provider-neutral Capsule server
+        `-- private grant + Unix socket -> provider-neutral Capsule server
                                       |-- selected today: deterministic fake
                                       `-- tested only: injected Codex runner
                                                -> detached guardian process group
@@ -122,6 +125,18 @@ one fake host process per Mission, authenticates every request with a local capa
 and binds recovery to the exact original start input checkpointed before host start.
 That Capsule can remain alive when the Node is killed.
 
+After Relay authorization and workspace preflight, that path compiles a grant bound
+to the Agent, Node, workspace resource, Mission, delivery, execution attempt, active
+lease/fence, accepted local-policy digest, and hard expiry. Node journal schema 3
+checkpoints the exact grant before activation. A private wire extension installs,
+renews, revalidates, and revokes it. The Capsule monitor gates session, start,
+recovery, cancellation, and cumulative streamed output, usage, and artifacts. The
+Node monitor separately gates final Relay completion and passes its live abort signal
+into the request. Product policy cannot grant push, merge, package publish, deploy,
+arbitrary network access, secret access, or privilege expansion. Both monitors can
+emit bounded redacted decisions to injected sinks; no durable evidence sink is wired
+by default. See [research 008](research/008-local-runtime-authority.md).
+
 The wire server is now provider-neutral and accepts a locally injected runtime while
 preserving the fake descriptor, CLI entry point, and versioned request/response
 contract. The library also contains a `CodexCapsuleRunner` with probe, session,
@@ -140,8 +155,8 @@ retirement through the runtime lifecycle.
 This Codex path is tested through the real Unix wire with fake app-server clients. Its
 guardian tests use real OS process trees, and the Linux process gate starts pinned
 Codex through the guardian and containment boundary without executing a model turn.
-It has no descriptor/CLI selection, verified Mission-authority input, real model-turn
-proof, or Claude equivalent. The Codex child environment is allowlisted, and its
+It has no descriptor/CLI selection, composition with the private authority monitor,
+real model-turn proof, or Claude equivalent. The Codex child environment is allowlisted, and its
 private home is derived locally beneath the Capsule and revalidated as canonical,
 current-user-owned, and exactly mode 0700. For an inherited uncertain-interrupt
 barrier, a fresh generation reads the exact intent once, persists a terminal provider
@@ -302,6 +317,12 @@ and the relay-owned idempotency key is not exposed to the model.
   and `retain_for_review` decision. The API returns an exact recovery handle, but the
   Mission lifecycle does not persist it. The dedicated Linux process job passes as
   evidence for this library boundary, not as Mission activation evidence.
+- On the selected persistent fake-Capsule path, Node journal schema 3 durably stores
+  one exact grant. Independent Node and Capsule monitors enforce its scope,
+  capability set, lease/fence, renewal, expiry, product denials, and aggregate
+  output/usage/artifact limits. Authority loss stops streaming and final Relay
+  completion. Decision records are emitted only to an injected evidence sink, and no
+  durable sink is selected by default.
 
 ### Best effort today
 
@@ -317,14 +338,15 @@ and the relay-owned idempotency key is not exposed to the model.
 - Automatic Node installation, OS service supervision, or process respawn. The
   singleton kernel lock now permits direct restart after process death, but it does
   not start the replacement Node.
-- Continuously verified Mission lease/fence/expiry/revocation inputs for the guardian
-  and complete local capability enforcement around every side effect.
+- Composition of the verified private authority grant with the guarded Codex
+  descriptor, plus complete local capability enforcement around every concrete side
+  effect.
 - Descriptor/CLI and Mission-lifecycle wiring for the Linux containment boundary,
   including durable storage of its exact recovery handle before provider start. The
   dedicated Linux process proof passes, but macOS has no supported equivalent.
 - Automatic worktree isolation and complete per-Mission command/network mediation.
 - Contract-acknowledgement and registered verification-command delivery handlers.
-- Local command, edit, test, and permission-decision audit.
+- Durable local command, edit, test, authority, and permission-decision audit.
 - A real two-machine, two-repository execution proof.
 - A current A2A compatibility proof.
 
@@ -345,6 +367,12 @@ and denied roots, private home/temp, no network, rejected ambient Codex configur
 disabled legacy Landlock, recursive read-tree alias inspection, and a mandatory
 runtime canary. No active Mission receives these protections yet.
 
+On the selected persistent fake-Capsule path, the bound grant is enforced outside the
+model before runtime lifecycle operations, streamed output/usage/artifacts, and final
+Relay completion. Its four limit sources intersect monotonically, and product-denied
+effects remain denied even if a peer or Mission asks for them. This checkpoint exposes
+no command executor, does not grant verification execution, and is not wired to Codex.
+
 They are not yet one end-to-end enforcement system:
 
 - The computed trust overlay has no production consumer that changes host policy.
@@ -355,9 +383,9 @@ They are not yet one end-to-end enforcement system:
   commands or edits happened because of a handoff.
 - Outbound AgentRelay tools are not constrained by a Mission-specific data policy.
 
-Autonomous execution must wait for the Node to apply the complete bounded command,
-network, time, path, and side-effect policy outside the model. See the security
-section of [`architecture.md`](architecture.md).
+Autonomous execution must still wait for the Node to activate this boundary around a
+real runtime and mediate every concrete command, network, path, and side effect outside
+the model. See the security section of [`architecture.md`](architecture.md).
 
 ## Failure behavior
 
@@ -451,8 +479,9 @@ Codex client, injected runner, and provider guardian now pass the provider-neutr
 Capsule boundary with fake app-server clients, and a Linux-only containment library
 now defines the workspace boundary. Its dedicated Linux process proof starts pinned
 Codex through both unactivated boundaries. The next gates are contract/artifact
-carriage, verified local capability enforcement, descriptor/CLI composition with
-durable recovery-handle storage, structured execution evidence, and Guarded Real
-Mission 0 through the public pipeline. Installed service/cgroup containment,
+carriage, registered verification execution, descriptor/CLI composition of the new
+authority checkpoint with durable recovery-handle storage, durable structured
+execution evidence, adversarial evaluation, and Guarded Real Mission 0 through the
+public pipeline. Installed service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120.
 The two-machine proof follows; see the roadmap for the dependency order.

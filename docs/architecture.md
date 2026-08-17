@@ -16,7 +16,9 @@
 > Linux-first runtime boundary is recorded in
 > [`Mission workspace containment`](research/006-mission-workspace-containment.md).
 > The provider-generation ownership boundary is recorded in
-> [`Codex provider guardian`](research/007-codex-provider-guardian.md).
+> [`Codex provider guardian`](research/007-codex-provider-guardian.md), and the
+> private capability checkpoint is recorded in
+> [`Local runtime authority`](research/008-local-runtime-authority.md).
 
 ## Product thesis
 
@@ -68,6 +70,16 @@ durable coordination foundations:
   its inode remains permanently in place while `run.owner.json` is diagnostic only.
   Process death or host reboot releases ownership without PID inference or manual
   file deletion.
+- A private capability reference monitor on that persistent fake-Capsule path. The
+  Node compiles and journal-checkpoints one grant bound to the Agent, Node, workspace
+  resource, Mission, delivery, execution attempt, Relay lease/fence, accepted local
+  policy, and expiry. It installs and renews that grant over the private Capsule wire.
+  The Capsule gates session/start/recovery/cancellation and cumulative streamed
+  output, usage, and artifacts; the Node independently gates final Relay completion
+  and aborts the in-flight request when authority is lost. Product policy hard-denies
+  push, merge, package publish, deploy, arbitrary network access, secrets, and
+  privilege expansion. Redacted decisions can be emitted to injected evidence sinks,
+  but are not durably persisted by default.
 - A provider-neutral persistent Capsule server behind that same versioned wire. The
   existing fake descriptor and CLI use a compatibility wrapper, so no current command
   selects another runtime. An unexpected internal runtime failure is redacted and
@@ -99,12 +111,12 @@ system does not contain:
 
 - A production-activated coding-agent path. The persistent CLI still hosts only the
   deterministic fake runtime; the Codex runner has no descriptor/CLI selection,
-  verified Mission-authority input, service supervisor, or real-turn proof.
+  authority composition, service supervisor, or real-turn proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
 - Production wiring that composes the guardian and Linux containment library with a
   Codex descriptor, durably stores its exact recovery handle before provider start,
-  and continuously supplies verified Mission authority.
+  and supplies the verified private authority signal to that generation.
 - A supported containment boundary outside Linux. macOS explicitly fails closed in
   this checkpoint.
 - A real two-machine execution proof through the public control plane.
@@ -237,15 +249,19 @@ A Mission is a bounded collaborative objective with:
 The relay stores this contract, applies the deterministic state machine, routes typed
 work, and tracks accepted revisions and verification rounds. The foreground Node can
 drive either its in-process fake or a detached persistent fake Capsule. It checks
-repository identity and local policy and bounds reported host events, but it does not
-yet execute registered verification commands or enforce the complete wall-time,
-token-budget, network, path, and side-effect policy. Those hard limits must remain
-outside the model because the relay cannot trust usage or effects it has not
-observed. The system does not add a manager LLM with global access to every repository.
+repository identity and local policy and bounds reported host events. On the detached
+fake path it now also installs a crash-safe, fenced grant into independent Node and
+Capsule monitors. Those monitors enforce lifetime and cumulative output, usage, and
+artifact limits and stop final publication on authority loss. It does not yet execute
+registered verification commands or mediate filesystem, command, and network effects
+that no current handler exposes. Those hard limits must remain outside the model
+because the relay cannot trust usage or effects it has not observed. The system does
+not add a manager LLM with global access to every repository.
 
 The Linux containment library strengthens the available local boundary, but it does
 not change this runtime path: no Mission handler prepares it, stores its recovery
-handle, or passes its process boundary to a selected Codex descriptor today.
+handle, or combines its process boundary and the private authority grant in a selected
+Codex descriptor today.
 
 ### Unactivated Codex execution checkpoint
 
@@ -348,7 +364,11 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   record, owner heartbeat, absolute deadline, local revocation signal, provider exit
   and request-timeout observation, reboot-gated recovery, and an out-of-group witness
   that records quiescence only after process-group teardown. This is an unactivated
-  guardian library, not verified Mission authority.
+  guardian library, not an activated Mission runtime.
+- On the persistent fake-Capsule path, independent Node and Capsule reference monitors
+  validate the exact grant scope, capability, lease/fence, policy digest, expiry, and
+  aggregate output/usage/artifact limits. Product-denied effects cannot be granted.
+  Authority loss aborts the local stream and final Relay completion.
 - A Linux-only, fail-closed Codex containment library. This is library capability,
   not an active Mission security claim.
 - Static recommended host permission configuration.
@@ -369,9 +389,10 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
-- The guardian's deadline and revocation inputs are not yet derived from continuously
-  verified Mission lease, fence, expiry, and revocation state. Local commands,
-  network effects, and other side effects are not completely mediated.
+- The private reference-monitor checkpoint is not composed with the guarded Codex
+  descriptor. Its redacted evidence goes only to injected sinks and is not durably
+  persisted by default. Local verification commands, network effects, and other
+  side effects are not completely mediated.
 - The Linux containment boundary is not selected by the Capsule/Node CLI, and the
   Mission lifecycle does not durably store its exact recovery handle. Its dedicated
   Linux process proof passes as library-level evidence, but that does not activate a
@@ -441,6 +462,8 @@ processes it after reconnecting.
   Linux-only workspace policy, retained recovery identity, and activation gates.
 - [`Codex provider guardian`](research/007-codex-provider-guardian.md): kernel-locked
   provider ownership, liveness, authority inputs, and teardown-witness proof.
+- [`Local runtime authority`](research/008-local-runtime-authority.md): private bound
+  grants, Node/Capsule reference monitors, crash-safe renewal, and current nonclaims.
 - [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.

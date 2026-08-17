@@ -34,8 +34,9 @@
 > has not been activated for a real model turn. A Linux-only Codex `0.146.0`
 > containment library now exists, but no Capsule descriptor or CLI selects it, its
 > recovery handle is not yet stored by the Mission lifecycle, and macOS parity,
-> verified local authority wiring, installed service supervision, and the two-machine
-> proof remain incomplete.
+> registered verification execution, durable local evidence, installed service
+> supervision, and the two-machine proof remain incomplete. A private capability
+> reference monitor is wired only into the persistent fake-Capsule checkpoint.
 
 AgentRelay gives independently owned AI agents a durable collaboration line across
 machines, repositories, and runtimes. They can exchange questions, contracts, and
@@ -57,14 +58,16 @@ repositories is the first proof, not the final product boundary.
 | --- | --- | --- |
 | **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.1: identities, invites, typed handoffs, messages, blocks, trust, and audit |
 | **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
-| **Experimental** | Node, persistent Capsule, guardian, and containment | Local recovery and provider supervision libraries; current commands still select deterministic fake runtimes |
+| **Experimental** | Node, persistent Capsule, authority monitor, guardian, and containment | Bound authority is enforced on the persistent fake-Capsule path; current commands still select deterministic fake runtimes |
 | **Next gate** | Guarded real Codex activation | Guarded Real Mission 0 through the public pipeline, then the two-machine backend ↔ Android proof |
 
 The repository does not yet ship the full autonomous runtime described above. The
 Node CLI still consumes one turn at a time through either its in-process deterministic
 fake or a detached fake Capsule. The provider-neutral Capsule server and injected
 Codex runner are tested through the real Unix wire against fake app-server clients,
-but no current descriptor or CLI activates Codex for a real model turn.
+but no current descriptor or CLI activates Codex for a real model turn. The detached
+fake path now installs one private, fenced runtime grant and continuously stops local
+output and final Relay completion when that authority expires or is revoked.
 
 ### Implemented today
 
@@ -113,6 +116,18 @@ but no current descriptor or CLI activates Codex for a real model turn.
   internal runtime failures return a redacted error and retire that running server
   generation. Runtime close begins while admitted handlers drain so the runtime can
   release and fence them; detached background work can request retirement directly.
+- A private local-authority checkpoint on the persistent fake-Capsule path. After
+  Relay authorization and repository preflight, the Node compiles one grant bound to
+  the Agent, Node, workspace resource, Mission, delivery, execution attempt, lease,
+  fence, accepted local-policy digest, and hard expiry. Journal schema 3 stores that
+  exact grant before Capsule activation. The Node and Capsule independently enforce
+  the same product/local/Mission/runtime intersection; product policy always denies push,
+  merge, package publish, deploy, arbitrary network access, secret access, and
+  privilege expansion. A private install/renew/revoke channel gates Capsule session,
+  start, recovery, cancellation, streamed output, usage, and artifacts. The Node
+  separately gates final Relay completion and passes a continuous abort signal into
+  the request. Bounded, redacted decisions can be emitted to injected evidence sinks,
+  but no durable local evidence store is wired by default.
 - An unactivated Codex runtime checkpoint: the pinned guarded client, schema-v2
   Capsule journal, and injected runner implement session start/resume, stable logical
   turn publication before provider binding, exact fresh-generation start
@@ -148,11 +163,13 @@ but no current descriptor or CLI activates Codex for a real model turn.
   current persistent command still selects only the deterministic fake runtime.
 - Mission-lifecycle wiring that durably stores the exact containment recovery handle
   before provider start and reopens only that retained instance after a crash.
-- Complete local verification, contract-artifact carriage, and policy/evidence
-  enforcement outside the model.
-- Mission-authority wiring for the guardian, complete command/network mediation, an
-  installed OS service boundary, and a supported containment boundary beyond Linux;
-  then a Claude runtime adapter.
+- Registered verification execution (#93), bounded Mission artifact carriage (#94),
+  durable local authority and execution evidence (#99), and adversarial evaluation
+  (#104). The current grant deliberately does not authorize verification execution.
+- Descriptor/CLI composition of the authority checkpoint with the real guarded Codex
+  path (#98), complete command/network effect mediation, an installed OS service
+  boundary, and a supported containment boundary beyond Linux; then a Claude runtime
+  adapter.
 - A real two-machine, two-repository proof using the public control plane.
 
 The design is in
@@ -171,6 +188,8 @@ The Linux-first workspace boundary and its remaining activation gates are record
 [`Mission workspace containment`](docs/research/006-mission-workspace-containment.md).
 The provider-generation ownership and teardown checkpoint is recorded in
 [`Codex provider guardian`](docs/research/007-codex-provider-guardian.md).
+The private, fenced capability checkpoint and its remaining nonclaims are recorded in
+[`Local runtime authority`](docs/research/008-local-runtime-authority.md).
 The implementation sequence and stop/go gates are in
 [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -360,12 +379,18 @@ They are not yet a complete autonomous security boundary:
   local denial active and can be repaired by retrying the command.
 
 The current Node enforces repository preflight, accepted local-policy identity, and
-reported host-event bounds outside the model. The unactivated Codex libraries also
-allowlist the child environment, derive a private exact-mode-0700 home locally,
-retire a failed Capsule generation, and can construct the Linux boundary described
-above. They are not wired to the Mission lifecycle. The Node must still enforce the
-effective command, network, time, path, side-effect, budget, and revocation policy
-before real autonomous writes are safe to claim. See
+reported host-event bounds outside the model. On `run-capsule`, it also installs one
+fenced, crash-safe authority grant into independent Node and Capsule reference
+monitors. Those monitors continuously gate fake-runtime lifecycle, streamed output,
+usage, artifacts, and final Relay completion, including expiry and revocation. Their
+redacted decisions are emitted only when an evidence sink is injected; they are not
+durably persisted by default. The unactivated Codex libraries also allowlist the child
+environment, derive a private exact-mode-0700 home locally, retire a failed Capsule
+generation, and can construct the Linux boundary described above. No descriptor or
+CLI composes that real-runtime path with the authority checkpoint, and the registered
+verification executor, full path/command/network effect mediation, durable evidence,
+and adversarial real-turn proof remain open. Real autonomous writes are therefore not
+safe to claim. See
 [`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
 acceptance tests.
 
@@ -413,7 +438,8 @@ this README does not claim full A2A conformance.
     │   ├── 004-codex-capsule-journal.md
     │   ├── 005-codex-capsule-runner.md
     │   ├── 006-mission-workspace-containment.md
-    │   └── 007-codex-provider-guardian.md
+    │   ├── 007-codex-provider-guardian.md
+    │   └── 008-local-runtime-authority.md
     └── rfcs/
         └── 001-agentrelay-node-and-missions.md
 ```
