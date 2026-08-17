@@ -173,10 +173,12 @@ install the same grant. Every guarded Node effect follows this order:
 3. Recheck locally after the remote round trip.
 4. Start the effect with the local monitor's continuous abort signal.
 
-This closes the check-then-act window for final publication: the Relay client composes
-the authority signal with Node shutdown and applies it to fetch, retry, and backoff.
-Expiry or revocation after the last preflight therefore aborts the in-flight completion
-instead of allowing late output to commit.
+This closes the local check-then-act window for final publication: the Relay client
+composes the authority signal with Node shutdown and applies it to fetch, retry, and
+backoff. Expiry or revocation after the last preflight stops the local request, but an
+HTTP abort cannot prove that the Relay did not already commit. The Node therefore
+retains the exact completion intent after an ambiguous abort and reconciles it through
+the Relay's idempotent completion path.
 
 Renewal succeeds remotely before it updates the local deadline. If either side fails,
 the local monitor revokes and the runtime is not treated as authorized. Cancellation
@@ -215,7 +217,7 @@ store and its retention/export contract.
 | Renewal replays exactly | Both monitors retain the existing deadline and turn timer. |
 | Renewal rolls back expiry or changes lease/fence | Renewal fails closed and local authority is revoked. |
 | Node restarts after grant checkpoint | Trusted inputs must reproduce the exact stored grant before Capsule recovery. |
-| Authority expires during final Relay completion | The continuous signal aborts fetch/retry/backoff; no authorized late completion is claimed. |
+| Authority expires during final Relay completion | The continuous signal aborts local fetch/retry/backoff. Because the Relay may already have committed, the exact completion intent remains durable for idempotent reconciliation. |
 | Evidence sink fails on an allow record | The guarded effect does not start. |
 
 ## Evidence exercised

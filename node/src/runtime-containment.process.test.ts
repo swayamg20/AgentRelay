@@ -169,7 +169,7 @@ describe.runIf(
 		).rejects.toThrow("authorize this exact workspace and policy");
 	}, 60_000);
 
-	it("starts pinned Codex and enforces the live process authority boundary", async () => {
+	it("keeps pinned Codex alive while the parent guardian rejects unauthorized effects", async () => {
 		const fixture = await createFixture();
 		const launcher = await resolvePinnedCodex();
 		const deadlineAtMs = Date.now() + 55_000;
