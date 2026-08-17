@@ -129,6 +129,28 @@ describe("NodeRuntimeAuthoritySession", () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it("does not contact the runtime when local authority is already expired", async () => {
+		const port = new FakeAuthorityPort();
+		const grant = authorityGrant({ lease_expires_at: AUTHORITY_NOW });
+
+		await expect(installSession(port, grant, currentLease(grant))).rejects.toMatchObject({
+			code: "expired",
+		});
+		expect(port.installations).toBe(0);
+		expect(port.revocations).toEqual([]);
+	});
+
+	it("best-effort revokes an ambiguous remote install without replacing its error", async () => {
+		const installError = new Error("authority install response lost");
+		const port = new FakeAuthorityPort();
+		port.installResult = Promise.reject(installError);
+		port.revokeResult = Promise.reject(new Error("authority revoke response lost"));
+
+		await expect(installSession(port)).rejects.toBe(installError);
+		expect(port.installations).toBe(1);
+		expect(port.revocations).toEqual(["revoked"]);
+	});
 });
 
 async function installSession(
@@ -160,6 +182,7 @@ class FakeAuthorityPort implements RuntimeAuthorityPort {
 	readonly assertions: RuntimeAuthorityRequest[] = [];
 	readonly renewals: RuntimeAuthorityRenewal[] = [];
 	readonly revocations: RuntimeAuthorityDenyCode[] = [];
+	installations = 0;
 	assertError: Error | null = null;
 	installResult: Promise<void> = Promise.resolve();
 	revokeResult: Promise<void> = Promise.resolve();
@@ -168,6 +191,7 @@ class FakeAuthorityPort implements RuntimeAuthorityPort {
 		_grant: RuntimeAuthorityGrant,
 		_currentLease: RuntimeAuthorityRenewal,
 	): Promise<void> {
+		this.installations += 1;
 		return this.installResult;
 	}
 

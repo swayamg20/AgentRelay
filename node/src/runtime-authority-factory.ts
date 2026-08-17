@@ -25,6 +25,8 @@ export interface RuntimeAuthorityGrantInput {
 	readonly now: Date;
 	/** Latest trusted Relay lease deadline; omitted when compiling a fresh grant. */
 	readonly currentLeaseExpiresAt?: string;
+	/** Exact journaled hard deadline; supplied only when replaying an existing grant. */
+	readonly retainedHardExpiresAt?: string;
 }
 
 /** Compiles one private, locally bounded grant after Relay and workspace authorization. */
@@ -63,12 +65,20 @@ export function createRuntimeAuthorityGrant(
 		artifactTypes: manifest.allowed_artifact_types,
 	});
 	const runtime = authorityLimits({ artifactTypes: manifest.allowed_artifact_types });
-	const hardExpiresAt = Math.min(
+	const missionExpiresAt = Math.min(
 		Date.parse(manifest.expires_at),
 		Date.parse(manifest.created_at) + manifest.max_wall_time_seconds * 1_000,
 	);
+	const retainedHardExpiresAt =
+		input.retainedHardExpiresAt === undefined
+			? Number.POSITIVE_INFINITY
+			: Date.parse(input.retainedHardExpiresAt);
+	const turnExpiresAt =
+		Date.parse(input.delivery.updated_at) +
+		Math.min(product.turn_ms, local.turn_ms, mission.turn_ms, runtime.turn_ms);
+	const hardExpiresAt = Math.min(missionExpiresAt, retainedHardExpiresAt, turnExpiresAt);
 	if (!Number.isFinite(hardExpiresAt) || hardExpiresAt <= input.now.getTime()) {
-		throw new Error("Mission authority has expired before runtime activation");
+		throw new Error("Runtime authority has expired before activation");
 	}
 
 	const workspaceResourceSha256 = sha256(

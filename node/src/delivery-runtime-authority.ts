@@ -91,6 +91,7 @@ export class DeliveryRuntimeAuthority {
 			adapter: input.adapter,
 			now: this.#now(),
 			currentLeaseExpiresAt: lease.expires_at,
+			...(persisted === null ? {} : { retainedHardExpiresAt: persisted.hard_expires_at }),
 		});
 		if (persisted !== null) {
 			if (!isDeepStrictEqual(persisted, compiled)) {

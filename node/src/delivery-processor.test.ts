@@ -111,6 +111,7 @@ describe("DeliveryProcessor", () => {
 			fencing_token: "1",
 			policy_profile: "coding",
 			lease_expires_at: TIMES.expires,
+			hard_expires_at: "2026-08-02T00:08:00.000Z",
 		});
 		expect(grant.workspace_resource_sha256).toMatch(/^[a-f0-9]{64}$/);
 		expect(grant.effective_limits.reported_tokens).toBe(10_000);

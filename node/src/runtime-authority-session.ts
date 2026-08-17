@@ -40,15 +40,15 @@ export class NodeRuntimeAuthoritySession {
 		options: NodeRuntimeAuthoritySessionOptions,
 	): Promise<NodeRuntimeAuthoritySession> {
 		const session = new NodeRuntimeAuthoritySession(options);
+		if (session.signal.aborted) throw new RuntimeAuthorityDeniedError("expired");
 		try {
 			await options.port.installAuthority(options.grant, options.currentLease);
-			if (session.signal.aborted) {
-				await session.revokeRemote("expired");
-				throw new RuntimeAuthorityDeniedError("expired");
-			}
+			if (session.signal.aborted) throw new RuntimeAuthorityDeniedError("expired");
 			return session;
 		} catch (error) {
-			session.#monitor.revoke(denialReason(error));
+			const reason = denialReason(error);
+			session.#monitor.revoke(reason);
+			await session.revokeRemote(reason);
 			throw error;
 		}
 	}
