@@ -1,13 +1,9 @@
 import { createHash } from "node:crypto";
+import { artifactTypeSchema } from "@agentrelay/protocol";
 import { z } from "zod";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const fencingTokenSchema = z.string().regex(/^(?:0|[1-9][0-9]*)$/);
-const artifactTypeSchema = z
-	.string()
-	.min(1)
-	.max(64)
-	.regex(/^[a-z][a-z0-9_]*$/);
 const positiveLimitSchema = z.number().int().safe().positive();
 
 export const RUNTIME_AUTHORITY_PRODUCT_POLICY_VERSION = 1;

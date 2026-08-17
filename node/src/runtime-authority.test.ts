@@ -48,6 +48,19 @@ describe("runtime authority grant", () => {
 			}),
 		).toThrow(/Effective authority limits/);
 	});
+
+	it("accepts every artifact type allowed by the shared Mission contract", () => {
+		const grant = authorityGrant({
+			limit_sources: {
+				product: authorityLimits({ artifact_types: ["openapi.v3", "code-patch"] }),
+				local: authorityLimits({ artifact_types: ["openapi.v3", "code-patch"] }),
+				mission: authorityLimits({ artifact_types: ["openapi.v3", "code-patch"] }),
+				runtime: authorityLimits({ artifact_types: ["openapi.v3", "code-patch"] }),
+			},
+		});
+
+		expect(grant.effective_limits.artifact_types).toEqual(["code-patch", "openapi.v3"]);
+	});
 });
 
 describe("LocalReferenceMonitor scope", () => {
