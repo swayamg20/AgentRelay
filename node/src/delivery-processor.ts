@@ -161,6 +161,14 @@ export class DeliveryProcessor {
 				await this.publishCompletion(deliveryId, entry.operation, signal, authority);
 				await this.revokeRuntimeAuthority(authority, "revoked");
 			} catch (error) {
+				if (
+					error instanceof CompletionOutcomeUnknownError ||
+					(error instanceof AuthorityLostError && !(error instanceof CompletionRejectedError))
+				) {
+					await this.tryRevokeRuntimeAuthority(authority);
+					await this.retainCompletionIntent(deliveryId, error);
+					return;
+				}
 				if (!(error instanceof AuthorityLostError)) throw error;
 				await this.tryRevokeRuntimeAuthority(authority);
 				await this.markLeaseLost(deliveryId, error);
@@ -249,6 +257,11 @@ export class DeliveryProcessor {
 				await this.complete(deliveryId, entry.result, signal, authority);
 				await this.revokeRuntimeAuthority(authority, "revoked");
 			} catch (error) {
+				if (error instanceof CompletionOutcomeUnknownError) {
+					await this.tryRevokeRuntimeAuthority(authority);
+					await this.retainCompletionIntent(deliveryId, error);
+					return;
+				}
 				if (!(error instanceof AuthorityLostError)) throw error;
 				await this.tryRevokeRuntimeAuthority(authority);
 				await this.markLeaseLost(deliveryId, error);
@@ -396,6 +409,10 @@ export class DeliveryProcessor {
 		} catch (error) {
 			await leaseKeeper.stop();
 			await this.tryRevokeRuntimeAuthority(authority);
+			if (error instanceof CompletionOutcomeUnknownError) {
+				await this.retainCompletionIntent(deliveryId, error);
+				return;
+			}
 			if (error instanceof NodeShutdownError) {
 				await this.#journal.updateDelivery(deliveryId, (current) => {
 					current.last_error = error.message;
@@ -836,6 +853,7 @@ export class DeliveryProcessor {
 		authority: NodeRuntimeAuthoritySession | null = null,
 	): Promise<void> {
 		if (intent.kind !== "complete") throw new Error("Expected a completion intent");
+		let completionAttempted = false;
 		try {
 			signal?.throwIfAborted();
 			const result =
@@ -849,14 +867,16 @@ export class DeliveryProcessor {
 									output_bytes: Buffer.byteLength(JSON.stringify(intent.input.result), "utf8"),
 								},
 							),
-							(authoritySignal) =>
-								this.#client.complete(
+							(authoritySignal) => {
+								completionAttempted = true;
+								return this.#client.complete(
 									deliveryId,
 									intent.input,
 									signal === undefined
 										? authoritySignal
 										: AbortSignal.any([signal, authoritySignal]),
-								),
+								);
+							},
 						);
 			await this.#journal.updateDelivery(deliveryId, (current) => {
 				current.item.delivery = structuredClone(result.delivery);
@@ -867,10 +887,12 @@ export class DeliveryProcessor {
 			});
 			await this.#checkpoint("acknowledged", deliveryId);
 		} catch (error) {
+			if (isDefinitiveAuthorityLoss(error)) throw new CompletionRejectedError(safeError(error));
 			if (authority?.signal.aborted || error instanceof RuntimeAuthorityDeniedError) {
-				throw new AuthorityLostError(`Runtime publish authority denied: ${safeError(error)}`);
+				const summary = `Runtime publish authority denied: ${safeError(error)}`;
+				if (completionAttempted) throw new CompletionOutcomeUnknownError(summary);
+				throw new AuthorityLostError(summary);
 			}
-			if (isDefinitiveAuthorityLoss(error)) throw new AuthorityLostError(safeError(error));
 			throw error;
 		}
 	}
@@ -923,6 +945,17 @@ export class DeliveryProcessor {
 		await this.#journal.updateDelivery(deliveryId, (current) => {
 			current.phase = "lease_lost";
 			current.operation = null;
+			current.last_error = safeError(error);
+			current.updated_at = this.#now().toISOString();
+		});
+	}
+
+	private async retainCompletionIntent(deliveryId: string, error: unknown): Promise<void> {
+		await this.#journal.updateDelivery(deliveryId, (current) => {
+			if (current.operation?.kind !== "complete") {
+				throw new Error(`Delivery has no completion intent to retain: ${deliveryId}`);
+			}
+			current.phase = "complete_intent";
 			current.last_error = safeError(error);
 			current.updated_at = this.#now().toISOString();
 		});
@@ -1244,6 +1277,20 @@ class AuthorityLostError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "AuthorityLostError";
+	}
+}
+
+class CompletionRejectedError extends AuthorityLostError {
+	constructor(message: string) {
+		super(message);
+		this.name = "CompletionRejectedError";
+	}
+}
+
+class CompletionOutcomeUnknownError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "CompletionOutcomeUnknownError";
 	}
 }
 

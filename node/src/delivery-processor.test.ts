@@ -245,7 +245,7 @@ describe("DeliveryProcessor", () => {
 		expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
 	});
 
-	it("aborts an in-flight completion when local lease authority expires", async () => {
+	it("aborts an in-flight completion and retains its intent when local authority expires", async () => {
 		vi.useFakeTimers();
 		let now = new Date(TIMES.renewed);
 		try {
@@ -273,11 +273,88 @@ describe("DeliveryProcessor", () => {
 
 			expect(completionSignal?.aborted).toBe(true);
 			expect(harness.client.completedCount).toBe(0);
-			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+			const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+			expect(pending.phase).toBe("complete_intent");
+			expect(pending.operation?.kind).toBe("complete");
 			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("retains the exact completion intent when authority expires after Relay commits", async () => {
+		vi.useFakeTimers();
+		let now = new Date(TIMES.renewed);
+		try {
+			const authorityPort = new FakeRuntimeAuthorityPort();
+			const harness = await createHarness({ authorityPort, now: () => now });
+			let markCompletionCommitted!: () => void;
+			const completionCommitted = new Promise<void>((resolve) => {
+				markCompletionCommitted = resolve;
+			});
+			harness.client.afterComplete = async (signal) => {
+				if (signal === undefined) throw new Error("completion was not authority-bound");
+				markCompletionCommitted();
+				await new Promise<void>((_resolve, reject) => {
+					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				});
+			};
+
+			const processing = harness.processor.process(IDS.delivery);
+			await completionCommitted;
+			const committedInput = structuredClone(harness.client.completeInputs[0]);
+			now = new Date(TIMES.expires);
+			await vi.advanceTimersByTimeAsync(Date.parse(TIMES.expires) - Date.parse(TIMES.renewed));
+			await processing;
+
+			const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+			expect(harness.client.completedCount).toBe(1);
+			expect(pending.phase).toBe("complete_intent");
+			expect(pending.operation).toEqual({ kind: "complete", input: committedInput });
+			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+
+			const restarted = new DeliveryProcessor({
+				config: harness.config,
+				client: harness.client,
+				journal: harness.journal,
+				adapter: harness.adapter,
+				authorityPort,
+				now: () => new Date(TIMES.expires),
+				preflight: successfulPreflight,
+			});
+			await restarted.process(IDS.delivery);
+
+			const stillPending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+			expect(stillPending.phase).toBe("complete_intent");
+			expect(stillPending.operation).toEqual({ kind: "complete", input: committedInput });
+			expect(harness.client.completeInputs).toHaveLength(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("rebuilds a pending completion only after Relay definitively rejects its old fence", async () => {
+		let crash = true;
+		const harness = await createHarness({
+			onCheckpoint(checkpoint) {
+				if (crash && checkpoint === "complete_intent") {
+					crash = false;
+					throw new Error("crash before completion request");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"crash before completion request",
+		);
+		const originalIntent = harness.journal.snapshot().deliveries[IDS.delivery]?.operation;
+		if (originalIntent?.kind !== "complete") throw new Error("expected pending completion");
+		harness.client.failNextCompletionWithAuthorityLoss = true;
+
+		await processorFor(harness).process(IDS.delivery);
+
+		expect(harness.client.completeInputs[0]).toEqual(originalIntent.input);
+		expect(harness.client.completeInputs[1]?.fencing_token).toBe("2");
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
 	it("rejects a structurally valid but locally inconsistent journaled grant", async () => {
@@ -518,6 +595,7 @@ describe("DeliveryProcessor", () => {
 
 		expect(harness.client.completeInputs).toHaveLength(2);
 		expect(harness.client.completeInputs[1]).toEqual(harness.client.completeInputs[0]);
+		expect(harness.client.completedCount).toBe(1);
 		expect(harness.adapter.counters.turnsCreated).toBe(1);
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
@@ -1207,9 +1285,11 @@ class FakeRelayClient implements NodeRelayClient {
 	readonly releaseInputs: DeliveryReleaseInput[] = [];
 	completedCount = 0;
 	beforeComplete: ((signal?: AbortSignal) => Promise<void>) | null = null;
+	afterComplete: ((signal?: AbortSignal) => Promise<void>) | null = null;
 	failFirstCompletion = false;
 	transientRelease = false;
 	failNextClaimWithAuthorityLoss = false;
+	failNextCompletionWithAuthorityLoss = false;
 	failNextRenewWithAuthorityLoss = false;
 	failNextReleaseWithAuthorityLoss = false;
 	failNextStartWithAuthorityLoss = false;
@@ -1226,6 +1306,7 @@ class FakeRelayClient implements NodeRelayClient {
 	#claimResults = new Map<string, DeliveryClaimResult>();
 	#startResults = new Map<string, DeliveryStartResult>();
 	#renewResults = new Map<string, DeliveryRenewResult>();
+	#completeResults = new Map<string, DeliveryCompleteResult>();
 
 	constructor(public mission: NodeMissionAssignment) {}
 
@@ -1328,17 +1409,26 @@ class FakeRelayClient implements NodeRelayClient {
 	): Promise<DeliveryCompleteResult> {
 		this.completeInputs.push(structuredClone(input));
 		await this.beforeComplete?.(signal);
-		if (this.failFirstCompletion && this.completeInputs.length === 1) {
-			throw new Error("completion committed but response lost");
+		if (this.failNextCompletionWithAuthorityLoss) {
+			this.failNextCompletionWithAuthorityLoss = false;
+			throw authorityLostError();
 		}
-		this.completedCount += 1;
-		return {
+		const replayed = this.#completeResults.get(input.idempotency_key);
+		if (replayed !== undefined) return { ...structuredClone(replayed), replayed: true };
+		const result: DeliveryCompleteResult = {
 			delivery: acknowledgedDelivery(Number(input.fencing_token)),
 			receipt: {} as never,
 			events: [{}] as never,
 			derived_delivery_ids: [],
-			replayed: this.completeInputs.length > 1,
+			replayed: false,
 		};
+		this.completedCount += 1;
+		this.#completeResults.set(input.idempotency_key, structuredClone(result));
+		if (this.failFirstCompletion && this.completeInputs.length === 1) {
+			throw new Error("completion committed but response lost");
+		}
+		await this.afterComplete?.(signal);
+		return result;
 	}
 
 	async release(_deliveryId: string, input: DeliveryReleaseInput): Promise<DeliveryReleaseResult> {
