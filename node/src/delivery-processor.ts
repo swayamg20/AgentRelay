@@ -21,6 +21,7 @@ import {
 	deriveHostMissionInputs,
 } from "@agentrelay/protocol";
 import type { NodeConfig } from "./config.js";
+import { DeliveryRuntimeAuthority } from "./delivery-runtime-authority.js";
 import {
 	type JournalDelivery,
 	type NodeJournal,
@@ -30,16 +31,9 @@ import {
 } from "./journal.js";
 import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from "./policy.js";
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
-import { createRuntimeAuthorityGrant } from "./runtime-authority-factory.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
-import { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
-import {
-	RuntimeAuthorityDeniedError,
-	type RuntimeAuthorityEvidenceSink,
-	type RuntimeAuthorityGrant,
-	type RuntimeAuthorityRenewal,
-	runtimeAuthorityRequest,
-} from "./runtime-authority.js";
+import type { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
+import { RuntimeAuthorityDeniedError, runtimeAuthorityRequest } from "./runtime-authority.js";
 import {
 	WorkspacePreflightError,
 	type WorkspacePreflightResult,
@@ -49,11 +43,6 @@ import {
 const TERMINAL_PHASES = new Set(["acknowledged", "dead_lettered", "authority_lost"]);
 const MIN_SAFE_LEASE_WINDOW_MS = 100;
 const HOST_ABORT_GRACE_MS = 5_000;
-// Durable decision storage is owned by #99. The Capsule still records the same
-// remote decision; this sink keeps the Node-side monitor free of payload logs.
-const NOOP_RUNTIME_AUTHORITY_EVIDENCE: RuntimeAuthorityEvidenceSink = {
-	record: () => undefined,
-};
 
 export interface DeliveryProcessorOptions {
 	readonly config: NodeConfig;
@@ -87,7 +76,7 @@ export class DeliveryProcessor {
 	readonly #client: NodeRelayClient;
 	readonly #journal: NodeJournal;
 	readonly #adapter: AgentHostAdapter;
-	readonly #authorityPort: RuntimeAuthorityPort | undefined;
+	readonly #runtimeAuthority: DeliveryRuntimeAuthority;
 	readonly #now: () => Date;
 	readonly #monotonicNow: () => number;
 	readonly #preflight: typeof preflightWorkspace;
@@ -98,8 +87,13 @@ export class DeliveryProcessor {
 		this.#client = options.client;
 		this.#journal = options.journal;
 		this.#adapter = options.adapter;
-		this.#authorityPort = options.authorityPort;
 		this.#now = options.now ?? (() => new Date());
+		this.#runtimeAuthority = new DeliveryRuntimeAuthority({
+			nodeId: options.config.node.node_id,
+			journal: options.journal,
+			port: options.authorityPort,
+			now: this.#now,
+		});
 		this.#monotonicNow = options.monotonicNow ?? (() => performance.now());
 		this.#preflight = options.preflight ?? preflightWorkspace;
 		this.#checkpoint = options.onCheckpoint ?? (() => undefined);
@@ -757,7 +751,7 @@ export class DeliveryProcessor {
 		entry: JournalDelivery,
 		signal?: AbortSignal,
 	): Promise<NodeRuntimeAuthoritySession | null> {
-		if (this.#authorityPort === undefined) return null;
+		if (!this.#runtimeAuthority.enabled) return null;
 		const authorization = await this.authorize(entry.item, signal);
 		const lease = requireLease(entry.item.delivery);
 		if (
@@ -776,62 +770,18 @@ export class DeliveryProcessor {
 		entry: JournalDelivery,
 		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
 	): Promise<NodeRuntimeAuthoritySession | null> {
-		if (this.#authorityPort === undefined) return null;
 		try {
-			const grant = await this.resolveRuntimeAuthority(authorization, entry, adapterInfo);
-			return await NodeRuntimeAuthoritySession.install({
-				port: this.#authorityPort,
-				grant,
-				currentLease: currentRuntimeAuthorityRenewal(
-					grant,
-					requireEntry(this.#journal, grant.delivery_id),
-				),
-				evidenceSink: NOOP_RUNTIME_AUTHORITY_EVIDENCE,
-				now: this.#now,
+			return await this.#runtimeAuthority.install({
+				assignment: authorization.assignment,
+				workspaceAlias: authorization.participant.workspace_alias,
+				workspace: authorization.preflight,
+				policy: authorization.policy,
+				adapter: adapterInfo,
+				entry,
 			});
 		} catch (error) {
 			throw new AuthorityLostError(`Runtime authority installation failed: ${safeError(error)}`);
 		}
-	}
-
-	private async resolveRuntimeAuthority(
-		authorization: AuthorizedDelivery,
-		entry: JournalDelivery,
-		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
-	): Promise<RuntimeAuthorityGrant> {
-		const persisted = entry.runtime_authority;
-		const currentLease = requireLease(entry.item.delivery);
-		if (
-			persisted !== null &&
-			(persisted.lease_id !== currentLease.lease_id ||
-				persisted.fencing_token !== currentLease.fencing_token)
-		) {
-			throw new Error("Persisted runtime authority does not match the current Relay fence");
-		}
-		const delivery = authoritySeedDelivery(entry, persisted);
-		const compiled = createRuntimeAuthorityGrant({
-			assignment: authorization.assignment,
-			delivery,
-			executionAttempt: entry.execution_attempt,
-			nodeId: this.#config.node.node_id,
-			workspaceAlias: authorization.participant.workspace_alias,
-			workspace: authorization.preflight,
-			policy: authorization.policy,
-			adapter: adapterInfo,
-			now: this.#now(),
-			currentLeaseExpiresAt: currentLease.expires_at,
-		});
-		if (persisted !== null) {
-			if (!isDeepStrictEqual(persisted, compiled)) {
-				throw new Error("Persisted runtime authority no longer matches trusted local inputs");
-			}
-			return persisted;
-		}
-		return this.#journal.checkpointRuntimeAuthority(
-			entry.item.delivery.delivery_id,
-			compiled,
-			this.#now(),
-		);
 	}
 
 	private async revokeRuntimeAuthority(
@@ -1338,37 +1288,6 @@ function requireLease(delivery: Delivery): DeliveryLease {
 		throw new AuthorityLostError(`delivery has no active lease: ${delivery.delivery_id}`);
 	}
 	return delivery.lease;
-}
-
-function authoritySeedDelivery(
-	entry: JournalDelivery,
-	persisted: RuntimeAuthorityGrant | null,
-): Delivery {
-	if (persisted === null) return entry.item.delivery;
-	const lease = requireLease(entry.item.delivery);
-	return {
-		...entry.item.delivery,
-		lease: { ...lease, expires_at: persisted.lease_expires_at },
-	};
-}
-
-function currentRuntimeAuthorityRenewal(
-	grant: RuntimeAuthorityGrant,
-	entry: JournalDelivery,
-): RuntimeAuthorityRenewal {
-	const lease = requireLease(entry.item.delivery);
-	if (lease.lease_id !== grant.lease_id || lease.fencing_token !== grant.fencing_token) {
-		throw new Error("Current Relay lease does not match persisted runtime authority");
-	}
-	if (Date.parse(lease.expires_at) < Date.parse(grant.lease_expires_at)) {
-		throw new Error("Current Relay lease is older than persisted runtime authority");
-	}
-	return {
-		grant_id: grant.grant_id,
-		lease_id: lease.lease_id,
-		fencing_token: lease.fencing_token,
-		lease_expires_at: lease.expires_at,
-	};
 }
 
 function leaseWindowFromRenewal(
