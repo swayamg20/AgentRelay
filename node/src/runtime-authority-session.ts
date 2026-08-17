@@ -76,8 +76,12 @@ export class NodeRuntimeAuthoritySession {
 	}
 
 	async revoke(reason: RuntimeAuthorityDenyCode = "revoked"): Promise<void> {
-		this.#monitor.revoke(reason);
+		this.revokeLocal(reason);
 		await this.#port.revokeAuthority(this.grant.mission_id, this.grant.grant_id, reason);
+	}
+
+	revokeLocal(reason: RuntimeAuthorityDenyCode = "revoked"): void {
+		this.#monitor.revoke(reason);
 	}
 
 	async perform<T>(

@@ -244,6 +244,41 @@ describe("DeliveryProcessor", () => {
 		expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
 	});
 
+	it("aborts an in-flight completion when local lease authority expires", async () => {
+		vi.useFakeTimers();
+		let now = new Date(TIMES.renewed);
+		try {
+			const authorityPort = new FakeRuntimeAuthorityPort();
+			const harness = await createHarness({ authorityPort, now: () => now });
+			let completionSignal: AbortSignal | undefined;
+			let markCompletionStarted!: () => void;
+			const completionStarted = new Promise<void>((resolve) => {
+				markCompletionStarted = resolve;
+			});
+			harness.client.beforeComplete = async (signal) => {
+				if (signal === undefined) throw new Error("completion was not authority-bound");
+				completionSignal = signal;
+				markCompletionStarted();
+				await new Promise<void>((_resolve, reject) => {
+					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				});
+			};
+
+			const processing = harness.processor.process(IDS.delivery);
+			await completionStarted;
+			now = new Date(TIMES.expires);
+			await vi.advanceTimersByTimeAsync(Date.parse(TIMES.expires) - Date.parse(TIMES.renewed));
+			await processing;
+
+			expect(completionSignal?.aborted).toBe(true);
+			expect(harness.client.completedCount).toBe(0);
+			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("rejects a structurally valid but locally inconsistent journaled grant", async () => {
 		const authorityPort = new FakeRuntimeAuthorityPort();
 		const harness = await createHarness({ authorityPort });
@@ -1169,6 +1204,8 @@ class FakeRelayClient implements NodeRelayClient {
 	readonly renewInputs: DeliveryRenewInput[] = [];
 	readonly completeInputs: DeliveryCompleteInput[] = [];
 	readonly releaseInputs: DeliveryReleaseInput[] = [];
+	completedCount = 0;
+	beforeComplete: ((signal?: AbortSignal) => Promise<void>) | null = null;
 	failFirstCompletion = false;
 	transientRelease = false;
 	failNextClaimWithAuthorityLoss = false;
@@ -1286,11 +1323,14 @@ class FakeRelayClient implements NodeRelayClient {
 	async complete(
 		_deliveryId: string,
 		input: DeliveryCompleteInput,
+		signal?: AbortSignal,
 	): Promise<DeliveryCompleteResult> {
 		this.completeInputs.push(structuredClone(input));
+		await this.beforeComplete?.(signal);
 		if (this.failFirstCompletion && this.completeInputs.length === 1) {
 			throw new Error("completion committed but response lost");
 		}
+		this.completedCount += 1;
 		return {
 			delivery: acknowledgedDelivery(Number(input.fencing_token)),
 			receipt: {} as never,

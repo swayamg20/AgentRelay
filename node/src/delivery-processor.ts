@@ -32,7 +32,10 @@ import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from ".
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
 import { createRuntimeAuthorityGrant } from "./runtime-authority-factory.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
+import { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
 import {
+	RuntimeAuthorityDeniedError,
+	type RuntimeAuthorityEvidenceSink,
 	type RuntimeAuthorityGrant,
 	type RuntimeAuthorityRenewal,
 	runtimeAuthorityRequest,
@@ -46,6 +49,11 @@ import {
 const TERMINAL_PHASES = new Set(["acknowledged", "dead_lettered", "authority_lost"]);
 const MIN_SAFE_LEASE_WINDOW_MS = 100;
 const HOST_ABORT_GRACE_MS = 5_000;
+// Durable decision storage is owned by #99. The Capsule still records the same
+// remote decision; this sink keeps the Node-side monitor free of payload logs.
+const NOOP_RUNTIME_AUTHORITY_EVIDENCE: RuntimeAuthorityEvidenceSink = {
+	record: () => undefined,
+};
 
 export interface DeliveryProcessorOptions {
 	readonly config: NodeConfig;
@@ -153,14 +161,14 @@ export class DeliveryProcessor {
 			entry = requireEntry(this.#journal, deliveryId);
 		}
 		if (entry.operation?.kind === "complete") {
-			let grant: RuntimeAuthorityGrant | null = null;
+			let authority: NodeRuntimeAuthoritySession | null = null;
 			try {
-				grant = await this.installAuthorityForPendingCompletion(entry, signal);
-				await this.publishCompletion(deliveryId, entry.operation, signal, grant);
-				await this.revokeRuntimeAuthority(grant, "revoked");
+				authority = await this.installAuthorityForPendingCompletion(entry, signal);
+				await this.publishCompletion(deliveryId, entry.operation, signal, authority);
+				await this.revokeRuntimeAuthority(authority, "revoked");
 			} catch (error) {
 				if (!(error instanceof AuthorityLostError)) throw error;
-				await this.tryRevokeRuntimeAuthority(grant);
+				await this.tryRevokeRuntimeAuthority(authority);
 				await this.markLeaseLost(deliveryId, error);
 			}
 			entry = requireEntry(this.#journal, deliveryId);
@@ -226,29 +234,29 @@ export class DeliveryProcessor {
 		}
 
 		if (entry.result !== null) {
-			let grant: RuntimeAuthorityGrant | null = null;
+			let authority: NodeRuntimeAuthoritySession | null = null;
 			try {
 				await this.prepareExecutableLease(deliveryId, signal);
 				signal?.throwIfAborted();
 				const adapterInfo = await this.#adapter.probe();
 				signal?.throwIfAborted();
-				grant = await this.installRuntimeAuthority(
+				authority = await this.installRuntimeAuthority(
 					authorization,
 					requireEntry(this.#journal, deliveryId),
 					adapterInfo,
 				);
 			} catch (error) {
 				if (!(error instanceof AuthorityLostError)) throw error;
-				await this.tryRevokeRuntimeAuthority(grant);
+				await this.tryRevokeRuntimeAuthority(authority);
 				await this.cancelAndMarkAuthorityLost(deliveryId, error);
 				return;
 			}
 			try {
-				await this.complete(deliveryId, entry.result, signal, grant);
-				await this.revokeRuntimeAuthority(grant, "revoked");
+				await this.complete(deliveryId, entry.result, signal, authority);
+				await this.revokeRuntimeAuthority(authority, "revoked");
 			} catch (error) {
 				if (!(error instanceof AuthorityLostError)) throw error;
-				await this.tryRevokeRuntimeAuthority(grant);
+				await this.tryRevokeRuntimeAuthority(authority);
 				await this.markLeaseLost(deliveryId, error);
 			}
 			return;
@@ -268,9 +276,9 @@ export class DeliveryProcessor {
 			await this.cancelAndMarkAuthorityLost(deliveryId, error);
 			return;
 		}
-		let grant: RuntimeAuthorityGrant | null = null;
+		let authority: NodeRuntimeAuthoritySession | null = null;
 		const cancelActiveTurn = () =>
-			this.cancelAndRevokeRuntime(grant, deliveryId, executionAttempt, hostTurn);
+			this.cancelAndRevokeRuntime(authority, deliveryId, executionAttempt, hostTurn);
 		const leaseKeeper = new LeaseKeeper({
 			deliveryId,
 			client: this.#client,
@@ -279,10 +287,10 @@ export class DeliveryProcessor {
 			monotonicNow: this.#monotonicNow,
 			onAuthorityLost: cancelActiveTurn,
 			onRenewed: async (lease) => {
-				if (grant === null || this.#authorityPort === undefined) return;
+				if (authority === null) return;
 				try {
-					await this.#authorityPort.renewAuthority(grant.mission_id, {
-						grant_id: grant.grant_id,
+					await authority.renew({
+						grant_id: authority.grant.grant_id,
 						lease_id: lease.lease_id,
 						fencing_token: lease.fencing_token,
 						lease_expires_at: lease.expires_at,
@@ -308,7 +316,7 @@ export class DeliveryProcessor {
 			);
 			leaseKeeper.assertHealthy();
 			await assertHostOperationAllowed(signal, cancelActiveTurn);
-			grant = await this.installRuntimeAuthority(
+			authority = await this.installRuntimeAuthority(
 				authorization,
 				requireEntry(this.#journal, deliveryId),
 				adapterInfo,
@@ -389,11 +397,11 @@ export class DeliveryProcessor {
 				current.phase = "host_terminal";
 				current.updated_at = this.#now().toISOString();
 			});
-			await this.complete(deliveryId, result, signal, grant);
-			await this.revokeRuntimeAuthority(grant, "revoked");
+			await this.complete(deliveryId, result, signal, authority);
+			await this.revokeRuntimeAuthority(authority, "revoked");
 		} catch (error) {
 			await leaseKeeper.stop();
-			await this.tryRevokeRuntimeAuthority(grant);
+			await this.tryRevokeRuntimeAuthority(authority);
 			if (error instanceof NodeShutdownError) {
 				await this.#journal.updateDelivery(deliveryId, (current) => {
 					current.last_error = error.message;
@@ -562,7 +570,7 @@ export class DeliveryProcessor {
 		deliveryId: string,
 		result: NodeDeliveryResultPayload,
 		signal?: AbortSignal,
-		grant: RuntimeAuthorityGrant | null = null,
+		authority: NodeRuntimeAuthoritySession | null = null,
 	): Promise<void> {
 		signal?.throwIfAborted();
 		const entry = requireEntry(this.#journal, deliveryId);
@@ -583,7 +591,7 @@ export class DeliveryProcessor {
 			current.updated_at = this.#now().toISOString();
 		});
 		await this.#checkpoint("complete_intent", deliveryId);
-		await this.publishCompletion(deliveryId, intent, signal, grant);
+		await this.publishCompletion(deliveryId, intent, signal, authority);
 	}
 
 	async release(
@@ -748,7 +756,7 @@ export class DeliveryProcessor {
 	private async installAuthorityForPendingCompletion(
 		entry: JournalDelivery,
 		signal?: AbortSignal,
-	): Promise<RuntimeAuthorityGrant | null> {
+	): Promise<NodeRuntimeAuthoritySession | null> {
 		if (this.#authorityPort === undefined) return null;
 		const authorization = await this.authorize(entry.item, signal);
 		const lease = requireLease(entry.item.delivery);
@@ -767,19 +775,23 @@ export class DeliveryProcessor {
 		authorization: AuthorizedDelivery,
 		entry: JournalDelivery,
 		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
-	): Promise<RuntimeAuthorityGrant | null> {
+	): Promise<NodeRuntimeAuthoritySession | null> {
 		if (this.#authorityPort === undefined) return null;
-		let grant: RuntimeAuthorityGrant;
 		try {
-			grant = await this.resolveRuntimeAuthority(authorization, entry, adapterInfo);
-			await this.#authorityPort.installAuthority(
+			const grant = await this.resolveRuntimeAuthority(authorization, entry, adapterInfo);
+			return await NodeRuntimeAuthoritySession.install({
+				port: this.#authorityPort,
 				grant,
-				currentRuntimeAuthorityRenewal(grant, requireEntry(this.#journal, grant.delivery_id)),
-			);
+				currentLease: currentRuntimeAuthorityRenewal(
+					grant,
+					requireEntry(this.#journal, grant.delivery_id),
+				),
+				evidenceSink: NOOP_RUNTIME_AUTHORITY_EVIDENCE,
+				now: this.#now,
+			});
 		} catch (error) {
 			throw new AuthorityLostError(`Runtime authority installation failed: ${safeError(error)}`);
 		}
-		return grant;
 	}
 
 	private async resolveRuntimeAuthority(
@@ -822,49 +834,31 @@ export class DeliveryProcessor {
 		);
 	}
 
-	private async assertRuntimeAuthority(grant: RuntimeAuthorityGrant | null): Promise<void> {
-		if (grant === null || this.#authorityPort === undefined) return;
-		const entry = requireEntry(this.#journal, grant.delivery_id);
-		const result =
-			entry.operation?.kind === "complete" ? entry.operation.input.result : entry.result;
-		if (result === null || result === undefined) {
-			throw new AuthorityLostError("Runtime completion has no journaled result");
-		}
-		try {
-			await this.#authorityPort.assertAuthority(
-				runtimeAuthorityRequest(
-					grant,
-					{ action: "outbound_publish", resource: "relay" },
-					{ output_bytes: Buffer.byteLength(JSON.stringify(result), "utf8") },
-				),
-			);
-		} catch (error) {
-			throw new AuthorityLostError(`Runtime publish authority denied: ${safeError(error)}`);
-		}
-	}
-
 	private async revokeRuntimeAuthority(
-		grant: RuntimeAuthorityGrant | null,
+		authority: NodeRuntimeAuthoritySession | null,
 		reason: "revoked",
 	): Promise<void> {
-		if (grant === null || this.#authorityPort === undefined) return;
-		await this.#authorityPort.revokeAuthority(grant.mission_id, grant.grant_id, reason);
+		if (authority === null) return;
+		await authority.revoke(reason);
 	}
 
-	private async tryRevokeRuntimeAuthority(grant: RuntimeAuthorityGrant | null): Promise<void> {
-		await this.revokeRuntimeAuthority(grant, "revoked").catch(() => undefined);
+	private async tryRevokeRuntimeAuthority(
+		authority: NodeRuntimeAuthoritySession | null,
+	): Promise<void> {
+		await this.revokeRuntimeAuthority(authority, "revoked").catch(() => undefined);
 	}
 
 	private async cancelAndRevokeRuntime(
-		grant: RuntimeAuthorityGrant | null,
+		authority: NodeRuntimeAuthoritySession | null,
 		deliveryId: string,
 		executionAttempt: number,
 		knownTurn: HostTurnRef | null,
 	): Promise<void> {
+		authority?.revokeLocal("revoked");
 		try {
 			await this.cancelHostExecution(deliveryId, executionAttempt, knownTurn);
 		} finally {
-			await this.revokeRuntimeAuthority(grant, "revoked");
+			await this.revokeRuntimeAuthority(authority, "revoked");
 		}
 	}
 
@@ -889,13 +883,31 @@ export class DeliveryProcessor {
 		deliveryId: string,
 		intent: OperationIntent,
 		signal?: AbortSignal,
-		grant: RuntimeAuthorityGrant | null = null,
+		authority: NodeRuntimeAuthoritySession | null = null,
 	): Promise<void> {
 		if (intent.kind !== "complete") throw new Error("Expected a completion intent");
 		try {
 			signal?.throwIfAborted();
-			await this.assertRuntimeAuthority(grant);
-			const result = await this.#client.complete(deliveryId, intent.input);
+			const result =
+				authority === null
+					? await this.#client.complete(deliveryId, intent.input, signal)
+					: await authority.perform(
+							runtimeAuthorityRequest(
+								authority.grant,
+								{ action: "outbound_publish", resource: "relay" },
+								{
+									output_bytes: Buffer.byteLength(JSON.stringify(intent.input.result), "utf8"),
+								},
+							),
+							(authoritySignal) =>
+								this.#client.complete(
+									deliveryId,
+									intent.input,
+									signal === undefined
+										? authoritySignal
+										: AbortSignal.any([signal, authoritySignal]),
+								),
+						);
 			await this.#journal.updateDelivery(deliveryId, (current) => {
 				current.item.delivery = structuredClone(result.delivery);
 				current.operation = null;
@@ -905,6 +917,9 @@ export class DeliveryProcessor {
 			});
 			await this.#checkpoint("acknowledged", deliveryId);
 		} catch (error) {
+			if (authority?.signal.aborted || error instanceof RuntimeAuthorityDeniedError) {
+				throw new AuthorityLostError(`Runtime publish authority denied: ${safeError(error)}`);
+			}
 			if (isDefinitiveAuthorityLoss(error)) throw new AuthorityLostError(safeError(error));
 			throw error;
 		}
