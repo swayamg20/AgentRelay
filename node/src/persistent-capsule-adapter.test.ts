@@ -17,6 +17,9 @@ import {
 	PersistentFakeCapsuleAdapter,
 	buildCapsuleEnvironment,
 } from "./persistent-capsule-adapter.js";
+import type { RuntimeAuthorityGrant } from "./runtime-authority.js";
+import { runtimeAuthorityRequest } from "./runtime-authority.js";
+import { authorityGrant } from "./runtime-authority.test-support.js";
 
 const IDS = {
 	mission: "10000000-0000-4000-8000-000000000001",
@@ -25,6 +28,15 @@ const IDS = {
 	delivery: "10000000-0000-4000-8000-000000000004",
 	secondDelivery: "10000000-0000-4000-8000-000000000005",
 } as const;
+
+const TEST_AUTHORITY = authorityGrant({
+	agent_id: IDS.participant,
+	mission_id: IDS.mission,
+	delivery_id: IDS.delivery,
+	workspace_alias: "backend-primary",
+	lease_expires_at: "2099-01-01T00:01:00.000Z",
+	hard_expires_at: "2099-01-01T00:05:00.000Z",
+});
 
 const temporaryDirectories: string[] = [];
 const launchers: InProcessCapsuleLauncher[] = [];
@@ -35,6 +47,254 @@ afterEach(async () => {
 });
 
 describe("PersistentFakeCapsuleAdapter", () => {
+	it("requires a local authority grant before activating a Mission capsule", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await PersistentFakeCapsuleAdapter.open(
+			adapterOptions(rootDirectory, launcher),
+		);
+
+		await expect(adapter.ensureSession(sessionInput())).rejects.toMatchObject({
+			name: "CapsuleRpcError",
+			code: "authority_denied",
+		});
+		expect(launcher.startCalls).toBe(0);
+	});
+
+	it("rejects a current lease outside the installed grant scope before launch", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await PersistentFakeCapsuleAdapter.open(
+			adapterOptions(rootDirectory, launcher),
+		);
+		const lease = currentLease(TEST_AUTHORITY);
+
+		for (const mismatched of [
+			{ ...lease, grant_id: "10000000-0000-4000-8000-000000000010" },
+			{ ...lease, lease_id: "10000000-0000-4000-8000-000000000011" },
+			{ ...lease, fencing_token: "9007199254740994" },
+		]) {
+			await expect(adapter.installAuthority(TEST_AUTHORITY, mismatched)).rejects.toMatchObject({
+				code: "authority_denied",
+				message: "Runtime authority current lease does not match its grant",
+			});
+		}
+		await expect(
+			adapter.installAuthority(TEST_AUTHORITY, {
+				...lease,
+				lease_expires_at: "2098-12-31T23:59:00.000Z",
+			}),
+		).rejects.toMatchObject({
+			code: "authority_denied",
+			message: "Runtime authority current lease cannot move backwards",
+		});
+		expect(launcher.startCalls).toBe(0);
+	});
+
+	it("carries install, assert, renewal, exact replay, and revocation over the private wire", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await PersistentFakeCapsuleAdapter.open(
+			adapterOptions(rootDirectory, launcher),
+		);
+
+		await adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY));
+		await adapter.assertAuthority(
+			runtimeAuthorityRequest(
+				TEST_AUTHORITY,
+				{ action: "outbound_publish", resource: "relay" },
+				{ output_bytes: 10 },
+			),
+		);
+		const renewedLease = {
+			grant_id: TEST_AUTHORITY.grant_id,
+			lease_id: TEST_AUTHORITY.lease_id,
+			fencing_token: TEST_AUTHORITY.fencing_token,
+			lease_expires_at: "2099-01-01T00:02:00.000Z",
+		} as const;
+		await adapter.renewAuthority(IDS.mission, renewedLease);
+		await expect(adapter.installAuthority(TEST_AUTHORITY, renewedLease)).resolves.toBeUndefined();
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+
+		const server = launcher.onlyServer();
+		await adapter.revokeAuthority(IDS.mission, TEST_AUTHORITY.grant_id, "revoked");
+		await server.waitUntilClosed();
+		await expect(adapter.ensureSession(sessionInput())).rejects.toMatchObject({
+			code: "authority_denied",
+		});
+
+		const nextAuthority = authorityGrant({
+			grant_id: "10000000-0000-4000-8000-000000000010",
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.secondDelivery,
+			lease_id: "10000000-0000-4000-8000-000000000011",
+			fencing_token: "9007199254740994",
+			workspace_alias: "backend-primary",
+			lease_expires_at: "2099-01-01T00:01:00.000Z",
+			hard_expires_at: "2099-01-01T00:05:00.000Z",
+		});
+		await adapter.installAuthority(nextAuthority, currentLease(nextAuthority));
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+		expect(launcher.startCalls).toBe(2);
+
+		await adapter.revokeAuthority(IDS.mission, nextAuthority.grant_id, "revoked");
+		await expect(
+			adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
+		).rejects.toMatchObject({
+			code: "authority_denied",
+			message: "Runtime authority grant has been revoked",
+		});
+		expect(launcher.startCalls).toBe(2);
+	});
+
+	it("serializes replacement activation behind revocation", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
+		const nextAuthority = authorityGrant({
+			grant_id: "10000000-0000-4000-8000-000000000010",
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.secondDelivery,
+			lease_id: "10000000-0000-4000-8000-000000000011",
+			fencing_token: "9007199254740994",
+			workspace_alias: "backend-primary",
+			lease_expires_at: "2099-01-01T00:01:00.000Z",
+			hard_expires_at: "2099-01-01T00:05:00.000Z",
+		});
+
+		const revoking = adapter.revokeAuthority(IDS.mission, TEST_AUTHORITY.grant_id, "revoked");
+		const runtimeDuringRevocation = adapter.ensureSession(sessionInput());
+		const revokedReplay = adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY));
+		const installing = adapter.installAuthority(nextAuthority, currentLease(nextAuthority));
+
+		await expect(runtimeDuringRevocation).rejects.toMatchObject({
+			code: "authority_denied",
+			message: "Runtime authority revocation is still in progress",
+		});
+		const [revocation, replay, replacement] = await Promise.allSettled([
+			revoking,
+			revokedReplay,
+			installing,
+		]);
+		expect(revocation).toEqual({ status: "fulfilled", value: undefined });
+		expect(replay).toMatchObject({
+			status: "rejected",
+			reason: {
+				code: "authority_denied",
+				message: "Runtime authority grant has been revoked",
+			},
+		});
+		expect(replacement).toEqual({ status: "fulfilled", value: undefined });
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+		expect(launcher.startCalls).toBe(2);
+	});
+
+	it("serializes lease updates without regressing the cached current lease", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
+		const newer = {
+			...currentLease(TEST_AUTHORITY),
+			lease_expires_at: "2099-01-01T00:03:00.000Z",
+		};
+		const olderReplay = {
+			...currentLease(TEST_AUTHORITY),
+			lease_expires_at: "2099-01-01T00:02:00.000Z",
+		};
+
+		const [renewal, replay] = await Promise.allSettled([
+			adapter.renewAuthority(IDS.mission, newer),
+			adapter.installAuthority(TEST_AUTHORITY, olderReplay),
+		]);
+		expect(renewal).toEqual({ status: "fulfilled", value: undefined });
+		expect(replay).toMatchObject({
+			status: "rejected",
+			reason: { code: "authority_denied" },
+		});
+
+		await launcher.closeAll();
+		await expect(adapter.installAuthority(TEST_AUTHORITY, olderReplay)).rejects.toMatchObject({
+			code: "authority_denied",
+			message: "Runtime authority current lease cannot move backwards",
+		});
+		expect(launcher.startCalls).toBe(1);
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+		await expect(
+			adapter.renewAuthority(IDS.mission, {
+				...currentLease(TEST_AUTHORITY),
+				lease_expires_at: "2099-01-01T00:02:30.000Z",
+			}),
+		).rejects.toMatchObject({ code: "authority_denied" });
+	});
+
+	it("keeps durable turn lookup read-only after authority is revoked", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
+		const session = await adapter.ensureSession(sessionInput());
+		const turn = acceptedTurn(await collect(adapter.startTurn(turnInput(session))));
+
+		await adapter.revokeAuthority(IDS.mission, TEST_AUTHORITY.grant_id, "revoked");
+
+		expect(await adapter.lookupTurn(IDS.delivery, 1)).toEqual(turn);
+		await expect(adapter.ensureSession(sessionInput())).rejects.toMatchObject({
+			code: "authority_denied",
+		});
+		expect(launcher.startCalls).toBe(2);
+	});
+
+	it("rejects a replacement before touching the active Capsule", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
+
+		await expect(
+			adapter.installAuthority(
+				{ ...TEST_AUTHORITY, policy_grant_sha256: "c".repeat(64) },
+				currentLease(TEST_AUTHORITY),
+			),
+		).rejects.toMatchObject({
+			code: "authority_denied",
+			message: "Active runtime authority must be revoked before replacement",
+		});
+
+		await expect(
+			adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
+		).resolves.toBeUndefined();
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+		expect(launcher.startCalls).toBe(1);
+	});
+
+	it("restores the original grant with its current lease after a Capsule restart", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const adapter = await PersistentFakeCapsuleAdapter.open(
+			adapterOptions(rootDirectory, launcher),
+		);
+		const now = Date.now();
+		const original = authorityGrant({
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			lease_expires_at: new Date(now - 1_000).toISOString(),
+			hard_expires_at: new Date(now + 60_000).toISOString(),
+		});
+		const current = {
+			...currentLease(original),
+			lease_expires_at: new Date(now + 30_000).toISOString(),
+		};
+
+		await adapter.installAuthority(original, current);
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+		await launcher.closeAll();
+
+		expect(await adapter.ensureSession(sessionInput())).toMatchObject(sessionInput());
+		expect(launcher.startCalls).toBe(2);
+	});
+
 	it("reopens durable state and replays the exact same turn reference and events", async () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
@@ -45,7 +305,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 			completionDelayMs: 20,
 			startupTimeoutMs: 1_000,
 		};
-		const first = await PersistentFakeCapsuleAdapter.open(options);
+		const first = await openAuthorizedAdapter(options);
 		const session = await first.ensureSession(sessionInput());
 		const input = turnInput(session);
 
@@ -54,7 +314,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		expect(events.map((event) => event.kind)).toEqual(["accepted", "usage", "completed"]);
 
 		await launcher.closeAll();
-		const reopened = await PersistentFakeCapsuleAdapter.open(options);
+		const reopened = await openAuthorizedAdapter(options);
 
 		expect(await reopened.ensureSession(sessionInput())).toEqual(session);
 		expect(await reopened.lookupTurn(input.deliveryId, input.executionAttempt)).toEqual(turn);
@@ -141,9 +401,9 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
 		const options = adapterOptions(rootDirectory, launcher);
-		const first = await PersistentFakeCapsuleAdapter.open(options);
+		const first = await openAuthorizedAdapter(options);
 		const session = await first.ensureSession(sessionInput());
-		const second = await PersistentFakeCapsuleAdapter.open(options);
+		const second = await openAuthorizedAdapter(options);
 		await launcher.closeAll();
 		const descriptor = await readCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
 		await installStaleSocket(descriptor.socket_path);
@@ -187,7 +447,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 
 		try {
 			process.env.TMPDIR = firstTmp;
-			const first = await PersistentFakeCapsuleAdapter.open(options);
+			const first = await openAuthorizedAdapter(options);
 			const session = await first.ensureSession(sessionInput());
 			const directory = join(rootDirectory, IDS.mission);
 			const descriptor = await readCapsuleLaunchDescriptor(directory);
@@ -195,7 +455,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 
 			await launcher.closeAll();
 			process.env.TMPDIR = secondTmp;
-			const reopened = await PersistentFakeCapsuleAdapter.open(options);
+			const reopened = await openAuthorizedAdapter(options);
 
 			expect(await reopened.ensureSession(sessionInput())).toEqual(session);
 			expect((await readCapsuleLaunchDescriptor(directory)).socket_path).toBe(
@@ -218,9 +478,9 @@ describe("PersistentFakeCapsuleAdapter", () => {
 
 		try {
 			process.env.TMPDIR = "relative-capsule-tmp";
-			await expect(adapter.ensureSession(sessionInput())).rejects.toThrow(
-				/Capsule descriptor contains an invalid local socket path/,
-			);
+			await expect(
+				adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
+			).rejects.toThrow(/Capsule descriptor contains an invalid local socket path/);
 			expect(launcher.startCalls).toBe(0);
 			await expect(
 				readFile(join(rootDirectory, IDS.mission, CAPSULE_DESCRIPTOR_FILE), "utf8"),
@@ -289,7 +549,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 			collect(adapter.startTurn(turnInput(session, IDS.secondDelivery))),
 		).rejects.toMatchObject({
 			name: "CapsuleRpcError",
-			code: "correlation_conflict",
+			code: "authority_denied",
 		});
 
 		await adapter.cancelTurn(firstEvent.value.turn);
@@ -304,7 +564,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
 		const options = adapterOptions(rootDirectory, launcher);
-		const adapter = await PersistentFakeCapsuleAdapter.open(options);
+		const adapter = await openAuthorizedAdapter(options);
 		await adapter.ensureSession(sessionInput());
 		const directory = join(rootDirectory, IDS.mission);
 		const descriptor = await readCapsuleLaunchDescriptor(directory);
@@ -318,7 +578,9 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		);
 		const reopened = await PersistentFakeCapsuleAdapter.open(options);
 
-		await expect(reopened.ensureSession(sessionInput())).rejects.toMatchObject({
+		await expect(
+			reopened.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
+		).rejects.toMatchObject({
 			name: "CapsuleRpcError",
 			code: "authentication_failed",
 		});
@@ -328,7 +590,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
 		const options = adapterOptions(rootDirectory, launcher);
-		const adapter = await PersistentFakeCapsuleAdapter.open(options);
+		const adapter = await openAuthorizedAdapter(options);
 		await adapter.ensureSession(sessionInput());
 		const directory = join(rootDirectory, IDS.mission);
 		const descriptor = await readCapsuleLaunchDescriptor(directory);
@@ -353,9 +615,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 	it("surfaces an invalid launch descriptor during best-effort termination", async () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
-		const adapter = await PersistentFakeCapsuleAdapter.open(
-			adapterOptions(rootDirectory, launcher),
-		);
+		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
 		await adapter.ensureSession(sessionInput());
 		const descriptorPath = join(rootDirectory, IDS.mission, CAPSULE_DESCRIPTOR_FILE);
 		const descriptor = await readCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
@@ -377,7 +637,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
 		const options = adapterOptions(rootDirectory, launcher);
-		const adapter = await PersistentFakeCapsuleAdapter.open(options);
+		const adapter = await openAuthorizedAdapter(options);
 		await adapter.ensureSession(sessionInput());
 		const directory = join(rootDirectory, IDS.mission);
 		const descriptorPath = join(directory, CAPSULE_DESCRIPTOR_FILE);
@@ -389,17 +649,15 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		);
 		const reopened = await PersistentFakeCapsuleAdapter.open(options);
 
-		await expect(reopened.ensureSession(sessionInput())).rejects.toThrow(
-			/Capsule descriptor contains an invalid local socket path/,
-		);
+		await expect(
+			reopened.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
+		).rejects.toThrow(/Capsule descriptor contains an invalid local socket path/);
 	});
 
 	it("persists private capsule files and strips unrelated credentials from the child environment", async () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
-		const adapter = await PersistentFakeCapsuleAdapter.open(
-			adapterOptions(rootDirectory, launcher),
-		);
+		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
 		const session = await adapter.ensureSession(sessionInput());
 		await collect(adapter.startTurn(turnInput(session)));
 		const directory = join(rootDirectory, IDS.mission);
@@ -439,7 +697,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
 		const options = adapterOptions(rootDirectory, launcher, { completionDelayMs: 1_000 });
-		const adapter = await PersistentFakeCapsuleAdapter.open(options);
+		const adapter = await openAuthorizedAdapter(options);
 		const session = await adapter.ensureSession(sessionInput());
 		const input = turnInput(session);
 		const stream = adapter.startTurn(input)[Symbol.asyncIterator]();
@@ -464,7 +722,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		await delay(Math.max(0, new Date(dueAt).getTime() - Date.now()) + 200);
 
 		await launcher.closeAll();
-		const reopened = await PersistentFakeCapsuleAdapter.open(options);
+		const reopened = await openAuthorizedAdapter(options);
 		const persistedTurn = await reopened.lookupTurn(input.deliveryId, input.executionAttempt);
 		expect(persistedTurn).toEqual(turn);
 		expect((await collect(reopened.recoverTurn(turn, input))).map((event) => event.kind)).toEqual([
@@ -507,13 +765,19 @@ function capsuleLauncher(): InProcessCapsuleLauncher {
 	return launcher;
 }
 
+async function openAuthorizedAdapter(
+	options: Parameters<typeof PersistentFakeCapsuleAdapter.open>[0],
+): Promise<PersistentFakeCapsuleAdapter> {
+	const adapter = await PersistentFakeCapsuleAdapter.open(options);
+	await adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY));
+	return adapter;
+}
+
 async function openedAdapter(overrides: { completionDelayMs?: number } = {}) {
 	const rootDirectory = await temporaryDirectory();
 	const launcher = capsuleLauncher();
 	return {
-		adapter: await PersistentFakeCapsuleAdapter.open(
-			adapterOptions(rootDirectory, launcher, overrides),
-		),
+		adapter: await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher, overrides)),
 		launcher,
 		rootDirectory,
 	};
@@ -568,6 +832,15 @@ function turnInput(session: HostSessionRef, deliveryId = IDS.delivery): StartTur
 		],
 		peerMessages: [],
 		artifacts: [],
+	};
+}
+
+function currentLease(grant: RuntimeAuthorityGrant) {
+	return {
+		grant_id: grant.grant_id,
+		lease_id: grant.lease_id,
+		fencing_token: grant.fencing_token,
+		lease_expires_at: grant.lease_expires_at,
 	};
 }
 

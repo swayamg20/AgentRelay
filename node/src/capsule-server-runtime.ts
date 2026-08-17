@@ -6,6 +6,7 @@ import { z } from "zod";
 import { CapsuleOperationError } from "./capsule-operation-error.js";
 import type { CapsuleErrorCode } from "./capsule-protocol.js";
 import type { CapsuleRuntime, CapsuleServerIdentity } from "./capsule-runtime.js";
+import { RuntimeAuthorityDeniedError } from "./runtime-authority.js";
 
 const identitySchema = z
 	.object({
@@ -72,6 +73,9 @@ export function publicCapsuleError(error: unknown): {
 	readonly message: string;
 } {
 	if (error instanceof CapsuleOperationError) return { code: error.code, message: error.message };
+	if (error instanceof RuntimeAuthorityDeniedError) {
+		return { code: "authority_denied", message: error.message };
+	}
 	if (error instanceof ZodError) {
 		return { code: "invalid_request", message: "Capsule request failed validation" };
 	}

@@ -10,6 +10,12 @@ import {
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
+import {
+	runtimeAuthorityDenyCodeSchema,
+	runtimeAuthorityGrantSchema,
+	runtimeAuthorityRenewalSchema,
+	runtimeAuthorityRequestSchema,
+} from "./runtime-authority.js";
 
 export const CAPSULE_WIRE_VERSION = 1;
 // A valid recovery request can contain sixteen 1 MiB text artifacts plus all
@@ -31,6 +37,45 @@ const requestEnvelope = {
 
 export const capsuleRequestSchema = z.discriminatedUnion("method", [
 	z.object({ ...requestEnvelope, method: z.literal("probe"), params: emptyParamsSchema }).strict(),
+	z
+		.object({
+			...requestEnvelope,
+			method: z.literal("install_authority"),
+			params: z
+				.object({
+					grant: runtimeAuthorityGrantSchema,
+					current_lease: runtimeAuthorityRenewalSchema,
+				})
+				.strict(),
+		})
+		.strict(),
+	z
+		.object({
+			...requestEnvelope,
+			method: z.literal("assert_authority"),
+			params: z.object({ request: runtimeAuthorityRequestSchema }).strict(),
+		})
+		.strict(),
+	z
+		.object({
+			...requestEnvelope,
+			method: z.literal("renew_authority"),
+			params: z.object({ mission_id: uuidSchema, renewal: runtimeAuthorityRenewalSchema }).strict(),
+		})
+		.strict(),
+	z
+		.object({
+			...requestEnvelope,
+			method: z.literal("revoke_authority"),
+			params: z
+				.object({
+					mission_id: uuidSchema,
+					grant_id: uuidSchema,
+					reason: runtimeAuthorityDenyCodeSchema,
+				})
+				.strict(),
+		})
+		.strict(),
 	z
 		.object({
 			...requestEnvelope,
@@ -99,6 +144,7 @@ export const capsuleResponseSchema = z.discriminatedUnion("kind", [
 			code: z.enum([
 				"invalid_request",
 				"authentication_failed",
+				"authority_denied",
 				"scope_mismatch",
 				"correlation_conflict",
 				"not_found",
