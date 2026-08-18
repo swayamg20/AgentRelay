@@ -6,6 +6,7 @@ import {
 	acceptHostEvent,
 	createHostEventStreamState,
 } from "@agentrelay/protocol";
+import { CapsuleAuthority } from "./capsule-authority.js";
 import type { CapsuleRequest, CapsuleUnaryResult } from "./capsule-protocol.js";
 import type {
 	CapsuleRuntime,
@@ -33,6 +34,7 @@ import {
 export class PersistentCapsuleServer {
 	readonly #identity: CapsuleServerIdentity;
 	readonly #runtime: CapsuleRuntime;
+	readonly #authority: CapsuleAuthority;
 	readonly #server: Server;
 	readonly #socketIdentity: CapsuleSocketIdentity;
 	readonly #connections = new Map<Socket, AbortController>();
@@ -46,11 +48,16 @@ export class PersistentCapsuleServer {
 		runtime: CapsuleRuntime,
 		server: Server,
 		socketIdentity: CapsuleSocketIdentity,
+		authorityEvidenceSink: PersistentCapsuleServerOptions["authorityEvidenceSink"],
 	) {
 		this.#identity = identity;
 		this.#runtime = runtime;
 		this.#server = server;
 		this.#socketIdentity = socketIdentity;
+		this.#authority = new CapsuleAuthority({
+			evidenceSink: authorityEvidenceSink,
+			retire: () => void this.close().catch(() => undefined),
+		});
 		this.#closedPromise = new Promise((resolve) => {
 			this.#resolveClosed = resolve;
 		});
@@ -77,7 +84,13 @@ export class PersistentCapsuleServer {
 			// spawn a provider process.
 			socketIdentity = await publishCapsuleSocket(server, identity.socketPath);
 			runtime = await options.openRuntime({ retire });
-			const activeCapsule = new PersistentCapsuleServer(identity, runtime, server, socketIdentity);
+			const activeCapsule = new PersistentCapsuleServer(
+				identity,
+				runtime,
+				server,
+				socketIdentity,
+				options.authorityEvidenceSink,
+			);
 			capsule = activeCapsule;
 			server.removeListener("connection", rejectUntilReady);
 			server.on("connection", (socket) => activeCapsule.accept(socket));
@@ -111,6 +124,7 @@ export class PersistentCapsuleServer {
 	private async performClose(): Promise<void> {
 		const failures: unknown[] = [];
 		try {
+			this.#authority.dispose();
 			await captureFailure(
 				removeCapsuleSocketIfOwned(this.socketPath, this.#socketIdentity),
 				failures,
@@ -195,13 +209,33 @@ export class PersistentCapsuleServer {
 		switch (request.method) {
 			case "probe":
 				return this.writeUnary(socket, request, await this.#runtime.probe());
+			case "install_authority":
+				this.#authority.install(request.params.grant, request.params.current_lease);
+				return this.writeUnary(socket, request, {});
+			case "assert_authority":
+				await this.#authority.assert(request.params.request);
+				return this.writeUnary(socket, request, {});
+			case "renew_authority":
+				this.#authority.renew(request.params.mission_id, request.params.renewal);
+				return this.writeUnary(socket, request, {});
+			case "revoke_authority":
+				this.#authority.revoke(
+					request.params.mission_id,
+					request.params.grant_id,
+					request.params.reason,
+				);
+				return this.writeUnary(socket, request, {});
 			case "ensure_session":
 				return this.writeUnary(
 					socket,
 					request,
-					await this.#runtime.ensureSession(request.params.input),
+					await this.#authority.performSession(request.params.input, () =>
+						this.#runtime.ensureSession(request.params.input),
+					),
 				);
 			case "lookup_turn":
+				// An authenticated read is needed to discover recoverable local state before
+				// a fresh delivery grant is installed. It cannot activate or mutate the runtime.
 				return this.writeUnary(
 					socket,
 					request,
@@ -210,24 +244,40 @@ export class PersistentCapsuleServer {
 						request.params.execution_attempt,
 					),
 				);
-			case "start_turn":
-				return this.streamEvents(
-					socket,
-					request,
+			case "start_turn": {
+				const events = await this.#authority.performStart(request.params.input, () =>
 					this.#runtime.startTurn(request.params.input),
-					turnCorrelation(request.params.input),
-					signal,
 				);
-			case "recover_turn":
+				this.#authority.beginTurn();
 				return this.streamEvents(
 					socket,
 					request,
-					this.#runtime.recoverTurn(request.params.turn, request.params.input),
-					request.params.turn,
+					events,
+					turnCorrelation(request.params.input),
+					"runtime_start",
 					signal,
 				);
+			}
+			case "recover_turn": {
+				const events = await this.#authority.performRecovery(
+					request.params.turn,
+					request.params.input,
+					() => this.#runtime.recoverTurn(request.params.turn, request.params.input),
+				);
+				this.#authority.beginTurn();
+				return this.streamEvents(
+					socket,
+					request,
+					events,
+					request.params.turn,
+					"runtime_recover",
+					signal,
+				);
+			}
 			case "cancel_turn":
-				await this.#runtime.cancelTurn(request.params.turn);
+				await this.#authority.performCancel(request.params.turn, () =>
+					this.#runtime.cancelTurn(request.params.turn),
+				);
 				return this.writeUnary(socket, request, {});
 			case "shutdown":
 				await this.writeUnary(socket, request, {});
@@ -255,14 +305,16 @@ export class PersistentCapsuleServer {
 		request: CapsuleRequest,
 		events: AsyncIterable<HostEvent>,
 		expectedTurn: HostTurnCorrelation,
+		operation: "runtime_start" | "runtime_recover",
 		signal: AbortSignal,
 	): Promise<void> {
 		let state = createHostEventStreamState(expectedTurn);
 		const iterator = events[Symbol.asyncIterator]();
+		const authoritySignal = this.#authority.streamSignal(signal);
 		let completed = false;
 		try {
 			while (true) {
-				const result = await nextRuntimeEvent(iterator, signal);
+				const result = await nextRuntimeEvent(iterator, authoritySignal);
 				if (result === null) return;
 				if (result.done) {
 					completed = true;
@@ -270,13 +322,15 @@ export class PersistentCapsuleServer {
 				}
 				const accepted = acceptHostEvent(state, result.value, DEFAULT_HOST_EVENT_STREAM_POLICY);
 				state = accepted.state;
-				await writeCapsuleFrame(socket, {
-					version: 1,
-					capsule_id: this.#identity.capsuleId,
-					request_id: request.request_id,
-					kind: "event",
-					event: accepted.event,
-				});
+				await this.#authority.gateEvent(accepted.event, state, operation, () =>
+					writeCapsuleFrame(socket, {
+						version: 1,
+						capsule_id: this.#identity.capsuleId,
+						request_id: request.request_id,
+						kind: "event",
+						event: accepted.event,
+					}),
+				);
 			}
 		} finally {
 			if (!completed) await iterator.return?.();

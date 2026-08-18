@@ -38,6 +38,14 @@ unactivated.
   correlation, separately bounded 128 MiB request and 4 MiB response frames,
   mode-0700 directories, mode-0600 files and sockets, and an allowlisted child
   environment that excludes Relay, Node, and coding-runtime credentials.
+- On `run-capsule`, one private grant bound to the Agent, Node, workspace, Mission,
+  delivery, execution attempt, lease, fence, local-policy digest, and hard expiry.
+  Journal schema 4 preserves that grant and any older-fence predecessor awaiting
+  proven Capsule retirement. Independent Node and Capsule monitors enforce lifetime,
+  cumulative output/usage/artifact limits, and final Relay publication outside the
+  model. This is a partial issue #97 checkpoint on the deterministic fake path, not
+  completion of the issue or real-runtime activation. See
+  [`Local runtime authority`](../docs/research/008-local-runtime-authority.md).
 - An unactivated guarded Codex client, injected Capsule runner, and provider guardian,
   plus a Linux-only Codex `0.146.0` containment library. The guardian owns one
   kernel-locked provider generation, absolute deadline, local revocation signal,
@@ -62,6 +70,11 @@ persistent fake Capsule. The delivery processor can publish `reply`,
 deterministic `ready` or `reply` outcomes. They deliberately fail closed for contract
 acknowledgement and verification deliveries because the required artifact-payload and
 command-result paths are not complete.
+
+Only `run-capsule` installs the private runtime-authority grant. The in-process `run`
+command keeps the older fake-adapter boundary without an independent Capsule monitor.
+Neither command executes a Codex model turn, and neither exposes an official A2A
+gateway.
 
 Git submodules are intentionally unsupported at this checkpoint. Supporting them
 requires a separate, explicit preflight for every nested repository and its local Git
@@ -90,7 +103,7 @@ explicit loopback host during local development.
 ```json
 {
   "schema_version": 1,
-  "relay_url": "http://localhost:3000",
+  "relay_url": "http://localhost:8080",
   "node": {
     "node_id": "00000000-0000-4000-8000-000000000001",
     "agent_id": "00000000-0000-4000-8000-000000000002",
@@ -122,13 +135,15 @@ explicit loopback host during local development.
 }
 ```
 
-At this checkpoint, `max_reported_tokens` feeds the host-event reducer. The other
-policy fields are validated and included in the acceptance grant hash, but turn
-deadlines, network sandboxing, and registered verification-command execution are not
-enforced by the active fake-runtime commands. The unactivated guardian enforces a
-caller-supplied absolute deadline, and the separate Linux containment library denies
-network access for processes launched through its boundary. The Mission lifecycle does
-not yet supply either boundary with verified authority.
+The in-process `run` command uses `max_reported_tokens` in the host-event reducer but
+has no independent Capsule reference monitor. On `run-capsule`, the Node derives the
+private grant from current Relay authority and trusted local inputs; it enforces the
+local turn limit, reported-token bound, product hard denials, lease/hard expiry,
+renewal, revocation, cumulative stream limits, and final Relay publication. The fake
+runtime exposes no command or network handler, and registered verification-command
+execution remains unimplemented. The unactivated guardian and Linux containment
+libraries are not composed with this grant, so no selected real-runtime process
+receives it yet.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this
@@ -188,10 +203,12 @@ established, do not delete or replace `run.lock` as part of normal recovery. Thi
 provides safe direct restart after process death; it does not install or run an OS
 service supervisor.
 
-The current Node journal uses schema 2 to retain the active attempt's exact validated
-start input. Empty schema-1 journals migrate automatically. A schema-1 journal with
-deliveries is rejected because its missing start inputs cannot be reconstructed
-safely; preserve and reconcile that state before replacing it.
+The current Node journal uses schema 4. It retains the active attempt's exact validated
+start input plus either its active runtime-authority grant or one older-fence
+predecessor awaiting proven Capsule retirement. Schema-2 and schema-3 journals migrate
+without inventing authority. Empty schema-1 journals migrate automatically; a
+schema-1 journal with deliveries is rejected because its missing start inputs cannot
+be reconstructed safely. Preserve and reconcile that state before replacing it.
 
 Each `launch.json` retains its original short private socket path, even if the
 restarted Node has a different `TMPDIR`. A direct Capsule server start refuses any

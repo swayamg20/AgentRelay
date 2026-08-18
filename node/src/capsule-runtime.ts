@@ -1,4 +1,5 @@
 import type { AgentHostAdapter } from "@agentrelay/protocol";
+import type { RuntimeAuthorityEvidenceSink } from "./runtime-authority.js";
 
 /**
  * Mission-scoped runtime hosted behind the private Capsule wire.
@@ -27,6 +28,8 @@ export interface CapsuleServerIdentity {
 
 export interface PersistentCapsuleServerOptions {
 	readonly identity: CapsuleServerIdentity;
+	/** Receives only bounded, redacted authority decisions; raw peer content is never included. */
+	readonly authorityEvidenceSink?: RuntimeAuthorityEvidenceSink;
 	/** Called only after this process has exclusively published the Capsule socket. */
 	readonly openRuntime: (lifecycle: CapsuleRuntimeLifecycle) => Promise<CapsuleRuntime>;
 }

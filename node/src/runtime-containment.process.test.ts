@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { resolvePinnedCodex, sha256File } from "../test-support/pinned-codex.js";
 import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
 import {
@@ -29,6 +29,13 @@ import {
 	recoverCodexSandboxContainment,
 } from "./codex-sandbox-containment.js";
 import { prepareMissionWorkspace } from "./mission-workspace.js";
+import {
+	LocalReferenceMonitor,
+	type RuntimeAuthorityEvidence,
+	type RuntimeCapability,
+	compileRuntimeAuthorityGrant,
+	runtimeAuthorityRequest,
+} from "./runtime-authority.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryRoots: string[] = [];
@@ -162,9 +169,15 @@ describe.runIf(
 		).rejects.toThrow("authorize this exact workspace and policy");
 	}, 60_000);
 
-	it("starts pinned Codex through the guardian and real boundary", async () => {
+	it("keeps pinned Codex alive while the parent guardian rejects unauthorized effects", async () => {
 		const fixture = await createFixture();
 		const launcher = await resolvePinnedCodex();
+		const deadlineAtMs = Date.now() + 55_000;
+		const grant = liveRuntimeAuthorityGrant(deadlineAtMs);
+		const authorityEvidence: RuntimeAuthorityEvidence[] = [];
+		const authority = new LocalReferenceMonitor(grant, {
+			record: (evidence) => authorityEvidence.push(evidence),
+		});
 		const containment = await prepareCodexSandboxContainment({
 			controlDirectory: fixture.control,
 			runtimeDirectory: fixture.runtime,
@@ -182,7 +195,8 @@ describe.runIf(
 			capsuleDirectory: fixture.runtime,
 			env: {},
 			boundary: containment.boundary,
-			deadlineAtMs: Date.now() + 55_000,
+			deadlineAtMs,
+			authoritySignal: authority.signal,
 			requestTimeoutMs: PROCESS_TIMEOUT_MS,
 			supervisor: {
 				executable: process.execPath,
@@ -193,9 +207,105 @@ describe.runIf(
 				],
 			},
 		}).openGeneration();
-		await generation.terminate("capsule_shutdown");
+		try {
+			for (const capability of PRODUCT_DENIED_CAPABILITIES) {
+				const effect = vi.fn();
+				await expect(
+					authority.perform(runtimeAuthorityRequest(grant, capability), effect),
+				).rejects.toMatchObject({ code: "product_denied" });
+				expect(effect).not.toHaveBeenCalled();
+			}
+
+			const wrongWorkspaceEffect = vi.fn();
+			await expect(
+				authority.perform(
+					{
+						...runtimeAuthorityRequest(grant, {
+							action: "workspace_read",
+							resource: "workspace",
+						}),
+						workspace_alias: "peer-workspace",
+					},
+					wrongWorkspaceEffect,
+				),
+			).rejects.toMatchObject({ code: "wrong_workspace" });
+			expect(wrongWorkspaceEffect).not.toHaveBeenCalled();
+
+			authority.revoke("revoked");
+			const delayedOutputEffect = vi.fn();
+			await expect(
+				authority.perform(
+					runtimeAuthorityRequest(
+						grant,
+						{ action: "outbound_publish", resource: "relay" },
+						{ output_bytes: 1 },
+					),
+					delayedOutputEffect,
+				),
+			).rejects.toMatchObject({ code: "revoked" });
+			expect(delayedOutputEffect).not.toHaveBeenCalled();
+			await generation.termination;
+
+			expect(JSON.stringify(authorityEvidence)).not.toContain(fixture.root);
+			expect(JSON.stringify(authorityEvidence)).not.toContain("peer-workspace");
+			expect(authorityEvidence.at(-1)).toMatchObject({
+				decision: "deny",
+				code: "revoked",
+				action: "outbound_publish",
+			});
+		} finally {
+			authority.revoke("revoked");
+			await generation.terminate("capsule_shutdown").catch(() => undefined);
+		}
 	}, 60_000);
 });
+
+const PRODUCT_DENIED_CAPABILITIES = [
+	{ action: "repository_push", resource: "repository" },
+	{ action: "repository_merge", resource: "repository" },
+	{ action: "package_publish", resource: "package" },
+	{ action: "deploy", resource: "deployment" },
+	{ action: "network_access", resource: "network" },
+	{ action: "secret_read", resource: "secret" },
+	{ action: "privilege_expand", resource: "privilege" },
+] as const satisfies readonly RuntimeCapability[];
+
+function liveRuntimeAuthorityGrant(deadlineAtMs: number) {
+	const limits = {
+		turn_ms: 55_000,
+		reported_tokens: 10_000,
+		output_bytes: 32_000,
+		artifact_count: 8,
+		artifact_bytes: 1_000_000,
+		artifact_types: ["patch"],
+	};
+	return compileRuntimeAuthorityGrant({
+		schema_version: 1,
+		product_policy_version: 1,
+		grant_id: randomUUID(),
+		agent_id: randomUUID(),
+		node_id: randomUUID(),
+		workspace_binding_id: randomUUID(),
+		workspace_alias: "contained-workspace",
+		workspace_resource_sha256: "a".repeat(64),
+		mission_id: randomUUID(),
+		delivery_id: randomUUID(),
+		execution_attempt: 1,
+		lease_id: randomUUID(),
+		fencing_token: "1",
+		policy_profile: "contained",
+		policy_grant_sha256: "b".repeat(64),
+		lease_expires_at: new Date(deadlineAtMs).toISOString(),
+		hard_expires_at: new Date(deadlineAtMs).toISOString(),
+		capabilities: [
+			{ action: "runtime_start", resource: "runtime" },
+			{ action: "workspace_read", resource: "workspace" },
+			{ action: "outbound_publish", resource: "relay" },
+			...PRODUCT_DENIED_CAPABILITIES,
+		],
+		limit_sources: { product: limits, local: limits, mission: limits, runtime: limits },
+	});
+}
 
 async function createFixture() {
 	const root = await realpath(await mkdtemp(join(process.cwd(), ".agentrelay-containment-")));

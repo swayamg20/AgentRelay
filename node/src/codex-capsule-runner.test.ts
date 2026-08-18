@@ -31,6 +31,7 @@ import {
 	type CodexProviderTerminationReason,
 } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { authorityGrant } from "./runtime-authority.test-support.js";
 
 const IDS = {
 	capsule: "72000000-0000-4000-8000-000000000001",
@@ -41,6 +42,14 @@ const IDS = {
 	owner: "72000000-0000-4000-8000-000000000006",
 };
 const CAPABILITY = `ar_capsule_${"c".repeat(64)}`;
+const CODEX_AUTHORITY = authorityGrant({
+	agent_id: IDS.participant,
+	mission_id: IDS.mission,
+	delivery_id: IDS.delivery,
+	workspace_alias: "backend-primary",
+	lease_expires_at: "2099-01-01T00:01:00.000Z",
+	hard_expires_at: "2099-01-01T00:05:00.000Z",
+});
 const directories: string[] = [];
 const servers: PersistentCapsuleServer[] = [];
 
@@ -485,6 +494,15 @@ async function createFixture(options: FixtureOptions = {}) {
 				}),
 		});
 		servers.push(server);
+		await capsuleResultValue(identity, "install_authority", {
+			grant: CODEX_AUTHORITY,
+			current_lease: {
+				grant_id: CODEX_AUTHORITY.grant_id,
+				lease_id: CODEX_AUTHORITY.lease_id,
+				fencing_token: CODEX_AUTHORITY.fencing_token,
+				lease_expires_at: CODEX_AUTHORITY.lease_expires_at,
+			},
+		});
 		return server;
 	};
 	return {

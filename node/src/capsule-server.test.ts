@@ -21,6 +21,9 @@ import {
 import type { CapsuleResponse } from "./capsule-protocol.js";
 import type { CapsuleRuntime, CapsuleServerIdentity } from "./capsule-runtime.js";
 import { PersistentCapsuleServer } from "./capsule-server.js";
+import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
+import { runtimeAuthorityRequest } from "./runtime-authority.js";
+import { authorityGrant, authorityLimits } from "./runtime-authority.test-support.js";
 
 const IDS = {
 	capsule: "71000000-0000-4000-8000-000000000001",
@@ -30,6 +33,14 @@ const IDS = {
 	owner: "71000000-0000-4000-8000-000000000005",
 };
 const CAPABILITY = `ar_capsule_${"a".repeat(64)}`;
+const SERVER_AUTHORITY = authorityGrant({
+	agent_id: IDS.participant,
+	mission_id: IDS.mission,
+	delivery_id: IDS.delivery,
+	workspace_alias: "backend-primary",
+	lease_expires_at: "2099-01-01T00:01:00.000Z",
+	hard_expires_at: "2099-01-01T00:05:00.000Z",
+});
 const directories: string[] = [];
 const servers: PersistentCapsuleServer[] = [];
 
@@ -94,6 +105,268 @@ describe("PersistentCapsuleServer", () => {
 			}),
 		]);
 		expect(runtime.calls).toEqual([]);
+	});
+
+	it("denies state-changing runtime calls until authority is installed", async () => {
+		const runtime = new RecordingRuntime();
+		const { identity } = await startServer(runtime, { installAuthority: false });
+		expect(await capsuleResultValue(identity, "probe", {})).toEqual(runtime.info);
+		expect(
+			await capsuleResultValue(identity, "lookup_turn", {
+				delivery_id: IDS.delivery,
+				execution_attempt: 1,
+			}),
+		).toEqual(runtime.turn);
+
+		const frames = await sendCapsuleRequest(identity, "ensure_session", {
+			input: sessionInput(),
+		});
+
+		expect(frames).toEqual([
+			expect.objectContaining({
+				kind: "error",
+				code: "authority_denied",
+				message: "Runtime authority is not installed",
+			}),
+		]);
+		expect(runtime.calls).toEqual(["probe", "lookupTurn"]);
+	});
+
+	it("accepts an exact grant replay and retires on a changed fence", async () => {
+		const runtime = new RecordingRuntime();
+		const { server, identity } = await startServer(runtime);
+
+		expect(
+			await capsuleResultValue(identity, "install_authority", {
+				grant: SERVER_AUTHORITY,
+				current_lease: currentLease(SERVER_AUTHORITY),
+			}),
+		).toEqual({});
+		const changedGrant = { ...SERVER_AUTHORITY, fencing_token: "9007199254740994" };
+		const changed = await sendCapsuleRequest(identity, "install_authority", {
+			grant: changedGrant,
+			current_lease: currentLease(changedGrant),
+		});
+		expect(changed).toEqual([
+			expect.objectContaining({
+				kind: "error",
+				code: "authority_denied",
+				message: "Runtime authority denied: stale_fence",
+			}),
+		]);
+		await server.waitUntilClosed();
+		expect(runtime.closeCalls).toBe(1);
+	});
+
+	it("retires on any changed body under an installed grant id", async () => {
+		const runtime = new RecordingRuntime();
+		const { server, identity } = await startServer(runtime);
+
+		const changed = await sendCapsuleRequest(identity, "install_authority", {
+			grant: { ...SERVER_AUTHORITY, policy_grant_sha256: "c".repeat(64) },
+			current_lease: currentLease(SERVER_AUTHORITY),
+		});
+		expect(changed).toEqual([
+			expect.objectContaining({
+				kind: "error",
+				code: "authority_denied",
+				message: "Runtime authority denied: policy_changed",
+			}),
+		]);
+		await server.waitUntilClosed();
+	});
+
+	it("retires after rejecting an already-expired first install", async () => {
+		const runtime = new RecordingRuntime();
+		const { server, identity } = await startServer(runtime, { installAuthority: false });
+		const now = Date.now();
+		const expired = authorityGrant({
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			lease_expires_at: new Date(now - 2_000).toISOString(),
+			hard_expires_at: new Date(now - 1_000).toISOString(),
+		});
+
+		const frames = await sendCapsuleRequest(identity, "install_authority", {
+			grant: expired,
+			current_lease: currentLease(expired),
+		});
+		expect(frames).toEqual([
+			expect.objectContaining({
+				kind: "error",
+				code: "authority_denied",
+				message: "Runtime authority denied: expired",
+			}),
+		]);
+		await server.waitUntilClosed();
+		expect(runtime.closeCalls).toBe(1);
+	});
+
+	it("atomically restores an original grant with its newer verified lease", async () => {
+		const runtime = new RecordingRuntime();
+		const { identity } = await startServer(runtime, { installAuthority: false });
+		const now = Date.now();
+		const original = authorityGrant({
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			lease_expires_at: new Date(now - 1_000).toISOString(),
+			hard_expires_at: new Date(now + 5_000).toISOString(),
+		});
+		const current = {
+			...currentLease(original),
+			lease_expires_at: new Date(now + 2_000).toISOString(),
+		};
+
+		expect(
+			await capsuleResultValue(identity, "install_authority", {
+				grant: original,
+				current_lease: current,
+			}),
+		).toEqual({});
+		expect(await capsuleResultValue(identity, "ensure_session", { input: sessionInput() })).toEqual(
+			runtime.session,
+		);
+	});
+
+	it("does not reset the one-shot turn budget on exact install replay", async () => {
+		const runtime = new RecordingRuntime();
+		const limits = authorityLimits({ turn_ms: 200 });
+		const authority = authorityGrant({
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			lease_expires_at: "2099-01-01T00:01:00.000Z",
+			hard_expires_at: "2099-01-01T00:05:00.000Z",
+			limit_sources: {
+				product: limits,
+				local: limits,
+				mission: limits,
+				runtime: limits,
+			},
+		});
+		const { server, identity } = await startServer(runtime, { authority });
+		await sendCapsuleRequest(identity, "start_turn", { input: turnInput(runtime.session) });
+		await delay(120);
+		await capsuleResultValue(identity, "install_authority", {
+			grant: authority,
+			current_lease: currentLease(authority),
+		});
+
+		await Promise.race([
+			server.waitUntilClosed(),
+			delay(130).then(() => {
+				throw new Error("Exact grant replay reset the Capsule turn budget");
+			}),
+		]);
+	});
+
+	it("records redacted assert decisions and retires after revocation", async () => {
+		const runtime = new RecordingRuntime();
+		const evidence: RuntimeAuthorityEvidence[] = [];
+		const { server, identity } = await startServer(runtime, { evidence });
+		const allowed = runtimeAuthorityRequest(
+			SERVER_AUTHORITY,
+			{ action: "outbound_publish", resource: "relay" },
+			{ output_bytes: 12 },
+		);
+
+		expect(await capsuleResultValue(identity, "assert_authority", { request: allowed })).toEqual(
+			{},
+		);
+		const denied = await sendCapsuleRequest(identity, "assert_authority", {
+			request: { ...allowed, workspace_alias: "wrong-workspace" },
+		});
+		expect(denied).toEqual([expect.objectContaining({ kind: "error", code: "authority_denied" })]);
+		expect(evidence.map(({ decision, code }) => ({ decision, code }))).toEqual([
+			{ decision: "allow", code: "allowed" },
+			{ decision: "deny", code: "wrong_workspace" },
+		]);
+		expect(JSON.stringify(evidence)).not.toContain("wrong-workspace");
+
+		expect(
+			await capsuleResultValue(identity, "revoke_authority", {
+				mission_id: IDS.mission,
+				grant_id: SERVER_AUTHORITY.grant_id,
+				reason: "revoked",
+			}),
+		).toEqual({});
+		await server.waitUntilClosed();
+	});
+
+	it("renews only the installed lease without resetting the turn budget", async () => {
+		const runtime = new RecordingRuntime();
+		const { identity } = await startServer(runtime);
+
+		expect(
+			await capsuleResultValue(identity, "renew_authority", {
+				mission_id: IDS.mission,
+				renewal: {
+					grant_id: SERVER_AUTHORITY.grant_id,
+					lease_id: SERVER_AUTHORITY.lease_id,
+					fencing_token: SERVER_AUTHORITY.fencing_token,
+					lease_expires_at: "2099-01-01T00:02:00.000Z",
+				},
+			}),
+		).toEqual({});
+	});
+
+	it("gates streamed output against the effective grant before publishing it", async () => {
+		const runtime = new RecordingRuntime();
+		const evidence: RuntimeAuthorityEvidence[] = [];
+		const limits = authorityLimits({ output_bytes: 3 });
+		const authority = authorityGrant({
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			lease_expires_at: "2099-01-01T00:01:00.000Z",
+			hard_expires_at: "2099-01-01T00:05:00.000Z",
+			limit_sources: {
+				product: limits,
+				local: limits,
+				mission: limits,
+				runtime: limits,
+			},
+		});
+		const { server, identity } = await startServer(runtime, { authority, evidence });
+
+		const frames = await sendCapsuleRequest(identity, "start_turn", {
+			input: turnInput(runtime.session),
+		});
+		expect(frames.map((frame) => frame.kind)).toEqual(["event", "event", "error"]);
+		expect(eventPayloads(frames).map((event) => event.kind)).toEqual(["accepted", "usage"]);
+		expect(frames.at(-1)).toMatchObject({ kind: "error", code: "authority_denied" });
+		expect(evidence).toContainEqual(
+			expect.objectContaining({
+				action: "outbound_publish",
+				decision: "deny",
+				code: "budget_exceeded",
+			}),
+		);
+		expect(JSON.stringify(evidence)).not.toContain("Done");
+		await server.waitUntilClosed();
+	});
+
+	it("retires the detached runtime when its installed authority expires", async () => {
+		const runtime = new RecordingRuntime();
+		const now = Date.now();
+		const authority = authorityGrant({
+			agent_id: IDS.participant,
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			lease_expires_at: new Date(now + 80).toISOString(),
+			hard_expires_at: new Date(now + 2_000).toISOString(),
+		});
+		const { server } = await startServer(runtime, { authority });
+
+		await server.waitUntilClosed();
+		expect(runtime.closeCalls).toBe(1);
 	});
 
 	it("redacts an unexpected runtime error and retires that runtime generation", async () => {
@@ -351,13 +624,30 @@ class RecordingRuntime implements CapsuleRuntime {
 	}
 }
 
-async function startServer(runtime: RecordingRuntime) {
+async function startServer(
+	runtime: RecordingRuntime,
+	options: {
+		readonly installAuthority?: boolean;
+		readonly authority?: RuntimeAuthorityGrant;
+		readonly evidence?: RuntimeAuthorityEvidence[];
+	} = {},
+) {
 	const identity = await serverIdentity();
 	const server = await PersistentCapsuleServer.start({
 		identity,
+		authorityEvidenceSink:
+			options.evidence === undefined
+				? undefined
+				: { record: (item) => options.evidence?.push(item) },
 		openRuntime: async () => runtime,
 	});
 	servers.push(server);
+	if (options.installAuthority !== false) {
+		await capsuleResultValue(identity, "install_authority", {
+			grant: options.authority ?? SERVER_AUTHORITY,
+			current_lease: currentLease(options.authority ?? SERVER_AUTHORITY),
+		});
+	}
 	return { server, identity };
 }
 
@@ -406,6 +696,15 @@ function turnInput(session: HostSessionRef): StartTurnInput {
 		],
 		peerMessages: [],
 		artifacts: [],
+	};
+}
+
+function currentLease(grant: RuntimeAuthorityGrant) {
+	return {
+		grant_id: grant.grant_id,
+		lease_id: grant.lease_id,
+		fencing_token: grant.fencing_token,
+		lease_expires_at: grant.lease_expires_at,
 	};
 }
 

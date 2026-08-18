@@ -518,6 +518,7 @@ describe("foreground Node delivery", () => {
 			let capsuleDescriptor: CapsuleLaunchDescriptor | null = null;
 			let socketIdentity: FileIdentity | null = null;
 			let noLaunchAdapter: PersistentFakeCapsuleAdapter | null = null;
+			let replacementLaunchAttempts = 0;
 			try {
 				await waitFor(
 					async () => (await backendRelayClient.listWorkspaces()).workspaces.length === 1,
@@ -552,7 +553,8 @@ describe("foreground Node delivery", () => {
 				const killedPid = runningNode.child.pid;
 				if (killedPid === undefined) throw new Error("Started Node process has no PID");
 				capsuleDescriptor = await readCapsuleLaunchDescriptor(capsuleDirectory);
-				socketIdentity = await privateSocketIdentity(capsuleDescriptor.socket_path);
+				const detachedSocketPath = capsuleDescriptor.socket_path;
+				socketIdentity = await privateSocketIdentity(detachedSocketPath);
 
 				competingNode = startNodeProcess(backendConfigPath, completionDelayMs, true);
 				await expectNodeExit(competingNode, 1, "Concurrent Node start");
@@ -567,7 +569,29 @@ describe("foreground Node delivery", () => {
 				const stateAtCrash = nodeJournalStateSchema.parse(
 					JSON.parse(await readFile(journalPath, "utf8")),
 				);
-				expect(stateAtCrash.deliveries[acceptedState.deliveryId]?.phase).toBe("host_accepted");
+				const crashEntry = stateAtCrash.deliveries[acceptedState.deliveryId];
+				if (crashEntry === undefined)
+					throw new Error("Crashed delivery is missing from the journal");
+				expect(crashEntry.phase).toBe("host_accepted");
+				const runtimeAuthority = crashEntry.runtime_authority;
+				if (runtimeAuthority === null) {
+					throw new Error("Crashed delivery is missing its exact runtime authority checkpoint");
+				}
+				const currentRelayLease = crashEntry.item.delivery.lease;
+				if (currentRelayLease === null) {
+					throw new Error("Crashed delivery is missing its current Relay lease");
+				}
+				expect(runtimeAuthority).toEqual(acceptedEntry.runtime_authority);
+				expect(currentRelayLease).toMatchObject({
+					lease_id: runtimeAuthority.lease_id,
+					fencing_token: runtimeAuthority.fencing_token,
+				});
+				const currentAuthorityLease = {
+					grant_id: runtimeAuthority.grant_id,
+					lease_id: currentRelayLease.lease_id,
+					fencing_token: currentRelayLease.fencing_token,
+					lease_expires_at: currentRelayLease.expires_at,
+				};
 
 				const capsuleState = JSON.parse(
 					await readFile(join(capsuleDirectory, CAPSULE_STATE_FILE), "utf8"),
@@ -594,12 +618,15 @@ describe("foreground Node delivery", () => {
 					rootDirectory: capsuleRoot,
 					launcher: {
 						start: async () => {
+							replacementLaunchAttempts += 1;
 							throw new Error("Existing-capsule recovery must not launch a replacement process");
 						},
 					},
 					outcome: capsuleDescriptor.runtime.outcome,
 					completionDelayMs: capsuleDescriptor.runtime.completion_delay_ms,
+					startupTimeoutMs: 500,
 				});
+				await noLaunchAdapter.installAuthority(runtimeAuthority, currentAuthorityLease);
 				const capsuleEvents = await collect(
 					noLaunchAdapter.recoverTurn(acceptedEvent.turn, persistedInput),
 				);
@@ -612,13 +639,27 @@ describe("foreground Node delivery", () => {
 				expect(capsuleEvents.map((event) => event.turn)).toEqual(
 					capsuleEvents.map(() => acceptedEvent.turn),
 				);
+				expect(replacementLaunchAttempts).toBe(0);
 
 				runningNode = startNodeProcess(backendConfigPath, completionDelayMs, true);
 				await expectNodeExit(runningNode, 0, "Direct restart after SIGKILL");
 				runningNode = null;
-				const survivingSession = await noLaunchAdapter.ensureSession(capsuleDescriptor.session);
-				expect(survivingSession.sessionId).toBe(acceptedEvent.turn.sessionId);
-				expect(await privateSocketIdentity(capsuleDescriptor.socket_path)).toEqual(socketIdentity);
+				expect(
+					await waitUntil(
+						async () =>
+							(await lstatIfPresent(detachedSocketPath)) === null &&
+							(await capsuleProcessIds(capsuleDirectory)).length === 0,
+						2_000,
+					),
+				).toBe(true);
+				await expect(
+					noLaunchAdapter.ensureSession(capsuleDescriptor.session),
+				).rejects.toMatchObject({
+					code: "transport",
+				});
+				expect(replacementLaunchAttempts).toBe(1);
+				expect(await lstatIfPresent(detachedSocketPath)).toBeNull();
+				expect(await capsuleProcessIds(capsuleDirectory)).toEqual([]);
 
 				const recoveredState = nodeJournalStateSchema.parse(
 					JSON.parse(await readFile(journalPath, "utf8")),

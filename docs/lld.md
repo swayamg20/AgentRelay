@@ -31,7 +31,9 @@ reaper owns teardown proof and post-absence quiescence. There is also no
 contract-acknowledgement or verification-delivery handler, so this still does not
 prove execution on two machines. A Linux-only Codex containment library now exists,
 and its dedicated process test starts pinned Codex through both unactivated boundaries.
-No descriptor, CLI, or Mission lifecycle selects them.
+No descriptor, CLI, or Mission lifecycle selects them. Separately, the persistent
+fake-Capsule path now installs and continuously enforces one private, fenced runtime
+grant. This does not activate Codex.
 
 ## Protocol workspace
 
@@ -385,18 +387,19 @@ through `FakeCapsuleRuntime` and delegates to `PersistentCapsuleServer`. This pr
 the descriptor, CLI, and versioned newline-delimited JSON wire. No current descriptor
 selects Codex.
 
-The wire exposes `probe`, `ensure_session`, `lookup_turn`, `start_turn`,
-`recover_turn`, `cancel_turn`, and `shutdown`. Each request carries the exact Capsule
-ID, a random local capability, and a request ID; responses repeat Capsule and request
-identity. Capsule directories are mode 0700, and descriptor/state files plus the Unix
-socket are mode 0600. The detached child receives a small environment allowlist, not
-the Node credential, Relay credential, inherited `HOME`, provider credentials, proxy
-settings, or process-loader injection variables. Authentication happens before any
-runtime call. Unexpected internal runtime errors are returned as the fixed public
-message `Capsule runtime failed`; the server then removes its owned socket and closes
-that running generation. `PersistentCapsuleServer.close()` starts runtime close while
-socket handlers drain, and the `CapsuleRuntime.close()` contract must release and
-fence admitted work before resolving. Detached background work can call the injected
+The wire exposes `probe`, `install_authority`, `assert_authority`, `renew_authority`,
+`revoke_authority`, `ensure_session`, `lookup_turn`, `start_turn`, `recover_turn`,
+`cancel_turn`, and `shutdown`. Each request carries the exact Capsule ID, a random
+local capability, and a request ID; responses repeat Capsule and request identity.
+Capsule directories are mode 0700, and descriptor/state files plus the Unix socket
+are mode 0600. The detached child receives a small environment allowlist, not the Node
+credential, Relay credential, inherited `HOME`, provider credentials, proxy settings,
+or process-loader injection variables. Authentication happens before any runtime call.
+Unexpected internal runtime errors are returned as the fixed public message `Capsule
+runtime failed`; the server then removes its owned socket and closes that running
+generation. `PersistentCapsuleServer.close()` starts runtime close while socket
+handlers drain, and the `CapsuleRuntime.close()` contract must release and fence
+admitted work before resolving. Detached background work can call the injected
 `lifecycle.retire()` hook to trigger the same teardown.
 
 The wire has separate bounded frames: 128 MiB for requests, which covers the maximum
@@ -437,6 +440,63 @@ There is no installed OS service supervisor or automatic process respawn. Capsul
 restart is automatic only after repeated failed authenticated probes and
 ownership-safe removal of the same unchanged stale socket inode. The server binds
 through a private alias so closing an old process cannot unlink a replacement socket.
+
+### Private local runtime authority checkpoint
+
+`createRuntimeAuthorityGrant` runs only after current Relay authorization, local
+policy resolution, repository preflight, transition to `executing`, and adapter
+probing. Its strict schema binds one grant to:
+
+- grant, Agent, Node, workspace binding/alias/resource digest, and accepted local
+  policy profile/digest;
+- Mission, delivery, positive execution attempt, lease ID, and positive fencing
+  token; and
+- lease expiry, hard Mission expiry, exact capabilities, and the separately retained
+  product, local, Mission, and runtime limit sources.
+
+The effective numeric limits are the minimum across all four sources; allowed artifact
+types are their intersection. Capabilities must use their canonical action/resource
+pair. Product policy rejects repository push/merge, package publish, deployment,
+arbitrary network access, secret access, and privilege expansion even if such a
+capability appears in an input. The compiled fake-runtime grant includes lifecycle,
+workspace-read, usage-report, artifact-publish, and outbound-publish capabilities. It
+does not include workspace write or verification execution.
+
+Before runtime activation, Node journal schema 4 checkpoints the exact grant in the
+delivery entry. Reopening must reproduce it from the same trusted local inputs; a
+changed lease identity, fence, policy digest, workspace resource, or body fails
+closed. When trusted Relay recovery advances the fence, the old grant moves atomically
+to a predecessor slot. The Node proves that exact Capsule generation retired before a
+CAS can promote a successor with the same hard deadline and non-fence scope. Schema 2
+and 3 migrate without inventing a predecessor. Lease renewals retain the
+original grant, lease ID, and fence while monotonically extending only the current
+lease expiry; exact replay is idempotent and rollback is denied.
+
+`NodeRuntimeAuthoritySession` and `CapsuleAuthority` each own a
+`LocalReferenceMonitor`. Installation replays the exact grant until the Capsule has
+confirmed the latest verified renewal, then creates and binds the local monitor. A
+lease that advances while installation is in flight therefore cannot be lost, and an
+expired earlier lease is never revived in place. The Capsule gates session
+creation, start, recovery, cancellation, and every emitted output/usage/artifact event.
+Measurements are cumulative stream state, not per-frame deltas. Its turn timer and
+lease/hard-expiry timers revoke the monitor and retire the Capsule generation. The
+Node independently revalidates final `outbound_publish`, asks the Capsule to assert the
+same request, rechecks locally, and gives the Relay request a continuous abort signal.
+The Node also races local authority loss through live host waits and runs one bounded
+cancellation/revocation path. Lease renewal or revocation is forwarded to both
+monitors; a renewal arriving at the final handoff is buffered and drained before the
+session becomes ready. An aborted completion keeps its exact durable intent because
+transport cancellation cannot prove whether the Relay committed it.
+
+Authority decisions contain only bounded identifiers, hashes, workspace alias,
+action/resource, decision, and denial code. They exclude local paths, prompts, command
+arguments, environment values, output, provider IDs, and secrets. Both monitors write
+through an injected `RuntimeAuthorityEvidenceSink`; the selected Node/Capsule path uses
+a no-op sink today, so this checkpoint does not claim durable evidence. It also does
+not provide the registered verification handler (#93), artifact flow (#94), Codex
+descriptor/activation (#98), durable evidence store (#99), or adversarial activated-
+runtime proof (#104). Detailed evidence and nonclaims are in
+[`research/008-local-runtime-authority.md`](research/008-local-runtime-authority.md).
 
 ### Unactivated Codex Capsule, provider guardian, and teardown-reaper libraries
 
@@ -503,9 +563,10 @@ absence, waits for that durable matching state, and only then releases its own l
 settles termination. A same-boot non-quiescent predecessor fails closed, while a
 changed kernel boot-session ID safely reconciles state left by a host reboot.
 
-This still has no production descriptor/CLI wiring, verified Mission-authority input,
-installed service supervisor, or real model-turn evidence. Capsule-plus-guardian death
-converges if the witness survives. Loss of the witness or every local lifecycle owner,
+This still has no production descriptor/CLI wiring, composition with the private
+authority checkpoint, installed service supervisor, or real model-turn evidence.
+Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
+every local lifecycle owner,
 service restart/upgrade/rollback, cgroup containment, and descendants that escape the
 supervised process group remain #120.
 
@@ -695,9 +756,10 @@ both the journaled in-process fake-turn boundary and detached fake-Capsule recov
 after Node-process death. The provider-neutral server, injected Codex runner, and
 provider guardian/reaper add an unactivated wire/process checkpoint; the Linux containment
 library adds an unactivated workspace boundary with exact retained recovery identity
-and a passing Linux process proof. The next gates are contract/verification and
-artifact carriage, verified local capability enforcement, descriptor/CLI composition
-with durable handle storage, structured execution evidence, Guarded Real Mission 0,
+and a passing Linux process proof. A bound reference monitor now protects only the
+persistent fake-Capsule path. The next gates are registered verification and artifact
+carriage, descriptor/CLI composition of that authority with durable handle storage,
+durable structured execution evidence, adversarial evaluation, Guarded Real Mission 0,
 and finally the two-machine proof. Installed service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120. The
 mailbox API remains a compatibility and inspection surface.

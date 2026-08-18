@@ -22,6 +22,7 @@ import {
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
+import { type RuntimeAuthorityGrant, runtimeAuthorityGrantSchema } from "./runtime-authority.js";
 
 const journalPhaseSchema = z.enum([
 	"ingested",
@@ -71,6 +72,8 @@ const journalDeliverySchema = z
 		host_attempt_history: z.array(archivedHostExecutionSchema).max(99),
 		host_events: z.array(hostEventSchema).max(4_096),
 		result: nodeDeliveryResultPayloadSchema.nullable(),
+		runtime_authority: runtimeAuthorityGrantSchema.nullable(),
+		runtime_authority_predecessor: runtimeAuthorityGrantSchema.nullable().default(null),
 		last_error: z.string().max(2_000).nullable(),
 		updated_at: z.string().datetime(),
 	})
@@ -110,6 +113,19 @@ const journalDeliverySchema = z
 					path: ["host_events", index, "turn", "executionAttempt"],
 				});
 			}
+		}
+		if (entry.runtime_authority !== null) {
+			validateRuntimeAuthority(entry, entry.runtime_authority, ctx, "runtime_authority", true);
+		}
+		if (entry.runtime_authority_predecessor !== null) {
+			validateRuntimeAuthority(
+				entry,
+				entry.runtime_authority_predecessor,
+				ctx,
+				"runtime_authority_predecessor",
+				false,
+			);
+			validateRuntimeAuthorityPredecessor(entry, ctx);
 		}
 		const archivedAttempts = new Set<number>();
 		for (const [historyIndex, attempt] of entry.host_attempt_history.entries()) {
@@ -153,7 +169,7 @@ const missionAcceptanceJournalSchema = z
 
 export const nodeJournalStateSchema = z
 	.object({
-		schema_version: z.literal(2),
+		schema_version: z.literal(4),
 		cursor: z
 			.string()
 			.regex(/^[1-9][0-9]*$/)
@@ -190,9 +206,79 @@ export type OperationIntent = z.infer<typeof operationIntentSchema>;
 export type JournalDelivery = z.infer<typeof journalDeliverySchema>;
 export type NodeJournalState = z.infer<typeof nodeJournalStateSchema>;
 
+/** Moves an installed grant aside before a trusted delivery advances to a newer fence. */
+export function stageRuntimeAuthoritySuccessor(
+	entry: JournalDelivery,
+	nextDelivery: Delivery,
+): void {
+	if (BigInt(nextDelivery.last_fencing_token) < BigInt(entry.item.delivery.last_fencing_token)) {
+		throw new Error("Runtime authority delivery fence moved backwards");
+	}
+	const nextLease = nextDelivery.lease;
+	if (nextLease === null) {
+		if (entry.runtime_authority === null && entry.runtime_authority_predecessor !== null) {
+			entry.runtime_authority = entry.runtime_authority_predecessor;
+			entry.runtime_authority_predecessor = null;
+		}
+		return;
+	}
+	const journaledLease = entry.item.delivery.lease;
+	if (journaledLease !== null) {
+		const fenceOrder = BigInt(nextLease.fencing_token) - BigInt(journaledLease.fencing_token);
+		if (fenceOrder < 0n) throw new Error("Runtime authority delivery fence moved backwards");
+		if (fenceOrder === 0n) {
+			if (journaledLease.lease_id !== nextLease.lease_id) {
+				throw new Error("Runtime authority lease changed without a new fence");
+			}
+			if (Date.parse(nextLease.expires_at) < Date.parse(journaledLease.expires_at)) {
+				throw new Error("Runtime authority lease expiry moved backwards");
+			}
+		}
+	}
+	const currentGrant = entry.runtime_authority;
+	if (currentGrant !== null) {
+		const fenceOrder = BigInt(nextLease.fencing_token) - BigInt(currentGrant.fencing_token);
+		if (fenceOrder < 0n) throw new Error("Runtime authority delivery fence moved backwards");
+		if (fenceOrder === 0n) {
+			if (currentGrant.lease_id !== nextLease.lease_id) {
+				throw new Error("Runtime authority lease changed without a new fence");
+			}
+			return;
+		}
+		if (entry.runtime_authority_predecessor !== null) {
+			throw new Error("Cannot replace runtime authority while a predecessor is still pending");
+		}
+		entry.runtime_authority_predecessor = currentGrant;
+		entry.runtime_authority = null;
+		return;
+	}
+	const predecessor = entry.runtime_authority_predecessor;
+	if (
+		predecessor !== null &&
+		BigInt(nextLease.fencing_token) <= BigInt(predecessor.fencing_token)
+	) {
+		throw new Error("Runtime authority successor fence did not advance past its predecessor");
+	}
+}
+
 export interface JournalStorage {
 	load(): Promise<unknown | null>;
 	save(state: NodeJournalState): Promise<void>;
+}
+
+export class JournalCompareAndSwapError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "JournalCompareAndSwapError";
+	}
+}
+
+export interface RuntimeAuthorityCheckpointExpectation {
+	readonly lease_id: string;
+	readonly fencing_token: string;
+	readonly lease_expires_at: string;
+	readonly active_grant_id: string | null;
+	readonly predecessor_grant_id: string | null;
 }
 
 interface JournalMigration {
@@ -300,6 +386,36 @@ export class NodeJournal {
 		return structuredClone(entry.start_turn_input!);
 	}
 
+	async checkpointRuntimeAuthority(
+		deliveryId: string,
+		grantValue: RuntimeAuthorityGrant,
+		now = new Date(),
+		expected?: RuntimeAuthorityCheckpointExpectation,
+	): Promise<RuntimeAuthorityGrant> {
+		const grant = runtimeAuthorityGrantSchema.parse(grantValue);
+		const entry = await this.updateDelivery(deliveryId, (current) => {
+			if (expected !== undefined && !runtimeAuthorityCheckpointMatches(current, expected)) {
+				throw new JournalCompareAndSwapError(
+					`Runtime authority inputs changed before checkpoint: ${deliveryId}`,
+				);
+			}
+			if (current.runtime_authority !== null) {
+				if (!isDeepStrictEqual(current.runtime_authority, grant)) {
+					throw new Error(`Runtime authority changed within execution attempt: ${deliveryId}`);
+				}
+			} else if (
+				current.runtime_authority_predecessor !== null &&
+				!isRuntimeAuthoritySuccessor(current.runtime_authority_predecessor, grant)
+			) {
+				throw new Error(`Runtime authority successor changed trusted scope: ${deliveryId}`);
+			}
+			current.runtime_authority = structuredClone(grant);
+			current.runtime_authority_predecessor = null;
+			current.updated_at = now.toISOString();
+		});
+		return structuredClone(entry.runtime_authority!);
+	}
+
 	async recordMissionAcceptance(
 		missionIdInput: string,
 		inputValue: MissionParticipantAcceptanceInput,
@@ -344,6 +460,7 @@ export class NodeJournal {
 		return this.updateDelivery(deliveryInput.delivery_id, (entry) => {
 			const delivery = structuredClone(deliveryInput);
 			assertSameDeliveryIdentity(entry.item.delivery, delivery);
+			stageRuntimeAuthoritySuccessor(entry, delivery);
 			entry.item.delivery = delivery;
 			entry.updated_at = now.toISOString();
 		});
@@ -374,6 +491,20 @@ export class NodeJournal {
 	}
 }
 
+function runtimeAuthorityCheckpointMatches(
+	entry: JournalDelivery,
+	expected: RuntimeAuthorityCheckpointExpectation,
+): boolean {
+	const lease = entry.item.delivery.lease;
+	return (
+		lease?.lease_id === expected.lease_id &&
+		lease.fencing_token === expected.fencing_token &&
+		lease.expires_at === expected.lease_expires_at &&
+		(entry.runtime_authority?.grant_id ?? null) === expected.active_grant_id &&
+		(entry.runtime_authority_predecessor?.grant_id ?? null) === expected.predecessor_grant_id
+	);
+}
+
 function upsertDelivery(state: NodeJournalState, itemInput: MissionDeliveryItem, now: Date): void {
 	const item = missionDeliveryItemSchema.parse(itemInput);
 	const deliveryId = item.delivery.delivery_id;
@@ -393,6 +524,8 @@ function upsertDelivery(state: NodeJournalState, itemInput: MissionDeliveryItem,
 			host_attempt_history: [],
 			host_events: [],
 			result: null,
+			runtime_authority: null,
+			runtime_authority_predecessor: null,
 			last_error: null,
 			updated_at: now.toISOString(),
 		};
@@ -402,6 +535,7 @@ function upsertDelivery(state: NodeJournalState, itemInput: MissionDeliveryItem,
 		throw new Error(`delivery replay changed immutable content: ${deliveryId}`);
 	}
 	assertSameDeliveryIdentity(existing.item.delivery, item.delivery);
+	stageRuntimeAuthoritySuccessor(existing, item.delivery);
 	existing.item.delivery = structuredClone(item.delivery);
 	existing.updated_at = now.toISOString();
 }
@@ -410,7 +544,7 @@ function migrateJournalState(stored: unknown | null): JournalMigration {
 	if (stored === null) {
 		return {
 			state: {
-				schema_version: 2,
+				schema_version: 4,
 				cursor: null,
 				mission_assignment_cursor: null,
 				deliveries: {},
@@ -424,6 +558,29 @@ function migrateJournalState(stored: unknown | null): JournalMigration {
 		return { state: stored, changed: false };
 	}
 	const record = stored as Record<string, unknown>;
+	if (record.schema_version === 3) {
+		const migrated = structuredClone(record);
+		migrated.schema_version = 4;
+		addRuntimeAuthorityPredecessors(migrated);
+		return { state: migrated, changed: true };
+	}
+	if (record.schema_version === 2) {
+		const migrated = structuredClone(record);
+		migrated.schema_version = 4;
+		if (
+			typeof migrated.deliveries === "object" &&
+			migrated.deliveries !== null &&
+			!Array.isArray(migrated.deliveries)
+		) {
+			for (const entry of Object.values(migrated.deliveries)) {
+				if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+					(entry as Record<string, unknown>).runtime_authority = null;
+					(entry as Record<string, unknown>).runtime_authority_predecessor = null;
+				}
+			}
+		}
+		return { state: migrated, changed: true };
+	}
 	if (record.schema_version !== 1) return { state: stored, changed: false };
 	if (
 		typeof record.deliveries === "object" &&
@@ -436,11 +593,108 @@ function migrateJournalState(stored: unknown | null): JournalMigration {
 		);
 	}
 	const migrated = structuredClone(record);
-	migrated.schema_version = 2;
+	migrated.schema_version = 4;
 	if (!Object.hasOwn(migrated, "mission_assignment_cursor")) {
 		migrated.mission_assignment_cursor = null;
 	}
 	return { state: migrated, changed: true };
+}
+
+function addRuntimeAuthorityPredecessors(record: Record<string, unknown>): void {
+	if (
+		typeof record.deliveries !== "object" ||
+		record.deliveries === null ||
+		Array.isArray(record.deliveries)
+	) {
+		return;
+	}
+	for (const entry of Object.values(record.deliveries)) {
+		if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+			if (!Object.hasOwn(entry, "runtime_authority_predecessor")) {
+				(entry as Record<string, unknown>).runtime_authority_predecessor = null;
+			}
+		}
+	}
+}
+
+function validateRuntimeAuthority(
+	entry: JournalDelivery,
+	grant: RuntimeAuthorityGrant,
+	ctx: z.RefinementCtx,
+	fieldName: "runtime_authority" | "runtime_authority_predecessor",
+	requireCurrentFence: boolean,
+): void {
+	const delivery = entry.item.delivery;
+	for (const [field, actual, expected] of [
+		["delivery_id", grant.delivery_id, delivery.delivery_id],
+		["mission_id", grant.mission_id, delivery.mission_id],
+		["node_id", grant.node_id, delivery.node_id],
+		["execution_attempt", grant.execution_attempt, entry.execution_attempt],
+	] as const) {
+		if (actual === expected) continue;
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: `Runtime authority ${field} does not match its journaled delivery`,
+			path: [fieldName, field],
+		});
+	}
+	if (
+		requireCurrentFence &&
+		delivery.lease !== null &&
+		(grant.lease_id !== delivery.lease.lease_id ||
+			grant.fencing_token !== delivery.lease.fencing_token)
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Runtime authority does not match the journaled lease fence",
+			path: [fieldName, "lease_id"],
+		});
+	}
+}
+
+function validateRuntimeAuthorityPredecessor(entry: JournalDelivery, ctx: z.RefinementCtx): void {
+	const predecessor = entry.runtime_authority_predecessor;
+	if (predecessor === null) return;
+	if (entry.runtime_authority !== null) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Runtime authority predecessor cannot coexist with an active grant",
+			path: ["runtime_authority_predecessor"],
+		});
+	}
+	const lease = entry.item.delivery.lease;
+	if (
+		lease === null ||
+		BigInt(predecessor.fencing_token) >= BigInt(lease.fencing_token) ||
+		predecessor.lease_id === lease.lease_id
+	) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: "Runtime authority predecessor must belong to an older Relay fence",
+			path: ["runtime_authority_predecessor", "fencing_token"],
+		});
+	}
+}
+
+function isRuntimeAuthoritySuccessor(
+	predecessor: RuntimeAuthorityGrant,
+	successor: RuntimeAuthorityGrant,
+): boolean {
+	const {
+		grant_id: _previousGrantId,
+		lease_id: _previousLeaseId,
+		fencing_token: previousFence,
+		lease_expires_at: _previousLeaseExpiry,
+		...previousScope
+	} = predecessor;
+	const {
+		grant_id: _nextGrantId,
+		lease_id: _nextLeaseId,
+		fencing_token: nextFence,
+		lease_expires_at: _nextLeaseExpiry,
+		...nextScope
+	} = successor;
+	return BigInt(nextFence) > BigInt(previousFence) && isDeepStrictEqual(previousScope, nextScope);
 }
 
 function validateStartTurnInput(

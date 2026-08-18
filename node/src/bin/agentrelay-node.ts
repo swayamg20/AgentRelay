@@ -18,6 +18,7 @@ import {
 } from "../persistent-capsule-adapter.js";
 import { acquireProcessLock } from "../process-lock.js";
 import { createNodeRelayClient } from "../relay-client.js";
+import type { RuntimeAuthorityPort } from "../runtime-authority-port.js";
 
 const cli = cac("agentrelay-node");
 
@@ -29,7 +30,7 @@ cli
 	.option("--fake-outcome <outcome>", "Fake turn disposition: ready or reply", {
 		default: "ready",
 	})
-	.action((options) => runNode(options, () => fakeAdapter(options.fakeOutcome)));
+	.action((options) => runNode(options, () => ({ adapter: fakeAdapter(options.fakeOutcome) })));
 
 cli
 	.command(
@@ -52,12 +53,13 @@ cli
 				typeof options.capsuleRoot === "string"
 					? resolve(options.capsuleRoot)
 					: join(stateDirectory, "capsules");
-			return PersistentFakeCapsuleAdapter.open({
+			const adapter = await PersistentFakeCapsuleAdapter.open({
 				rootDirectory: capsuleRoot,
 				launcher: createDetachedCapsuleLauncher(capsuleProcessCommand()),
 				outcome: options.fakeOutcome,
 				completionDelayMs: Number(options.completionDelayMs),
 			});
+			return { adapter, authorityPort: adapter };
 		}),
 	);
 
@@ -99,9 +101,14 @@ interface RunContext {
 	readonly stateDirectory: string;
 }
 
+interface NodeRuntime {
+	readonly adapter: AgentHostAdapter;
+	readonly authorityPort?: RuntimeAuthorityPort;
+}
+
 async function runNode(
 	options: Record<string, unknown>,
-	createAdapter: (context: RunContext) => AgentHostAdapter | Promise<AgentHostAdapter>,
+	createRuntime: (context: RunContext) => NodeRuntime | Promise<NodeRuntime>,
 ): Promise<void> {
 	const configPath = resolve(
 		typeof options.config === "string" ? options.config : resolveNodeConfigPath(),
@@ -119,7 +126,7 @@ async function runNode(
 		const journal = await NodeJournal.open(
 			createFileJournalStorage(join(stateDirectory, "journal.json")),
 		);
-		const adapter = await createAdapter({ stateDirectory });
+		const runtime = await createRuntime({ stateDirectory });
 		const node = new ForegroundNode({
 			config,
 			client: createNodeRelayClient({
@@ -127,7 +134,8 @@ async function runNode(
 				credential: config.node.token,
 			}),
 			journal,
-			adapter,
+			adapter: runtime.adapter,
+			authorityPort: runtime.authorityPort,
 			pollIntervalMs: Number(options.pollMs),
 			logger: pino({ level: process.env.AGENTRELAY_NODE_LOG_LEVEL ?? "info" }),
 		});
