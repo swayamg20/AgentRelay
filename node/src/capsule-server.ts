@@ -10,6 +10,8 @@ import { CapsuleAuthority } from "./capsule-authority.js";
 import type { CapsuleRequest, CapsuleUnaryResult } from "./capsule-protocol.js";
 import type {
 	CapsuleRuntime,
+	CapsuleRuntimeActivation,
+	CapsuleRuntimeController,
 	CapsuleServerIdentity,
 	PersistentCapsuleServerOptions,
 } from "./capsule-runtime.js";
@@ -29,11 +31,15 @@ import {
 	publicCapsuleError,
 	turnCorrelation,
 } from "./capsule-server-runtime.js";
+import {
+	RuntimeAuthorityDeniedError,
+	runtimeAuthorityDenyCodeSchema,
+} from "./runtime-authority.js";
 
 /** Provider-neutral private Unix-socket server for one Mission Capsule runtime. */
 export class PersistentCapsuleServer {
 	readonly #identity: CapsuleServerIdentity;
-	readonly #runtime: CapsuleRuntime;
+	readonly #controller: CapsuleRuntimeController;
 	readonly #authority: CapsuleAuthority;
 	readonly #server: Server;
 	readonly #socketIdentity: CapsuleSocketIdentity;
@@ -42,16 +48,17 @@ export class PersistentCapsuleServer {
 	readonly #closedPromise: Promise<void>;
 	#resolveClosed!: () => void;
 	#closing: Promise<void> | null = null;
+	#runtimeActivation: Promise<CapsuleRuntime> | null = null;
 
 	private constructor(
 		identity: CapsuleServerIdentity,
-		runtime: CapsuleRuntime,
+		controller: CapsuleRuntimeController,
 		server: Server,
 		socketIdentity: CapsuleSocketIdentity,
 		authorityEvidenceSink: PersistentCapsuleServerOptions["authorityEvidenceSink"],
 	) {
 		this.#identity = identity;
-		this.#runtime = runtime;
+		this.#controller = controller;
 		this.#server = server;
 		this.#socketIdentity = socketIdentity;
 		this.#authority = new CapsuleAuthority({
@@ -69,24 +76,27 @@ export class PersistentCapsuleServer {
 		const rejectUntilReady = (socket: Socket) => socket.destroy();
 		server.on("connection", rejectUntilReady);
 		let socketIdentity: CapsuleSocketIdentity | null = null;
-		let runtime: CapsuleRuntime | null = null;
+		let controller: CapsuleRuntimeController | null = null;
 		let capsule: PersistentCapsuleServer | null = null;
 		let retirementPending = false;
+		let retirementScheduled = false;
 		const retire = () => {
 			if (capsule === null) {
 				retirementPending = true;
 				return;
 			}
-			void capsule.close().catch(() => undefined);
+			if (retirementScheduled) return;
+			retirementScheduled = true;
+			setImmediate(() => void capsule?.close().catch(() => undefined));
 		};
 		try {
-			// Only the socket-owning process may open durable state, schedule work, or
-			// spawn a provider process.
+			// Only the socket-owning process may open durable state. Provider activation
+			// remains fenced until this generation has installed runtime authority.
 			socketIdentity = await publishCapsuleSocket(server, identity.socketPath);
-			runtime = await options.openRuntime({ retire });
+			controller = await options.openController({ retire });
 			const activeCapsule = new PersistentCapsuleServer(
 				identity,
-				runtime,
+				controller,
 				server,
 				socketIdentity,
 				options.authorityEvidenceSink,
@@ -98,7 +108,7 @@ export class PersistentCapsuleServer {
 			return activeCapsule;
 		} catch (error) {
 			await Promise.allSettled([
-				runtime?.close(),
+				controller?.close(),
 				socketIdentity === null
 					? Promise.resolve()
 					: removeCapsuleSocketIfOwned(identity.socketPath, socketIdentity),
@@ -134,10 +144,10 @@ export class PersistentCapsuleServer {
 				controller.abort();
 				socket.destroy();
 			}
-			// Runtime close is the cancellation hook for provider-backed operations.
-			// Start it while handlers drain so neither side can wait on the other.
-			const runtimeClose = captureFailure(this.#runtime.close(), failures);
-			await Promise.all([Promise.allSettled([...this.#handlers]), runtimeClose, serverClose]);
+			// Controller close fences an in-flight activation and releases an active
+			// provider while handlers drain so neither side can wait on the other.
+			const controllerClose = captureFailure(this.#controller.close(), failures);
+			await Promise.all([Promise.allSettled([...this.#handlers]), controllerClose, serverClose]);
 		} finally {
 			this.#resolveClosed();
 		}
@@ -208,7 +218,7 @@ export class PersistentCapsuleServer {
 	private async dispatch(socket: Socket, request: CapsuleRequest, signal: AbortSignal) {
 		switch (request.method) {
 			case "probe":
-				return this.writeUnary(socket, request, await this.#runtime.probe());
+				return this.writeUnary(socket, request, await this.#controller.probe());
 			case "install_authority":
 				this.#authority.install(request.params.grant, request.params.current_lease);
 				return this.writeUnary(socket, request, {});
@@ -229,9 +239,10 @@ export class PersistentCapsuleServer {
 				return this.writeUnary(
 					socket,
 					request,
-					await this.#authority.performSession(request.params.input, () =>
-						this.#runtime.ensureSession(request.params.input),
-					),
+					await this.#authority.performSession(request.params.input, async (authority) => {
+						const runtime = await this.activateRuntime(authority);
+						return runtime.ensureSession(request.params.input);
+					}),
 				);
 			case "lookup_turn":
 				// An authenticated read is needed to discover recoverable local state before
@@ -239,14 +250,18 @@ export class PersistentCapsuleServer {
 				return this.writeUnary(
 					socket,
 					request,
-					await this.#runtime.lookupTurn(
+					await this.#controller.lookupTurn(
 						request.params.delivery_id,
 						request.params.execution_attempt,
 					),
 				);
 			case "start_turn": {
-				const events = await this.#authority.performStart(request.params.input, () =>
-					this.#runtime.startTurn(request.params.input),
+				const events = await this.#authority.performStart(
+					request.params.input,
+					async (authority) => {
+						const runtime = await this.activateRuntime(authority);
+						return runtime.startTurn(request.params.input);
+					},
 				);
 				this.#authority.beginTurn();
 				return this.streamEvents(
@@ -262,7 +277,10 @@ export class PersistentCapsuleServer {
 				const events = await this.#authority.performRecovery(
 					request.params.turn,
 					request.params.input,
-					() => this.#runtime.recoverTurn(request.params.turn, request.params.input),
+					async (authority) => {
+						const runtime = await this.activateRuntime(authority);
+						return runtime.recoverTurn(request.params.turn, request.params.input);
+					},
 				);
 				this.#authority.beginTurn();
 				return this.streamEvents(
@@ -275,13 +293,31 @@ export class PersistentCapsuleServer {
 				);
 			}
 			case "cancel_turn":
-				await this.#authority.performCancel(request.params.turn, () =>
-					this.#runtime.cancelTurn(request.params.turn),
-				);
+				await this.#authority.performCancel(request.params.turn, async (authority) => {
+					const runtime = await this.activateRuntime(authority);
+					return runtime.cancelTurn(request.params.turn);
+				});
 				return this.writeUnary(socket, request, {});
 			case "shutdown":
 				await this.writeUnary(socket, request, {});
 				setImmediate(() => void this.close().catch(() => undefined));
+		}
+	}
+
+	private activateRuntime(authority: CapsuleRuntimeActivation): Promise<CapsuleRuntime> {
+		this.#runtimeActivation ??= this.performActivation(authority);
+		return this.#runtimeActivation;
+	}
+
+	private async performActivation(authority: CapsuleRuntimeActivation): Promise<CapsuleRuntime> {
+		assertActivationLive(authority.signal);
+		const runtime = await this.#controller.activate(authority);
+		try {
+			assertActivationLive(authority.signal);
+			return runtime;
+		} catch (error) {
+			await this.#controller.close().catch(() => undefined);
+			throw error;
 		}
 	}
 
@@ -348,4 +384,10 @@ export class PersistentCapsuleServer {
 		});
 		socket.end();
 	}
+}
+
+function assertActivationLive(signal: AbortSignal): void {
+	if (!signal.aborted) return;
+	const parsed = runtimeAuthorityDenyCodeSchema.safeParse(signal.reason);
+	throw new RuntimeAuthorityDeniedError(parsed.success ? parsed.data : "revoked");
 }

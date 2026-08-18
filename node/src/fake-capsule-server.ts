@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { ensurePrivateCapsuleDirectory } from "./capsule-server-io.js";
 import { PersistentCapsuleServer } from "./capsule-server.js";
-import { FakeCapsuleRuntime } from "./fake-capsule-runtime.js";
+import { FakeCapsuleRuntimeController } from "./fake-capsule-runtime.js";
 import { FakeCapsuleStore, readCapsuleLaunchDescriptor } from "./fake-capsule-store.js";
 
 /** Compatibility factory for the still fake-only Capsule command and Node adapter. */
@@ -22,7 +22,8 @@ export class PersistentFakeCapsuleServer {
 				capabilityToken: descriptor.capability_token,
 				socketPath: descriptor.socket_path,
 			},
-			openRuntime: async () => new FakeCapsuleRuntime(await FakeCapsuleStore.open(directory)),
+			openController: async () =>
+				new FakeCapsuleRuntimeController(await FakeCapsuleStore.open(directory)),
 		});
 		return new PersistentFakeCapsuleServer(server);
 	}

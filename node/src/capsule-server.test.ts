@@ -19,7 +19,12 @@ import {
 	sendCapsuleRequest,
 } from "../test-support/capsule-wire-client.js";
 import type { CapsuleResponse } from "./capsule-protocol.js";
-import type { CapsuleRuntime, CapsuleServerIdentity } from "./capsule-runtime.js";
+import type {
+	CapsuleRuntime,
+	CapsuleRuntimeActivation,
+	CapsuleRuntimeController,
+	CapsuleServerIdentity,
+} from "./capsule-runtime.js";
 import { PersistentCapsuleServer } from "./capsule-server.js";
 import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
 import { runtimeAuthorityRequest } from "./runtime-authority.js";
@@ -130,6 +135,56 @@ describe("PersistentCapsuleServer", () => {
 			}),
 		]);
 		expect(runtime.calls).toEqual(["probe", "lookupTurn"]);
+	});
+
+	it("keeps the controller passive until the first authorized runtime operation", async () => {
+		const runtime = new RecordingRuntime();
+		const { identity, controller } = await startServer(runtime, { installAuthority: false });
+
+		expect(await capsuleResultValue(identity, "probe", {})).toEqual(runtime.info);
+		expect(
+			await capsuleResultValue(identity, "lookup_turn", {
+				delivery_id: IDS.delivery,
+				execution_attempt: 1,
+			}),
+		).toEqual(runtime.turn);
+		await capsuleResultValue(identity, "install_authority", {
+			grant: SERVER_AUTHORITY,
+			current_lease: currentLease(SERVER_AUTHORITY),
+		});
+		expect(controller.activations).toHaveLength(0);
+
+		await capsuleResultValue(identity, "ensure_session", { input: sessionInput() });
+		await capsuleResultValue(identity, "ensure_session", { input: sessionInput() });
+
+		expect(controller.activations).toHaveLength(1);
+		expect(controller.activations[0]).toMatchObject({ grant: SERVER_AUTHORITY });
+		expect(controller.activations[0]?.signal.aborted).toBe(false);
+	});
+
+	it("fails closed when authority is revoked during runtime activation", async () => {
+		const runtime = new RecordingRuntime();
+		const { server, identity, controller } = await startServer(runtime);
+		controller.activationGate = deferred();
+		controller.activationStarted = deferred();
+
+		const pendingSession = sendCapsuleRequest(identity, "ensure_session", {
+			input: sessionInput(),
+		});
+		await controller.activationStarted.promise;
+		await capsuleResultValue(identity, "revoke_authority", {
+			mission_id: IDS.mission,
+			grant_id: SERVER_AUTHORITY.grant_id,
+			reason: "revoked",
+		});
+		controller.activationGate.resolve();
+		await pendingSession.catch(() => []);
+		await server.waitUntilClosed();
+
+		expect(controller.activations).toHaveLength(1);
+		expect(controller.activations[0]?.signal.aborted).toBe(true);
+		expect(runtime.calls).not.toContain("ensureSession");
+		expect(runtime.closeCalls).toBe(1);
 	});
 
 	it("accepts an exact grant replay and retires on a changed fence", async () => {
@@ -404,44 +459,46 @@ describe("PersistentCapsuleServer", () => {
 		});
 	});
 
-	it("removes its public socket when runtime startup fails", async () => {
+	it("removes its public socket when controller startup fails", async () => {
 		const identity = await serverIdentity();
 		await expect(
 			PersistentCapsuleServer.start({
 				identity,
-				openRuntime: async () => {
-					throw new Error("runtime startup failed");
+				openController: async () => {
+					throw new Error("controller startup failed");
 				},
 			}),
-		).rejects.toThrow("runtime startup failed");
+		).rejects.toThrow("controller startup failed");
 		await expect(lstat(identity.socketPath)).rejects.toMatchObject({ code: "ENOENT" });
 
 		const runtime = new RecordingRuntime();
 		const server = await PersistentCapsuleServer.start({
 			identity,
-			openRuntime: async () => runtime,
+			openController: async () => new RecordingController(runtime),
 		});
 		servers.push(server);
 		expect(await capsuleResultValue(identity, "probe", {})).toEqual(runtime.info);
 	});
 
-	it("opens a runtime only for the server that wins socket ownership", async () => {
+	it("opens a passive controller only for the server that wins socket ownership", async () => {
 		const identity = await serverIdentity();
-		const runtimes: RecordingRuntime[] = [];
-		const openRuntime = async () => {
+		const controllers: RecordingController[] = [];
+		const openController = async () => {
 			const runtime = new RecordingRuntime();
-			runtimes.push(runtime);
-			return runtime;
+			const controller = new RecordingController(runtime);
+			controllers.push(controller);
+			return controller;
 		};
 		const results = await Promise.allSettled([
-			PersistentCapsuleServer.start({ identity, openRuntime }),
-			PersistentCapsuleServer.start({ identity, openRuntime }),
+			PersistentCapsuleServer.start({ identity, openController }),
+			PersistentCapsuleServer.start({ identity, openController }),
 		]);
 		const winners = results.flatMap((result) =>
 			result.status === "fulfilled" ? [result.value] : [],
 		);
 		expect(winners).toHaveLength(1);
-		expect(runtimes).toHaveLength(1);
+		expect(controllers).toHaveLength(1);
+		expect(controllers[0]?.activations).toHaveLength(0);
 		servers.push(winners[0]!);
 	});
 
@@ -500,9 +557,9 @@ describe("PersistentCapsuleServer", () => {
 		let retire!: () => void;
 		const server = await PersistentCapsuleServer.start({
 			identity,
-			openRuntime: async (lifecycle) => {
+			openController: async (lifecycle) => {
 				retire = lifecycle.retire;
-				return runtime;
+				return new RecordingController(runtime);
 			},
 		});
 		servers.push(server);
@@ -624,6 +681,38 @@ class RecordingRuntime implements CapsuleRuntime {
 	}
 }
 
+class RecordingController implements CapsuleRuntimeController {
+	readonly activations: CapsuleRuntimeActivation[] = [];
+	readonly #runtime: RecordingRuntime;
+	activationGate: Deferred<void> | null = null;
+	activationStarted: Deferred<void> | null = null;
+	#closing: Promise<void> | null = null;
+
+	constructor(runtime: RecordingRuntime) {
+		this.#runtime = runtime;
+	}
+
+	probe() {
+		return this.#runtime.probe();
+	}
+
+	lookupTurn(deliveryId: string, executionAttempt: number) {
+		return this.#runtime.lookupTurn(deliveryId, executionAttempt);
+	}
+
+	async activate(authority: CapsuleRuntimeActivation): Promise<CapsuleRuntime> {
+		this.activations.push(authority);
+		this.activationStarted?.resolve();
+		await this.activationGate?.promise;
+		return this.#runtime;
+	}
+
+	close(): Promise<void> {
+		this.#closing ??= this.#runtime.close();
+		return this.#closing;
+	}
+}
+
 async function startServer(
 	runtime: RecordingRuntime,
 	options: {
@@ -633,13 +722,14 @@ async function startServer(
 	} = {},
 ) {
 	const identity = await serverIdentity();
+	const controller = new RecordingController(runtime);
 	const server = await PersistentCapsuleServer.start({
 		identity,
 		authorityEvidenceSink:
 			options.evidence === undefined
 				? undefined
 				: { record: (item) => options.evidence?.push(item) },
-		openRuntime: async () => runtime,
+		openController: async () => controller,
 	});
 	servers.push(server);
 	if (options.installAuthority !== false) {
@@ -648,7 +738,7 @@ async function startServer(
 			current_lease: currentLease(options.authority ?? SERVER_AUTHORITY),
 		});
 	}
-	return { server, identity };
+	return { server, identity, controller };
 }
 
 async function serverIdentity(): Promise<CapsuleServerIdentity> {

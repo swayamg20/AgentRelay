@@ -20,7 +20,12 @@ import {
 	type FakeCodexProviderState,
 } from "../test-support/fake-codex-capsule-client.js";
 import type { CapsuleResponse } from "./capsule-protocol.js";
-import type { CapsuleServerIdentity } from "./capsule-runtime.js";
+import type {
+	CapsuleRuntime,
+	CapsuleRuntimeActivation,
+	CapsuleRuntimeController,
+	CapsuleServerIdentity,
+} from "./capsule-runtime.js";
 import { PersistentCapsuleServer } from "./capsule-server.js";
 import {
 	CODEX_CAPSULE_ADAPTER_INFO,
@@ -61,12 +66,21 @@ afterEach(async () => {
 describe("CodexCapsuleRunner", () => {
 	it("executes one fresh turn through the real Capsule wire", async () => {
 		const fixture = await openFixture();
+		expect(fixture.guardian.openCalls).toBe(0);
 		expect(await capsuleResultValue(fixture.identity, "probe", {})).toEqual(
 			CODEX_CAPSULE_ADAPTER_INFO,
 		);
+		expect(
+			await capsuleResultValue(fixture.identity, "lookup_turn", {
+				delivery_id: IDS.delivery,
+				execution_attempt: 1,
+			}),
+		).toBeNull();
+		expect(fixture.guardian.openCalls).toBe(0);
 		const session = (await capsuleResultValue(fixture.identity, "ensure_session", {
 			input: sessionInput(),
 		})) as HostSessionRef;
+		expect(fixture.guardian.openCalls).toBe(1);
 		const input = turnInput(session);
 		const frames = await sendCapsuleRequest(fixture.identity, "start_turn", { input });
 
@@ -78,6 +92,7 @@ describe("CodexCapsuleRunner", () => {
 			"startThread",
 			"startReadOnlyTurn",
 		]);
+		expect(fixture.guardian.openCalls).toBe(1);
 	});
 
 	it("coalesces duplicate wire starts onto one provider turn", async () => {
@@ -317,7 +332,18 @@ describe("CodexCapsuleRunner", () => {
 		const fixture = await createFixture();
 		fixture.guardian.failure = new Error("previous provider may still be live");
 
-		await expect(fixture.startServer()).rejects.toThrow("previous provider may still be live");
+		const server = await fixture.startServer();
+		const failed = await sendCapsuleRequest(fixture.identity, "ensure_session", {
+			input: sessionInput(),
+		});
+		expect(failed).toEqual([
+			expect.objectContaining({
+				kind: "error",
+				code: "internal",
+				message: "Capsule runtime failed",
+			}),
+		]);
+		await server.waitUntilClosed();
 		expect(fixture.guardian.openCalls).toBe(1);
 		expect(fixture.guardian.generations).toHaveLength(0);
 		expect(fixture.client.calls).toEqual([]);
@@ -416,6 +442,9 @@ describe("CodexCapsuleRunner", () => {
 		async (kind) => {
 			const fixture = await createFixture();
 			const server = await fixture.startServer();
+			await capsuleResultValue(fixture.identity, "ensure_session", {
+				input: sessionInput(),
+			});
 
 			fixture.guardian.generations[0]?.finish(kind);
 			await server.waitUntilClosed();
@@ -482,16 +511,18 @@ async function createFixture(options: FixtureOptions = {}) {
 	const startServer = async () => {
 		const server = await PersistentCapsuleServer.start({
 			identity,
-			openRuntime: ({ retire }) =>
-				CodexCapsuleRunner.open({
-					store,
-					cwd: directory,
-					guardian,
-					retireGeneration: retire,
-					eventPollMs: 1,
-					providerPollMs: 1,
-					zeroMatchReads: options.zeroMatchReads ?? 2,
-				}),
+			openController: async ({ retire }) =>
+				new CodexWireController(store, () =>
+					CodexCapsuleRunner.open({
+						store,
+						cwd: directory,
+						guardian,
+						retireGeneration: retire,
+						eventPollMs: 1,
+						providerPollMs: 1,
+						zeroMatchReads: options.zeroMatchReads ?? 2,
+					}),
+				),
 		});
 		servers.push(server);
 		await capsuleResultValue(identity, "install_authority", {
@@ -518,6 +549,48 @@ async function createFixture(options: FixtureOptions = {}) {
 			client = new FakeCodexCapsuleClient(directory, "thread-1", providerState);
 		},
 	};
+}
+
+class CodexWireController implements CapsuleRuntimeController {
+	readonly #store: CodexCapsuleStore;
+	readonly #openRuntime: () => Promise<CodexCapsuleRunner>;
+	#activation: Promise<CodexCapsuleRunner> | null = null;
+	#closing: Promise<void> | null = null;
+	#closed = false;
+
+	constructor(store: CodexCapsuleStore, openRuntime: () => Promise<CodexCapsuleRunner>) {
+		this.#store = store;
+		this.#openRuntime = openRuntime;
+	}
+
+	async probe() {
+		return structuredClone(CODEX_CAPSULE_ADAPTER_INFO);
+	}
+
+	lookupTurn(deliveryId: string, executionAttempt: number) {
+		return this.#store.lookupTurn(deliveryId, executionAttempt);
+	}
+
+	activate(_authority: CapsuleRuntimeActivation): Promise<CapsuleRuntime> {
+		if (this.#closed) return Promise.reject(new Error("Codex wire controller is closed"));
+		this.#activation ??= this.#openRuntime();
+		return this.#activation;
+	}
+
+	close(): Promise<void> {
+		this.#closed = true;
+		this.#closing ??= this.performClose();
+		return this.#closing;
+	}
+
+	private async performClose(): Promise<void> {
+		const runtime = await this.#activation?.catch(() => null);
+		if (runtime === null || runtime === undefined) {
+			await this.#store.close();
+			return;
+		}
+		await runtime.close();
+	}
 }
 
 class RecordingProviderGuardian implements CodexProviderGuardian {

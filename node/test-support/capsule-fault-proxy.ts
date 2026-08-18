@@ -1,7 +1,7 @@
 import { chmod, unlink } from "node:fs/promises";
 import { type Server, type Socket, createConnection, createServer } from "node:net";
 import { PersistentCapsuleServer } from "../src/capsule-server.js";
-import { FakeCapsuleRuntime } from "../src/fake-capsule-runtime.js";
+import { FakeCapsuleRuntimeController } from "../src/fake-capsule-runtime.js";
 import { FakeCapsuleStore, readCapsuleLaunchDescriptor } from "../src/fake-capsule-store.js";
 import type { CapsuleLauncher } from "../src/persistent-capsule-adapter.js";
 
@@ -28,8 +28,8 @@ export class DropInstallResponseLauncher implements CapsuleLauncher {
 				capabilityToken: descriptor.capability_token,
 				socketPath: this.#upstreamPath,
 			},
-			openRuntime: async () =>
-				new FakeCapsuleRuntime(await FakeCapsuleStore.open(capsuleDirectory)),
+			openController: async () =>
+				new FakeCapsuleRuntimeController(await FakeCapsuleStore.open(capsuleDirectory)),
 		});
 		this.#proxy = createServer((client) => this.forward(client));
 		await listen(this.#proxy, this.#proxyPath);

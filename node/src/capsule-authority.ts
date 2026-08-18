@@ -8,6 +8,7 @@ import type {
 	StartTurnInput,
 } from "@agentrelay/protocol";
 import { CapsuleOperationError } from "./capsule-operation-error.js";
+import type { CapsuleRuntimeActivation } from "./capsule-runtime.js";
 import {
 	LocalReferenceMonitor,
 	RuntimeAuthorityDeniedError,
@@ -97,29 +98,44 @@ export class CapsuleAuthority {
 		monitor.revoke(reason);
 	}
 
-	performSession<T>(input: SessionInput, effect: () => T | Promise<T>): Promise<T> {
+	performSession<T>(
+		input: SessionInput,
+		effect: (authority: CapsuleRuntimeActivation) => T | Promise<T>,
+	): Promise<T> {
 		const monitor = this.requireMonitor();
-		return monitor.perform(this.requestForSession(monitor.grant, input), effect);
+		return monitor.perform(this.requestForSession(monitor.grant, input), () =>
+			effect(this.activationFor(monitor)),
+		);
 	}
 
-	performStart<T>(input: StartTurnInput, effect: () => T | Promise<T>): Promise<T> {
+	performStart<T>(
+		input: StartTurnInput,
+		effect: (authority: CapsuleRuntimeActivation) => T | Promise<T>,
+	): Promise<T> {
 		return this.performInput("runtime_start", input, effect);
 	}
 
 	performRecovery<T>(
 		turn: HostTurnRef,
 		input: StartTurnInput,
-		effect: () => T | Promise<T>,
+		effect: (authority: CapsuleRuntimeActivation) => T | Promise<T>,
 	): Promise<T> {
 		const monitor = this.requireMonitor();
 		return monitor.perform(this.requestForInput(monitor.grant, "runtime_recover", input), () =>
-			monitor.perform(this.requestForTurn(monitor.grant, "runtime_recover", turn), effect),
+			monitor.perform(this.requestForTurn(monitor.grant, "runtime_recover", turn), () =>
+				effect(this.activationFor(monitor)),
+			),
 		);
 	}
 
-	performCancel<T>(turn: HostTurnRef, effect: () => T | Promise<T>): Promise<T> {
+	performCancel<T>(
+		turn: HostTurnRef,
+		effect: (authority: CapsuleRuntimeActivation) => T | Promise<T>,
+	): Promise<T> {
 		const monitor = this.requireMonitor();
-		return monitor.perform(this.requestForTurn(monitor.grant, "runtime_cancel", turn), effect);
+		return monitor.perform(this.requestForTurn(monitor.grant, "runtime_cancel", turn), () =>
+			effect(this.activationFor(monitor)),
+		);
 	}
 
 	beginTurn(): void {
@@ -193,15 +209,22 @@ export class CapsuleAuthority {
 	dispose(): void {
 		if (this.#turnTimer !== null) clearTimeout(this.#turnTimer);
 		this.#turnTimer = null;
+		this.#monitor?.revoke("revoked");
 	}
 
 	private performInput<T>(
 		action: "runtime_start" | "runtime_recover",
 		input: StartTurnInput,
-		effect: () => T | Promise<T>,
+		effect: (authority: CapsuleRuntimeActivation) => T | Promise<T>,
 	): Promise<T> {
 		const monitor = this.requireMonitor();
-		return monitor.perform(this.requestForInput(monitor.grant, action, input), effect);
+		return monitor.perform(this.requestForInput(monitor.grant, action, input), () =>
+			effect(this.activationFor(monitor)),
+		);
+	}
+
+	private activationFor(monitor: LocalReferenceMonitor): CapsuleRuntimeActivation {
+		return Object.freeze({ grant: monitor.grant, signal: monitor.signal });
 	}
 
 	private requestForSession(grant: RuntimeAuthorityGrant, input: SessionInput) {

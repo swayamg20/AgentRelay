@@ -7,7 +7,11 @@ import type {
 	StartTurnInput,
 } from "@agentrelay/protocol";
 import { CAPSULE_ADAPTER_INFO } from "./capsule-protocol.js";
-import type { CapsuleRuntime } from "./capsule-runtime.js";
+import type {
+	CapsuleRuntime,
+	CapsuleRuntimeActivation,
+	CapsuleRuntimeController,
+} from "./capsule-runtime.js";
 import type { FakeCapsuleStore } from "./fake-capsule-store.js";
 import { waitUnref } from "./unref-timer.js";
 
@@ -65,5 +69,32 @@ export class FakeCapsuleRuntime implements CapsuleRuntime {
 			if (await this.#store.isTurnTerminal(turn)) return;
 			await waitUnref(STREAM_POLL_MS);
 		}
+	}
+}
+
+/** Passive compatibility controller for the deterministic fake Capsule runtime. */
+export class FakeCapsuleRuntimeController implements CapsuleRuntimeController {
+	readonly #runtime: FakeCapsuleRuntime;
+	#closing: Promise<void> | null = null;
+
+	constructor(store: FakeCapsuleStore) {
+		this.#runtime = new FakeCapsuleRuntime(store);
+	}
+
+	probe(): Promise<AdapterInfo> {
+		return this.#runtime.probe();
+	}
+
+	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
+		return this.#runtime.lookupTurn(deliveryId, executionAttempt);
+	}
+
+	async activate(_authority: CapsuleRuntimeActivation): Promise<CapsuleRuntime> {
+		return this.#runtime;
+	}
+
+	close(): Promise<void> {
+		this.#closing ??= this.#runtime.close();
+		return this.#closing;
 	}
 }
