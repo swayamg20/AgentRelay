@@ -49,6 +49,13 @@ export function assertCodexSandboxInput(input: CodexSandboxContainmentInput): vo
 	if ((input.readOnlyRoots?.length ?? 0) > 32 || (input.forbiddenRoots?.length ?? 0) > 32) {
 		throw new Error("Containment supports at most 32 additional read or denied roots");
 	}
+	if (
+		input.workspaceAccess !== undefined &&
+		input.workspaceAccess !== "read" &&
+		input.workspaceAccess !== "write"
+	) {
+		throw new Error("Containment workspace access must be read or write");
+	}
 	for (const digest of [
 		input.launcher.sha256,
 		input.launcher.sandboxHelper.sha256,
@@ -128,7 +135,12 @@ export async function buildCodexSandboxConfig(
 		...(input.forbiddenRoots ?? []),
 	]);
 	const deniedRoots = [...new Set([ownerHome, ...explicitDeniedRoots])].sort();
-	const writableRoots = [input.workspace.root, layout.runtimeHome, layout.runtimeTmp];
+	const workspaceAccess = input.workspaceAccess ?? "write";
+	const writableRoots = [
+		...(workspaceAccess === "write" ? [input.workspace.root] : []),
+		layout.runtimeHome,
+		layout.runtimeTmp,
+	];
 	for (const readRoot of readRoots) {
 		for (const writableRoot of writableRoots) {
 			assertDisjoint(readRoot, writableRoot, "trusted read and writable roots");
@@ -142,16 +154,22 @@ export async function buildCodexSandboxConfig(
 	}
 	if (
 		explicitDeniedRoots.some((deniedRoot) =>
-			writableRoots.some((writableRoot) => isPathWithin(writableRoot, deniedRoot)),
+			[input.workspace.root, ...writableRoots].some((accessibleRoot) =>
+				isPathWithin(accessibleRoot, deniedRoot),
+			),
 		)
 	) {
-		throw new Error("An explicitly denied containment root cannot contain a writable root");
+		throw new Error(
+			workspaceAccess === "write"
+				? "An explicitly denied containment root cannot contain a writable root"
+				: "An explicitly denied containment root cannot contain an accessible root",
+		);
 	}
 	if (readRoots.some((readRoot) => deniedRoots.some((denied) => isPathWithin(denied, readRoot)))) {
 		throw new Error("A readable root cannot contain a denied containment root");
 	}
 	const explicitDenyRoots = deniedRoots.filter((deniedRoot) =>
-		[...LINUX_VISIBLE_BASE_ROOTS, ...writableRoots].some((visibleRoot) =>
+		[...LINUX_VISIBLE_BASE_ROOTS, input.workspace.root, ...writableRoots].some((visibleRoot) =>
 			isPathWithin(deniedRoot, visibleRoot),
 		),
 	);
@@ -160,7 +178,7 @@ export async function buildCodexSandboxConfig(
 	filesystemEntries.set(":minimal", "read");
 	for (const path of explicitDenyRoots) filesystemEntries.set(path, "deny");
 	for (const path of readRoots) filesystemEntries.set(path, "read");
-	filesystemEntries.set(input.workspace.root, "write");
+	filesystemEntries.set(input.workspace.root, workspaceAccess);
 	filesystemEntries.set(input.workspace.gitDirectory, "read");
 	filesystemEntries.set(layout.runtimeHome, "write");
 	filesystemEntries.set(layout.runtimeTmp, "write");

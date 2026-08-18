@@ -11,6 +11,7 @@ import {
 	type RuntimeAuthorityLimits,
 	compileRuntimeAuthorityGrant,
 } from "./runtime-authority.js";
+import { workspaceResourceSha256 } from "./workspace-resource.js";
 import type { WorkspacePreflightResult } from "./workspace.js";
 
 export interface RuntimeAuthorityGrantInput {
@@ -79,16 +80,14 @@ export function createRuntimeAuthorityGrant(
 		throw new Error("Runtime authority has expired before activation");
 	}
 
-	const workspaceResourceSha256 = sha256(
-		canonicalJson({
-			workspace_binding_id: input.assignment.workspace_binding_id,
-			workspace_alias: input.workspaceAlias,
-			root: input.workspace.root,
-			repository_url: input.workspace.repository_url,
-			head_commit: input.workspace.head_commit,
-			reachable_from_ref: input.workspace.reachable_from_ref,
-		}),
-	);
+	const workspaceResourceDigest = workspaceResourceSha256({
+		workspaceBindingId: input.assignment.workspace_binding_id,
+		workspaceAlias: input.workspaceAlias,
+		root: input.workspace.root,
+		repositoryUrl: input.workspace.repository_url,
+		headCommit: input.workspace.head_commit,
+		reachableFromRef: input.workspace.reachable_from_ref,
+	});
 	const grantIdentity = canonicalJson({
 		mission_id: input.assignment.mission_id,
 		delivery_id: input.delivery.delivery_id,
@@ -96,7 +95,7 @@ export function createRuntimeAuthorityGrant(
 		lease_id: lease.lease_id,
 		fencing_token: lease.fencing_token,
 		policy_grant_sha256: input.policy.grant.grant_sha256,
-		workspace_resource_sha256: workspaceResourceSha256,
+		workspace_resource_sha256: workspaceResourceDigest,
 	});
 
 	return compileRuntimeAuthorityGrant({
@@ -107,7 +106,7 @@ export function createRuntimeAuthorityGrant(
 		node_id: input.nodeId,
 		workspace_binding_id: input.assignment.workspace_binding_id,
 		workspace_alias: input.workspaceAlias,
-		workspace_resource_sha256: workspaceResourceSha256,
+		workspace_resource_sha256: workspaceResourceDigest,
 		mission_id: input.assignment.mission_id,
 		delivery_id: input.delivery.delivery_id,
 		execution_attempt: input.executionAttempt,
@@ -151,16 +150,16 @@ function authorityLimits(
 	};
 }
 
-function sha256(value: string): string {
-	return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
 function deterministicUuid(value: string): string {
-	const bytes = Buffer.from(sha256(value).slice(0, 32), "hex");
+	const bytes = Buffer.from(sha256Text(value).slice(0, 32), "hex");
 	bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
 	bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
 	const hex = bytes.toString("hex");
 	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function sha256Text(value: string): string {
+	return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function canonicalJson(value: unknown): string {

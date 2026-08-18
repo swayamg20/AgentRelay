@@ -224,7 +224,18 @@ export class CapsuleAuthority {
 	}
 
 	private activationFor(monitor: LocalReferenceMonitor): CapsuleRuntimeActivation {
-		return Object.freeze({ grant: monitor.grant, signal: monitor.signal });
+		return Object.freeze({
+			grant: monitor.grant,
+			signal: monitor.signal,
+			performWorkspaceRead: <T>(effect: () => T | Promise<T>) =>
+				monitor.perform(
+					runtimeAuthorityRequest(monitor.grant, {
+						action: "workspace_read",
+						resource: "workspace",
+					}),
+					effect,
+				),
+		});
 	}
 
 	private requestForSession(grant: RuntimeAuthorityGrant, input: SessionInput) {

@@ -36,6 +36,10 @@ import {
 	compileRuntimeAuthorityGrant,
 	runtimeAuthorityRequest,
 } from "./runtime-authority.js";
+import {
+	createRuntimeContainmentManifest,
+	readRuntimeContainmentManifest,
+} from "./runtime-containment-manifest.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryRoots: string[] = [];
@@ -51,123 +55,133 @@ afterAll(async () => {
 describe.runIf(
 	process.platform === "linux" && process.env.AGENTRELAY_RUN_CONTAINMENT_TESTS === "1",
 )("Codex Bubblewrap containment", () => {
-	it("allows only the bound workspace, read roots, and private runtime directories", async () => {
-		const fixture = await createFixture();
-		const launcher = await resolvePinnedCodex();
-		const provider = {
-			executable: fixture.providerExecutable,
-			readRoot: fixture.providerRoot,
-			sha256: await sha256File(fixture.providerExecutable),
-		};
-		const input = {
-			controlDirectory: fixture.control,
-			runtimeDirectory: fixture.runtime,
-			workspace: fixture.workspace,
-			launcher,
-			provider,
-			readOnlyRoots: [fixture.readOnly, dirname(fixture.probe)],
-			forbiddenRoots: [fixture.sibling, fixture.ownerHome],
-			policyGrantSha256: "a".repeat(64),
-		};
-		const containment = await prepareCodexSandboxContainment(input);
-		const parentNetworkNamespace = await readlink("/proc/self/ns/net");
-		const resultPath = join(containment.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
-		const resultToken = randomUUID();
-		const paths = {
-			workspaceFile: join(fixture.workspace.root, "tracked.txt"),
-			workspaceWrite: join(fixture.workspace.root, "created.txt"),
-			gitMetadataWrite: join(fixture.workspace.gitDirectory, "blocked.txt"),
-			readRootFile: join(fixture.readOnly, "allowed.txt"),
-			readRootWrite: join(fixture.readOnly, "blocked.txt"),
-			siblingSecret: join(fixture.sibling, "secret.txt"),
-			siblingWrite: join(fixture.sibling, "created.txt"),
-			sharedTempSecret: join(fixture.sharedTemp, "secret.txt"),
-			sshSecret: join(fixture.ownerHome, ".ssh", "id_test"),
-			awsSecret: join(fixture.ownerHome, ".aws", "credentials"),
-			azureSecret: join(fixture.ownerHome, ".azure", "accessTokens.json"),
-			controlSecret: join(fixture.control, "node-token.txt"),
-			launcherConfig: join(fixture.control, "sandbox-launcher", "config.toml"),
-			symlinkEscape: join(fixture.workspace.root, "sibling-link"),
-			traversalEscape: join(fixture.workspace.root, "..", "sibling", "secret.txt"),
-			runtimeHomeWrite: join(containment.runtimeHome, "state.txt"),
-			runtimeTmpWrite: join(containment.runtimeTmp, "scratch.txt"),
-			resultPath,
-			resultToken,
-		};
-		const prepared = await containment.boundary.prepare({
-			executable: provider.executable,
-			argv: [fixture.probe, JSON.stringify(paths)],
-			cwd: fixture.workspace.root,
-			env: {
-				HOME: containment.runtimeHome,
-				CODEX_HOME: containment.runtimeHome,
-				AGENTRELAY_NODE_TOKEN: "must-not-cross",
-			},
-		});
-		let result: Record<string, unknown>;
-		try {
-			const output = await run(prepared);
-			expect(output).toEqual({ stdout: "", stderr: "" });
-			result = await readContainedProbeResult(resultPath, resultToken);
-		} finally {
-			await unlink(resultPath).catch(() => undefined);
-		}
-
-		expect(result).toMatchObject({
-			workspaceRead: true,
-			workspaceWrite: true,
-			gitMetadataWrite: false,
-			readRootRead: true,
-			readRootWrite: false,
-			siblingRead: false,
-			grandchildSiblingRead: false,
-			siblingWrite: false,
-			sharedTempRead: false,
-			sshRead: false,
-			awsRead: false,
-			azureRead: false,
-			controlRead: false,
-			launcherConfigRead: false,
-			symlinkRead: false,
-			traversalRead: false,
-			runtimeHomeWrite: true,
-			runtimeTmpWrite: true,
-			environmentSecretPresent: false,
-			home: containment.runtimeHome,
-			codexHome: containment.runtimeHome,
-			tmpdir: containment.runtimeTmp,
-			networkConnect: false,
-		});
-		expect(result.networkNamespace).not.toBe(parentNetworkNamespace);
-		await expect(readFile(paths.siblingWrite, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-		expect(JSON.stringify(containment.evidence)).not.toContain(fixture.root);
-
-		const recoveryExpectation = containment.recovery;
-		const recovered = await recoverCodexSandboxContainment(recoveryExpectation);
-		expect(recovered.evidence).toEqual(containment.evidence);
-		const freshRecovery = await execFileAsync(
-			process.execPath,
-			["--import", "tsx/esm", fixture.recoveryHelper, JSON.stringify(recoveryExpectation)],
-			{
-				cwd: process.cwd(),
-				env: process.env,
-				encoding: "utf8",
-				timeout: PROCESS_TIMEOUT_MS,
-				maxBuffer: MAX_PROCESS_OUTPUT_BYTES,
-			},
-		);
-		expect(JSON.parse(freshRecovery.stdout)).toEqual(containment.evidence);
-
-		await appendFile(paths.launcherConfig, "# changed after launch\n");
-		await expect(
-			containment.boundary.prepare({
+	it.each([
+		["write", true],
+		["read", false],
+	] as const)(
+		"allows only the %s-bound workspace, read roots, and private runtime directories",
+		async (workspaceAccess, workspaceWrite) => {
+			const fixture = await createFixture();
+			const launcher = await resolvePinnedCodex();
+			const provider = {
+				executable: fixture.providerExecutable,
+				readRoot: fixture.providerRoot,
+				sha256: await sha256File(fixture.providerExecutable),
+			};
+			const input = {
+				controlDirectory: fixture.control,
+				runtimeDirectory: fixture.runtime,
+				workspace: fixture.workspace,
+				launcher,
+				provider,
+				readOnlyRoots: [fixture.readOnly, dirname(fixture.probe)],
+				forbiddenRoots: [fixture.sibling, fixture.ownerHome],
+				policyGrantSha256: "a".repeat(64),
+				workspaceAccess,
+			};
+			const containment = await prepareCodexSandboxContainment(input);
+			expect(containment.authorization.workspaceAccess).toBe(workspaceAccess);
+			const parentNetworkNamespace = await readlink("/proc/self/ns/net");
+			const resultPath = join(containment.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
+			const resultToken = randomUUID();
+			const paths = {
+				workspaceFile: join(fixture.workspace.root, "tracked.txt"),
+				workspaceWrite: join(fixture.workspace.root, "created.txt"),
+				gitMetadataWrite: join(fixture.workspace.gitDirectory, "blocked.txt"),
+				readRootFile: join(fixture.readOnly, "allowed.txt"),
+				readRootWrite: join(fixture.readOnly, "blocked.txt"),
+				siblingSecret: join(fixture.sibling, "secret.txt"),
+				siblingWrite: join(fixture.sibling, "created.txt"),
+				sharedTempSecret: join(fixture.sharedTemp, "secret.txt"),
+				sshSecret: join(fixture.ownerHome, ".ssh", "id_test"),
+				awsSecret: join(fixture.ownerHome, ".aws", "credentials"),
+				azureSecret: join(fixture.ownerHome, ".azure", "accessTokens.json"),
+				controlSecret: join(fixture.control, "node-token.txt"),
+				launcherConfig: join(fixture.control, "sandbox-launcher", "config.toml"),
+				symlinkEscape: join(fixture.workspace.root, "sibling-link"),
+				traversalEscape: join(fixture.workspace.root, "..", "sibling", "secret.txt"),
+				runtimeHomeWrite: join(containment.runtimeHome, "state.txt"),
+				runtimeTmpWrite: join(containment.runtimeTmp, "scratch.txt"),
+				resultPath,
+				resultToken,
+			};
+			const prepared = await containment.boundary.prepare({
 				executable: provider.executable,
 				argv: [fixture.probe, JSON.stringify(paths)],
 				cwd: fixture.workspace.root,
-				env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
-			}),
-		).rejects.toThrow("authorize this exact workspace and policy");
-	}, 60_000);
+				env: {
+					HOME: containment.runtimeHome,
+					CODEX_HOME: containment.runtimeHome,
+					AGENTRELAY_NODE_TOKEN: "must-not-cross",
+				},
+			});
+			let result: Record<string, unknown>;
+			try {
+				const output = await run(prepared);
+				expect(output).toEqual({ stdout: "", stderr: "" });
+				result = await readContainedProbeResult(resultPath, resultToken);
+			} finally {
+				await unlink(resultPath).catch(() => undefined);
+			}
+
+			expect(result).toMatchObject({
+				workspaceRead: true,
+				workspaceWrite,
+				gitMetadataWrite: false,
+				readRootRead: true,
+				readRootWrite: false,
+				siblingRead: false,
+				grandchildSiblingRead: false,
+				siblingWrite: false,
+				sharedTempRead: false,
+				sshRead: false,
+				awsRead: false,
+				azureRead: false,
+				controlRead: false,
+				launcherConfigRead: false,
+				symlinkRead: false,
+				traversalRead: false,
+				runtimeHomeWrite: true,
+				runtimeTmpWrite: true,
+				environmentSecretPresent: false,
+				home: containment.runtimeHome,
+				codexHome: containment.runtimeHome,
+				tmpdir: containment.runtimeTmp,
+				networkConnect: false,
+			});
+			expect(result.networkNamespace).not.toBe(parentNetworkNamespace);
+			await expect(readFile(paths.siblingWrite, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+			expect(JSON.stringify(containment.evidence)).not.toContain(fixture.root);
+
+			const recoveryExpectation = containment.recovery;
+			const recovered = await recoverCodexSandboxContainment(recoveryExpectation);
+			expect(recovered.evidence).toEqual(containment.evidence);
+			expect(recovered.authorization.workspaceAccess).toBe(workspaceAccess);
+			const freshRecovery = await execFileAsync(
+				process.execPath,
+				["--import", "tsx/esm", fixture.recoveryHelper, JSON.stringify(recoveryExpectation)],
+				{
+					cwd: process.cwd(),
+					env: process.env,
+					encoding: "utf8",
+					timeout: PROCESS_TIMEOUT_MS,
+					maxBuffer: MAX_PROCESS_OUTPUT_BYTES,
+				},
+			);
+			expect(JSON.parse(freshRecovery.stdout)).toEqual(containment.evidence);
+
+			await appendFile(paths.launcherConfig, "# changed after launch\n");
+			await expect(
+				containment.boundary.prepare({
+					executable: provider.executable,
+					argv: [fixture.probe, JSON.stringify(paths)],
+					cwd: fixture.workspace.root,
+					env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
+				}),
+			).rejects.toThrow("authorize this exact workspace and policy");
+		},
+		60_000,
+	);
 
 	it("keeps pinned Codex alive while the parent guardian rejects unauthorized effects", async () => {
 		const fixture = await createFixture();
@@ -186,7 +200,9 @@ describe.runIf(
 			provider: launcher,
 			forbiddenRoots: [fixture.sibling, fixture.ownerHome],
 			policyGrantSha256: "b".repeat(64),
+			workspaceAccess: "read",
 		});
+		expect(containment.authorization.workspaceAccess).toBe("read");
 
 		const generation = await new SupervisedCodexProviderGuardian({
 			capsuleId: randomUUID(),
@@ -257,6 +273,63 @@ describe.runIf(
 			authority.revoke("revoked");
 			await generation.terminate("capsule_shutdown").catch(() => undefined);
 		}
+	}, 60_000);
+
+	it("recovers the exact legacy write-mode binding without adding workspace_access", async () => {
+		const fixture = await createFixture();
+		const launcher = await resolvePinnedCodex();
+		const provider = {
+			executable: fixture.providerExecutable,
+			readRoot: fixture.providerRoot,
+			sha256: await sha256File(fixture.providerExecutable),
+		};
+		const current = await prepareCodexSandboxContainment({
+			controlDirectory: fixture.control,
+			runtimeDirectory: fixture.runtime,
+			workspace: fixture.workspace,
+			launcher,
+			provider,
+			forbiddenRoots: [fixture.sibling, fixture.ownerHome],
+			policyGrantSha256: "c".repeat(64),
+			workspaceAccess: "write",
+		});
+		const currentManifest = await readRuntimeContainmentManifest(current.recovery.manifestPath);
+		const legacyBinding = { ...currentManifest.binding };
+		delete legacyBinding.workspace_access;
+		await unlink(current.recovery.manifestPath);
+		const legacyManifest = await createRuntimeContainmentManifest(
+			current.recovery.manifestPath,
+			legacyBinding,
+		);
+		const retainedManifest = await readFile(current.recovery.manifestPath, "utf8");
+		const recovery = {
+			manifestPath: current.recovery.manifestPath,
+			instanceId: legacyManifest.instance_id,
+			bindingSha256: legacyManifest.binding_sha256,
+		};
+
+		expect("workspace_access" in legacyManifest.binding).toBe(false);
+		expect(retainedManifest).not.toContain("workspace_access");
+		expect(legacyManifest.binding_sha256).not.toBe(currentManifest.binding_sha256);
+		const recovered = await recoverCodexSandboxContainment(recovery);
+		expect(recovered.authorization.workspaceAccess).toBe("write");
+		expect(recovered.recovery).toEqual(recovery);
+		expect(recovered.evidence.bindingSha256).toBe(legacyManifest.binding_sha256);
+
+		const workspaceWrite = join(fixture.workspace.root, "legacy-recovery-write.txt");
+		const prepared = await recovered.boundary.prepare({
+			executable: provider.executable,
+			argv: [
+				"-e",
+				"require('node:fs').writeFileSync(process.argv[1], 'legacy-write\\n')",
+				workspaceWrite,
+			],
+			cwd: fixture.workspace.root,
+			env: { HOME: recovered.runtimeHome, CODEX_HOME: recovered.runtimeHome },
+		});
+		expect(await run(prepared)).toEqual({ stdout: "", stderr: "" });
+		expect(await readFile(workspaceWrite, "utf8")).toBe("legacy-write\n");
+		expect(await readFile(current.recovery.manifestPath, "utf8")).toBe(retainedManifest);
 	}, 60_000);
 });
 

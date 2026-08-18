@@ -28,6 +28,8 @@ export const runtimeContainmentBindingSchema = z
 	.object({
 		backend: z.literal(RUNTIME_CONTAINMENT_BACKEND),
 		runtime_version: z.literal(SUPPORTED_CODEX_CLI_VERSION),
+		// Missing is the legacy write-mode encoding and must remain absent when rehashed.
+		workspace_access: z.enum(["read", "write"]).optional(),
 		workspace: z
 			.object({
 				repository_url: z.string().min(1).max(2_048),

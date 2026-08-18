@@ -54,10 +54,15 @@ export async function buildRuntimeContainmentBinding(
 		inspectedProbe.readRoot.path,
 		...readOnlyRoots.map((root) => root.path),
 	];
+	const workspaceAccess = input.workspaceAccess ?? "write";
 	const writableRoots = [
-		workspace.root.path,
+		...(workspaceAccess === "write" ? [workspace.root.path] : []),
 		privatePaths.runtime_home.path,
 		privatePaths.runtime_tmp.path,
+	];
+	const classifiedReadRoots = [
+		...trustedReadRoots,
+		...(workspaceAccess === "read" ? [workspace.root.path] : []),
 	];
 	const deniedRootPaths = deniedRoots.map((root) => root.path);
 	const linuxMounts = await readLinuxMounts();
@@ -68,7 +73,7 @@ export async function buildRuntimeContainmentBinding(
 	);
 	assertNoLinuxStorageAliases(
 		[
-			...trustedReadRoots.map((path) => ({ path, access: "read" as const })),
+			...classifiedReadRoots.map((path) => ({ path, access: "read" as const })),
 			...writableRoots.map((path) => ({ path, access: "write" as const })),
 			...deniedRootPaths.map((path) => ({ path, access: "deny" as const })),
 		],
@@ -77,6 +82,7 @@ export async function buildRuntimeContainmentBinding(
 	return {
 		backend: RUNTIME_CONTAINMENT_BACKEND,
 		runtime_version: SUPPORTED_CODEX_CLI_VERSION,
+		...(input.workspaceAccess === undefined ? {} : { workspace_access: input.workspaceAccess }),
 		workspace,
 		launcher: {
 			executable: launcher.executable,

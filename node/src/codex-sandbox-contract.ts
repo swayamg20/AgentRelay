@@ -9,6 +9,7 @@ export const CODEX_SANDBOX_CONFIG_FILE = "config.toml";
 export const CODEX_SANDBOX_MANIFEST_FILE = "containment.json";
 
 export type ContainmentOpenMode = "create" | "recover";
+export type CodexWorkspaceAccess = "read" | "write";
 
 export interface PinnedExecutable {
 	readonly executable: string;
@@ -29,15 +30,34 @@ export interface CodexSandboxContainmentInput {
 	readonly readOnlyRoots?: readonly string[];
 	readonly forbiddenRoots?: readonly string[];
 	readonly policyGrantSha256: string;
+	/** Omission defaults to write; new manifests persist the resolved access explicitly. */
+	readonly workspaceAccess?: CodexWorkspaceAccess;
 }
 
 export interface CodexSandboxContainment {
 	readonly boundary: CodexProcessBoundary;
 	readonly evidence: RuntimeContainmentEvidence;
+	/** Trusted fields recovered from the exact validated manifest binding. */
+	readonly authorization: CodexSandboxAuthorization;
 	/** Local authority that the Node must persist before relying on crash recovery. */
 	readonly recovery: CodexSandboxRecoveryExpectation;
 	readonly runtimeHome: string;
 	readonly runtimeTmp: string;
+}
+
+export interface CodexSandboxAuthorization {
+	readonly controlDirectory: string;
+	readonly runtimeDirectory: string;
+	readonly providerExecutable: string;
+	readonly runtimeVersion: RuntimeContainmentEvidence["runtimeVersion"];
+	readonly policyGrantSha256: string;
+	readonly workspaceAccess: CodexWorkspaceAccess;
+	readonly workspace: Readonly<{
+		root: string;
+		repositoryUrl: string;
+		headCommit: string;
+		reachableFromRef: string;
+	}>;
 }
 
 export const codexSandboxRecoveryExpectationSchema = z

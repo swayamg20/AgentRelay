@@ -82,6 +82,35 @@ describe("Codex sandbox policy", () => {
 		expect(config).not.toContain(`${JSON.stringify(input.controlDirectory)} = "deny"`);
 	});
 
+	it.each([
+		["legacy default", undefined, "write"],
+		["explicit read-only", "read", "read"],
+	] as const)("mounts the workspace with %s access", async (_name, workspaceAccess, expected) => {
+		const root = await temporaryRoot();
+		const toolRoot = join(root, "tool-runtime");
+		const workspaceRoot = join(root, "workspace");
+		await Promise.all([mkdir(toolRoot), mkdir(join(workspaceRoot, ".git"), { recursive: true })]);
+		const executable = {
+			executable: join(toolRoot, "codex"),
+			readRoot: toolRoot,
+			sha256: "a".repeat(64),
+		};
+		const input: CodexSandboxContainmentInput = {
+			...fixtureInput(root),
+			launcher: { ...executable, sandboxHelper: executable },
+			provider: executable,
+			...(workspaceAccess === undefined ? {} : { workspaceAccess }),
+		};
+		const layout = await prepareContainmentLayout(input, "create");
+		const config = await buildCodexSandboxConfig(input, layout, {
+			executable: layout.stagedProbeExecutable,
+			readRoot: layout.stagedProbeRoot,
+			sha256: "d".repeat(64),
+		});
+
+		expect(config).toContain(`${JSON.stringify(workspaceRoot)} = ${JSON.stringify(expected)}`);
+	});
+
 	it.each(["inside", "around"] as const)(
 		"rejects a trusted read root %s a writable workspace",
 		async (relationship) => {

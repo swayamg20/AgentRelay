@@ -39,7 +39,7 @@ export {
 	type CodexProviderTerminationReason,
 } from "./codex-capsule-runner-contract.js";
 
-/** Injected Codex orchestration inside one Mission Capsule; not wired to a production CLI. */
+/** Codex orchestration inside one authority-activated Mission Capsule. */
 export class CodexCapsuleRunner implements CapsuleRuntime {
 	readonly #store: CodexCapsuleStore;
 	readonly #generation: CodexProviderGeneration;

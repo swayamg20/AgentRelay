@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import { open, readlink, realpath, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PinnedExecutable } from "./codex-sandbox-contract.js";
+import type { CodexWorkspaceAccess, PinnedExecutable } from "./codex-sandbox-contract.js";
 import { assertContainmentProbeAttestation } from "./codex-sandbox-probe-attestation.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -19,6 +19,7 @@ export interface CodexSandboxProbeInput {
 	readonly launcherPath: string;
 	readonly profileName: string;
 	readonly workspaceRoot: string;
+	readonly workspaceAccess: CodexWorkspaceAccess;
 	readonly gitDirectory: string;
 	readonly runtimeTmp: string;
 	readonly probe: ContainmentProbeExecutable;
@@ -38,6 +39,7 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 	const probePaths = {
 		workspaceRead: join(input.gitDirectory, "HEAD"),
 		workspaceWrite: join(input.workspaceRoot, `.agentrelay-${randomUUID()}.probe`),
+		workspaceAccess: input.workspaceAccess,
 		gitWrite: join(input.gitDirectory, `.agentrelay-${randomUUID()}.probe`),
 		runtimeTmpWrite: join(input.runtimeTmp, `.agentrelay-${randomUUID()}.probe`),
 		controlRead: input.launcherPath,
@@ -202,7 +204,10 @@ const checks = {
   networkNamespaceChanged: await readlink("/proc/self/ns/net") !== paths.parentNetworkNamespace,
   networkConnect: await canConnect(),
 };
-const ok = checks.workspaceRead && checks.workspaceWrite && !checks.gitWrite &&
+const workspaceAccessOk = paths.workspaceAccess === "read"
+  ? !checks.workspaceWrite
+  : checks.workspaceWrite;
+const ok = checks.workspaceRead && workspaceAccessOk && !checks.gitWrite &&
   checks.runtimeTmpWrite && !checks.controlRead && !checks.ownerHomeRead &&
   !checks.sharedTempRead && !checks.environmentSecretPresent &&
   checks.networkNamespaceChanged && !checks.networkConnect;

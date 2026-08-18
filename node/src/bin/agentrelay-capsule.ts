@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
 import { cac } from "cac";
-import { PersistentFakeCapsuleServer } from "../fake-capsule-server.js";
+import { startConfiguredCapsuleServer } from "../capsule-runtime-factory.js";
 
 const cli = cac("agentrelay-capsule");
 
 cli
-	.command("serve", "Serve one persisted Mission-scoped fake capsule")
+	.command("serve", "Serve one persisted Mission-scoped capsule")
 	.option("--directory <path>", "Private capsule state and socket directory")
 	.action(async (options) => {
 		if (typeof options.directory !== "string" || options.directory.length === 0) {
 			throw new Error("--directory is required");
 		}
-		const server = await PersistentFakeCapsuleServer.start(options.directory);
+		const server = await startConfiguredCapsuleServer(options.directory);
 		const stop = () => void server.close();
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);

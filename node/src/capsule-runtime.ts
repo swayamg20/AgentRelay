@@ -19,6 +19,8 @@ export interface CapsuleRuntime extends AgentHostAdapter {
 export interface CapsuleRuntimeActivation {
 	readonly grant: RuntimeAuthorityGrant;
 	readonly signal: AbortSignal;
+	/** Executes a concrete workspace read through the Capsule reference monitor. */
+	performWorkspaceRead<T>(effect: () => T | Promise<T>): Promise<T>;
 }
 
 /**

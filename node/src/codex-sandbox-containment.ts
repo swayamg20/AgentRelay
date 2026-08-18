@@ -6,6 +6,7 @@ import { buildRuntimeContainmentBinding } from "./codex-sandbox-binding.js";
 import {
 	CODEX_SANDBOX_MANIFEST_FILE,
 	CODEX_SANDBOX_PROFILE_NAME,
+	type CodexSandboxAuthorization,
 	type CodexSandboxContainment,
 	type CodexSandboxContainmentInput,
 	type CodexSandboxRecoveryExpectation,
@@ -41,6 +42,7 @@ import {
 } from "./runtime-containment-manifest.js";
 
 export type {
+	CodexSandboxAuthorization,
 	CodexSandboxContainment,
 	CodexSandboxContainmentInput,
 	CodexSandboxRecoveryExpectation,
@@ -51,7 +53,10 @@ export type {
 export async function prepareCodexSandboxContainment(
 	input: CodexSandboxContainmentInput,
 ): Promise<CodexSandboxContainment> {
-	return prepareContainment(input, "create");
+	return prepareContainment(
+		{ ...input, workspaceAccess: input.workspaceAccess ?? "write" },
+		"create",
+	);
 }
 
 /** Reopens a retained binding only when the Node journal names the same instance and digest. */
@@ -92,6 +97,7 @@ export async function recoverCodexSandboxContainment(
 		{
 			controlDirectory,
 			runtimeDirectory: binding.private_paths.runtime_root.path,
+			workspaceAccess: binding.workspace_access,
 			workspace,
 			launcher: {
 				executable: binding.launcher.executable.path,
@@ -160,6 +166,7 @@ async function prepareContainment(
 		launcherPath: layout.launcherPath,
 		profileName: CODEX_SANDBOX_PROFILE_NAME,
 		workspaceRoot: input.workspace.root,
+		workspaceAccess: input.workspaceAccess ?? "write",
 		gitDirectory: input.workspace.gitDirectory,
 		runtimeTmp: layout.runtimeTmp,
 		probe,
@@ -179,6 +186,7 @@ async function prepareContainment(
 			manifest.binding_sha256,
 		),
 		evidence: containmentEvidence(manifest),
+		authorization: containmentAuthorization(manifest.binding),
 		recovery: Object.freeze({
 			manifestPath: layout.manifestPath,
 			instanceId: manifest.instance_id,
@@ -186,6 +194,23 @@ async function prepareContainment(
 		}),
 		runtimeHome: layout.runtimeHome,
 		runtimeTmp: layout.runtimeTmp,
+	});
+}
+
+function containmentAuthorization(binding: RuntimeContainmentBinding): CodexSandboxAuthorization {
+	return Object.freeze({
+		controlDirectory: binding.private_paths.control_root.path,
+		runtimeDirectory: binding.private_paths.runtime_root.path,
+		providerExecutable: binding.provider.executable.path,
+		runtimeVersion: binding.runtime_version,
+		policyGrantSha256: binding.policy_grant_sha256,
+		workspaceAccess: binding.workspace_access ?? "write",
+		workspace: Object.freeze({
+			root: binding.workspace.root.path,
+			repositoryUrl: binding.workspace.repository_url,
+			headCommit: binding.workspace.base_commit,
+			reachableFromRef: binding.workspace.reachable_from_ref,
+		}),
 	});
 }
 

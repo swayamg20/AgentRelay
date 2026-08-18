@@ -46,6 +46,8 @@ describe("runtime containment manifest", () => {
 		const reopened = await openRuntimeContainmentManifest(path, binding);
 
 		expect(reopened).toEqual(created);
+		expect("workspace_access" in reopened.binding).toBe(false);
+		expect(await readFile(path, "utf8")).not.toContain("workspace_access");
 		expect(await readRuntimeContainmentManifest(path)).toEqual(created);
 		expect((await stat(path)).mode & 0o777).toBe(0o600);
 		await expect(createRuntimeContainmentManifest(path, binding)).rejects.toMatchObject({
@@ -62,6 +64,24 @@ describe("runtime containment manifest", () => {
 					},
 				},
 			}),
+		).rejects.toThrow("does not authorize this exact workspace and policy");
+	});
+
+	it("binds explicit read-only workspace access into the retained digest", async () => {
+		const directory = await realpath(
+			await mkdtemp(join(tmpdir(), "agentrelay-containment-manifest-")),
+		);
+		temporaryDirectories.push(directory);
+		const path = join(directory, "containment.json");
+		const binding = { ...validBinding(), workspace_access: "read" as const };
+
+		const created = await createRuntimeContainmentManifest(path, binding);
+		const reopened = await openRuntimeContainmentManifest(path, binding);
+
+		expect(reopened).toEqual(created);
+		expect(reopened.binding.workspace_access).toBe("read");
+		await expect(
+			openRuntimeContainmentManifest(path, { ...binding, workspace_access: "write" }),
 		).rejects.toThrow("does not authorize this exact workspace and policy");
 	});
 
