@@ -1,8 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { constants, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, normalize } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -21,16 +20,17 @@ import {
 } from "@agentrelay/protocol";
 import { z } from "zod";
 import { digestStartTurnInput, executionKey } from "./capsule-correlation.js";
+import {
+	type FakeCapsuleLaunchDescriptor,
+	readFakeCapsuleLaunchDescriptor,
+} from "./capsule-launch-descriptor.js";
 import { CapsuleOperationError } from "./capsule-operation-error.js";
-import { type CapsuleLaunchDescriptor, capsuleLaunchDescriptorSchema } from "./capsule-protocol.js";
 import { writeDurableJson } from "./durable-file.js";
 
 export { digestStartTurnInput, executionKey } from "./capsule-correlation.js";
 export { CapsuleOperationError } from "./capsule-operation-error.js";
 
-export const CAPSULE_DESCRIPTOR_FILE = "launch.json";
 export const CAPSULE_STATE_FILE = "state.json";
-const MAX_CAPSULE_SOCKET_PATH_BYTES = 100;
 
 const storedTurnSchema = z
 	.object({
@@ -55,73 +55,10 @@ const fakeCapsuleStateSchema = z
 type FakeCapsuleState = z.infer<typeof fakeCapsuleStateSchema>;
 type StoredTurn = z.infer<typeof storedTurnSchema>;
 
-export async function readCapsuleLaunchDescriptor(
-	directory: string,
-): Promise<CapsuleLaunchDescriptor> {
-	assertUnixSocketSupport();
-	const descriptor = capsuleLaunchDescriptorSchema.parse(
-		await readSecureJson(join(directory, CAPSULE_DESCRIPTOR_FILE)),
-	);
-	assertValidCapsuleSocketPath(descriptor.socket_path, descriptor.capsule_id);
-	return descriptor;
-}
-
-function assertValidCapsuleSocketPath(path: string, capsuleId: string): void {
-	const expectedSocketDirectory = `ar-capsules-${process.getuid?.() ?? "unknown"}`;
-	let canonicalRoot = false;
-	try {
-		const root = dirname(dirname(path));
-		canonicalRoot = realpathSync(root) === root;
-	} catch {
-		canonicalRoot = false;
-	}
-	if (
-		!isAbsolute(path) ||
-		normalize(path) !== path ||
-		!canonicalRoot ||
-		Buffer.byteLength(path, "utf8") > MAX_CAPSULE_SOCKET_PATH_BYTES ||
-		basename(dirname(path)) !== expectedSocketDirectory ||
-		basename(path) !== capsuleSocketFilename(capsuleId)
-	) {
-		throw new Error("Capsule descriptor contains an invalid local socket path");
-	}
-}
-
-export function capsuleSocketPath(capsuleId: string): string {
-	assertUnixSocketSupport();
-	const owner = process.getuid?.() ?? "unknown";
-	const temporaryRoot = tmpdir();
-	if (!isAbsolute(temporaryRoot) || normalize(temporaryRoot) !== temporaryRoot) {
-		throw new Error("Capsule descriptor contains an invalid local socket path");
-	}
-	const candidate = join(
-		realpathSync(temporaryRoot),
-		`ar-capsules-${owner}`,
-		capsuleSocketFilename(capsuleId),
-	);
-	const path =
-		Buffer.byteLength(candidate, "utf8") <= MAX_CAPSULE_SOCKET_PATH_BYTES
-			? candidate
-			: join(realpathSync("/tmp"), `ar-capsules-${owner}`, capsuleSocketFilename(capsuleId));
-	assertValidCapsuleSocketPath(path, capsuleId);
-	return path;
-}
-
-function capsuleSocketFilename(capsuleId: string): string {
-	const digest = createHash("sha256").update(capsuleId, "utf8").digest("hex").slice(0, 24);
-	return `${digest}.sock`;
-}
-
-function assertUnixSocketSupport(): void {
-	if (process.platform === "win32") {
-		throw new Error("Persistent Mission capsules require Unix domain sockets");
-	}
-}
-
 /** Durable deterministic host state owned by one Mission-scoped capsule process. */
 export class FakeCapsuleStore {
 	readonly #directory: string;
-	readonly #descriptor: CapsuleLaunchDescriptor;
+	readonly #descriptor: FakeCapsuleLaunchDescriptor;
 	readonly #statePath: string;
 	readonly #timers = new Map<string, AbortController>();
 	#state: FakeCapsuleState;
@@ -129,7 +66,7 @@ export class FakeCapsuleStore {
 
 	private constructor(
 		directory: string,
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 		state: FakeCapsuleState,
 	) {
 		this.#directory = directory;
@@ -139,7 +76,7 @@ export class FakeCapsuleStore {
 	}
 
 	static async open(directory: string): Promise<FakeCapsuleStore> {
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		const statePath = join(directory, CAPSULE_STATE_FILE);
 		const decoded = await readSecureJsonIfPresent(statePath);
 		const state =
@@ -165,7 +102,7 @@ export class FakeCapsuleStore {
 		return this.#directory;
 	}
 
-	get descriptor(): CapsuleLaunchDescriptor {
+	get descriptor(): FakeCapsuleLaunchDescriptor {
 		return structuredClone(this.#descriptor);
 	}
 
@@ -396,7 +333,7 @@ async function readSecureJsonIfPresent(path: string): Promise<unknown | null> {
 	}
 }
 
-function validateState(descriptor: CapsuleLaunchDescriptor, state: FakeCapsuleState): void {
+function validateState(descriptor: FakeCapsuleLaunchDescriptor, state: FakeCapsuleState): void {
 	if (state.capsule_id !== descriptor.capsule_id) {
 		throw new Error("Capsule state belongs to a different capsule generation");
 	}

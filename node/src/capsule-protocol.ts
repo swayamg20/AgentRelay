@@ -155,29 +155,6 @@ export const capsuleResponseSchema = z.discriminatedUnion("kind", [
 		.strict(),
 ]);
 
-export const fakeCapsuleOutcomeSchema = z.enum(["ready", "reply"]);
-
-export const capsuleLaunchDescriptorSchema = z
-	.object({
-		schema_version: z.literal(1),
-		capsule_id: uuidSchema,
-		capability_token: z.string().regex(/^ar_capsule_[a-f0-9]{64}$/),
-		socket_path: z
-			.string()
-			.min(1)
-			.max(512)
-			.refine((value) => !value.includes("\0")),
-		session: sessionInputSchema,
-		runtime: z
-			.object({
-				kind: z.literal("fake"),
-				outcome: fakeCapsuleOutcomeSchema,
-				completion_delay_ms: z.number().int().min(0).max(60_000),
-			})
-			.strict(),
-	})
-	.strict();
-
 export const CAPSULE_ADAPTER_INFO: AdapterInfo = adapterInfoSchema.parse({
 	name: "capsule-fake",
 	version: "1.0.0",
@@ -190,8 +167,6 @@ export const CAPSULE_ADAPTER_INFO: AdapterInfo = adapterInfoSchema.parse({
 
 export type CapsuleRequest = z.infer<typeof capsuleRequestSchema>;
 export type CapsuleResponse = z.infer<typeof capsuleResponseSchema>;
-export type CapsuleLaunchDescriptor = z.infer<typeof capsuleLaunchDescriptorSchema>;
-export type FakeCapsuleOutcome = z.infer<typeof fakeCapsuleOutcomeSchema>;
 export type CapsuleErrorCode = Extract<CapsuleResponse, { kind: "error" }>["code"];
 export type CapsuleUnaryResult = z.infer<typeof capsuleUnaryResultSchema>;
 export type CapsuleResultResponse = Extract<CapsuleResponse, { kind: "result" }>;

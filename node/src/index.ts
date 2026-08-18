@@ -1,4 +1,5 @@
 export * from "./config.js";
+export * from "./capsule-launch-descriptor.js";
 export * from "./capsule-protocol.js";
 export * from "./capsule-runtime.js";
 export * from "./capsule-server.js";

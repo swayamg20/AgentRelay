@@ -6,13 +6,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { HostEvent, HostSessionRef, HostTurnRef, StartTurnInput } from "@agentrelay/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { DropInstallResponseLauncher } from "../test-support/capsule-fault-proxy.js";
-import { writeDurableJson } from "./durable-file.js";
-import { PersistentFakeCapsuleServer } from "./fake-capsule-server.js";
 import {
 	CAPSULE_DESCRIPTOR_FILE,
-	CAPSULE_STATE_FILE,
-	readCapsuleLaunchDescriptor,
-} from "./fake-capsule-store.js";
+	readFakeCapsuleLaunchDescriptor,
+} from "./capsule-launch-descriptor.js";
+import { writeDurableJson } from "./durable-file.js";
+import { PersistentFakeCapsuleServer } from "./fake-capsule-server.js";
+import { CAPSULE_STATE_FILE } from "./fake-capsule-store.js";
 import {
 	type CapsuleLauncher,
 	PersistentFakeCapsuleAdapter,
@@ -553,7 +553,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		await adapter.ensureSession(sessionInput());
 		await launcher.closeAll();
 		const directory = join(rootDirectory, IDS.mission);
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		const sourcePath = descriptor.socket_path.replace(/\.sock$/, ".old");
 		const staleServer = createServer();
 		await listen(staleServer, sourcePath);
@@ -578,7 +578,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const crashedServer = launcher.onlyServer();
 		await launcher.closeAll();
 		const directory = join(rootDirectory, IDS.mission);
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		await installStaleSocket(descriptor.socket_path);
 
 		expect(await adapter.ensureSession(sessionInput())).toEqual(session);
@@ -595,7 +595,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const session = await first.ensureSession(sessionInput());
 		const second = await openAuthorizedAdapter(options);
 		await launcher.closeAll();
-		const descriptor = await readCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
+		const descriptor = await readFakeCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
 		await installStaleSocket(descriptor.socket_path);
 
 		await expect(
@@ -608,7 +608,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const { adapter, launcher, rootDirectory } = await openedAdapter();
 		await adapter.ensureSession(sessionInput());
 		const oldServer = launcher.onlyServer();
-		const descriptor = await readCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
+		const descriptor = await readFakeCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
 		await rm(descriptor.socket_path, { force: true });
 		const replacementServer = createServer();
 		await listen(replacementServer, descriptor.socket_path);
@@ -640,7 +640,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 			const first = await openAuthorizedAdapter(options);
 			const session = await first.ensureSession(sessionInput());
 			const directory = join(rootDirectory, IDS.mission);
-			const descriptor = await readCapsuleLaunchDescriptor(directory);
+			const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 			expect(descriptor.socket_path.startsWith(`${firstTmp}/`)).toBe(true);
 
 			await launcher.closeAll();
@@ -648,7 +648,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 			const reopened = await openAuthorizedAdapter(options);
 
 			expect(await reopened.ensureSession(sessionInput())).toEqual(session);
-			expect((await readCapsuleLaunchDescriptor(directory)).socket_path).toBe(
+			expect((await readFakeCapsuleLaunchDescriptor(directory)).socket_path).toBe(
 				descriptor.socket_path,
 			);
 			expect(launcher.startCalls).toBe(2);
@@ -757,7 +757,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const adapter = await openAuthorizedAdapter(options);
 		await adapter.ensureSession(sessionInput());
 		const directory = join(rootDirectory, IDS.mission);
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		await writeDurableJson(
 			join(directory, CAPSULE_DESCRIPTOR_FILE),
 			{
@@ -783,7 +783,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const adapter = await openAuthorizedAdapter(options);
 		await adapter.ensureSession(sessionInput());
 		const directory = join(rootDirectory, IDS.mission);
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		await writeDurableJson(
 			join(directory, CAPSULE_DESCRIPTOR_FILE),
 			{
@@ -808,7 +808,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const adapter = await openAuthorizedAdapter(adapterOptions(rootDirectory, launcher));
 		await adapter.ensureSession(sessionInput());
 		const descriptorPath = join(rootDirectory, IDS.mission, CAPSULE_DESCRIPTOR_FILE);
-		const descriptor = await readCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
+		const descriptor = await readFakeCapsuleLaunchDescriptor(join(rootDirectory, IDS.mission));
 		await writeDurableJson(
 			descriptorPath,
 			{ ...descriptor, socket_path: "relative.sock" },
@@ -831,7 +831,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		await adapter.ensureSession(sessionInput());
 		const directory = join(rootDirectory, IDS.mission);
 		const descriptorPath = join(directory, CAPSULE_DESCRIPTOR_FILE);
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		await writeDurableJson(
 			descriptorPath,
 			{ ...descriptor, socket_path: "relative.sock" },
@@ -851,7 +851,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const session = await adapter.ensureSession(sessionInput());
 		await collect(adapter.startTurn(turnInput(session)));
 		const directory = join(rootDirectory, IDS.mission);
-		const descriptor = await readCapsuleLaunchDescriptor(directory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 
 		for (const path of [rootDirectory, directory, dirname(descriptor.socket_path)]) {
 			expect((await stat(path)).mode & 0o777).toBe(0o700);

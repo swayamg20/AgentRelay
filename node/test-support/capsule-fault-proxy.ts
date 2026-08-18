@@ -1,8 +1,9 @@
 import { chmod, unlink } from "node:fs/promises";
 import { type Server, type Socket, createConnection, createServer } from "node:net";
+import { readFakeCapsuleLaunchDescriptor } from "../src/capsule-launch-descriptor.js";
 import { PersistentCapsuleServer } from "../src/capsule-server.js";
 import { FakeCapsuleRuntimeController } from "../src/fake-capsule-runtime.js";
-import { FakeCapsuleStore, readCapsuleLaunchDescriptor } from "../src/fake-capsule-store.js";
+import { FakeCapsuleStore } from "../src/fake-capsule-store.js";
 import type { CapsuleLauncher } from "../src/persistent-capsule-adapter.js";
 
 /** Drops the first install response only after the real Capsule commits the request. */
@@ -19,7 +20,7 @@ export class DropInstallResponseLauncher implements CapsuleLauncher {
 		if (this.#proxy !== null || this.#capsule !== null) {
 			throw new Error("Fault proxy launcher already owns a Capsule generation");
 		}
-		const descriptor = await readCapsuleLaunchDescriptor(capsuleDirectory);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(capsuleDirectory);
 		this.#proxyPath = descriptor.socket_path;
 		this.#upstreamPath = `${descriptor.socket_path}.upstream`;
 		this.#capsule = await PersistentCapsuleServer.start({

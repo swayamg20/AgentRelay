@@ -16,8 +16,8 @@ import {
 import { FakeAgentHostAdapter } from "@agentrelay/protocol/testing";
 import {
 	CAPSULE_STATE_FILE,
-	type CapsuleLaunchDescriptor,
 	DeliveryProcessor,
+	type FakeCapsuleLaunchDescriptor,
 	ForegroundNode,
 	NodeJournal,
 	type NodeJournalState,
@@ -27,7 +27,7 @@ import {
 	createNodeRelayClient,
 	nodeConfigSchema,
 	nodeJournalStateSchema,
-	readCapsuleLaunchDescriptor,
+	readFakeCapsuleLaunchDescriptor,
 	syncDirectory,
 	writeNodeConfig,
 } from "agentrelay-node";
@@ -515,7 +515,7 @@ describe("foreground Node delivery", () => {
 				completionDelayMs,
 			);
 			let competingNode: TrackedNodeProcess | null = null;
-			let capsuleDescriptor: CapsuleLaunchDescriptor | null = null;
+			let capsuleDescriptor: FakeCapsuleLaunchDescriptor | null = null;
 			let socketIdentity: FileIdentity | null = null;
 			let noLaunchAdapter: PersistentFakeCapsuleAdapter | null = null;
 			let replacementLaunchAttempts = 0;
@@ -552,7 +552,7 @@ describe("foreground Node delivery", () => {
 
 				const killedPid = runningNode.child.pid;
 				if (killedPid === undefined) throw new Error("Started Node process has no PID");
-				capsuleDescriptor = await readCapsuleLaunchDescriptor(capsuleDirectory);
+				capsuleDescriptor = await readFakeCapsuleLaunchDescriptor(capsuleDirectory);
 				const detachedSocketPath = capsuleDescriptor.socket_path;
 				socketIdentity = await privateSocketIdentity(detachedSocketPath);
 
@@ -1148,7 +1148,7 @@ function errorCode(error: unknown): string | undefined {
 async function stopCapsule(
 	adapter: PersistentFakeCapsuleAdapter | null,
 	capsuleDirectory: string,
-	descriptor: CapsuleLaunchDescriptor | null,
+	descriptor: FakeCapsuleLaunchDescriptor | null,
 	socketIdentity: FileIdentity | null,
 ): Promise<void> {
 	let shutdownError: unknown;

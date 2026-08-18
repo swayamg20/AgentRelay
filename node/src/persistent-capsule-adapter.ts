@@ -36,30 +36,29 @@ import {
 } from "./capsule-authority-registry.js";
 import { buildBaseCapsuleEnvironment } from "./capsule-environment.js";
 import {
+	CAPSULE_DESCRIPTOR_FILE,
+	type FakeCapsuleLaunchDescriptor,
+	type FakeCapsuleOutcome,
+	capsuleSocketPath,
+	fakeCapsuleLaunchDescriptorSchema,
+	fakeCapsuleOutcomeSchema,
+	readFakeCapsuleLaunchDescriptor,
+} from "./capsule-launch-descriptor.js";
+import {
 	CAPSULE_ADAPTER_INFO,
 	type CapsuleErrorCode,
-	type CapsuleLaunchDescriptor,
 	type CapsuleRequest,
 	type CapsuleResponse,
-	type FakeCapsuleOutcome,
 	MAX_CAPSULE_REQUEST_FRAME_BYTES,
 	MAX_CAPSULE_RESPONSE_FRAME_BYTES,
 	capsuleEmptyResultSchema,
 	capsuleEnsureSessionResultSchema,
-	capsuleLaunchDescriptorSchema,
 	capsuleLookupTurnResultSchema,
 	capsuleProbeResultSchema,
 	capsuleResponseSchema,
-	fakeCapsuleOutcomeSchema,
 } from "./capsule-protocol.js";
 import { syncDirectory, writeDurableJson } from "./durable-file.js";
-import {
-	CAPSULE_DESCRIPTOR_FILE,
-	capsuleSocketPath,
-	digestStartTurnInput,
-	executionKey,
-	readCapsuleLaunchDescriptor,
-} from "./fake-capsule-store.js";
+import { digestStartTurnInput, executionKey } from "./fake-capsule-store.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
 import {
 	type RuntimeAuthorityDenyCode,
@@ -145,7 +144,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	readonly #startupTimeoutMs: number;
 	#registry: CapsuleRegistry;
 	#pendingRegistryWrite: Promise<void> = Promise.resolve();
-	readonly #descriptorReadiness = new Map<string, Promise<CapsuleLaunchDescriptor>>();
+	readonly #descriptorReadiness = new Map<string, Promise<FakeCapsuleLaunchDescriptor>>();
 	readonly #capsuleReadiness = new Map<string, Promise<void>>();
 	readonly #authorities = new CapsuleAuthorityRegistry();
 
@@ -395,9 +394,9 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		const failures: unknown[] = [];
 		for (const entry of entries) {
 			if (!entry.isDirectory() || !uuidSchema.safeParse(entry.name).success) continue;
-			let descriptor: CapsuleLaunchDescriptor;
+			let descriptor: FakeCapsuleLaunchDescriptor;
 			try {
-				descriptor = await readCapsuleLaunchDescriptor(join(this.#rootDirectory, entry.name));
+				descriptor = await readFakeCapsuleLaunchDescriptor(join(this.#rootDirectory, entry.name));
 			} catch (error) {
 				failures.push(error);
 				continue;
@@ -486,7 +485,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		}
 	}
 
-	private async ensureDescriptor(input: SessionInput): Promise<CapsuleLaunchDescriptor> {
+	private async ensureDescriptor(input: SessionInput): Promise<FakeCapsuleLaunchDescriptor> {
 		let readiness = this.#descriptorReadiness.get(input.missionId);
 		if (readiness === undefined) {
 			readiness = this.loadOrCreateDescriptor(input);
@@ -503,16 +502,16 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		}
 	}
 
-	private async loadOrCreateDescriptor(input: SessionInput): Promise<CapsuleLaunchDescriptor> {
+	private async loadOrCreateDescriptor(input: SessionInput): Promise<FakeCapsuleLaunchDescriptor> {
 		const directory = this.capsuleDirectory(input.missionId);
 		await ensurePrivateDirectory(directory);
 		const descriptorPath = join(directory, CAPSULE_DESCRIPTOR_FILE);
 		const existing = await readSecureJsonIfPresent(descriptorPath);
 		if (existing !== null) {
-			return readCapsuleLaunchDescriptor(directory);
+			return readFakeCapsuleLaunchDescriptor(directory);
 		}
 		const capsuleId = randomUUID();
-		const descriptor = capsuleLaunchDescriptorSchema.parse({
+		const descriptor = fakeCapsuleLaunchDescriptorSchema.parse({
 			schema_version: 1,
 			capsule_id: capsuleId,
 			capability_token: `ar_capsule_${randomBytes(32).toString("hex")}`,
@@ -535,16 +534,16 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		missionId: string,
 		expected: string | SessionInput,
 		allowMissing = false,
-	): Promise<CapsuleLaunchDescriptor> {
-		const descriptor = await readCapsuleLaunchDescriptor(this.capsuleDirectory(missionId)).catch(
-			(error) => {
-				if (allowMissing)
-					throw new CapsuleRpcError("transport", "Capsule session is not initialized", {
-						cause: error,
-					});
-				throw error;
-			},
-		);
+	): Promise<FakeCapsuleLaunchDescriptor> {
+		const descriptor = await readFakeCapsuleLaunchDescriptor(
+			this.capsuleDirectory(missionId),
+		).catch((error) => {
+			if (allowMissing)
+				throw new CapsuleRpcError("transport", "Capsule session is not initialized", {
+					cause: error,
+				});
+			throw error;
+		});
 		if (typeof expected === "string") {
 			if (descriptor.capsule_id !== expected) {
 				throw new CapsuleRpcError(
@@ -566,7 +565,10 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		return descriptor;
 	}
 
-	private assertDescriptorConfig(descriptor: CapsuleLaunchDescriptor, input: SessionInput): void {
+	private assertDescriptorConfig(
+		descriptor: FakeCapsuleLaunchDescriptor,
+		input: SessionInput,
+	): void {
 		if (!isDeepStrictEqual(descriptor.session, input)) {
 			throw new CapsuleRpcError(
 				"scope_mismatch",
@@ -645,7 +647,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	private ensureCapsule(
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 		requireActiveAuthority = true,
 	): Promise<void> {
 		return this.#authorities.runTransition(descriptor.session.missionId, () =>
@@ -654,7 +656,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	private async ensureCapsuleWithinTransition(
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 		requireActiveAuthority = true,
 	): Promise<void> {
 		const authority = this.#authorities.get(descriptor.session.missionId);
@@ -672,7 +674,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		if (requireActiveAuthority) await this.syncAuthorityWithinTransition(descriptor);
 	}
 
-	private async ensureCapsuleReady(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+	private async ensureCapsuleReady(descriptor: FakeCapsuleLaunchDescriptor): Promise<void> {
 		let readiness = this.#capsuleReadiness.get(descriptor.capsule_id);
 		if (readiness === undefined) {
 			readiness = this.startOrAwaitCapsule(descriptor);
@@ -687,7 +689,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		}
 	}
 
-	private async startOrAwaitCapsule(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+	private async startOrAwaitCapsule(descriptor: FakeCapsuleLaunchDescriptor): Promise<void> {
 		const deadline = Date.now() + this.#startupTimeoutMs;
 		let waitMs = 20;
 		let lastError: unknown;
@@ -723,7 +725,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	private async prepareCapsuleLaunch(
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 	): Promise<CapsuleLaunchPreparation> {
 		try {
 			await this.probeCapsule(descriptor);
@@ -752,7 +754,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		return removeUnchangedSocket(descriptor.socket_path, after);
 	}
 
-	private async probeCapsule(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+	private async probeCapsule(descriptor: FakeCapsuleLaunchDescriptor): Promise<void> {
 		await assertPrivateSocket(descriptor.socket_path);
 		const info = capsuleProbeResultSchema.parse(await this.requestUnary(descriptor, "probe", {}));
 		if (!isDeepStrictEqual(info, CAPSULE_ADAPTER_INFO)) {
@@ -763,7 +765,9 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		}
 	}
 
-	private async syncAuthorityWithinTransition(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+	private async syncAuthorityWithinTransition(
+		descriptor: FakeCapsuleLaunchDescriptor,
+	): Promise<void> {
 		const missionId = descriptor.session.missionId;
 		const authority = this.#authorities.get(missionId);
 		if (authority === undefined) return;
@@ -796,7 +800,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		grant: RuntimeAuthorityGrant,
 		reason: RuntimeAuthorityDenyCode,
 	): Promise<void> {
-		let descriptor: CapsuleLaunchDescriptor;
+		let descriptor: FakeCapsuleLaunchDescriptor;
 		try {
 			descriptor = await this.requireDescriptor(grant.mission_id, sessionFromGrant(grant));
 		} catch (error) {
@@ -824,7 +828,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		await this.waitForCapsuleRetirement(descriptor);
 	}
 
-	private async shutdownUninstalledCapsule(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+	private async shutdownUninstalledCapsule(descriptor: FakeCapsuleLaunchDescriptor): Promise<void> {
 		try {
 			capsuleEmptyResultSchema.parse(await this.requestUnary(descriptor, "shutdown", {}));
 		} catch (error) {
@@ -832,7 +836,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 		}
 	}
 
-	private async waitForCapsuleRetirement(descriptor: CapsuleLaunchDescriptor): Promise<void> {
+	private async waitForCapsuleRetirement(descriptor: FakeCapsuleLaunchDescriptor): Promise<void> {
 		const deadline = Date.now() + this.#startupTimeoutMs;
 		let waitMs = 10;
 		while (Date.now() < deadline) {
@@ -852,7 +856,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	private async requestUnary(
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 		method:
 			| "probe"
 			| "install_authority"
@@ -883,7 +887,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	private async *requestEvents(
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 		method: "start_turn" | "recover_turn",
 		params: Record<string, unknown>,
 	): AsyncIterable<HostEvent> {
@@ -906,7 +910,7 @@ export class PersistentFakeCapsuleAdapter implements AgentHostAdapter, RuntimeAu
 	}
 
 	private async *requestFrames(
-		descriptor: CapsuleLaunchDescriptor,
+		descriptor: FakeCapsuleLaunchDescriptor,
 		method: CapsuleRequest["method"],
 		params: Record<string, unknown>,
 	): AsyncIterable<CapsuleResponse> {

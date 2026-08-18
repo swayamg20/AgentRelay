@@ -1,3 +1,5 @@
+import { isAbsolute, normalize } from "node:path";
+import { z } from "zod";
 import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 import type { PreparedMissionWorkspace } from "./mission-workspace.js";
 import type { RuntimeContainmentEvidence } from "./runtime-containment-manifest.js";
@@ -38,11 +40,23 @@ export interface CodexSandboxContainment {
 	readonly runtimeTmp: string;
 }
 
-export interface CodexSandboxRecoveryExpectation {
-	readonly manifestPath: string;
-	readonly instanceId: string;
-	readonly bindingSha256: string;
-}
+export const codexSandboxRecoveryExpectationSchema = z
+	.object({
+		manifestPath: z
+			.string()
+			.min(1)
+			.max(4_096)
+			.refine((value) => !value.includes("\0"), "Path cannot contain NUL")
+			.refine((value) => isAbsolute(value), "Path must be absolute")
+			.refine((value) => normalize(value) === value, "Path must be normalized"),
+		instanceId: z.string().uuid(),
+		bindingSha256: z.string().regex(/^[a-f0-9]{64}$/),
+	})
+	.strict();
+
+export type CodexSandboxRecoveryExpectation = Readonly<
+	z.infer<typeof codexSandboxRecoveryExpectationSchema>
+>;
 
 export interface ContainmentLayout {
 	readonly controlRoot: string;
