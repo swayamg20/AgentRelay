@@ -4,8 +4,10 @@ import type { NodeConfig } from "./config.js";
 import { DeliveryProcessor } from "./delivery-processor.js";
 import type { NodeJournal } from "./journal.js";
 import { acceptPendingMissions, verifyNodeIdentityAndWorkspaces } from "./mission-acceptance.js";
+import type { prepareMissionWorkspace } from "./mission-workspace.js";
 import type { NodeRelayClient } from "./relay-client.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
+import type { RuntimeProvisioner } from "./runtime-provisioner.js";
 
 export interface NodeLog {
 	info(fields: Record<string, unknown>, message: string): void;
@@ -19,6 +21,8 @@ export interface ForegroundNodeOptions {
 	readonly journal: NodeJournal;
 	readonly adapter: AgentHostAdapter;
 	readonly authorityPort?: RuntimeAuthorityPort;
+	readonly runtimeProvisioner?: RuntimeProvisioner;
+	readonly prepareRuntimeWorkspace?: typeof prepareMissionWorkspace;
 	readonly pollIntervalMs?: number;
 	readonly logger?: NodeLog;
 }

@@ -9,7 +9,10 @@ import { JournalCompareAndSwapError, type JournalDelivery, type NodeJournal } fr
 import type { ResolvedPolicyProfile } from "./policy.js";
 import { createRuntimeAuthorityGrant } from "./runtime-authority-factory.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
-import { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
+import {
+	NodeRuntimeAuthoritySession,
+	RuntimeAuthorityRetirementError,
+} from "./runtime-authority-session.js";
 import type {
 	RuntimeAuthorityEvidenceSink,
 	RuntimeAuthorityGrant,
@@ -28,6 +31,12 @@ export interface DeliveryRuntimeAuthorityInput {
 	readonly policy: ResolvedPolicyProfile;
 	readonly adapter: AdapterInfo;
 	readonly entry: JournalDelivery;
+}
+
+export interface DeliveryRuntimeAuthorityInstallHooks {
+	readonly abortSignal?: AbortSignal;
+	readonly beforeRemoteInstall?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>;
+	readonly beforeReady?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>;
 }
 
 export class RuntimeAuthorityTransitionPendingError extends Error {
@@ -112,24 +121,38 @@ export class DeliveryRuntimeAuthority {
 
 	async install(
 		input: DeliveryRuntimeAuthorityInput,
-		beforeReady?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>,
+		hooks: DeliveryRuntimeAuthorityInstallHooks = {},
 	): Promise<NodeRuntimeAuthoritySession | null> {
 		const port = this.#port;
 		if (port === undefined) return null;
 		const grant = await this.resolveGrant(input, port);
-		return NodeRuntimeAuthoritySession.install({
-			port,
-			grant,
-			currentLease: currentRenewal(
+		try {
+			return await NodeRuntimeAuthoritySession.install({
+				port,
 				grant,
-				requireJournaledDelivery(this.#journal, grant.delivery_id),
-			),
-			readCurrentLease: () =>
-				currentRenewal(grant, requireJournaledDelivery(this.#journal, grant.delivery_id)),
-			...(beforeReady === undefined ? {} : { beforeReady }),
-			evidenceSink: this.#evidenceSink,
-			now: this.#now,
-		});
+				currentLease: currentRenewal(
+					grant,
+					requireJournaledDelivery(this.#journal, grant.delivery_id),
+				),
+				readCurrentLease: () =>
+					currentRenewal(grant, requireJournaledDelivery(this.#journal, grant.delivery_id)),
+				...(hooks.abortSignal === undefined ? {} : { abortSignal: hooks.abortSignal }),
+				...(hooks.beforeRemoteInstall === undefined
+					? {}
+					: { beforeRemoteInstall: hooks.beforeRemoteInstall }),
+				...(hooks.beforeReady === undefined ? {} : { beforeReady: hooks.beforeReady }),
+				evidenceSink: this.#evidenceSink,
+				now: this.#now,
+			});
+		} catch (error) {
+			if (error instanceof RuntimeAuthorityRetirementError) {
+				throw new RuntimeAuthorityTransitionPendingError(
+					"Capsule retirement after runtime authority installation is not yet proven",
+					{ cause: error },
+				);
+			}
+			throw error;
+		}
 	}
 
 	private async resolveGrant(

@@ -33,12 +33,20 @@ import {
 	startTurnInputDigest,
 	terminalResultFromEvents,
 } from "./journal.js";
+import { prepareMissionWorkspace } from "./mission-workspace.js";
 import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from "./policy.js";
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
-import { RuntimeAuthorityLeaseSynchronizer } from "./runtime-authority-lease-synchronizer.js";
+import {
+	RuntimeAuthorityLeaseSynchronizer,
+	RuntimeAuthoritySyncError,
+} from "./runtime-authority-lease-synchronizer.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
-import type { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
+import {
+	type NodeRuntimeAuthoritySession,
+	RuntimeAuthorityRetirementError,
+} from "./runtime-authority-session.js";
 import { RuntimeAuthorityDeniedError, runtimeAuthorityRequest } from "./runtime-authority.js";
+import type { RuntimeProvisioner } from "./runtime-provisioner.js";
 import {
 	WorkspacePreflightError,
 	type WorkspacePreflightResult,
@@ -55,9 +63,11 @@ export interface DeliveryProcessorOptions {
 	readonly journal: NodeJournal;
 	readonly adapter: AgentHostAdapter;
 	readonly authorityPort?: RuntimeAuthorityPort;
+	readonly runtimeProvisioner?: RuntimeProvisioner;
 	readonly now?: () => Date;
 	readonly monotonicNow?: () => number;
 	readonly preflight?: typeof preflightWorkspace;
+	readonly prepareRuntimeWorkspace?: typeof prepareMissionWorkspace;
 	readonly onCheckpoint?: (
 		checkpoint: DeliveryCheckpoint,
 		deliveryId: string,
@@ -82,9 +92,11 @@ export class DeliveryProcessor {
 	readonly #journal: NodeJournal;
 	readonly #adapter: AgentHostAdapter;
 	readonly #runtimeAuthority: DeliveryRuntimeAuthority;
+	readonly #runtimeProvisioner: RuntimeProvisioner | undefined;
 	readonly #now: () => Date;
 	readonly #monotonicNow: () => number;
 	readonly #preflight: typeof preflightWorkspace;
+	readonly #prepareRuntimeWorkspace: typeof prepareMissionWorkspace;
 	readonly #checkpoint: NonNullable<DeliveryProcessorOptions["onCheckpoint"]>;
 
 	constructor(options: DeliveryProcessorOptions) {
@@ -92,6 +104,10 @@ export class DeliveryProcessor {
 		this.#client = options.client;
 		this.#journal = options.journal;
 		this.#adapter = options.adapter;
+		if (options.runtimeProvisioner !== undefined && options.authorityPort === undefined) {
+			throw new Error("Runtime provisioning requires a runtime authority port");
+		}
+		this.#runtimeProvisioner = options.runtimeProvisioner;
 		this.#now = options.now ?? (() => new Date());
 		this.#runtimeAuthority = new DeliveryRuntimeAuthority({
 			nodeId: options.config.node.node_id,
@@ -101,6 +117,7 @@ export class DeliveryProcessor {
 		});
 		this.#monotonicNow = options.monotonicNow ?? (() => performance.now());
 		this.#preflight = options.preflight ?? preflightWorkspace;
+		this.#prepareRuntimeWorkspace = options.prepareRuntimeWorkspace ?? prepareMissionWorkspace;
 		this.#checkpoint = options.onCheckpoint ?? (() => undefined);
 	}
 
@@ -183,16 +200,26 @@ export class DeliveryProcessor {
 				await this.publishCompletion(deliveryId, entry.operation, signal, authority);
 				await this.retireCompletedRuntimeAuthority(deliveryId, authority);
 			} catch (error) {
+				if (error instanceof NodeShutdownError || isNodeShutdownSignalError(error, signal)) {
+					await this.revokeRuntimeAuthority(authority, "revoked");
+					await this.recordNodeShutdown(deliveryId, new NodeShutdownError());
+					return;
+				}
+				if (error instanceof RuntimeAuthorityInstallDeniedError) {
+					await this.revokeRuntimeAuthority(authority, "revoked");
+					await this.markLeaseLost(deliveryId, error);
+					return;
+				}
 				if (
 					error instanceof CompletionOutcomeUnknownError ||
 					(error instanceof AuthorityLostError && !(error instanceof CompletionRejectedError))
 				) {
-					await this.tryRevokeRuntimeAuthority(authority);
+					await this.revokeRuntimeAuthority(authority, "revoked");
 					await this.retainCompletionIntent(deliveryId, error);
 					return;
 				}
 				if (!(error instanceof AuthorityLostError)) throw error;
-				await this.tryRevokeRuntimeAuthority(authority);
+				await this.revokeRuntimeAuthority(authority, "revoked");
 				await this.markLeaseLost(deliveryId, error);
 			}
 			entry = requireEntry(this.#journal, deliveryId);
@@ -268,10 +295,21 @@ export class DeliveryProcessor {
 					authorization,
 					requireEntry(this.#journal, deliveryId),
 					adapterInfo,
+					signal,
 				);
 			} catch (error) {
+				if (error instanceof NodeShutdownError) {
+					await this.revokeRuntimeAuthority(authority, "revoked");
+					await this.recordNodeShutdown(deliveryId, error);
+					return;
+				}
+				if (error instanceof RuntimeAuthorityInstallDeniedError) {
+					await this.revokeRuntimeAuthority(authority, "revoked");
+					await this.markLeaseLost(deliveryId, error);
+					return;
+				}
 				if (!(error instanceof AuthorityLostError)) throw error;
-				await this.tryRevokeRuntimeAuthority(authority);
+				await this.revokeRuntimeAuthority(authority, "revoked");
 				await this.cancelAndMarkAuthorityLost(deliveryId, error);
 				return;
 			}
@@ -279,13 +317,18 @@ export class DeliveryProcessor {
 				await this.complete(deliveryId, entry.result, signal, authority);
 				await this.retireCompletedRuntimeAuthority(deliveryId, authority);
 			} catch (error) {
+				if (error instanceof NodeShutdownError || isNodeShutdownSignalError(error, signal)) {
+					await this.revokeRuntimeAuthority(authority, "revoked");
+					await this.recordNodeShutdown(deliveryId, new NodeShutdownError());
+					return;
+				}
 				if (error instanceof CompletionOutcomeUnknownError) {
-					await this.tryRevokeRuntimeAuthority(authority);
+					await this.revokeRuntimeAuthority(authority, "revoked");
 					await this.retainCompletionIntent(deliveryId, error);
 					return;
 				}
 				if (!(error instanceof AuthorityLostError)) throw error;
-				await this.tryRevokeRuntimeAuthority(authority);
+				await this.revokeRuntimeAuthority(authority, "revoked");
 				await this.markLeaseLost(deliveryId, error);
 			}
 			return;
@@ -344,6 +387,7 @@ export class DeliveryProcessor {
 				authorization,
 				requireEntry(this.#journal, deliveryId),
 				adapterInfo,
+				signal,
 				async (installing) => {
 					authority = installing;
 					await authorityLeases.bind(installing);
@@ -438,19 +482,20 @@ export class DeliveryProcessor {
 			await this.retireCompletedRuntimeAuthority(deliveryId, authority);
 		} catch (error) {
 			await leaseKeeper.stop();
-			await this.tryRevokeRuntimeAuthority(authority);
+			if (error instanceof NodeShutdownError || isNodeShutdownSignalError(error, signal)) {
+				await this.revokeRuntimeAuthority(authority, "revoked");
+				await this.recordNodeShutdown(deliveryId, new NodeShutdownError());
+				return;
+			}
+			const transitionPending = runtimeAuthorityTransitionPending(error);
+			if (transitionPending !== null) throw transitionPending;
 			if (error instanceof CompletionOutcomeUnknownError) {
+				await this.revokeRuntimeAuthority(authority, "revoked");
 				await this.retainCompletionIntent(deliveryId, error);
 				return;
 			}
-			if (error instanceof NodeShutdownError) {
-				await this.#journal.updateDelivery(deliveryId, (current) => {
-					current.last_error = error.message;
-					current.updated_at = this.#now().toISOString();
-				});
-				return;
-			}
 			if (error instanceof AuthorityLostError) {
+				await this.revokeRuntimeAuthority(authority, "revoked");
 				await this.markLeaseLost(deliveryId, error);
 				return;
 			}
@@ -491,6 +536,7 @@ export class DeliveryProcessor {
 				);
 				return;
 			}
+			await this.revokeRuntimeAuthority(authority, "revoked");
 			throw error;
 		}
 	}
@@ -795,8 +841,8 @@ export class DeliveryProcessor {
 				"Current local policy no longer matches the accepted Mission grant",
 			);
 		}
-		const preflight = await this.#preflight(workspace, participant);
-		return { assignment, participant, policy, preflight };
+		const preflight = await this.#preflight(workspace, participant, { signal });
+		return { assignment, participant, workspaceConfig: workspace, policy, preflight };
 	}
 
 	private async installAuthorityForPendingCompletion(
@@ -814,17 +860,18 @@ export class DeliveryProcessor {
 		}
 		const adapterInfo = await this.#adapter.probe();
 		signal?.throwIfAborted();
-		return this.installRuntimeAuthority(authorization, entry, adapterInfo);
+		return this.installRuntimeAuthority(authorization, entry, adapterInfo, signal);
 	}
 
 	private async installRuntimeAuthority(
 		authorization: AuthorizedDelivery,
 		entry: JournalDelivery,
 		adapterInfo: Awaited<ReturnType<AgentHostAdapter["probe"]>>,
-		beforeReady?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>,
+		shutdownSignal?: AbortSignal,
+		beforeRemoteInstall?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>,
 	): Promise<NodeRuntimeAuthoritySession | null> {
 		try {
-			return await this.#runtimeAuthority.install(
+			const authority = await this.#runtimeAuthority.install(
 				{
 					assignment: authorization.assignment,
 					workspaceAlias: authorization.participant.workspace_alias,
@@ -833,12 +880,62 @@ export class DeliveryProcessor {
 					adapter: adapterInfo,
 					entry,
 				},
-				beforeReady,
+				{
+					abortSignal: shutdownSignal,
+					beforeRemoteInstall: async (session) => {
+						await beforeRemoteInstall?.(session);
+						await this.provisionRuntime(authorization, session);
+					},
+				},
 			);
+			if (!shutdownSignal?.aborted) return authority;
+			const shutdown = new NodeShutdownError();
+			await this.revokeRuntimeAuthority(authority, "revoked");
+			throw shutdown;
 		} catch (error) {
-			if (error instanceof RuntimeAuthorityTransitionPendingError) throw error;
-			throw new AuthorityLostError(`Runtime authority installation failed: ${safeError(error)}`);
+			const transitionPending = runtimeAuthorityTransitionPending(error);
+			if (transitionPending !== null) throw transitionPending;
+			if (isNodeShutdownSignalError(error, shutdownSignal)) throw new NodeShutdownError();
+			if (isRuntimeAuthorityPortDenial(error)) {
+				throw new RuntimeAuthorityInstallDeniedError(
+					`Runtime authority installation failed: ${safeError(error)}`,
+				);
+			}
+			if (
+				error instanceof RuntimeAuthorityDeniedError ||
+				error instanceof RuntimeAuthoritySyncError
+			) {
+				throw new AuthorityLostError(`Runtime authority installation failed: ${safeError(error)}`);
+			}
+			throw error;
 		}
+	}
+
+	private async provisionRuntime(
+		authorization: AuthorizedDelivery,
+		authority: NodeRuntimeAuthoritySession,
+	): Promise<void> {
+		const provisioner = this.#runtimeProvisioner;
+		if (provisioner === undefined) return;
+		const session = {
+			missionId: authorization.assignment.mission_id,
+			participantId: authorization.assignment.participant_agent_id,
+			workspaceAlias: authorization.participant.workspace_alias,
+		};
+		const workspace = await authority.performWorkspaceRead(() =>
+			this.#prepareRuntimeWorkspace(authorization.workspaceConfig, authorization.participant, {
+				signal: authority.signal,
+			}),
+		);
+		authority.signal.throwIfAborted();
+		await provisioner.provision(
+			{
+				session,
+				workspace,
+				policyGrantSha256: authorization.policy.grant.grant_sha256,
+			},
+			authority,
+		);
 	}
 
 	private async revokeRuntimeAuthority(
@@ -846,7 +943,14 @@ export class DeliveryProcessor {
 		reason: "revoked",
 	): Promise<void> {
 		if (authority === null) return;
-		await authority.revoke(reason);
+		try {
+			await authority.revoke(reason);
+		} catch (error) {
+			throw new RuntimeAuthorityTransitionPendingError(
+				`Capsule retirement is not yet proven: ${safeError(error)}`,
+				{ cause: error },
+			);
+		}
 	}
 
 	private async retireCompletedRuntimeAuthority(
@@ -855,12 +959,6 @@ export class DeliveryProcessor {
 	): Promise<void> {
 		authority?.revokeLocal("revoked");
 		await this.#runtimeAuthority.retireJournaled(deliveryId);
-	}
-
-	private async tryRevokeRuntimeAuthority(
-		authority: NodeRuntimeAuthoritySession | null,
-	): Promise<void> {
-		await this.revokeRuntimeAuthority(authority, "revoked").catch(() => undefined);
 	}
 
 	private async cancelAndRevokeRuntime(
@@ -1030,6 +1128,13 @@ export class DeliveryProcessor {
 			current.updated_at = this.#now().toISOString();
 		});
 	}
+
+	private async recordNodeShutdown(deliveryId: string, error: NodeShutdownError): Promise<void> {
+		await this.#journal.updateDelivery(deliveryId, (current) => {
+			current.last_error = error.message;
+			current.updated_at = this.#now().toISOString();
+		});
+	}
 }
 
 interface ConsumeHostEventsOptions {
@@ -1051,6 +1156,7 @@ interface ConsumeHostEventsOptions {
 interface AuthorizedDelivery {
 	readonly assignment: NodeMissionAssignment;
 	readonly participant: NodeMissionAssignment["coordinator_config"]["mission_context"]["manifest"]["participants"][number];
+	readonly workspaceConfig: NodeConfig["workspaces"][string];
 	readonly policy: ResolvedPolicyProfile;
 	readonly preflight: WorkspacePreflightResult;
 }
@@ -1371,6 +1477,13 @@ class AuthorityLostError extends Error {
 	}
 }
 
+class RuntimeAuthorityInstallDeniedError extends AuthorityLostError {
+	constructor(message: string) {
+		super(message);
+		this.name = "RuntimeAuthorityInstallDeniedError";
+	}
+}
+
 class CompletionRejectedError extends AuthorityLostError {
 	constructor(message: string) {
 		super(message);
@@ -1473,6 +1586,35 @@ function isDefinitiveAuthorityLoss(error: unknown): boolean {
 	return (
 		error instanceof RelayHttpError &&
 		(error.status === 401 || error.status === 403 || error.status === 409)
+	);
+}
+
+function isRuntimeAuthorityPortDenial(error: unknown): boolean {
+	return error instanceof Error && "code" in error && error.code === "authority_denied";
+}
+
+function runtimeAuthorityTransitionPending(
+	error: unknown,
+): RuntimeAuthorityTransitionPendingError | null {
+	if (error instanceof RuntimeAuthorityTransitionPendingError) return error;
+	if (
+		error instanceof RuntimeAuthoritySyncError &&
+		error.cause instanceof RuntimeAuthorityRetirementError
+	) {
+		return new RuntimeAuthorityTransitionPendingError(
+			"Capsule retirement after runtime authority renewal is not yet proven",
+			{ cause: error.cause },
+		);
+	}
+	return null;
+}
+
+function isNodeShutdownSignalError(error: unknown, signal?: AbortSignal): boolean {
+	if (!signal?.aborted) return false;
+	return (
+		error instanceof NodeShutdownError ||
+		error === signal.reason ||
+		(error instanceof RuntimeAuthorityDeniedError && error.code === "revoked")
 	);
 }
 

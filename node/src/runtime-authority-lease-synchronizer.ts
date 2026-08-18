@@ -48,7 +48,7 @@ export class RuntimeAuthorityLeaseSynchronizer {
 export class RuntimeAuthoritySyncError extends Error {
 	constructor(error: unknown) {
 		const detail = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
-		super(`Runtime lease renewal was not confirmed: ${detail}`);
+		super(`Runtime lease renewal was not confirmed: ${detail}`, { cause: error });
 		this.name = "RuntimeAuthoritySyncError";
 	}
 }

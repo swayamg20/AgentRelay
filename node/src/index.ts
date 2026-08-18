@@ -32,4 +32,5 @@ export * from "./relay-client.js";
 export * from "./runtime-containment-manifest.js";
 export * from "./runtime-authority.js";
 export * from "./runtime-authority-port.js";
+export * from "./runtime-provisioner.js";
 export * from "./workspace.js";

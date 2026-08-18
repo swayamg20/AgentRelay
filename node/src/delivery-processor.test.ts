@@ -33,8 +33,14 @@ import {
 import { FakeAgentHostAdapter, type FakeTurnOutcome } from "@agentrelay/protocol/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { NodeConfig } from "./config.js";
-import { type DeliveryCheckpoint, DeliveryProcessor } from "./delivery-processor.js";
+import {
+	type DeliveryCheckpoint,
+	DeliveryProcessor,
+	type DeliveryProcessorOptions,
+} from "./delivery-processor.js";
 import { type JournalStorage, NodeJournal, type NodeJournalState } from "./journal.js";
+import type { PreparedMissionWorkspace } from "./mission-workspace.js";
+import { CapsuleRpcError } from "./persistent-capsule-adapter.js";
 import { resolvePolicyProfile } from "./policy.js";
 import type { NodeRelayClient } from "./relay-client.js";
 import { RelayHttpError } from "./relay-client.js";
@@ -46,6 +52,7 @@ import type {
 	RuntimeAuthorityRequest,
 } from "./runtime-authority.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
+import type { RuntimeProvisioner } from "./runtime-provisioner.js";
 
 const IDS = {
 	mission: "20000000-0000-4000-8000-000000000001",
@@ -141,6 +148,545 @@ describe("DeliveryProcessor", () => {
 		expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
 	});
 
+	it("provisions the exact owner workspace under local authority before remote install", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		let preparationSignal: AbortSignal | undefined;
+		let provisioningSignal: AbortSignal | undefined;
+		const prepareRuntimeWorkspace: NonNullable<
+			DeliveryProcessorOptions["prepareRuntimeWorkspace"]
+		> = vi.fn(async (workspace, expectation, dependencies = {}) => {
+			preparationSignal = dependencies.signal;
+			expect(authorityPort.installed).toHaveLength(0);
+			expect(workspace).toEqual(localConfig().workspaces.backend);
+			expect(expectation).toMatchObject({
+				agent_id: IDS.agent,
+				workspace_alias: "backend",
+				repository_url: "https://github.com/acme/backend.git",
+				expected_base_commit: "1".repeat(40),
+			});
+			return preparedWorkspace();
+		});
+		const provision = vi.fn<RuntimeProvisioner["provision"]>(async (input, authority) => {
+			provisioningSignal = authority.signal;
+			expect(authorityPort.installed).toHaveLength(0);
+			await authority.performWorkspaceRead(() => undefined);
+			expect(input).toEqual({
+				session: {
+					missionId: IDS.mission,
+					participantId: IDS.agent,
+					workspaceAlias: "backend",
+				},
+				workspace: preparedWorkspace(),
+				policyGrantSha256: resolvePolicyProfile(localConfig().policy_profiles, "coding").grant
+					.grant_sha256,
+			});
+		});
+		const harness = await createHarness({
+			authorityPort,
+			runtimeProvisioner: { provision },
+			prepareRuntimeWorkspace,
+		});
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(prepareRuntimeWorkspace).toHaveBeenCalledOnce();
+		expect(provision).toHaveBeenCalledOnce();
+		expect(preparationSignal).toBeDefined();
+		expect(provisioningSignal).toBe(preparationSignal);
+		expect(authorityPort.installed).toHaveLength(1);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("does not prepare a runtime workspace when no provisioner is configured", async () => {
+		const prepareRuntimeWorkspace = vi.fn(async () => {
+			throw new Error("runtime workspace preparation must remain disabled");
+		});
+		const harness = await createHarness({
+			authorityPort: new FakeRuntimeAuthorityPort(),
+			prepareRuntimeWorkspace,
+		});
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(prepareRuntimeWorkspace).not.toHaveBeenCalled();
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("passes the Node shutdown signal into early workspace preflight", async () => {
+		const controller = new AbortController();
+		const preflight: NonNullable<DeliveryProcessorOptions["preflight"]> = vi.fn(
+			async (_workspace, _expectation, dependencies = {}) => {
+				expect(dependencies.signal).toBe(controller.signal);
+				return successfulPreflight();
+			},
+		);
+		const harness = await createHarness({ preflight });
+
+		await harness.processor.process(IDS.delivery, controller.signal);
+
+		expect(preflight).toHaveBeenCalledOnce();
+	});
+
+	it("aborts gated runtime workspace preparation before remote install on Node shutdown", async () => {
+		const controller = new AbortController();
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		let preparationSignal: AbortSignal | undefined;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>();
+		const prepareRuntimeWorkspace: NonNullable<
+			DeliveryProcessorOptions["prepareRuntimeWorkspace"]
+		> = vi.fn(async (_workspace, _expectation, dependencies = {}) => {
+			const signal = dependencies.signal;
+			if (signal === undefined) throw new Error("authority signal is missing");
+			preparationSignal = signal;
+			return new Promise<PreparedMissionWorkspace>((_resolve, reject) => {
+				signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				controller.abort();
+			});
+		});
+		const harness = await createHarness({
+			authorityPort,
+			runtimeProvisioner: { provision },
+			prepareRuntimeWorkspace,
+		});
+
+		await harness.processor.process(IDS.delivery, controller.signal);
+
+		expect(preparationSignal?.aborted).toBe(true);
+		expect(provision).not.toHaveBeenCalled();
+		expect(authorityPort.installed).toHaveLength(0);
+		expect(authorityPort.revoked).toHaveLength(0);
+		expect(harness.adapter.counters.turnsCreated).toBe(0);
+	});
+
+	it("aborts gated runtime provisioning before remote install on Node shutdown", async () => {
+		const controller = new AbortController();
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		let provisioningSignal: AbortSignal | undefined;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>(async (_input, authority) => {
+			provisioningSignal = authority.signal;
+			return new Promise<never>((_resolve, reject) => {
+				authority.signal.addEventListener("abort", () => reject(authority.signal.reason), {
+					once: true,
+				});
+				controller.abort();
+			});
+		});
+		const harness = await createHarness({
+			authorityPort,
+			runtimeProvisioner: { provision },
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+		});
+
+		await harness.processor.process(IDS.delivery, controller.signal);
+
+		expect(provisioningSignal?.aborted).toBe(true);
+		expect(authorityPort.installed).toHaveLength(0);
+		expect(authorityPort.revoked).toHaveLength(0);
+		expect(harness.adapter.counters.turnsCreated).toBe(0);
+	});
+
+	it("loses authority without later effects when authority expires during preparation", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(TIMES.renewed);
+		let now = new Date(TIMES.renewed);
+		let preparationStarted!: () => void;
+		const started = new Promise<void>((resolve) => {
+			preparationStarted = resolve;
+		});
+		try {
+			const config = localConfig();
+			config.policy_profiles.coding = {
+				...config.policy_profiles.coding!,
+				max_turn_seconds: 1,
+			};
+			const authorityPort = new FakeRuntimeAuthorityPort();
+			const provision = vi.fn<RuntimeProvisioner["provision"]>();
+			const prepareRuntimeWorkspace: NonNullable<
+				DeliveryProcessorOptions["prepareRuntimeWorkspace"]
+			> = vi.fn(async (_workspace, _expectation, dependencies = {}) => {
+				const authoritySignal = dependencies.signal;
+				if (authoritySignal === undefined) throw new Error("authority signal is missing");
+				preparationStarted();
+				return new Promise<PreparedMissionWorkspace>((_resolve, reject) => {
+					authoritySignal.addEventListener("abort", () => reject(authoritySignal.reason), {
+						once: true,
+					});
+				});
+			});
+			const harness = await createHarness({
+				config,
+				mission: assignment({ config }),
+				authorityPort,
+				runtimeProvisioner: { provision },
+				prepareRuntimeWorkspace,
+				now: () => now,
+			});
+
+			const processing = harness.processor.process(IDS.delivery);
+			await started;
+			now = new Date(Date.parse(TIMES.renewed) + 1_000);
+			await vi.advanceTimersByTimeAsync(1_000);
+			await processing;
+
+			expect(provision).not.toHaveBeenCalled();
+			expect(authorityPort.installed).toHaveLength(0);
+			expect(authorityPort.revoked).toHaveLength(0);
+			expect(harness.adapter.counters.turnsCreated).toBe(0);
+			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("installs the newest lease after renewal while runtime preparation is gated", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(TIMES.renewed);
+		let releasePreparation!: () => void;
+		let markPreparationStarted!: () => void;
+		const preparationStarted = new Promise<void>((resolve) => {
+			markPreparationStarted = resolve;
+		});
+		const preparationGate = new Promise<void>((resolve) => {
+			releasePreparation = resolve;
+		});
+		try {
+			const authorityPort = new FakeRuntimeAuthorityPort();
+			const prepareRuntimeWorkspace: NonNullable<
+				DeliveryProcessorOptions["prepareRuntimeWorkspace"]
+			> = vi.fn(async () => {
+				markPreparationStarted();
+				await preparationGate;
+				return preparedWorkspace();
+			});
+			const harness = await createHarness({
+				authorityPort,
+				runtimeProvisioner: { provision: async () => undefined },
+				prepareRuntimeWorkspace,
+				now: () => new Date(Date.now()),
+			});
+			harness.client.renewalExpiresAt = "2026-08-02T00:03:00.500Z";
+
+			const processing = harness.processor.process(IDS.delivery);
+			await preparationStarted;
+			expect(authorityPort.installed).toHaveLength(0);
+			harness.client.renewalExpiresAt = "2026-08-02T00:03:01.000Z";
+			await vi.waitFor(
+				() =>
+					expect(
+						harness.journal.snapshot().deliveries[IDS.delivery]?.item.delivery.lease?.expires_at,
+					).toBe("2026-08-02T00:03:01.000Z"),
+				{ timeout: 400 },
+			);
+			releasePreparation();
+			await processing;
+
+			expect(authorityPort.installedLeases[0]?.lease_expires_at).toBe("2026-08-02T00:03:01.000Z");
+			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+		} finally {
+			releasePreparation?.();
+			vi.useRealTimers();
+		}
+	});
+
+	it("surfaces a provisioning failure without mislabeling authority loss and retries it", async () => {
+		const failure = new Error("containment probe failed");
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		let failProvisioning = true;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>(async () => {
+			if (failProvisioning) {
+				failProvisioning = false;
+				throw failure;
+			}
+		});
+		const harness = await createHarness({
+			authorityPort,
+			runtimeProvisioner: { provision },
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+		});
+
+		await expect(harness.processor.process(IDS.delivery)).rejects.toBe(failure);
+
+		const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(pending.runtime_authority).not.toBeNull();
+		expect(pending.phase).not.toBe("lease_lost");
+		expect(authorityPort.installed).toHaveLength(0);
+		expect(authorityPort.revoked).toHaveLength(0);
+		expect(harness.adapter.counters.turnsCreated).toBe(0);
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(provision).toHaveBeenCalledTimes(2);
+		expect(authorityPort.installed).toHaveLength(1);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("marks the lease lost when a Capsule denies runtime authority installation", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		authorityPort.installErrorFor = () =>
+			new CapsuleRpcError("authority_denied", "Runtime authority grant has been revoked");
+		const harness = await createHarness({ authorityPort });
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+		expect(authorityPort.installed).toHaveLength(1);
+		expect(harness.adapter.counters.turnsCreated).toBe(0);
+		expect(harness.client.completeInputs).toHaveLength(0);
+	});
+
+	it("keeps a Capsule install transport failure as a retryable setup error", async () => {
+		const failure = new CapsuleRpcError("transport", "Capsule socket is unavailable");
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		let failInstall = true;
+		authorityPort.installErrorFor = () => {
+			if (!failInstall) return null;
+			failInstall = false;
+			return failure;
+		};
+		const harness = await createHarness({ authorityPort });
+
+		await expect(harness.processor.process(IDS.delivery)).rejects.toBe(failure);
+
+		const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(pending.phase).not.toBe("lease_lost");
+		expect(pending.runtime_authority).not.toBeNull();
+		expect(harness.client.claimInputs).toHaveLength(1);
+		expect(harness.adapter.counters.turnsCreated).toBe(0);
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(harness.client.claimInputs).toHaveLength(1);
+		expect(authorityPort.installed.map((grant) => grant.grant_id)).toEqual([
+			pending.runtime_authority?.grant_id,
+			pending.runtime_authority?.grant_id,
+		]);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("reprovisions a pending completion and preserves its intent across setup failure", async () => {
+		let crashBeforePublish = true;
+		const harness = await createHarness({
+			onCheckpoint(checkpoint) {
+				if (crashBeforePublish && checkpoint === "complete_intent") {
+					crashBeforePublish = false;
+					throw new Error("crash before completion request");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"crash before completion request",
+		);
+		const originalIntent = structuredClone(
+			harness.journal.snapshot().deliveries[IDS.delivery]?.operation,
+		);
+		expect(originalIntent?.kind).toBe("complete");
+
+		const failure = new Error("runtime descriptor unavailable");
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		let failProvisioning = true;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>(async (_input, authority) => {
+			expect(authorityPort.installed).toHaveLength(0);
+			expect(authority.signal.aborted).toBe(false);
+			if (failProvisioning) {
+				failProvisioning = false;
+				throw failure;
+			}
+		});
+		const restarted = new DeliveryProcessor({
+			config: harness.config,
+			client: harness.client,
+			journal: harness.journal,
+			adapter: harness.adapter,
+			authorityPort,
+			runtimeProvisioner: { provision },
+			now: () => new Date(TIMES.renewed),
+			preflight: successfulPreflight,
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+		});
+
+		await expect(restarted.process(IDS.delivery)).rejects.toBe(failure);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.operation).toEqual(originalIntent);
+		expect(authorityPort.installed).toHaveLength(0);
+
+		await restarted.process(IDS.delivery);
+
+		expect(provision).toHaveBeenCalledTimes(2);
+		expect(authorityPort.installed).toHaveLength(1);
+		expect(harness.client.completeInputs).toHaveLength(1);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("retires authority and retains a pending completion when shutdown meets install settlement", async () => {
+		let crashBeforePublish = true;
+		const harness = await createHarness({
+			onCheckpoint(checkpoint) {
+				if (crashBeforePublish && checkpoint === "complete_intent") {
+					crashBeforePublish = false;
+					throw new Error("crash before completion request");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"crash before completion request",
+		);
+		const original = structuredClone(harness.journal.snapshot().deliveries[IDS.delivery]!);
+		let markInstallStarted!: () => void;
+		let releaseInstall!: () => void;
+		const installStarted = new Promise<void>((resolve) => {
+			markInstallStarted = resolve;
+		});
+		const installGate = new Promise<void>((resolve) => {
+			releaseInstall = resolve;
+		});
+		const authorityPort = new FakeRuntimeAuthorityPort((operation) => {
+			if (operation.startsWith("install:")) markInstallStarted();
+		});
+		authorityPort.installResult = installGate;
+		const restarted = processorFor({ ...harness, authorityPort });
+		const controller = new AbortController();
+
+		const processing = restarted.process(IDS.delivery, controller.signal);
+		await installStarted;
+		controller.abort();
+		releaseInstall();
+		await processing;
+
+		const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(pending.operation).toEqual(original.operation);
+		expect(pending.result).toEqual(original.result);
+		expect(pending.phase).toBe("complete_intent");
+		expect(authorityPort.revoked).toEqual(authorityPort.installed);
+		expect(harness.client.completeInputs).toHaveLength(0);
+	});
+
+	it("retires authority and retains a durable result when shutdown meets install settlement", async () => {
+		let crashBeforePublish = true;
+		const harness = await createHarness({
+			onCheckpoint(checkpoint) {
+				if (crashBeforePublish && checkpoint === "complete_intent") {
+					crashBeforePublish = false;
+					throw new Error("crash after durable result");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"crash after durable result",
+		);
+		const result = structuredClone(harness.journal.snapshot().deliveries[IDS.delivery]!.result);
+		await harness.journal.updateDelivery(IDS.delivery, (entry) => {
+			entry.operation = null;
+			entry.phase = "host_terminal";
+			entry.updated_at = TIMES.renewed;
+		});
+		let markInstallStarted!: () => void;
+		let releaseInstall!: () => void;
+		const installStarted = new Promise<void>((resolve) => {
+			markInstallStarted = resolve;
+		});
+		const installGate = new Promise<void>((resolve) => {
+			releaseInstall = resolve;
+		});
+		const revokedGrantIds = new Set<string>();
+		const authorityPort = new FakeRuntimeAuthorityPort((operation) => {
+			if (operation.startsWith("install:")) markInstallStarted();
+		});
+		authorityPort.installErrorFor = (grant) =>
+			revokedGrantIds.has(grant.grant_id)
+				? new CapsuleRpcError("authority_denied", "Runtime authority grant has been revoked")
+				: null;
+		authorityPort.revokeErrorFor = (grant) => {
+			revokedGrantIds.add(grant.grant_id);
+			return null;
+		};
+		authorityPort.installResult = installGate;
+		const restarted = processorFor({ ...harness, authorityPort });
+		const controller = new AbortController();
+
+		const processing = restarted.process(IDS.delivery, controller.signal);
+		await installStarted;
+		controller.abort();
+		releaseInstall();
+		await processing;
+
+		const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(pending.result).toEqual(result);
+		expect(pending.operation).toBeNull();
+		expect(pending.phase).toBe("host_terminal");
+		expect(authorityPort.revoked).toEqual(authorityPort.installed);
+		expect(harness.client.completeInputs).toHaveLength(0);
+		const revokedGrant = pending.runtime_authority;
+		if (revokedGrant === null) throw new Error("expected a durable revoked result grant");
+		expect(revokedGrantIds).toContain(revokedGrant.grant_id);
+		const turnsBeforeRecovery = harness.adapter.counters.turnsCreated;
+
+		await restarted.process(IDS.delivery);
+
+		const leaseLost = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(leaseLost.phase).toBe("lease_lost");
+		expect(leaseLost.result).toEqual(result);
+		expect(leaseLost.runtime_authority).toEqual(revokedGrant);
+		expect(harness.adapter.counters.turnsCreated).toBe(turnsBeforeRecovery);
+		expect(harness.client.completeInputs).toHaveLength(0);
+
+		await restarted.process(IDS.delivery);
+
+		expect(authorityPort.installed.map((grant) => grant.fencing_token)).toEqual(["1", "1", "2"]);
+		expect(harness.client.completeInputs).toHaveLength(1);
+		expect(harness.client.completeInputs[0]?.fencing_token).toBe("2");
+		expect(harness.adapter.counters.turnsCreated).toBe(turnsBeforeRecovery);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("reclaims a new fence when a pending completion grant was already revoked", async () => {
+		let crashBeforePublish = true;
+		const revokedGrantIds = new Set<string>();
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		authorityPort.installErrorFor = (grant) =>
+			revokedGrantIds.has(grant.grant_id)
+				? new CapsuleRpcError("authority_denied", "Runtime authority grant has been revoked")
+				: null;
+		authorityPort.revokeErrorFor = (grant) => {
+			revokedGrantIds.add(grant.grant_id);
+			return null;
+		};
+		const harness = await createHarness({
+			authorityPort,
+			onCheckpoint(checkpoint) {
+				if (crashBeforePublish && checkpoint === "complete_intent") {
+					crashBeforePublish = false;
+					throw new Error("crash after Capsule revocation before journal clearance");
+				}
+			},
+		});
+
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"crash after Capsule revocation before journal clearance",
+		);
+		const revokedGrant = harness.journal.snapshot().deliveries[IDS.delivery]?.runtime_authority;
+		if (revokedGrant === null || revokedGrant === undefined) {
+			throw new Error("expected a durable revoked grant");
+		}
+		expect(revokedGrantIds).toContain(revokedGrant.grant_id);
+		const turnsBeforeDeniedReplay = harness.adapter.counters.turnsCreated;
+
+		await harness.processor.process(IDS.delivery);
+
+		const leaseLost = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(leaseLost.phase).toBe("lease_lost");
+		expect(leaseLost.operation).toBeNull();
+		expect(leaseLost.runtime_authority).toEqual(revokedGrant);
+		expect(harness.client.claimInputs).toHaveLength(1);
+		expect(harness.adapter.counters.turnsCreated).toBe(turnsBeforeDeniedReplay);
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(harness.client.claimInputs).toHaveLength(2);
+		expect(authorityPort.installed.map((grant) => grant.fencing_token)).toEqual(["1", "1", "2"]);
+		expect(authorityPort.installed[2]?.grant_id).not.toBe(revokedGrant.grant_id);
+		expect(harness.adapter.counters.turnsCreated).toBe(turnsBeforeDeniedReplay);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
 	it("anchors the turn deadline to trusted local time despite a future Relay timestamp", async () => {
 		const config = localConfig();
 		config.policy_profiles.coding = {
@@ -224,6 +770,32 @@ describe("DeliveryProcessor", () => {
 		});
 	});
 
+	it("mission-blocks an active renewal while exact Capsule retirement is unproven", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		authorityPort.failNextRenew = true;
+		authorityPort.revokeError = new Error("active renewal retirement timed out");
+		const harness = await createHarness({
+			outcome: { kind: "pending" },
+			authorityPort,
+		});
+		harness.client.renewalExpiresAt = "2026-08-02T00:03:00.300Z";
+		const processor = processorFor({
+			...harness,
+			adapter: stallHostStream(harness.adapter),
+		});
+
+		await expect(processor.processNext()).resolves.toBeNull();
+
+		const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(pending.last_error).toContain(
+			"Capsule retirement after runtime authority renewal is not yet proven",
+		);
+		expect(pending.runtime_authority).not.toBeNull();
+		expect(authorityPort.renewed).toHaveLength(1);
+		expect(authorityPort.revoked.length).toBeGreaterThan(0);
+		expect(harness.adapter.counters.cancelTurnCalls).toBe(1);
+	});
+
 	it("converges on a renewal that outlives the lease used to begin installation", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(TIMES.renewed);
@@ -232,7 +804,7 @@ describe("DeliveryProcessor", () => {
 			const config = localConfig();
 			config.policy_profiles.coding = {
 				...config.policy_profiles.coding!,
-				max_turn_seconds: 1,
+				max_turn_seconds: 10,
 			};
 			const authorityPort = new FakeRuntimeAuthorityPort();
 			authorityPort.installResult = new Promise<void>((resolve) => {
@@ -244,26 +816,26 @@ describe("DeliveryProcessor", () => {
 				authorityPort,
 				now: () => new Date(Date.now()),
 			});
-			harness.client.renewalExpiresAt = "2026-08-02T00:03:00.300Z";
+			harness.client.renewalExpiresAt = "2026-08-02T00:03:00.500Z";
 
 			const processing = harness.processor.process(IDS.delivery);
 			await vi.waitFor(() => expect(authorityPort.installed).toHaveLength(1));
-			harness.client.renewalExpiresAt = "2026-08-02T00:03:00.800Z";
-			await vi.advanceTimersByTimeAsync(150);
-			await vi.waitFor(() =>
-				expect(
-					harness.journal.snapshot().deliveries[IDS.delivery]?.item.delivery.lease?.expires_at,
-				).toBe("2026-08-02T00:03:00.800Z"),
+			harness.client.renewalExpiresAt = "2026-08-02T00:03:01.000Z";
+			await vi.waitFor(
+				() =>
+					expect(
+						harness.journal.snapshot().deliveries[IDS.delivery]?.item.delivery.lease?.expires_at,
+					).toBe("2026-08-02T00:03:01.000Z"),
+				{ timeout: 400 },
 			);
-			await vi.advanceTimersByTimeAsync(200);
 			finishInstall();
 			await processing;
 
 			expect(authorityPort.installedLeases.map((lease) => lease.lease_expires_at)).toEqual([
-				"2026-08-02T00:03:00.300Z",
-				"2026-08-02T00:03:00.800Z",
+				"2026-08-02T00:03:00.500Z",
+				"2026-08-02T00:03:01.000Z",
 			]);
-			expect(authorityPort.renewed.at(0)?.lease_expires_at).toBe("2026-08-02T00:03:00.800Z");
+			expect(authorityPort.renewed).toEqual([]);
 			expect(authorityPort.operations).not.toContain("revoke:expired");
 			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 		} finally {
@@ -365,7 +937,7 @@ describe("DeliveryProcessor", () => {
 			const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
 			expect(pending.phase).toBe("complete_intent");
 			expect(pending.operation?.kind).toBe("complete");
-			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+			expect(authorityPort.operations.at(-1)).toBe("revoke:expired");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -400,7 +972,7 @@ describe("DeliveryProcessor", () => {
 			expect(harness.client.completedCount).toBe(1);
 			expect(pending.phase).toBe("complete_intent");
 			expect(pending.operation).toEqual({ kind: "complete", input: committedInput });
-			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+			expect(authorityPort.operations.at(-1)).toBe("revoke:expired");
 
 			const restarted = new DeliveryProcessor({
 				config: harness.config,
@@ -446,7 +1018,7 @@ describe("DeliveryProcessor", () => {
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
-	it("rejects a structurally valid but locally inconsistent journaled grant", async () => {
+	it("surfaces a structurally valid but locally inconsistent journaled grant", async () => {
 		const authorityPort = new FakeRuntimeAuthorityPort();
 		const harness = await createHarness({ authorityPort });
 		const interrupted = processorFor({
@@ -469,11 +1041,13 @@ describe("DeliveryProcessor", () => {
 			};
 		});
 
-		await processorFor(harness).process(IDS.delivery);
+		await expect(processorFor(harness).process(IDS.delivery)).rejects.toThrow(
+			"Persisted runtime authority no longer matches trusted local inputs",
+		);
 
 		expect(authorityPort.installed).toHaveLength(1);
 		expect(harness.client.completeInputs).toHaveLength(0);
-		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).not.toBe("lease_lost");
 	});
 
 	it("renews the executing lease while runtime setup is still in progress", async () => {
@@ -1307,6 +1881,42 @@ describe("DeliveryProcessor", () => {
 		expect(harness.adapter.counters.startTurnCalls).toBe(0);
 	});
 
+	it("records shutdown cleanup as pending while exact Capsule retirement is unproven", async () => {
+		const controller = new AbortController();
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		authorityPort.revokeError = new Error("shutdown retirement timed out");
+		const harness = await createHarness({ authorityPort });
+		let markSetupStarted!: () => void;
+		let releaseSetup!: () => void;
+		const setupStarted = new Promise<void>((resolve) => {
+			markSetupStarted = resolve;
+		});
+		const setupGate = new Promise<void>((resolve) => {
+			releaseSetup = resolve;
+		});
+		const adapter: AgentHostAdapter = {
+			...adapterDelegates(harness.adapter),
+			async ensureSession(input) {
+				markSetupStarted();
+				await setupGate;
+				return harness.adapter.ensureSession(input);
+			},
+		};
+		const processor = processorFor({ ...harness, adapter });
+
+		const processing = processor.processNext(controller.signal);
+		await setupStarted;
+		controller.abort();
+		releaseSetup();
+		await expect(processing).resolves.toBeNull();
+
+		const pending = harness.journal.snapshot().deliveries[IDS.delivery]!;
+		expect(pending.last_error).toContain("Capsule retirement is not yet proven");
+		expect(pending.runtime_authority).not.toBeNull();
+		expect(authorityPort.revoked.length).toBeGreaterThan(0);
+		expect(harness.adapter.counters.startTurnCalls).toBe(0);
+	});
+
 	it("persists an in-flight claim response but starts no later Relay or host request", async () => {
 		const controller = new AbortController();
 		const harness = await createHarness();
@@ -1431,7 +2041,7 @@ describe("DeliveryProcessor", () => {
 			expect(harness.adapter.counters.cancelTurnCalls).toBe(1);
 			expect(harness.client.completeInputs).toHaveLength(0);
 			expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("lease_lost");
-			expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
+			expect(authorityPort.operations.at(-1)).toBe("revoke:expired");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -1440,12 +2050,14 @@ describe("DeliveryProcessor", () => {
 
 interface HarnessOptions {
 	readonly onCheckpoint?: (checkpoint: DeliveryCheckpoint) => void | Promise<void>;
-	readonly preflight?: typeof successfulPreflight;
+	readonly preflight?: DeliveryProcessorOptions["preflight"];
 	readonly now?: () => Date;
 	readonly outcome?: FakeTurnOutcome;
 	readonly config?: NodeConfig;
 	readonly mission?: NodeMissionAssignment;
 	readonly authorityPort?: RuntimeAuthorityPort;
+	readonly runtimeProvisioner?: RuntimeProvisioner;
+	readonly prepareRuntimeWorkspace?: DeliveryProcessorOptions["prepareRuntimeWorkspace"];
 }
 
 async function createHarness(options: HarnessOptions = {}) {
@@ -1467,6 +2079,8 @@ async function createHarness(options: HarnessOptions = {}) {
 		journal,
 		storage,
 		authorityPort: options.authorityPort,
+		runtimeProvisioner: options.runtimeProvisioner,
+		prepareRuntimeWorkspace: options.prepareRuntimeWorkspace,
 	};
 	return {
 		...harness,
@@ -1488,6 +2102,8 @@ function processorFor(harness: Awaited<ReturnType<typeof createHarness>>): Deliv
 		journal: harness.journal,
 		adapter: harness.adapter,
 		authorityPort: harness.authorityPort,
+		runtimeProvisioner: harness.runtimeProvisioner,
+		prepareRuntimeWorkspace: harness.prepareRuntimeWorkspace,
 		now: () => new Date(TIMES.renewed),
 		preflight: successfulPreflight,
 	});
@@ -1617,6 +2233,18 @@ async function successfulPreflight() {
 	};
 }
 
+function preparedWorkspace(): PreparedMissionWorkspace {
+	return {
+		repositoryUrl: "https://github.com/acme/backend.git",
+		baseCommit: "1".repeat(40),
+		root: "/tmp/agentrelay-backend",
+		gitDirectory: "/tmp/agentrelay-backend/.git",
+		rootIdentity: { device: "1", inode: "2" },
+		gitIdentity: { device: "1", inode: "3" },
+		reachableFromRef: "refs/heads/main",
+	};
+}
+
 class FakeRuntimeAuthorityPort implements RuntimeAuthorityPort {
 	readonly installed: RuntimeAuthorityGrant[] = [];
 	readonly installedLeases: RuntimeAuthorityRenewal[] = [];
@@ -1626,6 +2254,7 @@ class FakeRuntimeAuthorityPort implements RuntimeAuthorityPort {
 	readonly operations: string[] = [];
 	currentFence: string | null = null;
 	failNextRenew = false;
+	installErrorFor: ((grant: RuntimeAuthorityGrant) => Error | null) | null = null;
 	revokeError: Error | null = null;
 	revokeErrorFor: ((grant: RuntimeAuthorityGrant) => Error | null) | null = null;
 	installResult: Promise<void> = Promise.resolve();
@@ -1644,6 +2273,8 @@ class FakeRuntimeAuthorityPort implements RuntimeAuthorityPort {
 		this.installed.push(structuredClone(grant));
 		this.installedLeases.push(structuredClone(currentLease));
 		this.record(`install:${grant.fencing_token}`);
+		const error = this.installErrorFor?.(grant) ?? null;
+		if (error !== null) throw error;
 		await this.installResult;
 	}
 

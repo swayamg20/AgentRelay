@@ -7,7 +7,10 @@ import {
 	type RuntimeAuthorityGrant,
 	type RuntimeAuthorityRenewal,
 	type RuntimeAuthorityRequest,
+	type RuntimeWorkspaceReadAuthority,
 	advanceRuntimeAuthorityLease,
+	runtimeAuthorityDenyCodeSchema,
+	runtimeAuthorityRequest,
 } from "./runtime-authority.js";
 
 export interface NodeRuntimeAuthoritySessionOptions {
@@ -15,9 +18,24 @@ export interface NodeRuntimeAuthoritySessionOptions {
 	readonly grant: RuntimeAuthorityGrant;
 	readonly currentLease: RuntimeAuthorityRenewal;
 	readonly evidenceSink: RuntimeAuthorityEvidenceSink;
+	readonly abortSignal?: AbortSignal;
 	readonly now?: () => Date;
 	readonly readCurrentLease?: () => RuntimeAuthorityRenewal;
+	readonly beforeRemoteInstall?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>;
 	readonly beforeReady?: (session: NodeRuntimeAuthoritySession) => void | Promise<void>;
+}
+
+type RuntimeAuthoritySessionPhase = "local_preinstall" | "remote_installing" | "active" | "revoked";
+
+export class RuntimeAuthorityRetirementError extends AggregateError {
+	constructor(retirementError: unknown, authorityError: unknown) {
+		super(
+			[retirementError, authorityError],
+			"Runtime authority retirement could not be proven after an authority failure",
+			{ cause: retirementError },
+		);
+		this.name = "RuntimeAuthorityRetirementError";
+	}
 }
 
 /**
@@ -27,9 +45,14 @@ export interface NodeRuntimeAuthoritySessionOptions {
  * raw assertion method. That keeps local liveness and the effect in one guarded
  * operation while the runtime independently records and revalidates the request.
  */
-export class NodeRuntimeAuthoritySession {
+export class NodeRuntimeAuthoritySession implements RuntimeWorkspaceReadAuthority {
 	readonly #port: RuntimeAuthorityPort;
 	readonly #monitor: LocalReferenceMonitor;
+	#phase: RuntimeAuthoritySessionPhase = "local_preinstall";
+	#remoteInstallAttempted = false;
+	#remoteInstallInFlight: Promise<void> | null = null;
+	#remoteRetirement: Promise<void> | null = null;
+	#remoteRetired = false;
 
 	private constructor(options: NodeRuntimeAuthoritySessionOptions) {
 		this.#port = options.port;
@@ -49,36 +72,60 @@ export class NodeRuntimeAuthoritySession {
 			options.currentLease,
 		);
 		assertLeaseLive(options.grant, currentLease, now());
-		let session: NodeRuntimeAuthoritySession | null = null;
+		const session = new NodeRuntimeAuthoritySession({ ...options, currentLease, now });
+		const abortSession = () => session.revokeLocal("revoked");
+		options.abortSignal?.addEventListener("abort", abortSession, { once: true });
+		if (options.abortSignal?.aborted) abortSession();
+		let beforeReadyPending = options.beforeReady !== undefined;
 		try {
+			options.abortSignal?.throwIfAborted();
+			await options.beforeRemoteInstall?.(session);
+			options.abortSignal?.throwIfAborted();
+
 			for (let attempt = 0; attempt < 8; attempt += 1) {
+				currentLease = session.synchronizeLocalLease(options, currentLease, now);
 				try {
-					await options.port.installAuthority(options.grant, currentLease);
+					await session.installRemote(currentLease);
 				} catch (error) {
+					const failure = session.authorityFailure(error);
+					if (session.signal.aborted) throw failure;
+					options.abortSignal?.throwIfAborted();
+					session.throwIfLocallyRevoked();
 					const latest = readLatestRenewal(options, currentLease);
-					if (!leaseAdvanced(currentLease, latest) && !isExpiredDenial(error)) throw error;
-					assertLeaseLive(options.grant, latest, now());
-					currentLease = latest;
+					if (!leaseAdvanced(currentLease, latest) && !isExpiredDenial(failure)) throw failure;
+					currentLease = session.applyLocalLease(latest, now);
 					continue;
 				}
+
+				options.abortSignal?.throwIfAborted();
+				session.throwIfLocallyRevoked();
+				const installedLease = currentLease;
 				const latest = readLatestRenewal(options, currentLease);
-				if (leaseAdvanced(currentLease, latest)) {
-					assertLeaseLive(options.grant, latest, now());
-					currentLease = latest;
-					continue;
+				currentLease = session.applyLocalLease(latest, now);
+				if (leaseAdvanced(installedLease, latest)) continue;
+
+				if (beforeReadyPending) {
+					beforeReadyPending = false;
+					await options.beforeReady?.(session);
+					options.abortSignal?.throwIfAborted();
+					session.throwIfLocallyRevoked();
+					const handoffLease = readLatestRenewal(options, currentLease);
+					currentLease = session.applyLocalLease(handoffLease, now);
+					if (leaseAdvanced(installedLease, handoffLease)) continue;
 				}
-				assertLeaseLive(options.grant, latest, now());
-				session = new NodeRuntimeAuthoritySession({ ...options, currentLease: latest, now });
-				await options.beforeReady?.(session);
-				if (session.signal.aborted) throw new RuntimeAuthorityDeniedError("expired");
+
+				session.assertLocallyLive();
+				session.activate();
 				return session;
 			}
 			throw new Error("Runtime authority lease did not stabilize during installation");
 		} catch (error) {
-			const reason = denialReason(error);
-			if (session !== null) session.#monitor.revoke(reason);
-			await options.port.revokeAuthority(options.grant, reason).catch(() => undefined);
-			throw error;
+			const failure = session.authorityFailure(error);
+			const reason = denialReason(failure);
+			session.revokeLocal(reason);
+			return session.failAfterRetirement(failure);
+		} finally {
+			options.abortSignal?.removeEventListener("abort", abortSession);
 		}
 	}
 
@@ -95,38 +142,43 @@ export class NodeRuntimeAuthoritySession {
 			this.#monitor.renew(renewal);
 		} catch (error) {
 			const reason = denialReason(error);
-			this.#monitor.revoke(reason);
-			await this.revokeRemote(reason);
-			throw error;
+			this.revokeLocal(reason);
+			return this.failAfterRetirement(error);
 		}
+		if (this.#phase !== "active") return;
 		try {
 			await this.#port.renewAuthority(this.grant.mission_id, renewal);
 		} catch (error) {
 			const reason = denialReason(error);
-			this.#monitor.revoke(reason);
-			await this.revokeRemote(reason);
-			throw error;
+			this.revokeLocal(reason);
+			return this.failAfterRetirement(error);
 		}
 	}
 
 	async revoke(reason: RuntimeAuthorityDenyCode = "revoked"): Promise<void> {
 		this.revokeLocal(reason);
-		await this.#port.revokeAuthority(this.grant, reason);
+		await this.retireRemote();
 	}
 
 	revokeLocal(reason: RuntimeAuthorityDenyCode = "revoked"): void {
+		this.#phase = "revoked";
 		this.#monitor.revoke(reason);
+	}
+
+	async performWorkspaceRead<T>(effect: () => T | Promise<T>): Promise<T> {
+		return this.#monitor.perform(this.workspaceReadRequest(), effect);
 	}
 
 	async perform<T>(
 		request: RuntimeAuthorityRequest,
 		effect: (signal: AbortSignal) => T | Promise<T>,
 	): Promise<T> {
+		this.assertActive();
 		return this.#monitor.perform(request, async () => {
 			try {
 				await this.#port.assertAuthority(request);
 			} catch (error) {
-				this.#monitor.revoke(denialReason(error));
+				this.revokeLocal(denialReason(error));
 				throw error;
 			}
 			this.#monitor.assert(request);
@@ -134,8 +186,107 @@ export class NodeRuntimeAuthoritySession {
 		});
 	}
 
-	private async revokeRemote(reason: RuntimeAuthorityDenyCode): Promise<void> {
-		await this.#port.revokeAuthority(this.grant, reason).catch(() => undefined);
+	private synchronizeLocalLease(
+		options: NodeRuntimeAuthoritySessionOptions,
+		currentLease: RuntimeAuthorityRenewal,
+		now: () => Date,
+	): RuntimeAuthorityRenewal {
+		return this.applyLocalLease(readLatestRenewal(options, currentLease), now);
+	}
+
+	private applyLocalLease(
+		lease: RuntimeAuthorityRenewal,
+		now: () => Date,
+	): RuntimeAuthorityRenewal {
+		this.#monitor.renew(lease);
+		assertLeaseLive(this.grant, lease, now());
+		return lease;
+	}
+
+	private async installRemote(currentLease: RuntimeAuthorityRenewal): Promise<void> {
+		this.throwIfLocallyRevoked();
+		this.#phase = "remote_installing";
+		this.#remoteInstallAttempted = true;
+		this.#remoteRetired = false;
+		let markInstallSettled!: () => void;
+		const installSettled = new Promise<void>((resolve) => {
+			markInstallSettled = resolve;
+		});
+		this.#remoteInstallInFlight = installSettled;
+		try {
+			await this.#port.installAuthority(this.grant, currentLease);
+		} finally {
+			markInstallSettled();
+			if (this.#remoteInstallInFlight === installSettled) this.#remoteInstallInFlight = null;
+		}
+	}
+
+	private activate(): void {
+		this.throwIfLocallyRevoked();
+		this.#phase = "active";
+	}
+
+	private assertActive(): void {
+		if (this.#phase === "active") return;
+		this.throwIfLocallyRevoked();
+		throw new Error("Runtime authority session is not active");
+	}
+
+	private assertLocallyLive(): void {
+		this.#monitor.assert(this.workspaceReadRequest());
+	}
+
+	private workspaceReadRequest(): RuntimeAuthorityRequest {
+		return runtimeAuthorityRequest(this.grant, {
+			action: "workspace_read",
+			resource: "workspace",
+		});
+	}
+
+	private throwIfLocallyRevoked(): void {
+		if (!this.signal.aborted) return;
+		throw new RuntimeAuthorityDeniedError(this.abortReason());
+	}
+
+	private abortReason(): RuntimeAuthorityDenyCode {
+		const parsed = runtimeAuthorityDenyCodeSchema.safeParse(this.signal.reason);
+		return parsed.success ? parsed.data : "revoked";
+	}
+
+	private authorityFailure(error: unknown): unknown {
+		if (!this.signal.aborted) return error;
+		if (error === this.signal.reason || isAbortError(error)) {
+			return new RuntimeAuthorityDeniedError(this.abortReason());
+		}
+		return error;
+	}
+
+	private async failAfterRetirement(failure: unknown): Promise<never> {
+		if (failure instanceof RuntimeAuthorityRetirementError) throw failure;
+		try {
+			await this.retireRemote();
+		} catch (retirementError) {
+			throw new RuntimeAuthorityRetirementError(retirementError, failure);
+		}
+		throw failure;
+	}
+
+	private async retireRemote(): Promise<void> {
+		if (!this.#remoteInstallAttempted || this.#remoteRetired) return;
+		if (this.#remoteRetirement !== null) return this.#remoteRetirement;
+		const installation = this.#remoteInstallInFlight;
+		const retirement = (async () => {
+			await installation?.catch(() => undefined);
+			if (this.#remoteRetired) return;
+			await this.#port.revokeAuthority(this.grant, this.abortReason());
+			this.#remoteRetired = true;
+		})();
+		this.#remoteRetirement = retirement;
+		try {
+			await retirement;
+		} finally {
+			if (this.#remoteRetirement === retirement) this.#remoteRetirement = null;
+		}
 	}
 }
 
@@ -191,4 +342,8 @@ function isExpiredDenial(error: unknown): boolean {
 
 function denialReason(error: unknown): RuntimeAuthorityDenyCode {
 	return error instanceof RuntimeAuthorityDeniedError ? error.code : "revoked";
+}
+
+function isAbortError(error: unknown): boolean {
+	return error instanceof Error && error.name === "AbortError";
 }

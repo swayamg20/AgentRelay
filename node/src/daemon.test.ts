@@ -6,6 +6,7 @@ import { ForegroundNode } from "./daemon.js";
 import { DeliveryProcessor } from "./delivery-processor.js";
 import { type JournalStorage, NodeJournal, type NodeJournalState } from "./journal.js";
 import type { NodeRelayClient } from "./relay-client.js";
+import type { RuntimeProvisioner } from "./runtime-provisioner.js";
 
 const IDS = {
 	owner: "60000000-0000-4000-8000-000000000001",
@@ -146,9 +147,24 @@ describe("ForegroundNode cycle ordering and shutdown fencing", () => {
 		expect(harness.adapter.counters.startTurnCalls).toBe(0);
 		expect(harness.client.listAssignments).not.toHaveBeenCalled();
 	});
+
+	it("forwards runtime provisioning configuration to the delivery boundary", async () => {
+		const runtimeProvisioner: RuntimeProvisioner = {
+			provision: async () => undefined,
+		};
+
+		await expect(createHarness({ runtimeProvisioner })).rejects.toThrow(
+			"Runtime provisioning requires a runtime authority port",
+		);
+	});
 });
 
-async function createHarness(options: { readonly config?: NodeConfig } = {}) {
+async function createHarness(
+	options: {
+		readonly config?: NodeConfig;
+		readonly runtimeProvisioner?: RuntimeProvisioner;
+	} = {},
+) {
 	const client = relayClient();
 	const journal = await NodeJournal.open(new MemoryStorage());
 	const adapter = new FakeAgentHostAdapter();
@@ -161,6 +177,7 @@ async function createHarness(options: { readonly config?: NodeConfig } = {}) {
 			client: client as unknown as NodeRelayClient,
 			journal,
 			adapter,
+			runtimeProvisioner: options.runtimeProvisioner,
 		}),
 	};
 }
