@@ -65,6 +65,9 @@ importers:
       '@agentrelay/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@openai/codex':
+        specifier: 0.146.0
+        version: 0.146.0
       cac:
         specifier: ^6.7.14
         version: 6.7.14
@@ -81,9 +84,6 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
-      '@openai/codex':
-        specifier: 0.146.0
-        version: 0.146.0
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.17
