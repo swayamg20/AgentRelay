@@ -21,9 +21,9 @@ describe("Codex app-server containment gate", () => {
 		const fixture = await fakeAppServer();
 		const requests: CodexProcessRequest[] = [];
 		const boundary: CodexProcessBoundary = {
-			prepare: async (request) => {
+			prepare: async (request, signal) => {
 				requests.push(request);
-				return directCodexProcessBoundaryForTests.prepare(request);
+				return directCodexProcessBoundaryForTests.prepare(request, signal);
 			},
 		};
 		const client = await openClient(fixture, boundary);
@@ -67,6 +67,7 @@ async function openClient(
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary,
+		authoritySignal: new AbortController().signal,
 	});
 	clients.push(client);
 	return client;

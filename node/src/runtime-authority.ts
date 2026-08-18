@@ -22,6 +22,13 @@ export interface RuntimeAuthorityEvidenceSink {
 	record(evidence: RuntimeAuthorityEvidence): void | Promise<void>;
 }
 
+/** One live, scoped reference-monitor boundary for a concrete workspace read effect. */
+export interface RuntimeWorkspaceReadAuthority {
+	readonly grant: RuntimeAuthorityGrant;
+	readonly signal: AbortSignal;
+	performWorkspaceRead<T>(effect: () => T | Promise<T>): Promise<T>;
+}
+
 export class RuntimeAuthorityDeniedError extends Error {
 	constructor(readonly code: RuntimeAuthorityDenyCode) {
 		super(`Runtime authority denied: ${code}`);

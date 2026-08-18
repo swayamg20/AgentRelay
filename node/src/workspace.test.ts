@@ -156,6 +156,27 @@ describe("defaultWorkspaceCommandRunner", () => {
 		expect(String(error)).not.toContain("secret");
 		expect(JSON.stringify(error)).not.toContain("secret");
 	});
+
+	it("binds Git inspection to the caller signal and preserves its abort reason", async () => {
+		const authority = new AbortController();
+		execFileMock.mockImplementationOnce((_file, _argv, options, callback) => {
+			expect(options.signal).toBe(authority.signal);
+			authority.abort("expired");
+			callback(
+				Object.assign(new Error("aborted"), {
+					code: "ABORT_ERR",
+					killed: true,
+					signal: "SIGKILL" as const,
+				}),
+				"",
+				"",
+			);
+		});
+
+		await expect(
+			defaultWorkspaceCommandRunner(git(["status", "--porcelain=v1"]), authority.signal),
+		).rejects.toBe("expired");
+	});
 });
 
 describe("preflightWorkspace", () => {

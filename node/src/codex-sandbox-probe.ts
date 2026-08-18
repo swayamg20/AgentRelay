@@ -4,12 +4,19 @@ import { constants } from "node:fs";
 import { open, readlink, realpath, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CodexWorkspaceAccess, PinnedExecutable } from "./codex-sandbox-contract.js";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+	CodexContainmentTerminationError,
+	type CodexWorkspaceAccess,
+	type PinnedExecutable,
+} from "./codex-sandbox-contract.js";
 import { assertContainmentProbeAttestation } from "./codex-sandbox-probe-attestation.js";
+import { killProcessGroupAndProveTerminated } from "./process-group-termination.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const MAX_PROBE_OUTPUT_BYTES = 64 * 1_024;
 const MAX_DIAGNOSTIC_OUTPUT_CHARS = 512;
+const PROCESS_GROUP_EXIT_TIMEOUT_MS = 2_000;
 
 export type ContainmentProbeExecutable = PinnedExecutable;
 
@@ -26,16 +33,15 @@ export interface CodexSandboxProbeInput {
 }
 
 /** Runs an actual child through the effective profile before any provider is admitted. */
-export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promise<void> {
+export async function runCodexSandboxProbe(
+	input: CodexSandboxProbeInput,
+	signal: AbortSignal,
+): Promise<void> {
+	signal.throwIfAborted();
 	const sharedTempCanary = join(await realpath(tmpdir()), `.agentrelay-${randomUUID()}.canary`);
 	const ownerHomeCanary = join(await realpath(homedir()), `.agentrelay-${randomUUID()}.canary`);
 	const resultPath = join(input.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
 	const resultToken = randomUUID();
-	await Promise.all([
-		writeHostCanary(sharedTempCanary, "host-temp-canary"),
-		writeHostCanary(ownerHomeCanary, "owner-home-canary"),
-	]);
-
 	const probePaths = {
 		workspaceRead: join(input.gitDirectory, "HEAD"),
 		workspaceWrite: join(input.workspaceRoot, `.agentrelay-${randomUUID()}.probe`),
@@ -51,6 +57,12 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 	};
 
 	try {
+		signal.throwIfAborted();
+		await Promise.all([
+			writeHostCanary(sharedTempCanary, "host-temp-canary"),
+			writeHostCanary(ownerHomeCanary, "owner-home-canary"),
+		]);
+		signal.throwIfAborted();
 		const child = spawn(
 			input.launcherExecutable,
 			[
@@ -81,9 +93,11 @@ export async function runCodexSandboxProbe(input: CodexSandboxProbeInput): Promi
 				shell: false,
 			},
 		);
-		const output = await collectProbeOutput(child);
+		const output = await collectProbeOutput(child, signal);
+		signal.throwIfAborted();
 		assertSilentProbeOutput(output);
 		await assertContainmentProbeAttestation(resultPath, resultToken);
+		signal.throwIfAborted();
 	} finally {
 		await Promise.all([
 			unlink(sharedTempCanary).catch(() => undefined),
@@ -106,43 +120,177 @@ async function writeHostCanary(path: string, contents: string): Promise<void> {
 	}
 }
 
-async function collectProbeOutput(child: ReturnType<typeof spawn>) {
+async function collectProbeOutput(child: ReturnType<typeof spawn>, signal: AbortSignal) {
 	let stdout = "";
 	let stderr = "";
 	let exceeded = false;
 	let timedOut = false;
+	let terminationRequested = false;
+	let knownPid = child.pid ?? null;
+	let signalledPid: number | null = null;
+	let resolveTerminationRequested!: () => void;
+	const terminationRequestedPromise = new Promise<void>((resolve) => {
+		resolveTerminationRequested = resolve;
+	});
+	const signalKnownProcessGroup = () => {
+		const pid = knownPid ?? child.pid ?? null;
+		if (pid === null || signalledPid === pid) return;
+		knownPid = pid;
+		signalledPid = pid;
+		killProbeProcessGroupNow(pid, child);
+	};
+	const requestTermination = () => {
+		if (!terminationRequested) {
+			terminationRequested = true;
+			resolveTerminationRequested();
+		}
+		signalKnownProcessGroup();
+	};
+	const onAbort = () => requestTermination();
+	let resolveSpawned!: (pid: number | null) => void;
+	let spawnResolved = false;
+	const spawned = new Promise<number | null>((resolve) => {
+		resolveSpawned = resolve;
+	});
+	const settleSpawn = (pid: number | null) => {
+		if (spawnResolved) return;
+		spawnResolved = true;
+		resolveSpawned(pid);
+	};
+	const onSpawn = () => {
+		knownPid = child.pid ?? null;
+		settleSpawn(knownPid);
+		if (terminationRequested) signalKnownProcessGroup();
+	};
+	const onSpawnError = () => settleSpawn(knownPid ?? child.pid ?? null);
+	child.once("spawn", onSpawn);
+	child.once("error", onSpawnError);
+	if (knownPid !== null) settleSpawn(knownPid);
+	type ChildOutcome =
+		| { readonly kind: "closed"; readonly status: number | null }
+		| { readonly kind: "error"; readonly error: unknown };
+	let onClose!: (status: number | null) => void;
+	const closed = new Promise<ChildOutcome>((resolve) => {
+		onClose = (status) => {
+			requestTermination();
+			resolve({ kind: "closed", status });
+		};
+		child.once("close", onClose);
+	});
+	let onChildError!: (error: unknown) => void;
+	const failed = new Promise<ChildOutcome>((resolve) => {
+		onChildError = (error) => {
+			requestTermination();
+			resolve({ kind: "error", error });
+		};
+		child.once("error", onChildError);
+	});
+	const childOutcome = Promise.race([closed, failed]);
+	signal.addEventListener("abort", onAbort, { once: true });
 	child.stdout?.setEncoding("utf8");
 	child.stderr?.setEncoding("utf8");
-	child.stdout?.on("data", (chunk: string) => {
+	const onStdout = (chunk: string) => {
 		stdout += chunk;
 		if (Buffer.byteLength(stdout, "utf8") > MAX_PROBE_OUTPUT_BYTES) {
 			exceeded = true;
-			killProcessGroup(child.pid);
+			requestTermination();
 		}
-	});
-	child.stderr?.on("data", (chunk: string) => {
+	};
+	const onStderr = (chunk: string) => {
 		stderr += chunk;
 		if (Buffer.byteLength(stderr, "utf8") > MAX_PROBE_OUTPUT_BYTES) {
 			exceeded = true;
-			killProcessGroup(child.pid);
+			requestTermination();
 		}
-	});
+	};
+	child.stdout?.on("data", onStdout);
+	child.stderr?.on("data", onStderr);
+	if (signal.aborted) requestTermination();
 	const timeout = setTimeout(() => {
 		timedOut = true;
-		killProcessGroup(child.pid);
+		requestTermination();
 	}, PROBE_TIMEOUT_MS);
-	const status = await new Promise<number | null>((resolve, reject) => {
-		child.once("error", reject);
-		child.once("close", resolve);
-	}).finally(() => clearTimeout(timeout));
+	let outcome: ChildOutcome | undefined;
+	try {
+		const first = await Promise.race([
+			childOutcome.then((value) => ({ kind: "child" as const, value })),
+			terminationRequestedPromise.then(() => ({ kind: "termination" as const })),
+		]);
+		if (first.kind === "child") outcome = first.value;
+		await proveProbeTermination(child, spawned, closed);
+		outcome ??= await childOutcome;
+	} finally {
+		clearTimeout(timeout);
+		signal.removeEventListener("abort", onAbort);
+		child.removeListener("spawn", onSpawn);
+		child.removeListener("error", onSpawnError);
+		child.removeListener("error", onChildError);
+		child.removeListener("close", onClose);
+		child.stdout?.removeListener("data", onStdout);
+		child.stderr?.removeListener("data", onStderr);
+	}
+	signal.throwIfAborted();
+	if (outcome === undefined) {
+		throw new CodexContainmentTerminationError({
+			cause: new Error("Codex sandbox probe ended without a child outcome"),
+		});
+	}
+	if (outcome.kind === "error") throw outcome.error;
 	if (timedOut) throw new Error("Codex sandbox capability probe timed out");
 	if (exceeded) throw new Error("Codex sandbox capability probe exceeded its output limit");
-	if (status !== 0) {
+	if (outcome.status !== 0) {
 		throw new Error(
-			`Codex sandbox capability probe failed (${status}); ${probeOutputDiagnostic({ stdout, stderr })}`,
+			`Codex sandbox capability probe failed (${outcome.status}); ${probeOutputDiagnostic({ stdout, stderr })}`,
 		);
 	}
 	return { stdout, stderr };
+}
+
+async function proveProbeTermination(
+	child: ReturnType<typeof spawn>,
+	spawned: Promise<number | null>,
+	closed: Promise<unknown>,
+): Promise<void> {
+	try {
+		const unresolvedSpawn = Symbol("unresolved-spawn");
+		const pid = await Promise.race([
+			spawned,
+			delay(PROCESS_GROUP_EXIT_TIMEOUT_MS, unresolvedSpawn, { ref: false }),
+		]);
+		if (pid === unresolvedSpawn) {
+			child.kill("SIGKILL");
+			throw new Error("Codex sandbox probe spawn state could not be resolved");
+		}
+		if (pid === null) {
+			const pipesOpen = Symbol("pipes-open");
+			const closeResult = await Promise.race([
+				closed,
+				delay(PROCESS_GROUP_EXIT_TIMEOUT_MS, pipesOpen, { ref: false }),
+			]);
+			if (closeResult === pipesOpen) {
+				throw new Error("Codex sandbox probe pipes did not close");
+			}
+			return;
+		}
+		await killProcessGroupAndProveTerminated(pid, closed, PROCESS_GROUP_EXIT_TIMEOUT_MS, () =>
+			child.kill("SIGKILL"),
+		);
+	} catch (error) {
+		throw new CodexContainmentTerminationError({ cause: error });
+	}
+}
+
+function killProbeProcessGroupNow(pid: number, child: ReturnType<typeof spawn>): void {
+	try {
+		process.kill(-pid, "SIGKILL");
+	} catch (error) {
+		if (errorCode(error) === "ESRCH") return;
+		try {
+			child.kill("SIGKILL");
+		} catch {
+			// The bounded termination proof below owns the authoritative result.
+		}
+	}
 }
 
 function assertSilentProbeOutput(output: { stdout: string; stderr: string }): void {
@@ -160,13 +308,10 @@ function probeOutputDiagnostic(output: { stdout: string; stderr: string }): stri
 	return `stdout (${stdoutBytes} bytes): ${stdout}; stderr (${stderrBytes} bytes): ${stderr}`;
 }
 
-function killProcessGroup(pid: number | undefined): void {
-	if (pid === undefined) return;
-	try {
-		process.kill(-pid, "SIGKILL");
-	} catch {
-		// The process may have exited between the bound check and cleanup.
-	}
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error
+		? String(error.code)
+		: undefined;
 }
 
 const PROBE_SOURCE = String.raw`

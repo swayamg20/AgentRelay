@@ -1,4 +1,15 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	link,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	realpath,
+	rm,
+	stat,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -47,6 +58,53 @@ describe("staged containment probe", () => {
 		await expect(prepareStagedContainmentProbe(fixture.layout, "recover", created)).rejects.toThrow(
 			"unsafe filesystem metadata",
 		);
+	});
+
+	it("converges an exact pre-manifest retry and removes a crashed publication link", async () => {
+		const fixture = await createFixture();
+		const created = await prepareStagedContainmentProbe(
+			fixture.layout,
+			"create",
+			undefined,
+			fixture.source,
+		);
+		const original = await stat(created.executable);
+		const crashedLink = join(fixture.layout.stagedProbeRoot, "bin", ".node.99999999.crashed.tmp");
+		await link(created.executable, crashedLink);
+		expect((await stat(created.executable)).nlink).toBe(2);
+
+		const retried = await prepareStagedContainmentProbe(
+			fixture.layout,
+			"create",
+			undefined,
+			fixture.source,
+		);
+
+		expect(retried).toEqual(created);
+		expect((await stat(retried.executable)).ino).toBe(original.ino);
+		expect((await stat(retried.executable)).nlink).toBe(1);
+		expect(await readdir(join(fixture.layout.stagedProbeRoot, "bin"))).toEqual(["node"]);
+	});
+
+	it("rejects a different probe source without replacing the completed publication", async () => {
+		const fixture = await createFixture();
+		const created = await prepareStagedContainmentProbe(
+			fixture.layout,
+			"create",
+			undefined,
+			fixture.source,
+		);
+		const original = await stat(created.executable);
+		await chmod(fixture.source, 0o700);
+		await writeFile(fixture.source, "#!/bin/sh\nexit 1\n", { mode: 0o500 });
+		await chmod(fixture.source, 0o500);
+
+		await expect(
+			prepareStagedContainmentProbe(fixture.layout, "create", undefined, fixture.source),
+		).rejects.toThrow("digest changed after creation");
+
+		expect((await stat(created.executable)).ino).toBe(original.ino);
+		expect(await readFile(created.executable, "utf8")).toBe("#!/bin/sh\nexit 0\n");
 	});
 });
 

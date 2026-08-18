@@ -6,5 +6,5 @@ import {
 const serialized = process.argv[2];
 if (serialized === undefined) throw new Error("Recovery expectation is required");
 const expectation = JSON.parse(serialized) as CodexSandboxRecoveryExpectation;
-const containment = await recoverCodexSandboxContainment(expectation);
+const containment = await recoverCodexSandboxContainment(expectation, new AbortController().signal);
 process.stdout.write(`${JSON.stringify(containment.evidence)}\n`);

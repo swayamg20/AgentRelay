@@ -90,7 +90,14 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 		try {
 			return new CodexCapsuleRunner(options, generation);
 		} catch (error) {
-			await generation.terminate("startup_failure").catch(() => undefined);
+			try {
+				await generation.terminate("startup_failure");
+			} catch (teardownError) {
+				throw new AggregateError(
+					[teardownError, error],
+					"Codex Capsule runner startup teardown could not be proven",
+				);
+			}
 			throw error;
 		}
 	}

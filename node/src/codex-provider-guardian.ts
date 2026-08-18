@@ -18,13 +18,16 @@ import {
 	type ProcessLock,
 	acquireProcessLock,
 } from "./process-lock.js";
+import {
+	RuntimeAuthorityDeniedError,
+	runtimeAuthorityDenyCodeSchema,
+} from "./runtime-authority.js";
 
 export const CODEX_PROVIDER_LOCK_FILE = "provider.lock";
 
 export interface CodexProviderGuardianOptions extends CodexAppServerClientOptions {
 	readonly capsuleId: string;
 	readonly deadlineAtMs: number;
-	readonly authoritySignal?: AbortSignal;
 	readonly supervisor?: CodexSupervisorCommand;
 	readonly reaper?: CodexSupervisorCommand;
 	readonly startupTimeoutMs?: number;
@@ -63,10 +66,8 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 				),
 			);
 		}
-		if (this.#options.authoritySignal?.aborted === true) {
-			return Promise.reject(
-				new CodexProviderGuardianError("authority", "Codex provider authority is revoked"),
-			);
+		if (this.#options.authoritySignal.aborted) {
+			return Promise.reject(authorityDenied(this.#options.authoritySignal));
 		}
 		if (this.#opening !== null || this.#active !== null) {
 			return Promise.reject(
@@ -110,7 +111,6 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 		}
 
 		const supervisedRef: { value: CodexSupervisedProcess | null } = { value: null };
-		let removeAuthorityListener: () => void = () => undefined;
 		try {
 			const client = await CodexAppServerClient.start({
 				command: this.#options.command,
@@ -118,6 +118,7 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 				capsuleDirectory: this.#options.capsuleDirectory,
 				env: this.#options.env,
 				boundary: this.#options.boundary,
+				authoritySignal: this.#options.authoritySignal,
 				requestTimeoutMs: this.#options.requestTimeoutMs,
 				processFactory: async (processOptions) => {
 					if (supervisedRef.value !== null) {
@@ -141,67 +142,56 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 						},
 						(supervised) => {
 							supervisedRef.value = supervised;
-							removeAuthorityListener = bindAuthoritySignal(
-								this.#options.authoritySignal,
-								supervised,
-							);
 						},
 					);
 					return supervisedRef.value.process;
 				},
 			});
 			const supervised = requireSupervisedProcess(supervisedRef.value);
-			if (this.#options.authoritySignal?.aborted === true) {
-				await supervised.stop("authority_revoked");
-				throw new CodexProviderGuardianError("authority", "Codex provider authority is revoked");
+			if (this.#options.authoritySignal.aborted) {
+				throw authorityDenied(this.#options.authoritySignal);
 			}
 			supervised.activate();
 			const generation = providerGeneration(generationId, client, supervised);
 			this.#active = generation;
 			void generation.termination.then(
 				() => {
-					removeAuthorityListener();
 					if (this.#active === generation) this.#active = null;
 				},
 				() => {
 					this.#failedClosed = true;
-					removeAuthorityListener();
 					if (this.#active === generation) this.#active = null;
 				},
 			);
 			return generation;
 		} catch (error) {
-			removeAuthorityListener();
 			const supervised = supervisedRef.value;
-			if (supervised === null) {
-				await lock.release().catch(() => undefined);
-			} else {
-				await supervised.stop("startup_failure").catch(() => {
-					this.#failedClosed = true;
-				});
+			try {
+				if (supervised === null) {
+					await lock.release();
+				} else {
+					await supervised.stop("startup_failure");
+				}
+			} catch (teardownError) {
+				this.#failedClosed = true;
+				throw new AggregateError(
+					[teardownError, error],
+					"Codex provider startup teardown could not be proven",
+				);
 			}
-			if (
-				error instanceof CodexProviderGuardianError ||
-				this.#options.authoritySignal?.aborted === true
-			) {
-				throw new CodexProviderGuardianError("authority", "Codex provider authority is revoked");
+			if (this.#options.authoritySignal.aborted) {
+				throw authorityDenied(this.#options.authoritySignal);
 			}
+			if (error instanceof RuntimeAuthorityDeniedError) throw error;
+			if (error instanceof CodexProviderGuardianError) throw error;
 			throw new CodexProviderGuardianError("startup", "Codex provider generation failed to start");
 		}
 	}
 }
 
-function bindAuthoritySignal(
-	signal: AbortSignal | undefined,
-	supervised: CodexSupervisedProcess,
-): () => void {
-	if (signal === undefined) return () => undefined;
-	const revoke = () => {
-		void supervised.stop("authority_revoked").catch(() => undefined);
-	};
-	signal.addEventListener("abort", revoke, { once: true });
-	if (signal.aborted) revoke();
-	return () => signal.removeEventListener("abort", revoke);
+function authorityDenied(signal: AbortSignal): RuntimeAuthorityDeniedError {
+	const parsed = runtimeAuthorityDenyCodeSchema.safeParse(signal.reason);
+	return new RuntimeAuthorityDeniedError(parsed.success ? parsed.data : "revoked");
 }
 
 function requireSupervisedProcess(value: CodexSupervisedProcess | null): CodexSupervisedProcess {

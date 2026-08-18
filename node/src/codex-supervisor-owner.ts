@@ -1,9 +1,14 @@
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import type { CodexProviderSupervisorCommand } from "./codex-provider-supervisor-protocol.js";
+import {
+	isProcessGroupAlive,
+	killProcessGroupAndProveTerminated,
+	proveOwnedPipesClosed,
+	proveProcessGroupTerminated,
+} from "./process-group-termination.js";
 
 const STOP_GRACE_MS = 2_000;
-const GROUP_POLL_MS = 10;
 
 export async function sendSupervisorCommand(
 	child: ChildProcess,
@@ -22,37 +27,36 @@ export async function stopSupervisorProcessGroup(
 	child: ChildProcess,
 	exited: Promise<unknown>,
 	closed: Promise<unknown>,
+	options: { readonly immediate?: boolean } = {},
 ): Promise<void> {
 	const pid = child.pid;
-	if (pid === undefined) return;
-	signalProcessGroup(pid, "SIGTERM");
-	await Promise.race([exited, delay(STOP_GRACE_MS, undefined, { ref: false })]);
-	if (isSupervisorProcessGroupAlive(pid)) signalProcessGroup(pid, "SIGKILL");
-	const deadline = Date.now() + STOP_GRACE_MS;
-	while (isSupervisorProcessGroupAlive(pid)) {
-		if (Date.now() >= deadline) throw new Error("Codex provider process group did not terminate");
-		await delay(GROUP_POLL_MS);
+	try {
+		if (pid === undefined) {
+			await proveOwnedPipesClosed(closed, STOP_GRACE_MS);
+			return;
+		}
+		if (options.immediate === true) {
+			await killProcessGroupAndProveTerminated(pid, closed, STOP_GRACE_MS, () =>
+				child.kill("SIGKILL"),
+			);
+			return;
+		}
+		signalProcessGroup(pid, "SIGTERM");
+		await Promise.race([exited, delay(STOP_GRACE_MS, undefined, { ref: false })]);
+		if (isSupervisorProcessGroupAlive(pid)) {
+			await killProcessGroupAndProveTerminated(pid, closed, STOP_GRACE_MS, () =>
+				child.kill("SIGKILL"),
+			);
+			return;
+		}
+		await proveProcessGroupTerminated(pid, closed, STOP_GRACE_MS);
+	} catch (error) {
+		throw new Error("Codex provider process group did not terminate", { cause: error });
 	}
-	await Promise.race([
-		closed,
-		delay(STOP_GRACE_MS, undefined, { ref: false }).then(() => {
-			throw new Error("Codex provider supervisor pipes did not close");
-		}),
-	]);
 }
 
 export function isSupervisorProcessGroupAlive(pid: number): boolean {
-	try {
-		process.kill(-pid, 0);
-		return true;
-	} catch (error) {
-		const code = errorCode(error);
-		if (code === "ESRCH") return false;
-		// macOS can report EPERM while a process group contains only zombies.
-		// That is still a present group, not proof of quiescence.
-		if (code === "EPERM") return true;
-		throw error;
-	}
+	return isProcessGroupAlive(pid);
 }
 
 export function waitForChildSpawn(child: ChildProcess): Promise<void> {

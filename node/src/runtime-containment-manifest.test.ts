@@ -50,21 +50,45 @@ describe("runtime containment manifest", () => {
 		expect(await readFile(path, "utf8")).not.toContain("workspace_access");
 		expect(await readRuntimeContainmentManifest(path)).toEqual(created);
 		expect((await stat(path)).mode & 0o777).toBe(0o600);
-		await expect(createRuntimeContainmentManifest(path, binding)).rejects.toMatchObject({
-			code: "EEXIST",
-		});
-		await expect(
-			openRuntimeContainmentManifest(path, {
-				...binding,
-				workspace: {
-					...binding.workspace,
-					root: {
-						...binding.workspace.root,
-						identity: { ...binding.workspace.root.identity, inode: "999" },
-					},
+		await expect(createRuntimeContainmentManifest(path, binding)).resolves.toEqual(created);
+		const changedBinding = {
+			...binding,
+			workspace: {
+				...binding.workspace,
+				root: {
+					...binding.workspace.root,
+					identity: { ...binding.workspace.root.identity, inode: "999" },
 				},
-			}),
-		).rejects.toThrow("does not authorize this exact workspace and policy");
+			},
+		};
+		await expect(openRuntimeContainmentManifest(path, changedBinding)).rejects.toThrow(
+			"does not authorize this exact workspace and policy",
+		);
+		await expect(createRuntimeContainmentManifest(path, changedBinding)).rejects.toThrow(
+			"does not authorize this exact workspace and policy",
+		);
+	});
+
+	it("converges partial staging debris and concurrent final publication", async () => {
+		const directory = await realpath(
+			await mkdtemp(join(tmpdir(), "agentrelay-containment-manifest-")),
+		);
+		temporaryDirectories.push(directory);
+		const path = join(directory, "containment.json");
+		await writeFile(join(directory, ".containment.json.99999999.crashed.tmp"), '{"partial":', {
+			mode: 0o600,
+		});
+		const binding = validBinding();
+
+		const [first, second] = await Promise.all([
+			createRuntimeContainmentManifest(path, binding, () => new Date("2026-08-16T00:00:00.000Z")),
+			createRuntimeContainmentManifest(path, binding, () => new Date("2026-08-16T00:00:01.000Z")),
+		]);
+
+		expect(second).toEqual(first);
+		expect(await readRuntimeContainmentManifest(path)).toEqual(first);
+		expect((await stat(path)).mode & 0o777).toBe(0o600);
+		expect((await stat(path)).nlink).toBe(1);
 	});
 
 	it("binds explicit read-only workspace access into the retained digest", async () => {

@@ -33,6 +33,8 @@ export interface FakeAppServerFixture {
 	readonly childPidPath: string;
 	readonly argvPath: string;
 	readonly environmentPath: string;
+	readonly versionPidPath: string;
+	readonly appServerPidPath: string;
 	readonly continuousOutputGatePath: string;
 	readonly env: NodeJS.ProcessEnv;
 	remove(): Promise<void>;
@@ -47,6 +49,8 @@ export async function createFakeAppServer(
 	const childPidPath = join(directory, "child.pid");
 	const argvPath = join(directory, "argv.json");
 	const environmentPath = join(directory, "environment.json");
+	const versionPidPath = join(directory, "version.pid");
+	const appServerPidPath = join(directory, "app-server.pid");
 	const continuousOutputGatePath = join(directory, "continuous-output-go");
 	const configPath = join(directory, "fake-app-server-config.json");
 	await writeFile(scriptPath, `#!${process.execPath}\n${FAKE_APP_SERVER_SOURCE}`, { mode: 0o700 });
@@ -73,6 +77,8 @@ export async function createFakeAppServer(
 			childPidPath,
 			argvPath,
 			environmentPath,
+			versionPidPath,
+			appServerPidPath,
 		}),
 		{ mode: 0o600 },
 	);
@@ -83,6 +89,8 @@ export async function createFakeAppServer(
 		childPidPath,
 		argvPath,
 		environmentPath,
+		versionPidPath,
+		appServerPidPath,
 		continuousOutputGatePath,
 		env: {
 			PATH: process.env.PATH,
@@ -177,6 +185,7 @@ const config = JSON.parse(readFileSync(
 const version = config.version;
 writeFileSync(config.environmentPath, JSON.stringify(process.env), { mode: 0o600 });
 if (process.argv.includes("--version")) {
+  writeFileSync(config.versionPidPath, String(process.pid), { mode: 0o600 });
   setTimeout(() => {
     process.stdout.write("codex-cli " + version + "\\n");
     process.exit(0);
@@ -185,6 +194,7 @@ if (process.argv.includes("--version")) {
   startAppServer();
 }
 function startAppServer() {
+writeFileSync(config.appServerPidPath, String(process.pid), { mode: 0o600 });
 writeFileSync(config.argvPath, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });
 const logPath = config.logPath;
 const cwd = process.cwd();

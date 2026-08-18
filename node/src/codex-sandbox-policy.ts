@@ -11,7 +11,7 @@ import {
 	type ContainmentOpenMode,
 } from "./codex-sandbox-contract.js";
 import type { ContainmentProbeExecutable } from "./codex-sandbox-probe.js";
-import { writeDurableTextExclusive } from "./durable-file.js";
+import { publishDurableTextExclusive } from "./durable-file.js";
 import { isPathWithin } from "./filesystem-path.js";
 import { assertPrivateStateDirectory, ensurePrivateStateDirectory } from "./private-state-file.js";
 
@@ -222,7 +222,11 @@ export async function createPrivateContainmentConfig(
 	path: string,
 	expected: string,
 ): Promise<void> {
-	await writeDurableTextExclusive(path, expected, { fileMode: 0o600, directoryMode: 0o700 });
+	await publishDurableTextExclusive(path, expected, {
+		fileMode: 0o600,
+		directoryMode: 0o700,
+	});
+	await assertPrivateContainmentConfig(path, expected);
 }
 
 export async function assertPrivateContainmentConfig(

@@ -340,6 +340,7 @@ function createGuardian(fixture: FakeAppServerFixture): SupervisedCodexProviderG
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,
+		authoritySignal: new AbortController().signal,
 		deadlineAtMs: Date.now() + 60_000,
 		supervisor: sourceSupervisorCommand(),
 	});

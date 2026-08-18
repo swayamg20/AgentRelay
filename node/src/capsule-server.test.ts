@@ -187,6 +187,39 @@ describe("PersistentCapsuleServer", () => {
 		expect(runtime.closeCalls).toBe(1);
 	});
 
+	it("preserves activation teardown failure ahead of authority denial", async () => {
+		const runtime = new RecordingRuntime();
+		const teardownFailure = new Error("runtime teardown was not proven");
+		runtime.closeFailure = teardownFailure;
+		const { server, identity, controller } = await startServer(runtime);
+		controller.activationGate = deferred();
+		controller.activationStarted = deferred();
+
+		const pendingSession = sendCapsuleRequest(identity, "ensure_session", {
+			input: sessionInput(),
+		});
+		await controller.activationStarted.promise;
+		await capsuleResultValue(identity, "revoke_authority", {
+			mission_id: IDS.mission,
+			grant_id: SERVER_AUTHORITY.grant_id,
+			reason: "revoked",
+		});
+		controller.activationGate.resolve();
+
+		await expect(pendingSession).resolves.toEqual([
+			expect.objectContaining({
+				kind: "error",
+				code: "internal",
+				message: "Capsule runtime failed",
+			}),
+		]);
+		await server.waitUntilClosed();
+		const closeFailure = await server.close().catch((error: unknown) => error);
+		expect(closeFailure).toBeInstanceOf(AggregateError);
+		expect((closeFailure as AggregateError).errors).toContain(teardownFailure);
+		expect(runtime.closeCalls).toBe(1);
+	});
+
 	it("accepts an exact grant replay and retires on a changed fence", async () => {
 		const runtime = new RecordingRuntime();
 		const { server, identity } = await startServer(runtime);

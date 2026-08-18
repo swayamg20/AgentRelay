@@ -5,7 +5,7 @@ import { z } from "zod";
 import { digestCanonicalJson } from "./capsule-correlation.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
-import { readPrivateJsonIfPresent, writePrivateJsonExclusive } from "./private-state-file.js";
+import { publishPrivateJsonExclusive, readPrivateJsonIfPresent } from "./private-state-file.js";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const filesystemIdentitySchema = z
@@ -121,8 +121,8 @@ export async function createRuntimeContainmentManifest(
 		binding_sha256: bindingSha256,
 		binding,
 	});
-	await writePrivateJsonExclusive(path, manifest);
-	return manifest;
+	await publishPrivateJsonExclusive(path, manifest);
+	return openRuntimeContainmentManifest(path, binding);
 }
 
 export async function openRuntimeContainmentManifest(

@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { type FileHandle, open, realpath, unlink } from "node:fs/promises";
-import { dirname } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, type BigIntStats } from "node:fs";
+import { type FileHandle, link, lstat, open, readdir, realpath, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type {
 	ContainmentLayout,
 	ContainmentOpenMode,
@@ -45,33 +45,73 @@ export async function prepareStagedContainmentProbe(
 async function stageExecutable(source: string, destination: string): Promise<string> {
 	assertAbsoluteNormalizedPath(source, "probe runtime executable");
 	const sourceHandle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
-	let destinationHandle: FileHandle | undefined;
-	let destinationCreated = false;
+	const destinationDirectory = dirname(destination);
+	const temporaryPath = join(
+		destinationDirectory,
+		`.${basename(destination)}.${process.pid}.${randomUUID()}.tmp`,
+	);
+	let temporaryHandle: FileHandle | undefined;
+	let temporaryExists = false;
 	try {
 		await assertSourceHandle(sourceHandle);
-		destinationHandle = await open(
-			destination,
-			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+		temporaryHandle = await open(
+			temporaryPath,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
 			STAGED_EXECUTABLE_MODE,
 		);
-		destinationCreated = true;
-		const digest = await copyAndDigest(sourceHandle, destinationHandle);
-		await destinationHandle.chmod(STAGED_EXECUTABLE_MODE);
-		await destinationHandle.sync();
-		await destinationHandle.close();
-		destinationHandle = undefined;
-		await syncDirectory(dirname(destination));
+		temporaryExists = true;
+		const digest = await copyAndDigest(sourceHandle, temporaryHandle);
+		await temporaryHandle.chmod(STAGED_EXECUTABLE_MODE);
+		await temporaryHandle.sync();
+		await temporaryHandle.close();
+		temporaryHandle = undefined;
+		try {
+			await link(temporaryPath, destination);
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST") throw error;
+		}
+		await unlink(temporaryPath).catch((error: unknown) => {
+			if (errorCode(error) !== "ENOENT") throw error;
+		});
+		temporaryExists = false;
+		await removePublicationAliases(destination);
+		await syncDirectory(destinationDirectory);
+		await assertStagedExecutable(destination, digest);
 		return digest;
 	} catch (error) {
-		await destinationHandle?.close().catch(() => undefined);
-		if (destinationCreated) {
-			await unlink(destination).catch(() => undefined);
-			await syncDirectory(dirname(destination)).catch(() => undefined);
+		await temporaryHandle?.close().catch(() => undefined);
+		if (temporaryExists) {
+			await unlink(temporaryPath).catch(() => undefined);
+			await syncDirectory(destinationDirectory).catch(() => undefined);
 		}
 		throw error;
 	} finally {
 		await sourceHandle.close();
 	}
+}
+
+async function removePublicationAliases(destination: string): Promise<void> {
+	const directory = dirname(destination);
+	const prefix = `.${basename(destination)}.`;
+	const target = await lstat(destination, { bigint: true });
+	let removed = false;
+	for (const name of await readdir(directory)) {
+		if (!name.startsWith(prefix) || !name.endsWith(".tmp")) continue;
+		const candidate = join(directory, name);
+		let stats: BigIntStats;
+		try {
+			stats = await lstat(candidate, { bigint: true });
+		} catch (error) {
+			if (errorCode(error) === "ENOENT") continue;
+			throw error;
+		}
+		if (stats.dev !== target.dev || stats.ino !== target.ino) continue;
+		await unlink(candidate).catch((error: unknown) => {
+			if (errorCode(error) !== "ENOENT") throw error;
+		});
+		removed = true;
+	}
+	if (removed) await syncDirectory(directory);
 }
 
 async function assertSourceHandle(handle: FileHandle): Promise<void> {
@@ -147,4 +187,10 @@ async function writeAll(handle: FileHandle, value: Buffer, position: number): Pr
 		if (result.bytesWritten === 0) throw new Error("Staged probe runtime copy made no progress");
 		written += result.bytesWritten;
 	}
+}
+
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error
+		? String(error.code)
+		: undefined;
 }

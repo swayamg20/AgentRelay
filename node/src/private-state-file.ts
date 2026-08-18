@@ -1,7 +1,11 @@
 import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
-import { writeDurableText, writeDurableTextExclusive } from "./durable-file.js";
+import {
+	publishDurableTextExclusive,
+	writeDurableText,
+	writeDurableTextExclusive,
+} from "./durable-file.js";
 
 export const MAX_PRIVATE_STATE_FILE_BYTES = 16 * 1_048_576;
 
@@ -76,6 +80,18 @@ export async function writePrivateJsonExclusive(path: string, value: unknown): P
 	const serialized = serializePrivateJson(path, value);
 	await ensurePrivateStateDirectory(dirname(path));
 	await writeDurableTextExclusive(path, `${serialized}\n`, {
+		fileMode: 0o600,
+		directoryMode: 0o700,
+	});
+}
+
+export async function publishPrivateJsonExclusive(
+	path: string,
+	value: unknown,
+): Promise<"created" | "exists"> {
+	const serialized = serializePrivateJson(path, value);
+	await ensurePrivateStateDirectory(dirname(path));
+	return publishDurableTextExclusive(path, `${serialized}\n`, {
 		fileMode: 0o600,
 		directoryMode: 0o700,
 	});

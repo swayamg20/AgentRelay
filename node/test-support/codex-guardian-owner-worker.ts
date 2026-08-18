@@ -13,12 +13,15 @@ const prepareStartedPath = process.env.AGENTRELAY_TEST_PREPARE_STARTED_PATH;
 const prepareDelayMs = Number(process.env.AGENTRELAY_TEST_PREPARE_DELAY_MS ?? 0);
 
 const boundary = {
-	async prepare(request: Parameters<typeof directCodexProcessBoundaryForTests.prepare>[0]) {
+	async prepare(
+		request: Parameters<typeof directCodexProcessBoundaryForTests.prepare>[0],
+		signal: AbortSignal,
+	) {
 		if (prepareStartedPath !== undefined) {
 			await writeFile(prepareStartedPath, "started\n", { mode: 0o600 });
 		}
 		if (prepareDelayMs > 0) await delay(prepareDelayMs);
-		return directCodexProcessBoundaryForTests.prepare(request);
+		return directCodexProcessBoundaryForTests.prepare(request, signal);
 	},
 };
 
@@ -29,6 +32,7 @@ const guardian = new SupervisedCodexProviderGuardian({
 	capsuleDirectory: directory,
 	env: process.env,
 	boundary,
+	authoritySignal: new AbortController().signal,
 	deadlineAtMs: Date.now() + 60_000,
 	supervisor: {
 		executable: process.execPath,

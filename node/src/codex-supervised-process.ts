@@ -25,7 +25,6 @@ import {
 import {
 	childClose,
 	childExit,
-	isSupervisorProcessGroupAlive,
 	sendSupervisorCommand,
 	stopSupervisorProcessGroup,
 	waitForChildSpawn,
@@ -51,7 +50,9 @@ export class CodexSupervisedProcess {
 	#observation: CodexProviderObservation | null = null;
 	#stopCause: CodexProviderStopCause | null = null;
 	#stopPromise: Promise<void> | null = null;
-	#allowMissingGenerationState = false;
+	#urgentGroupTermination: Promise<void> | null = null;
+	#initializationMayHaveBeenDelivered = false;
+	#allowMissingGenerationState = true;
 
 	private constructor(
 		options: ResolvedCodexSupervisedProcessOptions,
@@ -66,12 +67,19 @@ export class CodexSupervisedProcess {
 			this.#rejectTermination = reject;
 		});
 		void this.termination.catch(() => undefined);
+		const authorityTermination = observeAuthorityTermination(
+			options.process.authoritySignal,
+			this.termination,
+			() => this.stop("authority_revoked"),
+		);
+		void authorityTermination.catch(() => undefined);
 		this.process = {
 			child,
 			cwd: options.process.cwd,
 			exited: this.#exited,
 			closed: this.#closed,
 			inputError: writableError(child),
+			authorityTermination,
 			stop: (reason) => this.stop(this.#stopCause ?? stopCause(reason, this.#ready)),
 		};
 	}
@@ -81,7 +89,9 @@ export class CodexSupervisedProcess {
 		onSpawned: (supervised: CodexSupervisedProcess) => void,
 	): Promise<CodexSupervisedProcess> {
 		const bounded = resolveSupervisedProcessOptions(options);
+		options.process.authoritySignal.throwIfAborted();
 		const commands = await prepareProviderCommands(options.process);
+		options.process.authoritySignal.throwIfAborted();
 		const child = spawn(options.supervisor.executable, [...options.supervisor.args], {
 			cwd: options.capsuleDirectory,
 			detached: true,
@@ -93,6 +103,10 @@ export class CodexSupervisedProcess {
 		await waitForChildSpawn(child);
 		child.stderr.resume();
 		onSpawned(supervised);
+		if (options.process.authoritySignal.aborted) {
+			await supervised.stop("authority_revoked");
+			options.process.authoritySignal.throwIfAborted();
+		}
 		await supervised.initialize(commands);
 		return supervised;
 	}
@@ -108,6 +122,15 @@ export class CodexSupervisedProcess {
 	stop(cause: CodexProviderStopCause): Promise<void> {
 		this.setStopCause(cause);
 		this.#stopPromise ??= this.performStop();
+		if (requiresImmediateTermination(cause)) {
+			this.#urgentGroupTermination ??= stopSupervisorProcessGroup(
+				this.#child,
+				this.#exited,
+				this.#closed,
+				{ immediate: true },
+			);
+			void this.#urgentGroupTermination.catch(() => undefined);
+		}
 		return this.#stopPromise;
 	}
 
@@ -152,6 +175,8 @@ export class CodexSupervisedProcess {
 			).catch(() => undefined);
 		});
 
+		this.#initializationMayHaveBeenDelivered = true;
+		this.#allowMissingGenerationState = false;
 		await sendSupervisorCommand(this.#child, {
 			version: 1,
 			kind: "initialize",
@@ -195,14 +220,18 @@ export class CodexSupervisedProcess {
 		if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
 		const cause = this.#stopCause ?? "provider_failure";
 		try {
+			if (!this.#initializationMayHaveBeenDelivered) {
+				await this.proveSupervisorTermination();
+				await this.#options.lock.release();
+				this.#resolveTermination({ kind: observationForProviderStopCause(cause) });
+				return;
+			}
 			await sendSupervisorCommand(
 				this.#child,
 				terminateSupervisorCommand(this.#options.generationId, cause),
 			).catch(() => undefined);
 			await Promise.race([this.#closed, delay(STOP_GRACE_MS + 250, undefined, { ref: false })]);
-			if (this.#child.pid !== undefined && isSupervisorProcessGroupAlive(this.#child.pid)) {
-				await stopSupervisorProcessGroup(this.#child, this.#exited, this.#closed);
-			}
+			await this.proveSupervisorTermination();
 			const finalized = await waitForReaperFinalization(
 				this.#options.store,
 				this.#options.generationId,
@@ -217,6 +246,55 @@ export class CodexSupervisedProcess {
 			this.#rejectTermination(error);
 			throw error;
 		}
+	}
+
+	private async proveSupervisorTermination(): Promise<void> {
+		const initialProof =
+			this.#urgentGroupTermination ??
+			stopSupervisorProcessGroup(this.#child, this.#exited, this.#closed);
+		const initialResult = await settle(initialProof);
+		const urgentProof = this.#urgentGroupTermination;
+		const urgentResult =
+			urgentProof === null || urgentProof === initialProof ? null : await settle(urgentProof);
+		const failures = [initialResult, urgentResult].filter(
+			(result): result is PromiseRejectedResult => result?.status === "rejected",
+		);
+		if (failures.length === 1) throw failures[0]!.reason;
+		if (failures.length > 1) {
+			throw new AggregateError(
+				failures.map((failure) => failure.reason),
+				"Codex provider process-group termination could not be proven",
+			);
+		}
+	}
+}
+
+async function observeAuthorityTermination(
+	signal: AbortSignal,
+	termination: CodexSupervisedProcess["termination"],
+	stop: () => Promise<void>,
+): Promise<void> {
+	let notifyAbort!: () => void;
+	let abortStop: Promise<void> | null = null;
+	const aborted = new Promise<void>((resolve) => {
+		notifyAbort = resolve;
+	});
+	const onAbort = () => {
+		abortStop ??= stop();
+		notifyAbort();
+	};
+	signal.addEventListener("abort", onAbort, { once: true });
+	if (signal.aborted) onAbort();
+	try {
+		const trigger = await Promise.race([
+			aborted.then(() => "aborted" as const),
+			termination.then(() => "terminated" as const),
+		]);
+		if (trigger === "terminated" && !signal.aborted) return;
+		await (abortStop ?? stop());
+		signal.throwIfAborted();
+	} finally {
+		signal.removeEventListener("abort", onAbort);
 	}
 }
 
@@ -246,4 +324,17 @@ function stopCause(
 ): CodexProviderStopCause {
 	if (reason === "unresponsive") return "provider_unresponsive";
 	return ready ? "provider_failure" : "startup_failure";
+}
+
+function requiresImmediateTermination(cause: CodexProviderStopCause): boolean {
+	return cause === "authority_revoked" || cause === "deadline_exceeded";
+}
+
+async function settle(promise: Promise<void>): Promise<PromiseSettledResult<void>> {
+	try {
+		await promise;
+		return { status: "fulfilled", value: undefined };
+	} catch (reason) {
+		return { status: "rejected", reason };
+	}
 }

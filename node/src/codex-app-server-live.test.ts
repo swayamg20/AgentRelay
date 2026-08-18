@@ -28,6 +28,7 @@ describe.runIf(process.env.AGENTRELAY_TEST_CODEX_BIN)("installed Codex app-serve
 			capsuleDirectory,
 			env: allowlistedLiveEnvironment(),
 			boundary: directCodexProcessBoundaryForTests,
+			authoritySignal: new AbortController().signal,
 		});
 		expect(await client.startThread()).toMatchObject({
 			thread: { cliVersion: SUPPORTED_CODEX_CLI_VERSION, cwd: process.cwd(), ephemeral: false },

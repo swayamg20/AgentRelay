@@ -24,6 +24,7 @@ export class CodexProviderReaper {
 	#heartbeatTimer: NodeJS.Timeout | null = null;
 	#deadlineTimer: NodeJS.Timeout | null = null;
 	#reaping: Promise<void> | null = null;
+	#finishGrace: (() => void) | null = null;
 	#failClosedTimer: NodeJS.Timeout | null = null;
 
 	run(): void {
@@ -95,33 +96,71 @@ export class CodexProviderReaper {
 	}
 
 	private reap(cause: CodexProviderStopCause): Promise<void> {
+		if (this.#reaping !== null && requiresImmediateTermination(cause)) {
+			this.signalImmediateTermination();
+		}
 		this.#reaping ??= this.performReap(cause);
 		return this.#reaping;
 	}
 
 	private async performReap(cause: CodexProviderStopCause): Promise<void> {
 		if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
-		if (this.#deadlineTimer !== null) clearTimeout(this.#deadlineTimer);
+		if (requiresImmediateTermination(cause) && this.#deadlineTimer !== null) {
+			clearTimeout(this.#deadlineTimer);
+		}
 		const init = this.#init;
 		const store = this.#store;
 		if (init === null || store === null) throw new Error("Codex provider reaper is not armed");
 
 		const stopRequested = store.requestStop(init.generation_id, cause).catch(() => undefined);
-		signalProcessGroup(init.target_process_group_id, "SIGTERM");
-		await delay(STOP_GRACE_MS);
-		if (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
-			signalProcessGroup(init.target_process_group_id, "SIGKILL");
+		if (requiresImmediateTermination(cause)) {
+			this.signalImmediateTermination();
+		} else {
+			signalProcessGroup(init.target_process_group_id, "SIGTERM");
+			if (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
+				await this.waitForGraceOrEscalation(init.target_process_group_id);
+			}
+			if (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
+				signalProcessGroup(init.target_process_group_id, "SIGKILL");
+			}
 		}
 		while (isSupervisorProcessGroupAlive(init.target_process_group_id)) {
 			await delay(GROUP_POLL_MS);
 		}
+		if (this.#deadlineTimer !== null) clearTimeout(this.#deadlineTimer);
 		await stopRequested;
+		closeSync(INHERITED_PROVIDER_LOCK_FD);
 		const finalized = await store.finalizeQuiescentAsCurrent(init.generation_id, cause);
 		if (finalized === null) {
 			throw new Error("Codex provider generation state changed before quiescence was recorded");
 		}
-		closeSync(INHERITED_PROVIDER_LOCK_FD);
 		if (process.connected) process.disconnect();
+	}
+
+	private signalImmediateTermination(): void {
+		if (this.#init === null) return;
+		signalProcessGroup(this.#init.target_process_group_id, "SIGKILL");
+		this.#finishGrace?.();
+	}
+
+	private async waitForGraceOrEscalation(processGroupId: number): Promise<void> {
+		let finish!: () => void;
+		const escalated = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		this.#finishGrace = finish;
+		const deadline = Date.now() + STOP_GRACE_MS;
+		try {
+			while (isSupervisorProcessGroupAlive(processGroupId) && Date.now() < deadline) {
+				const result = await Promise.race([
+					delay(GROUP_POLL_MS, "poll" as const),
+					escalated.then(() => "escalated" as const),
+				]);
+				if (result === "escalated") return;
+			}
+		} finally {
+			if (this.#finishGrace === finish) this.#finishGrace = null;
+		}
 	}
 
 	private failClosed(): void {
@@ -141,4 +180,8 @@ export class CodexProviderReaper {
 			);
 		});
 	}
+}
+
+function requiresImmediateTermination(cause: CodexProviderStopCause): boolean {
+	return cause === "authority_revoked" || cause === "deadline_exceeded";
 }

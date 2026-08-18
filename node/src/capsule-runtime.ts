@@ -1,5 +1,8 @@
 import type { AdapterInfo, AgentHostAdapter, HostTurnRef } from "@agentrelay/protocol";
-import type { RuntimeAuthorityEvidenceSink, RuntimeAuthorityGrant } from "./runtime-authority.js";
+import type {
+	RuntimeAuthorityEvidenceSink,
+	RuntimeWorkspaceReadAuthority,
+} from "./runtime-authority.js";
 
 /**
  * Mission-scoped runtime hosted behind the private Capsule wire.
@@ -16,12 +19,7 @@ export interface CapsuleRuntime extends AgentHostAdapter {
 }
 
 /** Installed Capsule authority under which a provider runtime may be activated. */
-export interface CapsuleRuntimeActivation {
-	readonly grant: RuntimeAuthorityGrant;
-	readonly signal: AbortSignal;
-	/** Executes a concrete workspace read through the Capsule reference monitor. */
-	performWorkspaceRead<T>(effect: () => T | Promise<T>): Promise<T>;
-}
+export type CapsuleRuntimeActivation = RuntimeWorkspaceReadAuthority;
 
 /**
  * Passive Mission-scoped state opened after exclusive socket publication.

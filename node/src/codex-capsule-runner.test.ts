@@ -374,6 +374,37 @@ describe("CodexCapsuleRunner", () => {
 		await store.close();
 	});
 
+	it("preserves teardown failure when runner construction fails", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-startup-teardown-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const client = new FakeCodexCapsuleClient(directory);
+		const guardian = new RecordingProviderGuardian(() => client);
+		const teardownFailure = new Error("provider quiescence was not proven");
+		guardian.terminationFailure = teardownFailure;
+
+		const failure = await CodexCapsuleRunner.open({
+			store,
+			cwd: "relative",
+			guardian,
+			retireGeneration: () => undefined,
+		}).catch((error: unknown) => error);
+
+		expect(failure).toBeInstanceOf(AggregateError);
+		expect((failure as AggregateError).errors).toEqual([
+			teardownFailure,
+			expect.objectContaining({
+				message: "Codex Capsule working directory must be absolute and normalized",
+			}),
+		]);
+		expect(guardian.generations[0]?.terminationReasons).toEqual(["startup_failure"]);
+		expect(client.closeCalls).toBe(1);
+		await store.close();
+	});
+
 	it("terminates one acquired generation on close without retiring it", async () => {
 		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-shutdown-"));
 		directories.push(directory);
@@ -597,6 +628,7 @@ class RecordingProviderGuardian implements CodexProviderGuardian {
 	readonly generations: RecordingProviderGeneration[] = [];
 	readonly #client: () => FakeCodexCapsuleClient;
 	failure: Error | null = null;
+	terminationFailure: Error | null = null;
 	openCalls = 0;
 
 	constructor(client: () => FakeCodexCapsuleClient) {
@@ -609,6 +641,7 @@ class RecordingProviderGuardian implements CodexProviderGuardian {
 		const generation = new RecordingProviderGeneration(
 			`generation-${this.openCalls}`,
 			this.#client(),
+			this.terminationFailure,
 		);
 		this.generations.push(generation);
 		return generation;
@@ -625,6 +658,7 @@ class RecordingProviderGeneration implements CodexProviderGeneration {
 	constructor(
 		readonly generationId: string,
 		readonly client: FakeCodexCapsuleClient,
+		readonly terminationFailure: Error | null,
 	) {
 		this.#termination = deferred<CodexProviderTermination>();
 		this.termination = this.#termination.promise;
@@ -645,6 +679,7 @@ class RecordingProviderGeneration implements CodexProviderGeneration {
 
 	private async stop(): Promise<void> {
 		await this.client.close();
+		if (this.terminationFailure !== null) throw this.terminationFailure;
 		this.finish("stopped");
 	}
 }

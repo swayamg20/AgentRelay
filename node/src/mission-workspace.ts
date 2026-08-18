@@ -39,9 +39,12 @@ export async function prepareMissionWorkspace(
 		);
 	}
 
-	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
+	const signal = dependencies.signal;
+	const runCommand = scopedWorkspaceCommandRunner(dependencies);
 	const realpath = dependencies.realpath ?? fsRealpath;
+	signal?.throwIfAborted();
 	const preflight = await preflightWorkspace(workspace, expectation, { runCommand, realpath });
+	signal?.throwIfAborted();
 	const rootIdentity = await assertOwnedDirectoryIdentity(preflight.root, "workspace root");
 	const gitDirectory = await inspectStandaloneGitDirectory(preflight.root, runCommand, realpath);
 	const gitIdentity = await assertOwnedDirectoryIdentity(gitDirectory, "workspace Git directory");
@@ -54,8 +57,8 @@ export async function prepareMissionWorkspace(
 		gitIdentity,
 		reachableFromRef: preflight.reachable_from_ref,
 	});
-	await revalidateMissionWorkspaceIsolation(prepared, { runCommand, realpath });
-	await assertMissionWorkspaceClean(prepared, { runCommand });
+	await revalidateMissionWorkspaceIsolation(prepared, { runCommand, realpath, signal });
+	await assertMissionWorkspaceClean(prepared, { runCommand, signal });
 	return prepared;
 }
 
@@ -64,12 +67,16 @@ export async function revalidateMissionWorkspaceIsolation(
 	workspace: PreparedMissionWorkspace,
 	dependencies: MissionWorkspaceDependencies = {},
 ): Promise<void> {
-	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
+	const signal = dependencies.signal;
+	const runCommand = scopedWorkspaceCommandRunner(dependencies);
 	const realpath = dependencies.realpath ?? fsRealpath;
+	signal?.throwIfAborted();
 	const rootIdentity = await assertOwnedDirectoryIdentity(workspace.root, "workspace root");
+	signal?.throwIfAborted();
 	assertSameIdentity(rootIdentity, workspace.rootIdentity, "Mission workspace root changed");
 
 	const gitDirectory = await inspectStandaloneGitDirectory(workspace.root, runCommand, realpath);
+	signal?.throwIfAborted();
 	if (gitDirectory !== workspace.gitDirectory) {
 		throw new MissionWorkspaceError(
 			"git_metadata_not_isolated",
@@ -77,6 +84,7 @@ export async function revalidateMissionWorkspaceIsolation(
 		);
 	}
 	const gitIdentity = await assertOwnedDirectoryIdentity(gitDirectory, "workspace Git directory");
+	signal?.throwIfAborted();
 	assertSameIdentity(gitIdentity, workspace.gitIdentity, "Mission workspace Git directory changed");
 
 	const repositoryUrl = await singleGitLine(runCommand, workspace.root, [
@@ -89,6 +97,7 @@ export async function revalidateMissionWorkspaceIsolation(
 		"--verify",
 		"HEAD^{commit}",
 	]);
+	signal?.throwIfAborted();
 	if (repositoryUrl !== workspace.repositoryUrl || baseCommit !== workspace.baseCommit) {
 		throw new MissionWorkspaceError(
 			"workspace_identity_changed",
@@ -99,14 +108,18 @@ export async function revalidateMissionWorkspaceIsolation(
 		root: workspace.root,
 		gitDirectory: workspace.gitDirectory,
 		rootDevice: workspace.rootIdentity.device,
+		signal,
 	});
+	signal?.throwIfAborted();
 }
 
 export async function assertMissionWorkspaceClean(
 	workspace: PreparedMissionWorkspace,
-	dependencies: Pick<MissionWorkspaceDependencies, "runCommand"> = {},
+	dependencies: Pick<MissionWorkspaceDependencies, "runCommand" | "signal"> = {},
 ): Promise<void> {
-	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
+	const signal = dependencies.signal;
+	const runCommand = scopedWorkspaceCommandRunner(dependencies);
+	signal?.throwIfAborted();
 	const statusArgv = ["status", "--porcelain=v1", "--untracked-files=all"] as const;
 	const status = await runCommand({
 		file: "git",
@@ -114,6 +127,7 @@ export async function assertMissionWorkspaceClean(
 		cwd: workspace.root,
 		shell: false,
 	});
+	signal?.throwIfAborted();
 	assertGitSuccess(status.exitCode, statusArgv, "Git cleanliness inspection failed");
 	if (status.stdout.length > 0) {
 		throw new MissionWorkspaceError(
@@ -129,6 +143,7 @@ export async function assertMissionWorkspaceClean(
 		cwd: workspace.root,
 		shell: false,
 	});
+	signal?.throwIfAborted();
 	assertGitSuccess(ignored.exitCode, ignoredArgv, "Git ignored-file inspection failed");
 	if (ignored.stdout.length > 0) {
 		throw new MissionWorkspaceError(
@@ -218,4 +233,11 @@ function assertSameIdentity(
 	if (actual.device !== expected.device || actual.inode !== expected.inode) {
 		throw new MissionWorkspaceError("workspace_identity_changed", message);
 	}
+}
+
+function scopedWorkspaceCommandRunner(
+	dependencies: Pick<MissionWorkspaceDependencies, "runCommand" | "signal">,
+): WorkspaceCommandRunner {
+	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
+	return (command) => runCommand(command, dependencies.signal);
 }

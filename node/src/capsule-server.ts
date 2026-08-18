@@ -316,7 +316,14 @@ export class PersistentCapsuleServer {
 			assertActivationLive(authority.signal);
 			return runtime;
 		} catch (error) {
-			await this.#controller.close().catch(() => undefined);
+			try {
+				await this.#controller.close();
+			} catch (teardownError) {
+				throw new AggregateError(
+					[teardownError, error],
+					"Capsule runtime activation teardown could not be proven",
+				);
+			}
 			throw error;
 		}
 	}

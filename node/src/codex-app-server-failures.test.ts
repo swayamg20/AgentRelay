@@ -78,6 +78,7 @@ async function openClient(
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,
+		authoritySignal: new AbortController().signal,
 		requestTimeoutMs,
 	});
 	clients.push(client);

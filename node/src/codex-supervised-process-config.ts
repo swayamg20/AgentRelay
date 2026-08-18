@@ -50,16 +50,25 @@ export async function prepareProviderCommands(options: CodexAppServerProcessOpti
 	readonly versionProbe: CodexPreparedProcess;
 	readonly appServer: CodexPreparedProcess;
 }> {
+	options.authoritySignal.throwIfAborted();
 	const base = {
 		executable: options.command.executable,
 		cwd: options.cwd,
 		env: options.env,
 	};
-	const versionProbe = await options.boundary.prepare({ ...base, argv: ["--version"] });
-	const appServer = await options.boundary.prepare({
-		...base,
-		argv: buildCodexAppServerArguments(),
-	});
+	const versionProbe = await options.boundary.prepare(
+		{ ...base, argv: ["--version"] },
+		options.authoritySignal,
+	);
+	options.authoritySignal.throwIfAborted();
+	const appServer = await options.boundary.prepare(
+		{
+			...base,
+			argv: buildCodexAppServerArguments(),
+		},
+		options.authoritySignal,
+	);
+	options.authoritySignal.throwIfAborted();
 	return { versionProbe: preparedProcess(versionProbe), appServer: preparedProcess(appServer) };
 }
 

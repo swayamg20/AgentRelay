@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { link, mkdir, open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 
 export interface DurableJsonWriteOptions {
@@ -66,6 +66,71 @@ export async function writeDurableText(
 	}
 }
 
+/**
+ * Publishes one complete JSON file without replacing an existing path.
+ * A same-directory hard link makes the final name visible only after the staged
+ * file has been flushed, so process death cannot expose partial JSON there.
+ */
+export async function publishDurableJsonExclusive(
+	path: string,
+	value: unknown,
+	options: DurableJsonWriteOptions = {},
+): Promise<"created" | "exists"> {
+	const serialized = JSON.stringify(value, null, 2);
+	if (serialized === undefined) {
+		throw new TypeError("Durable JSON value is not serializable");
+	}
+	return publishDurableTextExclusive(path, `${serialized}\n`, options);
+}
+
+/** Publishes one complete text file without replacing an existing path. */
+export async function publishDurableTextExclusive(
+	path: string,
+	serialized: string,
+	options: DurableJsonWriteOptions = {},
+): Promise<"created" | "exists"> {
+	const directory = dirname(path);
+	const fileMode = options.fileMode ?? 0o600;
+	const directoryMode = options.directoryMode ?? 0o700;
+	const firstCreatedDirectory = await mkdir(directory, { recursive: true, mode: directoryMode });
+	if (firstCreatedDirectory !== undefined) {
+		await syncCreatedDirectoryEntries(firstCreatedDirectory, directory);
+	}
+
+	const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+	let temporaryExists = false;
+	try {
+		const handle = await open(
+			temporaryPath,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+			fileMode,
+		);
+		temporaryExists = true;
+		try {
+			await handle.chmod(fileMode);
+			await handle.writeFile(serialized, "utf8");
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+
+		try {
+			await link(temporaryPath, path);
+			return "created";
+		} catch (error) {
+			if (errorCode(error) === "EEXIST") return "exists";
+			throw error;
+		}
+	} finally {
+		if (temporaryExists) {
+			await unlink(temporaryPath).catch((error: unknown) => {
+				if (errorCode(error) !== "ENOENT") throw error;
+			});
+			await syncDirectory(directory);
+		}
+	}
+}
+
 /** Creates one durable file without ever replacing an existing authorization record. */
 export async function writeDurableTextExclusive(
 	path: string,
@@ -127,4 +192,10 @@ export async function syncDirectory(directory: string): Promise<void> {
 	} finally {
 		await handle.close();
 	}
+}
+
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error
+		? String(error.code)
+		: undefined;
 }

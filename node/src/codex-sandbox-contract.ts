@@ -11,6 +11,14 @@ export const CODEX_SANDBOX_MANIFEST_FILE = "containment.json";
 export type ContainmentOpenMode = "create" | "recover";
 export type CodexWorkspaceAccess = "read" | "write";
 
+/** The owner could not prove that a containment child process group is gone. */
+export class CodexContainmentTerminationError extends Error {
+	constructor(options: ErrorOptions = {}) {
+		super("Codex containment process group termination could not be proven", options);
+		this.name = "CodexContainmentTerminationError";
+	}
+}
+
 export interface PinnedExecutable {
 	readonly executable: string;
 	readonly readRoot: string;

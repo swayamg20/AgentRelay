@@ -40,8 +40,10 @@ export async function assertMissionWorkspaceStorageIsolated(input: {
 	readonly root: string;
 	readonly gitDirectory: string;
 	readonly rootDevice: string;
+	readonly signal?: AbortSignal;
 }): Promise<void> {
-	const { root, gitDirectory, rootDevice } = input;
+	const { root, gitDirectory, rootDevice, signal } = input;
+	signal?.throwIfAborted();
 	const currentUid = process.getuid?.();
 	if (currentUid === undefined) {
 		throw new MissionWorkspaceError(
@@ -51,17 +53,22 @@ export async function assertMissionWorkspaceStorageIsolated(input: {
 	}
 	const ownerUid = BigInt(currentUid);
 	await rejectAlternates(gitDirectory);
+	signal?.throwIfAborted();
 	await rejectNestedLinuxMounts(root);
+	signal?.throwIfAborted();
 	const pending = [{ directory: root, gitMetadata: false }];
 	while (pending.length > 0) {
+		signal?.throwIfAborted();
 		const current = pending.pop();
 		if (current === undefined) break;
 		const entries = await opendir(current.directory);
 		for await (const entry of entries) {
+			signal?.throwIfAborted();
 			const path = join(current.directory, entry.name);
 			const gitMetadata =
 				current.gitMetadata || (current.directory === root && entry.name === ".git");
 			const stats = await lstat(path, { bigint: true });
+			signal?.throwIfAborted();
 			if (stats.dev.toString() !== rootDevice) {
 				throw new MissionWorkspaceError(
 					"workspace_mounts_unsupported",

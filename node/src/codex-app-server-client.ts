@@ -45,6 +45,7 @@ export interface CodexAppServerClientOptions {
 	readonly capsuleDirectory: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly boundary: CodexProcessBoundary;
+	readonly authoritySignal: AbortSignal;
 	readonly requestTimeoutMs?: number;
 	readonly processFactory?: CodexAppServerProcessFactory;
 }
@@ -58,14 +59,20 @@ export interface CodexAppServerClientEvent {
 export class CodexAppServerClient {
 	readonly #transport: CodexAppServerTransport;
 	readonly #codexHome: string;
+	readonly #authoritySignal: AbortSignal;
 	#identity: CodexInitializeResponse | null = null;
-	#failure: CodexAppServerError | null = null;
+	#failure: Error | null = null;
 	#closed = false;
 	#eventsClaimed = false;
 
-	private constructor(transport: CodexAppServerTransport, codexHome: string) {
+	private constructor(
+		transport: CodexAppServerTransport,
+		codexHome: string,
+		authoritySignal: AbortSignal,
+	) {
 		this.#transport = transport;
 		this.#codexHome = codexHome;
+		this.#authoritySignal = authoritySignal;
 	}
 
 	static async start(options: CodexAppServerClientOptions): Promise<CodexAppServerClient> {
@@ -85,16 +92,17 @@ export class CodexAppServerClient {
 			cwd: options.cwd,
 			env,
 			boundary: options.boundary,
+			authoritySignal: options.authoritySignal,
 			requestTimeoutMs: options.requestTimeoutMs,
 			processFactory: options.processFactory,
 			handleServerRequest: denyCodexServerRequest,
 		});
-		const client = new CodexAppServerClient(transport, codexHome);
+		const client = new CodexAppServerClient(transport, codexHome, options.authoritySignal);
 		try {
 			await client.initialize();
 			return client;
 		} catch (error) {
-			await client.close().catch(() => undefined);
+			await client.close();
 			throw error;
 		}
 	}
@@ -198,6 +206,11 @@ export class CodexAppServerClient {
 
 	async *events(): AsyncIterable<CodexAppServerClientEvent> {
 		this.assertUsable();
+		try {
+			await this.#transport.revalidateAuthority();
+		} catch (error) {
+			throw await this.resolveAuthorityFailure(error);
+		}
 		if (this.#eventsClaimed) {
 			throw new CodexAppServerError("policy", "Codex event stream already has a consumer");
 		}
@@ -205,17 +218,20 @@ export class CodexAppServerClient {
 		try {
 			for await (const event of this.#transport.events()) {
 				if (!isCodexRelevantNotificationMethod(event.method)) continue;
+				const notification = parseCodexProviderResult(
+					codexRelevantNotificationSchema,
+					{ method: event.method, params: event.params },
+					`notification ${event.method}`,
+				);
+				await this.#transport.revalidateAuthority();
 				yield {
 					kind: "notification",
-					notification: parseCodexProviderResult(
-						codexRelevantNotificationSchema,
-						{ method: event.method, params: event.params },
-						`notification ${event.method}`,
-					),
+					notification,
 				};
 			}
+			await this.#transport.revalidateAuthority();
 		} catch (error) {
-			throw await this.poison(error);
+			throw await this.resolveOperationFailure(error);
 		}
 	}
 
@@ -252,14 +268,41 @@ export class CodexAppServerClient {
 	private async runProviderCall<T>(operation: () => Promise<T>): Promise<T> {
 		this.assertUsable();
 		try {
-			return await operation();
+			await this.#transport.revalidateAuthority();
 		} catch (error) {
-			if (error instanceof CodexAppServerError && error.reason === "provider") throw error;
-			throw await this.poison(error);
+			throw await this.resolveAuthorityFailure(error);
 		}
+		let result: T;
+		try {
+			result = await operation();
+		} catch (error) {
+			throw await this.resolveOperationFailure(error);
+		}
+		try {
+			await this.#transport.revalidateAuthority();
+		} catch (error) {
+			throw await this.resolveAuthorityFailure(error);
+		}
+		return result;
 	}
 
-	private async poison(error: unknown): Promise<CodexAppServerError> {
+	private async resolveOperationFailure(error: unknown): Promise<unknown> {
+		if (this.#authoritySignal.aborted) {
+			try {
+				await this.#transport.revalidateAuthority();
+			} catch (authorityFailure) {
+				return this.resolveAuthorityFailure(authorityFailure);
+			}
+		}
+		if (error instanceof CodexAppServerError && error.reason === "provider") return error;
+		return this.poison(error);
+	}
+
+	private resolveAuthorityFailure(error: unknown): unknown | Promise<unknown> {
+		return this.isAuthorityReason(error) ? error : this.poison(error);
+	}
+
+	private async poison(error: unknown): Promise<unknown> {
 		const failure =
 			error instanceof CodexAppServerError
 				? error
@@ -267,12 +310,26 @@ export class CodexAppServerClient {
 						cause: error,
 					});
 		this.#failure ??= failure;
-		await this.#transport.close().catch(() => undefined);
+		try {
+			await this.#transport.close();
+		} catch (cleanupFailure) {
+			if (this.isAuthorityReason(cleanupFailure)) return cleanupFailure;
+			this.#failure =
+				cleanupFailure instanceof Error
+					? cleanupFailure
+					: new CodexAppServerError("transport", "Codex app-server cleanup could not be proven", {
+							cause: cleanupFailure,
+						});
+		}
 		return this.#failure;
 	}
 
 	private assertUsable(): void {
 		if (this.#failure !== null) throw this.#failure;
 		if (this.#closed) throw new CodexAppServerError("closed", "Codex app-server client is closed");
+	}
+
+	private isAuthorityReason(error: unknown): boolean {
+		return this.#authoritySignal.aborted && error === this.#authoritySignal.reason;
 	}
 }

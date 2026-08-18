@@ -22,6 +22,7 @@ import {
 import { recoverCodexSandboxContainment } from "./codex-sandbox-containment.js";
 import {
 	CODEX_SANDBOX_MANIFEST_FILE,
+	CodexContainmentTerminationError,
 	type CodexSandboxContainment,
 	type CodexSandboxRecoveryExpectation,
 } from "./codex-sandbox-contract.js";
@@ -35,6 +36,7 @@ import { workspaceResourceSha256 } from "./workspace-resource.js";
 
 type RecoverContainment = (
 	expectation: CodexSandboxRecoveryExpectation,
+	signal: AbortSignal,
 ) => Promise<CodexSandboxContainment>;
 type CreateGuardian = (options: CodexProviderGuardianOptions) => CodexProviderGuardian;
 type OpenRunner = (options: CodexCapsuleRunnerOptions) => Promise<CapsuleRuntime>;
@@ -121,7 +123,17 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 		try {
 			const guardedRuntime = await authority.performWorkspaceRead(async () => {
 				this.assertAvailable(authority.signal);
-				const containment = await this.#recoverContainment(this.#descriptor.runtime.containment);
+				let containment: CodexSandboxContainment;
+				try {
+					containment = await this.#recoverContainment(
+						this.#descriptor.runtime.containment,
+						authority.signal,
+					);
+				} catch (error) {
+					if (error instanceof CodexContainmentTerminationError) throw error;
+					this.assertAvailable(authority.signal);
+					throw error;
+				}
 				this.assertAvailable(authority.signal);
 				assertRecoveredContainment(this.#directory, this.#descriptor, grant, containment);
 

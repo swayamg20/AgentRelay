@@ -14,5 +14,5 @@ export interface PreparedCodexProcess {
 
 /** A required, external process boundary for both the version probe and app-server. */
 export interface CodexProcessBoundary {
-	prepare(request: CodexProcessRequest): Promise<PreparedCodexProcess>;
+	prepare(request: CodexProcessRequest, signal: AbortSignal): Promise<PreparedCodexProcess>;
 }

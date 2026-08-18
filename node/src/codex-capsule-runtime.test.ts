@@ -20,7 +20,10 @@ import type { CapsuleRuntime } from "./capsule-runtime.js";
 import type { CodexCapsuleRunnerOptions } from "./codex-capsule-runner-contract.js";
 import { CodexCapsuleRuntimeController } from "./codex-capsule-runtime.js";
 import type { CodexProviderGuardianOptions } from "./codex-provider-guardian.js";
-import type { CodexSandboxContainment } from "./codex-sandbox-contract.js";
+import {
+	CodexContainmentTerminationError,
+	type CodexSandboxContainment,
+} from "./codex-sandbox-contract.js";
 import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
 import { RUNTIME_CONTAINMENT_BACKEND } from "./runtime-containment-manifest.js";
@@ -71,6 +74,7 @@ describe("CodexCapsuleRuntimeController", () => {
 
 		expect(firstRuntime).toBe(secondRuntime);
 		expect(fixture.recoveryCalls).toBe(1);
+		expect(fixture.recoverySignals).toEqual([activationSignals[0]]);
 		expect(fixture.guardianOptions).toHaveLength(1);
 		expect(fixture.runnerOptions).toHaveLength(1);
 		const guardian = fixture.guardianOptions[0]!;
@@ -229,6 +233,26 @@ describe("CodexCapsuleRuntimeController", () => {
 		await fixture.controller.close();
 	});
 
+	it("does not mask an unproven recovery teardown as an authority denial", async () => {
+		const terminationFailure = new CodexContainmentTerminationError();
+		let revoke = () => undefined;
+		const fixture = await createFixture({
+			recoveryFailure: terminationFailure,
+			beforeRecoveryFailure: () => revoke(),
+		});
+		const authority = installedAuthority(fixture.grant);
+		revoke = () => authority.dispose();
+
+		await expect(
+			authority.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			),
+		).rejects.toBe(terminationFailure);
+		expect(fixture.guardianOptions).toHaveLength(0);
+
+		await fixture.controller.close();
+	});
+
 	it("fences an in-flight recovery when the controller closes", async () => {
 		const recoveryGate = deferred<void>();
 		const fixture = await createFixture({ recoveryGate });
@@ -274,6 +298,8 @@ interface FixtureOptions {
 	readonly containmentPolicySha256?: string;
 	readonly containmentMismatch?: "runtime_version" | "control_directory" | "workspace_access";
 	readonly grantOverrides?: Parameters<typeof authorityGrant>[0];
+	readonly beforeRecoveryFailure?: () => void;
+	readonly recoveryFailure?: Error;
 	readonly recoveryGate?: Deferred<void>;
 	readonly runnerGate?: Deferred<void>;
 }
@@ -313,6 +339,7 @@ async function createFixture(options: FixtureOptions = {}) {
 	const runtime = new RecordingRuntime();
 	const recoveryStarted = deferred<void>();
 	const runnerStarted = deferred<void>();
+	const recoverySignals: AbortSignal[] = [];
 	let recoveryCalls = 0;
 	const controller = await CodexCapsuleRuntimeController.open({
 		directory,
@@ -324,11 +351,14 @@ async function createFixture(options: FixtureOptions = {}) {
 				OPENAI_API_KEY: "must-not-cross",
 				AGENTRELAY_NODE_TOKEN: "must-not-cross",
 			},
-			recoverContainment: async (expectation) => {
+			recoverContainment: async (expectation, signal) => {
 				recoveryCalls += 1;
+				recoverySignals.push(signal);
 				recoveryStarted.resolve();
 				expect(expectation).toEqual(descriptor.runtime.containment);
-				await options.recoveryGate?.promise;
+				await waitForGateOrAbort(options.recoveryGate?.promise ?? null, signal);
+				options.beforeRecoveryFailure?.();
+				if (options.recoveryFailure !== undefined) throw options.recoveryFailure;
 				return containment;
 			},
 			createGuardian: (guardian) => {
@@ -352,6 +382,7 @@ async function createFixture(options: FixtureOptions = {}) {
 		runnerOptions,
 		runtime,
 		recoveryStarted,
+		recoverySignals,
 		runnerStarted,
 		get recoveryCalls() {
 			return recoveryCalls;
@@ -522,6 +553,24 @@ function deferred<T = void>(): Deferred<T> {
 		resolve = done;
 	});
 	return { promise, resolve };
+}
+
+async function waitForGateOrAbort(gate: Promise<void> | null, signal: AbortSignal): Promise<void> {
+	signal.throwIfAborted();
+	if (gate === null) return;
+	let rejectAborted!: (reason?: unknown) => void;
+	const aborted = new Promise<never>((_resolve, reject) => {
+		rejectAborted = reject;
+	});
+	const onAbort = () => rejectAborted(signal.reason);
+	signal.addEventListener("abort", onAbort, { once: true });
+	try {
+		if (signal.aborted) onAbort();
+		await Promise.race([gate, aborted]);
+		signal.throwIfAborted();
+	} finally {
+		signal.removeEventListener("abort", onAbort);
+	}
 }
 
 async function temporaryDirectory(): Promise<string> {

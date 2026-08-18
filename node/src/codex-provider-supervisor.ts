@@ -10,7 +10,10 @@ import type {
 	CodexProviderStopCause,
 } from "./codex-provider-generation-state.js";
 import { assertInheritedProviderLock } from "./codex-provider-lock.js";
-import { CodexProviderReaperClient } from "./codex-provider-reaper-client.js";
+import {
+	CodexProviderReaperClient,
+	CodexProviderReaperTeardownError,
+} from "./codex-provider-reaper-client.js";
 import {
 	CodexSupervisorProcessError,
 	assertSupervisorProcessGroup,
@@ -157,12 +160,7 @@ export class CodexProviderSupervisor {
 			});
 			this.#readyPublished = true;
 		} catch (error) {
-			const code =
-				error instanceof CodexSupervisorProcessError
-					? error.code
-					: this.#reaper === null
-						? "invalid_startup"
-						: "state";
+			const code = startupFailureCode(error, this.#reaper !== null);
 			await this.fail(code, "startup_failure", "crashed");
 		}
 	}
@@ -186,7 +184,7 @@ export class CodexProviderSupervisor {
 	}
 
 	private armDeadlineTimer(): void {
-		if (this.#deadlineAtMs === null || this.#stopping !== null) return;
+		if (this.#deadlineAtMs === null) return;
 		const remainingMs = this.#deadlineAtMs - Date.now();
 		if (remainingMs <= 0) {
 			void this.stop("deadline_exceeded", "unresponsive");
@@ -251,7 +249,13 @@ export class CodexProviderSupervisor {
 		observation: CodexProviderObservation,
 	): Promise<never> {
 		this.#stopCause ??= cause;
-		this.#stopping ??= this.performStop(this.#stopCause, observation);
+		if (this.#stopping !== null) {
+			if (requiresImmediateTermination(cause)) {
+				void this.#reaper?.escalate(cause).catch(() => undefined);
+			}
+			return this.#stopping;
+		}
+		this.#stopping = this.performStop(this.#stopCause, observation);
 		return this.#stopping;
 	}
 
@@ -260,7 +264,9 @@ export class CodexProviderSupervisor {
 		observation: CodexProviderObservation,
 	): Promise<never> {
 		if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
-		if (this.#deadlineTimer !== null) clearTimeout(this.#deadlineTimer);
+		if (requiresImmediateTermination(cause) && this.#deadlineTimer !== null) {
+			clearTimeout(this.#deadlineTimer);
+		}
 		const generationId = this.#generationId;
 		const reaper = this.#reaper;
 		if (generationId === null || reaper === null) process.exit(1);
@@ -284,4 +290,17 @@ export class CodexProviderSupervisor {
 			process.send(event, (error) => (error === null ? resolve() : reject(error)));
 		});
 	}
+}
+
+function requiresImmediateTermination(cause: CodexProviderStopCause): boolean {
+	return cause === "authority_revoked" || cause === "deadline_exceeded";
+}
+
+function startupFailureCode(
+	error: unknown,
+	reaperArmed: boolean,
+): Extract<CodexProviderSupervisorEvent, { kind: "failure" }>["code"] {
+	if (error instanceof CodexSupervisorProcessError) return error.code;
+	if (error instanceof CodexProviderReaperTeardownError) return "state";
+	return reaperArmed ? "state" : "invalid_startup";
 }

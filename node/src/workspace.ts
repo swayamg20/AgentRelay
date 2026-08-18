@@ -65,11 +65,15 @@ export interface WorkspaceCommandResult {
 	readonly stderr: string;
 }
 
-export type WorkspaceCommandRunner = (command: WorkspaceCommand) => Promise<WorkspaceCommandResult>;
+export type WorkspaceCommandRunner = (
+	command: WorkspaceCommand,
+	signal?: AbortSignal,
+) => Promise<WorkspaceCommandResult>;
 
 export interface WorkspacePreflightDependencies {
 	readonly runCommand?: WorkspaceCommandRunner;
 	readonly realpath?: (path: string) => Promise<string>;
+	readonly signal?: AbortSignal;
 }
 
 export interface WorkspacePreflightResult {
@@ -112,7 +116,10 @@ export async function preflightWorkspace(
 
 	const runCommand = dependencies.runCommand ?? defaultWorkspaceCommandRunner;
 	const runGit = (argv: readonly string[]) =>
-		runCommand({ file: "git", argv: [...argv], cwd: canonicalRoot, shell: false });
+		runCommand(
+			{ file: "git", argv: [...argv], cwd: canonicalRoot, shell: false },
+			dependencies.signal,
+		);
 	await assertNoExecutableGitFilters(runGit);
 	await assertNoGitlinks(runGit);
 
@@ -222,10 +229,11 @@ async function assertNoGitlinks(
 	}
 }
 
-export const defaultWorkspaceCommandRunner: WorkspaceCommandRunner = async (command) => {
+export const defaultWorkspaceCommandRunner: WorkspaceCommandRunner = async (command, signal) => {
 	if (command.file !== "git" || command.shell !== false) {
 		throw new Error("Workspace command runner accepts only git with shell:false");
 	}
+	signal?.throwIfAborted();
 
 	return new Promise((resolveResult, reject) => {
 		execFile(
@@ -238,9 +246,14 @@ export const defaultWorkspaceCommandRunner: WorkspaceCommandRunner = async (comm
 				maxBuffer: GIT_OUTPUT_LIMIT_BYTES,
 				timeout: GIT_COMMAND_TIMEOUT_MS,
 				killSignal: "SIGKILL",
+				...(signal === undefined ? {} : { signal }),
 				env: gitEnvironment(process.env),
 			},
 			(error, stdout, stderr) => {
+				if (signal?.aborted === true) {
+					reject(signal.reason);
+					return;
+				}
 				const exitCode = error === null ? 0 : error.code;
 				if (typeof exitCode !== "number") {
 					const timedOut = error?.killed === true;

@@ -17,12 +17,14 @@ import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_QUEUED_EVENTS = 1_024;
 const MAX_QUEUED_EVENT_BYTES = 32 * 1_048_576;
+const NO_FAILURE = Symbol("no Codex transport failure");
 
 export interface CodexAppServerTransportOptions {
 	readonly command: CodexAppServerCommand;
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly boundary: CodexProcessBoundary;
+	readonly authoritySignal: AbortSignal;
 	readonly requestTimeoutMs?: number;
 	readonly handleServerRequest: (request: CodexServerRequest) => CodexServerRequestDecision;
 	readonly processFactory?: CodexAppServerProcessFactory;
@@ -52,7 +54,7 @@ export interface CodexAppServerEvent {
 interface PendingRequest {
 	readonly method: string;
 	readonly resolve: (value: unknown) => void;
-	readonly reject: (error: Error) => void;
+	readonly reject: (reason?: unknown) => void;
 	readonly timeout: NodeJS.Timeout;
 }
 
@@ -71,6 +73,7 @@ export class CodexAppServerResponseError extends CodexAppServerError {
 /** Correlated, bounded JSONL transport for one version-pinned app-server process. */
 export class CodexAppServerTransport {
 	readonly #process: CodexAppServerProcess;
+	readonly #authoritySignal: AbortSignal;
 	readonly #requestTimeoutMs: number;
 	readonly #handleServerRequest: CodexAppServerTransportOptions["handleServerRequest"];
 	readonly #events = new BoundedAsyncQueue<CodexAppServerEvent>(
@@ -81,33 +84,40 @@ export class CodexAppServerTransport {
 	readonly #pending = new Map<number, PendingRequest>();
 	#nextRequestId = 0;
 	#writeTail: Promise<void> = Promise.resolve();
-	#failure: Error | null = null;
+	#failure: unknown = NO_FAILURE;
+	#terminalCause: unknown = NO_FAILURE;
+	#terminal: Promise<void> | null = null;
+	#closePromise: Promise<void> | null = null;
 	#closing = false;
 
 	private constructor(
 		processRef: CodexAppServerProcess,
+		authoritySignal: AbortSignal,
 		requestTimeoutMs: number,
 		handleServerRequest: CodexAppServerTransportOptions["handleServerRequest"],
 	) {
 		this.#process = processRef;
+		this.#authoritySignal = authoritySignal;
 		this.#requestTimeoutMs = requestTimeoutMs;
 		this.#handleServerRequest = handleServerRequest;
 		void this.readLoop();
 		void processRef.inputError.then((error) => {
-			if (!this.#closing && this.#failure === null) {
-				this.fail(
-					new CodexAppServerError("transport", "Cannot write to Codex app-server", {
-						cause: error,
-					}),
-				);
-			}
+			this.fail(
+				new CodexAppServerError("transport", "Cannot write to Codex app-server", {
+					cause: error,
+				}),
+			);
 		});
-		void processRef.exited.then(() => {
-			if (!this.#closing && this.#failure === null) {
-				void stopCodexAppServerProcess(processRef, "failure").catch((error) =>
-					this.fail(error instanceof Error ? error : new Error(String(error))),
-				);
-			}
+		void processRef.authorityTermination?.catch((error: unknown) => {
+			this.fail(error);
+		});
+		void processRef.exited.then(({ code, signal }) => {
+			this.fail(
+				new CodexAppServerError(
+					"transport",
+					`Codex app-server exited unexpectedly (code=${code}, signal=${signal})`,
+				),
+			);
 		});
 	}
 
@@ -119,7 +129,12 @@ export class CodexAppServerTransport {
 			.max(120_000)
 			.parse(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
 		const processRef = await (options.processFactory ?? startCodexAppServerProcess)(options);
-		return new CodexAppServerTransport(processRef, requestTimeoutMs, options.handleServerRequest);
+		return new CodexAppServerTransport(
+			processRef,
+			options.authoritySignal,
+			requestTimeoutMs,
+			options.handleServerRequest,
+		);
 	}
 
 	get cwd(): string {
@@ -132,23 +147,15 @@ export class CodexAppServerTransport {
 		this.#nextRequestId += 1;
 		const response = new Promise<unknown>((resolve, reject) => {
 			const timeout = setTimeout(() => {
-				this.#pending.delete(id);
 				const error = new CodexAppServerError(
 					"transport",
 					`Timed out waiting for Codex app-server method ${method}`,
 				);
-				reject(error);
 				this.fail(error, "unresponsive");
 			}, this.#requestTimeoutMs);
 			this.#pending.set(id, { method, resolve, reject, timeout });
 		});
-		void this.send({ method, id, params }).catch((error) => {
-			const pending = this.#pending.get(id);
-			if (pending === undefined) return;
-			clearTimeout(pending.timeout);
-			this.#pending.delete(id);
-			pending.reject(error instanceof Error ? error : new Error(String(error)));
-		});
+		void this.send({ method, id, params }).catch(() => undefined);
 		return response;
 	}
 
@@ -160,15 +167,18 @@ export class CodexAppServerTransport {
 		return this.#events;
 	}
 
-	async close(): Promise<void> {
-		if (this.#closing) {
-			await stopCodexAppServerProcess(this.#process);
-			return;
+	close(): Promise<void> {
+		if (this.#terminal !== null) return this.#terminal;
+		this.#closePromise ??= this.performClose();
+		return this.#closePromise;
+	}
+
+	async revalidateAuthority(): Promise<void> {
+		if (!this.#authoritySignal.aborted) return;
+		if (this.#process.authorityTermination !== undefined) {
+			await this.#process.authorityTermination;
 		}
-		this.#closing = true;
-		this.rejectPending(new CodexAppServerError("closed", "Codex app-server transport closed"));
-		this.#events.close();
-		await stopCodexAppServerProcess(this.#process);
+		this.#authoritySignal.throwIfAborted();
 	}
 
 	private async send(message: unknown): Promise<void> {
@@ -194,7 +204,7 @@ export class CodexAppServerTransport {
 					Buffer.byteLength(line, "utf8"),
 				);
 			}
-			if (!this.#closing && this.#failure === null) {
+			if (!this.#closing && this.#failure === NO_FAILURE) {
 				const { exitCode: code, signalCode: signal } = this.#process.child;
 				throw new CodexAppServerError(
 					"transport",
@@ -267,15 +277,16 @@ export class CodexAppServerTransport {
 		);
 	}
 
-	private fail(error: Error, stopReason: "failure" | "unresponsive" = "failure"): void {
-		if (this.#failure !== null) return;
-		this.#failure = error;
-		this.rejectPending(error);
-		this.#events.close(error);
-		void stopCodexAppServerProcess(this.#process, stopReason).catch(() => undefined);
+	private fail(error: unknown, stopReason: "failure" | "unresponsive" = "failure"): void {
+		if (this.#closing || this.#failure !== NO_FAILURE || this.#terminal !== null) {
+			return;
+		}
+		this.#terminalCause = error;
+		this.#terminal = this.settleTerminalFailure(error, stopReason);
+		void this.#terminal.catch(() => undefined);
 	}
 
-	private rejectPending(error: Error): void {
+	private rejectPending(error: unknown): void {
 		for (const pending of this.#pending.values()) {
 			clearTimeout(pending.timeout);
 			pending.reject(error);
@@ -284,7 +295,59 @@ export class CodexAppServerTransport {
 	}
 
 	private assertOpen(): void {
-		if (this.#failure !== null) throw this.#failure;
+		if (this.#failure !== NO_FAILURE) throw this.#failure;
+		if (this.#terminalCause !== NO_FAILURE) throw this.#terminalCause;
 		if (this.#closing) throw new CodexAppServerError("closed", "Codex transport is closed");
 	}
+
+	private async settleTerminalFailure(
+		functionalError: unknown,
+		stopReason: "failure" | "unresponsive",
+	): Promise<void> {
+		let failure = functionalError;
+		let teardownFailure: unknown = NO_FAILURE;
+		try {
+			await stopCodexAppServerProcess(this.#process, stopReason);
+		} catch (error) {
+			teardownFailure = error;
+			failure = error;
+		}
+		if (
+			teardownFailure === NO_FAILURE &&
+			this.#authoritySignal.aborted &&
+			this.#process.authorityTermination !== undefined
+		) {
+			try {
+				await this.#process.authorityTermination;
+				failure = this.#authoritySignal.reason;
+			} catch (authorityFailure) {
+				failure = authorityFailure;
+				if (authorityFailure !== this.#authoritySignal.reason) {
+					teardownFailure = authorityFailure;
+				}
+			}
+		}
+		this.commitFailure(failure);
+		if (teardownFailure !== NO_FAILURE) throw teardownFailure;
+	}
+
+	private commitFailure(failure: unknown): void {
+		this.#failure = failure;
+		this.rejectPending(failure);
+		this.#events.close(errorForEventQueue(failure));
+	}
+
+	private async performClose(): Promise<void> {
+		this.#closing = true;
+		this.rejectPending(new CodexAppServerError("closed", "Codex app-server transport closed"));
+		this.#events.close();
+		await stopCodexAppServerProcess(this.#process);
+		await this.revalidateAuthority();
+	}
+}
+
+function errorForEventQueue(error: unknown): Error {
+	return error instanceof Error
+		? error
+		: new CodexAppServerError("transport", "Codex authority was revoked", { cause: error });
 }

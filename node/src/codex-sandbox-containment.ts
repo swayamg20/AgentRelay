@@ -52,17 +52,21 @@ export type {
 
 export async function prepareCodexSandboxContainment(
 	input: CodexSandboxContainmentInput,
+	signal: AbortSignal,
 ): Promise<CodexSandboxContainment> {
 	return prepareContainment(
 		{ ...input, workspaceAccess: input.workspaceAccess ?? "write" },
 		"create",
+		signal,
 	);
 }
 
 /** Reopens a retained binding only when the Node journal names the same instance and digest. */
 export async function recoverCodexSandboxContainment(
 	expectation: CodexSandboxRecoveryExpectation,
+	signal: AbortSignal,
 ): Promise<CodexSandboxContainment> {
+	signal.throwIfAborted();
 	assertSupportedLinuxContainment();
 	const { manifestPath } = expectation;
 	assertAbsoluteNormalizedPath(manifestPath, "containment manifest");
@@ -86,7 +90,7 @@ export async function recoverCodexSandboxContainment(
 		throw new Error("Containment manifest is outside its bound control directory");
 	}
 	const workspace = workspaceFromBinding(binding);
-	await revalidateMissionWorkspaceIsolation(workspace);
+	await revalidateMissionWorkspaceIsolation(workspace, { signal });
 	const ownerHome = await realpath(homedir());
 	const deniedRoots = binding.denied_roots.map((root) => root.path);
 	if (!deniedRoots.includes(ownerHome) || !deniedRoots.includes(controlDirectory)) {
@@ -119,6 +123,7 @@ export async function recoverCodexSandboxContainment(
 			policyGrantSha256: binding.policy_grant_sha256,
 		},
 		"recover",
+		signal,
 		expectation,
 		{
 			executable: binding.probe.executable.path,
@@ -131,24 +136,36 @@ export async function recoverCodexSandboxContainment(
 async function prepareContainment(
 	input: CodexSandboxContainmentInput,
 	mode: ContainmentOpenMode,
+	signal: AbortSignal,
 	recoveryExpectation?: CodexSandboxRecoveryExpectation,
 	recoveryProbe?: PinnedExecutable,
 ): Promise<CodexSandboxContainment> {
+	signal.throwIfAborted();
 	assertSupportedLinuxContainment();
 	assertCodexSandboxInput(input);
 	await assertNoAmbientCodexConfiguration();
-	await revalidateMissionWorkspaceIsolation(input.workspace);
-	if (mode === "create") await assertMissionWorkspaceClean(input.workspace);
+	signal.throwIfAborted();
+	await revalidateMissionWorkspaceIsolation(input.workspace, { signal });
+	signal.throwIfAborted();
+	if (mode === "create") {
+		await assertMissionWorkspaceClean(input.workspace, { signal });
+		signal.throwIfAborted();
+	}
 
 	const layout = await prepareContainmentLayout(input, mode);
+	signal.throwIfAborted();
 	const probe = await prepareStagedContainmentProbe(layout, mode, recoveryProbe);
+	signal.throwIfAborted();
 	const config = await buildCodexSandboxConfig(input, layout, probe);
+	signal.throwIfAborted();
 	if (mode === "create") {
 		await createPrivateContainmentConfig(layout.launcherPath, config);
 	} else {
 		await assertPrivateContainmentConfig(layout.launcherPath, config);
 	}
-	const binding = await buildRuntimeContainmentBinding(input, layout, config, probe);
+	signal.throwIfAborted();
+	const binding = await buildRuntimeContainmentBinding(input, layout, config, probe, signal);
+	signal.throwIfAborted();
 	let manifest =
 		mode === "recover"
 			? await openRuntimeContainmentManifest(layout.manifestPath, binding)
@@ -160,20 +177,26 @@ async function prepareContainment(
 		assertExpectedManifest(manifest, recoveryExpectation);
 	}
 
-	await runCodexSandboxProbe({
-		launcherExecutable: input.launcher.executable,
-		launcherHome: layout.launcherHome,
-		launcherPath: layout.launcherPath,
-		profileName: CODEX_SANDBOX_PROFILE_NAME,
-		workspaceRoot: input.workspace.root,
-		workspaceAccess: input.workspaceAccess ?? "write",
-		gitDirectory: input.workspace.gitDirectory,
-		runtimeTmp: layout.runtimeTmp,
-		probe,
-	});
+	await runCodexSandboxProbe(
+		{
+			launcherExecutable: input.launcher.executable,
+			launcherHome: layout.launcherHome,
+			launcherPath: layout.launcherPath,
+			profileName: CODEX_SANDBOX_PROFILE_NAME,
+			workspaceRoot: input.workspace.root,
+			workspaceAccess: input.workspaceAccess ?? "write",
+			gitDirectory: input.workspace.gitDirectory,
+			runtimeTmp: layout.runtimeTmp,
+			probe,
+		},
+		signal,
+	);
+	signal.throwIfAborted();
 	if (mode === "create") {
-		await assertMissionWorkspaceClean(input.workspace);
+		await assertMissionWorkspaceClean(input.workspace, { signal });
+		signal.throwIfAborted();
 		manifest = await createRuntimeContainmentManifest(layout.manifestPath, binding);
+		signal.throwIfAborted();
 	}
 	if (manifest === undefined) throw new Error("Containment manifest was not established");
 
@@ -223,18 +246,24 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 		private readonly bindingSha256: string,
 	) {}
 
-	async prepare(request: CodexProcessRequest) {
+	async prepare(request: CodexProcessRequest, signal: AbortSignal) {
+		signal.throwIfAborted();
 		assertSupportedLinuxContainment();
 		assertProcessRequest(request, this.input, this.layout);
 		await assertNoAmbientCodexConfiguration();
+		signal.throwIfAborted();
 		const config = await readPrivateContainmentConfig(this.layout.launcherPath);
+		signal.throwIfAborted();
 		const binding = await buildRuntimeContainmentBinding(
 			this.input,
 			this.layout,
 			config,
 			this.probe,
+			signal,
 		);
+		signal.throwIfAborted();
 		const manifest = await openRuntimeContainmentManifest(this.layout.manifestPath, binding);
+		signal.throwIfAborted();
 		if (
 			manifest.instance_id !== this.instanceId ||
 			manifest.binding_sha256 !== this.bindingSha256

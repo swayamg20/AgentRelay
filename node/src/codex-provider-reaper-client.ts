@@ -28,6 +28,16 @@ export interface CodexProviderReaperOptions {
 	readonly heartbeatTimeoutMs: number;
 }
 
+export class CodexProviderReaperTeardownError extends AggregateError {
+	constructor(teardownError: unknown, startupError: unknown) {
+		super(
+			[teardownError, startupError],
+			"Codex provider reaper startup teardown could not be proven",
+		);
+		this.name = "CodexProviderReaperTeardownError";
+	}
+}
+
 /** Guardian-side handle for the detached teardown witness. */
 export class CodexProviderReaperClient {
 	readonly termination: Promise<void>;
@@ -72,7 +82,11 @@ export class CodexProviderReaperClient {
 			await ready;
 			return new CodexProviderReaperClient(options.generationId, child, closed);
 		} catch (error) {
-			await stopSupervisorProcessGroup(child, exited, closed).catch(() => undefined);
+			try {
+				await stopSupervisorProcessGroup(child, exited, closed);
+			} catch (teardownError) {
+				throw new CodexProviderReaperTeardownError(teardownError, error);
+			}
 			throw error;
 		}
 	}
@@ -81,8 +95,12 @@ export class CodexProviderReaperClient {
 		return sendReaperCommand(this.#child, heartbeatReaperCommand(this.#generationId));
 	}
 
+	escalate(cause: CodexProviderStopCause): Promise<void> {
+		return sendReaperCommand(this.#child, stopReaperCommand(this.#generationId, cause));
+	}
+
 	async stop(cause: CodexProviderStopCause): Promise<never> {
-		await sendReaperCommand(this.#child, stopReaperCommand(this.#generationId, cause));
+		await this.escalate(cause);
 		await this.termination;
 		throw new Error("Codex provider reaper exited before terminating its process group");
 	}

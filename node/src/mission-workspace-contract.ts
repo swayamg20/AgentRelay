@@ -42,4 +42,5 @@ export interface PreparedMissionWorkspace {
 export interface MissionWorkspaceDependencies {
 	readonly runCommand?: WorkspaceCommandRunner;
 	readonly realpath?: (path: string) => Promise<string>;
+	readonly signal?: AbortSignal;
 }

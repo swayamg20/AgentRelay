@@ -1,5 +1,6 @@
 import { access, chmod } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { directCodexProcessBoundaryForTests } from "../test-support/direct-codex-process-boundary.js";
 import {
@@ -14,6 +15,7 @@ import {
 } from "../test-support/fake-codex-app-server.js";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import { DISABLED_CODEX_FEATURES } from "./codex-app-server-command.js";
+import { startCodexAppServerProcess } from "./codex-app-server-process.js";
 import {
 	CODEX_APP_SERVER_CLIENT_NAME,
 	SUPPORTED_CODEX_CLI_VERSION,
@@ -282,6 +284,135 @@ describe("CodexAppServerClient", () => {
 		clients.splice(clients.indexOf(client), 1);
 		await waitForProcessExit(descendantPid);
 	});
+
+	it("preserves the exact authority reason after transport EOF and group teardown", async () => {
+		const fixture = await fakeAppServer({ ignoreRead: true, spawnDescendant: true });
+		const authority = new AbortController();
+		const client = await openClient(fixture, { authoritySignal: authority.signal });
+		const descendantPid = await waitForPid(fixture.childPidPath);
+		const pending = client.readThread("thread-1");
+		await waitForMessages(fixture.logPath, 3);
+
+		authority.abort("expired");
+
+		await expect(settleWithin(pending, 1_000)).rejects.toBe("expired");
+		await waitForProcessExit(descendantPid);
+	});
+
+	it("does not release a queued notification after authority revocation", async () => {
+		const fixture = await fakeAppServer({ notificationMode: "valid" });
+		const authority = new AbortController();
+		let releaseTeardown!: () => void;
+		const teardownGate = new Promise<void>((resolve) => {
+			releaseTeardown = resolve;
+		});
+		const client = await openClient(fixture, {
+			authoritySignal: authority.signal,
+			processFactory: async (options) => {
+				const processRef = await startCodexAppServerProcess(options);
+				return {
+					...processRef,
+					authorityTermination: processRef.authorityTermination?.catch(async (error) => {
+						if (error !== "expired") throw error;
+						await teardownGate;
+						throw error;
+					}),
+				};
+			},
+		});
+		await client.startThread();
+		await delay(25);
+		const pending = client.events()[Symbol.asyncIterator]().next();
+
+		authority.abort("expired");
+		const early = await Promise.race([
+			pending.then(
+				() => "settled",
+				() => "settled",
+			),
+			delay(25).then(() => "pending"),
+		]);
+		expect(early).toBe("pending");
+
+		releaseTeardown();
+		await expect(settleWithin(pending, 1_000)).rejects.toBe("expired");
+	});
+
+	it("revalidates authority after a clean event queue completion", async () => {
+		const fixture = await fakeAppServer();
+		const authority = new AbortController();
+		const client = await openClient(fixture, { authoritySignal: authority.signal });
+		const pending = client.events()[Symbol.asyncIterator]().next();
+		await delay(0);
+
+		const closing = client.close();
+		authority.abort("expired");
+
+		await expect(settleWithin(pending, 1_000)).rejects.toBe("expired");
+		await expect(settleWithin(closing, 1_000)).rejects.toBe("expired");
+		clients.splice(clients.indexOf(client), 1);
+	});
+
+	it("keeps teardown-proof failure ahead of authority and request timeout failures", async () => {
+		const fixture = await fakeAppServer({ ignoreRead: true });
+		const authority = new AbortController();
+		const teardownFailure = new Error("authority teardown proof failed");
+		const client = await openClient(fixture, {
+			authoritySignal: authority.signal,
+			requestTimeoutMs: 100,
+			processFactory: async (options) => {
+				const processRef = await startCodexAppServerProcess(options);
+				return {
+					...processRef,
+					authorityTermination: processRef.authorityTermination?.catch(async (error) => {
+						if (error !== "expired") throw error;
+						await delay(250);
+						throw teardownFailure;
+					}),
+				};
+			},
+		});
+		const pending = client.readThread("thread-1");
+		await waitForMessages(fixture.logPath, 3);
+
+		authority.abort("expired");
+		const failure = await settleWithin(
+			pending.catch((error: unknown) => error),
+			3_000,
+		);
+
+		expect(failure).toBe(teardownFailure);
+		clients.splice(clients.indexOf(client), 1);
+		await client.close().catch(() => undefined);
+	});
+
+	it("surfaces cleanup failure instead of the prior provider failure", async () => {
+		const fixture = await fakeAppServer({ initializedFailure: "invalid_json" });
+		const cleanupFailure = new Error("process-group cleanup was not proven");
+		const client = await CodexAppServerClient.start({
+			command: { executable: fixture.scriptPath },
+			cwd: fixture.directory,
+			capsuleDirectory: fixture.directory,
+			env: fixture.env,
+			boundary: directCodexProcessBoundaryForTests,
+			authoritySignal: new AbortController().signal,
+			processFactory: async (options) => {
+				const processRef = await startCodexAppServerProcess(options);
+				return {
+					...processRef,
+					stop: async () => {
+						await processRef.stop?.();
+						throw cleanupFailure;
+					},
+				};
+			},
+		});
+		clients.push(client);
+
+		await expect(client.readThread("thread-1")).rejects.toBe(cleanupFailure);
+		clients.splice(clients.indexOf(client), 1);
+		await client.close().catch(() => undefined);
+	});
 });
 
 async function fakeAppServer(
@@ -292,14 +423,33 @@ async function fakeAppServer(
 	return fixture;
 }
 
-async function openClient(fixture: FakeAppServerFixture): Promise<CodexAppServerClient> {
+async function openClient(
+	fixture: FakeAppServerFixture,
+	options: {
+		readonly authoritySignal?: AbortSignal;
+		readonly requestTimeoutMs?: number;
+		readonly processFactory?: Parameters<typeof CodexAppServerClient.start>[0]["processFactory"];
+	} = {},
+): Promise<CodexAppServerClient> {
 	const client = await CodexAppServerClient.start({
 		command: { executable: fixture.scriptPath },
 		cwd: fixture.directory,
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,
+		authoritySignal: options.authoritySignal ?? new AbortController().signal,
+		requestTimeoutMs: options.requestTimeoutMs,
+		processFactory: options.processFactory,
 	});
 	clients.push(client);
 	return client;
+}
+
+function settleWithin<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+	return Promise.race([
+		promise,
+		delay(milliseconds).then(() => {
+			throw new Error("Codex client did not settle within the expected authority bound");
+		}),
+	]);
 }

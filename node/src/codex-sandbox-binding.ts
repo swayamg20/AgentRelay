@@ -33,10 +33,12 @@ export async function buildRuntimeContainmentBinding(
 	layout: ContainmentLayout,
 	config: string,
 	probe: ContainmentProbeExecutable,
+	signal: AbortSignal,
 ): Promise<RuntimeContainmentBinding> {
+	signal.throwIfAborted();
 	const [workspace, launcher, provider, inspectedProbe, privatePaths, readOnlyRoots, deniedRoots] =
 		await Promise.all([
-			inspectWorkspace(input.workspace),
+			inspectWorkspace(input.workspace, signal),
 			inspectLauncher(input.launcher),
 			inspectExecutable(input.provider),
 			inspectExecutable(probe),
@@ -48,6 +50,7 @@ export async function buildRuntimeContainmentBinding(
 				...(input.forbiddenRoots ?? []),
 			]),
 		]);
+	signal.throwIfAborted();
 	const trustedReadRoots = [
 		launcher.readRoot.path,
 		provider.readRoot.path,
@@ -137,8 +140,9 @@ async function inspectLauncher(launcher: PinnedCodexLauncher) {
 	return { ...runtime, sandboxHelperExecutable: sandboxHelper.executable };
 }
 
-async function inspectWorkspace(workspace: PreparedMissionWorkspace) {
-	await revalidateMissionWorkspaceIsolation(workspace);
+async function inspectWorkspace(workspace: PreparedMissionWorkspace, signal: AbortSignal) {
+	await revalidateMissionWorkspaceIsolation(workspace, { signal });
+	signal.throwIfAborted();
 	const [root, gitDirectory] = await Promise.all([
 		inspectPath(workspace.root, "workspace root", "directory"),
 		inspectPath(workspace.gitDirectory, "workspace Git directory", "directory"),

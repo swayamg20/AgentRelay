@@ -48,6 +48,10 @@ const PROCESS_TIMEOUT_MS = 20_000;
 const MAX_PROCESS_OUTPUT_BYTES = 1_048_576;
 const MAX_PROBE_RESULT_BYTES = 64 * 1_024;
 
+function liveOwnerControlledSignal(): AbortSignal {
+	return new AbortController().signal;
+}
+
 afterAll(async () => {
 	await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true })));
 });
@@ -79,7 +83,7 @@ describe.runIf(
 				policyGrantSha256: "a".repeat(64),
 				workspaceAccess,
 			};
-			const containment = await prepareCodexSandboxContainment(input);
+			const containment = await prepareCodexSandboxContainment(input, liveOwnerControlledSignal());
 			expect(containment.authorization.workspaceAccess).toBe(workspaceAccess);
 			const parentNetworkNamespace = await readlink("/proc/self/ns/net");
 			const resultPath = join(containment.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
@@ -105,16 +109,19 @@ describe.runIf(
 				resultPath,
 				resultToken,
 			};
-			const prepared = await containment.boundary.prepare({
-				executable: provider.executable,
-				argv: [fixture.probe, JSON.stringify(paths)],
-				cwd: fixture.workspace.root,
-				env: {
-					HOME: containment.runtimeHome,
-					CODEX_HOME: containment.runtimeHome,
-					AGENTRELAY_NODE_TOKEN: "must-not-cross",
+			const prepared = await containment.boundary.prepare(
+				{
+					executable: provider.executable,
+					argv: [fixture.probe, JSON.stringify(paths)],
+					cwd: fixture.workspace.root,
+					env: {
+						HOME: containment.runtimeHome,
+						CODEX_HOME: containment.runtimeHome,
+						AGENTRELAY_NODE_TOKEN: "must-not-cross",
+					},
 				},
-			});
+				liveOwnerControlledSignal(),
+			);
 			let result: Record<string, unknown>;
 			try {
 				const output = await run(prepared);
@@ -154,7 +161,10 @@ describe.runIf(
 			expect(JSON.stringify(containment.evidence)).not.toContain(fixture.root);
 
 			const recoveryExpectation = containment.recovery;
-			const recovered = await recoverCodexSandboxContainment(recoveryExpectation);
+			const recovered = await recoverCodexSandboxContainment(
+				recoveryExpectation,
+				liveOwnerControlledSignal(),
+			);
 			expect(recovered.evidence).toEqual(containment.evidence);
 			expect(recovered.authorization.workspaceAccess).toBe(workspaceAccess);
 			const freshRecovery = await execFileAsync(
@@ -172,12 +182,15 @@ describe.runIf(
 
 			await appendFile(paths.launcherConfig, "# changed after launch\n");
 			await expect(
-				containment.boundary.prepare({
-					executable: provider.executable,
-					argv: [fixture.probe, JSON.stringify(paths)],
-					cwd: fixture.workspace.root,
-					env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
-				}),
+				containment.boundary.prepare(
+					{
+						executable: provider.executable,
+						argv: [fixture.probe, JSON.stringify(paths)],
+						cwd: fixture.workspace.root,
+						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
+					},
+					liveOwnerControlledSignal(),
+				),
 			).rejects.toThrow("authorize this exact workspace and policy");
 		},
 		60_000,
@@ -192,16 +205,19 @@ describe.runIf(
 		const authority = new LocalReferenceMonitor(grant, {
 			record: (evidence) => authorityEvidence.push(evidence),
 		});
-		const containment = await prepareCodexSandboxContainment({
-			controlDirectory: fixture.control,
-			runtimeDirectory: fixture.runtime,
-			workspace: fixture.workspace,
-			launcher,
-			provider: launcher,
-			forbiddenRoots: [fixture.sibling, fixture.ownerHome],
-			policyGrantSha256: "b".repeat(64),
-			workspaceAccess: "read",
-		});
+		const containment = await prepareCodexSandboxContainment(
+			{
+				controlDirectory: fixture.control,
+				runtimeDirectory: fixture.runtime,
+				workspace: fixture.workspace,
+				launcher,
+				provider: launcher,
+				forbiddenRoots: [fixture.sibling, fixture.ownerHome],
+				policyGrantSha256: "b".repeat(64),
+				workspaceAccess: "read",
+			},
+			liveOwnerControlledSignal(),
+		);
 		expect(containment.authorization.workspaceAccess).toBe("read");
 
 		const generation = await new SupervisedCodexProviderGuardian({
@@ -283,16 +299,19 @@ describe.runIf(
 			readRoot: fixture.providerRoot,
 			sha256: await sha256File(fixture.providerExecutable),
 		};
-		const current = await prepareCodexSandboxContainment({
-			controlDirectory: fixture.control,
-			runtimeDirectory: fixture.runtime,
-			workspace: fixture.workspace,
-			launcher,
-			provider,
-			forbiddenRoots: [fixture.sibling, fixture.ownerHome],
-			policyGrantSha256: "c".repeat(64),
-			workspaceAccess: "write",
-		});
+		const current = await prepareCodexSandboxContainment(
+			{
+				controlDirectory: fixture.control,
+				runtimeDirectory: fixture.runtime,
+				workspace: fixture.workspace,
+				launcher,
+				provider,
+				forbiddenRoots: [fixture.sibling, fixture.ownerHome],
+				policyGrantSha256: "c".repeat(64),
+				workspaceAccess: "write",
+			},
+			liveOwnerControlledSignal(),
+		);
 		const currentManifest = await readRuntimeContainmentManifest(current.recovery.manifestPath);
 		const legacyBinding = { ...currentManifest.binding };
 		delete legacyBinding.workspace_access;
@@ -311,22 +330,25 @@ describe.runIf(
 		expect("workspace_access" in legacyManifest.binding).toBe(false);
 		expect(retainedManifest).not.toContain("workspace_access");
 		expect(legacyManifest.binding_sha256).not.toBe(currentManifest.binding_sha256);
-		const recovered = await recoverCodexSandboxContainment(recovery);
+		const recovered = await recoverCodexSandboxContainment(recovery, liveOwnerControlledSignal());
 		expect(recovered.authorization.workspaceAccess).toBe("write");
 		expect(recovered.recovery).toEqual(recovery);
 		expect(recovered.evidence.bindingSha256).toBe(legacyManifest.binding_sha256);
 
 		const workspaceWrite = join(fixture.workspace.root, "legacy-recovery-write.txt");
-		const prepared = await recovered.boundary.prepare({
-			executable: provider.executable,
-			argv: [
-				"-e",
-				"require('node:fs').writeFileSync(process.argv[1], 'legacy-write\\n')",
-				workspaceWrite,
-			],
-			cwd: fixture.workspace.root,
-			env: { HOME: recovered.runtimeHome, CODEX_HOME: recovered.runtimeHome },
-		});
+		const prepared = await recovered.boundary.prepare(
+			{
+				executable: provider.executable,
+				argv: [
+					"-e",
+					"require('node:fs').writeFileSync(process.argv[1], 'legacy-write\\n')",
+					workspaceWrite,
+				],
+				cwd: fixture.workspace.root,
+				env: { HOME: recovered.runtimeHome, CODEX_HOME: recovered.runtimeHome },
+			},
+			liveOwnerControlledSignal(),
+		);
 		expect(await run(prepared)).toEqual({ stdout: "", stderr: "" });
 		expect(await readFile(workspaceWrite, "utf8")).toBe("legacy-write\n");
 		expect(await readFile(current.recovery.manifestPath, "utf8")).toBe(retainedManifest);

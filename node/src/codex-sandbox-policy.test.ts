@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import type { CodexSandboxContainmentInput } from "./codex-sandbox-contract.js";
 import {
 	assertNoAmbientCodexConfiguration,
 	buildCodexSandboxConfig,
+	createPrivateContainmentConfig,
 	prepareContainmentLayout,
 } from "./codex-sandbox-policy.js";
 
@@ -42,6 +43,24 @@ describe("Codex sandbox policy", () => {
 
 		expect(layout.stagedProbeRoot).toBe(join(input.runtimeDirectory, "probe-runtime"));
 		expect(layout.stagedProbeRoot.startsWith(`${input.controlDirectory}/`)).toBe(false);
+	});
+
+	it("reuses only the exact completed pre-manifest launcher config", async () => {
+		const root = await temporaryRoot();
+		const layout = await prepareContainmentLayout(fixtureInput(root), "create");
+		const expected = 'default_permissions = "agentrelay-runtime"\n';
+		await createPrivateContainmentConfig(layout.launcherPath, expected);
+		const original = await stat(layout.launcherPath);
+
+		await expect(
+			createPrivateContainmentConfig(layout.launcherPath, expected),
+		).resolves.toBeUndefined();
+		expect((await stat(layout.launcherPath)).ino).toBe(original.ino);
+		await expect(
+			createPrivateContainmentConfig(layout.launcherPath, `${expected}changed = true\n`),
+		).rejects.toThrow("changed after creation");
+		expect(await readFile(layout.launcherPath, "utf8")).toBe(expected);
+		expect((await stat(layout.launcherPath)).mode & 0o777).toBe(0o600);
 	});
 
 	it("masks visible carveouts and leaves rootless host paths absent", async () => {
