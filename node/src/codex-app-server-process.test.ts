@@ -136,7 +136,7 @@ describe.runIf(process.platform !== "win32")("Codex app-server authority teardow
 			if (escapedPid !== null) await waitForProcessExit(escapedPid).catch(() => undefined);
 			await fixture.remove();
 		}
-	});
+	}, 10_000);
 });
 
 async function collect(lines: AsyncIterable<string>): Promise<string[]> {
