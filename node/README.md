@@ -2,9 +2,9 @@
 
 `agentrelay-node` is the owner-controlled local execution boundary for AgentRelay
 Missions. This package is private and experimental. Its current purpose is to prove
-durable delivery, local authority checks, and runtime recovery with the deterministic
-fake paths while the guarded Codex and Linux-containment libraries remain
-unactivated.
+durable delivery, local authority checks, and runtime recovery. The public polling
+commands remain deterministic fake paths; guarded Codex activation exists only behind
+internal, non-production composition.
 
 ## What works
 
@@ -46,14 +46,20 @@ unactivated.
   model. This is a partial issue #97 checkpoint on the deterministic fake path, not
   completion of the issue or real-runtime activation. See
   [`Local runtime authority`](../docs/research/008-local-runtime-authority.md).
-- An unactivated guarded Codex client, injected Capsule runner, and provider guardian,
-  plus a Linux-only Codex `0.146.0` containment library. The guardian owns one
+- A guarded Codex client, injected Capsule runner, provider guardian, strict v2 launch
+  descriptor, persistent adapter, and Linux-only Codex `0.146.0` containment boundary.
+  The Node provisioner durably binds an exact read-only containment recovery handle
+  before remote authority installation. The Capsule remains provider-passive through
+  session establishment; starting, recovering, or cancelling an existing durable turn
+  may activate the guardian after the exact start input is journaled. The guardian
+  owns one
   kernel-locked provider generation, absolute deadline, local revocation signal,
   and liveness classification. It prearms a detached out-of-group witness before the
   start barrier; that witness retains the lock, removes the guardian/provider process
   group, and alone records same-boot teardown quiescence after proving the group absent.
-  The dedicated Linux process job starts pinned Codex through both boundaries; no
-  current descriptor, CLI, or Mission lifecycle selects them.
+  The dedicated Linux process job starts pinned Codex through both boundaries. An
+  internal factory pairs the provisioner and adapter after a pinned-runtime doctor,
+  but no polling CLI selects it and no test executes a real model turn.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
@@ -73,8 +79,10 @@ command-result paths are not complete.
 
 Only `run-capsule` installs the private runtime-authority grant. The in-process `run`
 command keeps the older fake-adapter boundary without an independent Capsule monitor.
-Neither command executes a Codex model turn, and neither exposes an official A2A
-gateway.
+The separate `doctor-codex` command verifies only the pinned Linux/x64 Codex and
+Bubblewrap artifacts plus `codex --version`; it opens no Node/Capsule state and claims
+no Relay work. No `run-codex` command exists. None of these commands executes a Codex
+model turn or exposes an official A2A gateway.
 
 Git submodules are intentionally unsupported at this checkpoint. Supporting them
 requires a separate, explicit preflight for every nested repository and its local Git
@@ -83,8 +91,8 @@ configuration.
 The Capsule checkpoint is experimental and Unix-only because its transport is a Unix
 domain socket. It is not a general local daemon manager: there is no installer, OS
 service supervisor, automatic process respawn, or production Codex/Claude activation.
-The guarded Codex client, injected runner, guardian, and Linux containment boundary
-exist only as unactivated libraries; see
+The guarded Codex client, injected runner, guardian, descriptor, provisioner, adapter,
+and Linux containment boundary form an internal read-only checkpoint; see
 [`Codex provider guardian`](../docs/research/007-codex-provider-guardian.md) and
 [`Mission workspace containment`](../docs/research/006-mission-workspace-containment.md).
 `agentrelay-codex-guardian` is the guardian's internal child-process entry point, not
@@ -141,15 +149,17 @@ private grant from current Relay authority and trusted local inputs; it enforces
 local turn limit, reported-token bound, product hard denials, lease/hard expiry,
 renewal, revocation, cumulative stream limits, and final Relay publication. The fake
 runtime exposes no command or network handler, and registered verification-command
-execution remains unimplemented. The unactivated guardian and Linux containment
-libraries are not composed with this grant, so no selected real-runtime process
-receives it yet.
+execution remains unimplemented. The internal Codex path composes the guardian and
+read-only Linux containment boundary with this grant, but no polling command selects
+that path. Owner authentication, provider egress, workspace-write authority, and real
+model-turn evidence remain absent.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this
 separate config. The Node CLI does not yet own enrollment or credential rotation.
-The current CLI always launches the fake adapter and therefore refuses
-`ar_node_live_*` credentials; it runs only with an `ar_node_test_*` credential.
+The polling commands always launch fake adapters and therefore refuse
+`ar_node_live_*` credentials; they run only with an `ar_node_test_*` credential.
+`doctor-codex` does not load a Node credential.
 
 ## Run
 
@@ -166,6 +176,17 @@ node node/dist/bin/agentrelay-node.js run-capsule \
   --config ~/.agentrelay/node/config.json \
   --fake-outcome ready
 ```
+
+On a supported Linux/x64 host, the non-claiming Codex preflight is:
+
+```bash
+node node/dist/bin/agentrelay-node.js doctor-codex
+```
+
+It verifies the exact pinned package artifacts and bounded version probe before any
+Node/Capsule runtime state is opened. Passing it does not enable Codex execution: owner
+authentication, provider egress, workspace-write authority, and a polling
+`run-codex` command are still absent.
 
 Use `--capsule-root <absolute-path>` to override the default
 `state/capsules` directory beside the Node config, and

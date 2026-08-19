@@ -31,12 +31,12 @@
 >
 > **Not usable today:** autonomous Missions. Their durable Relay control plane exists,
 > but the local Node still selects deterministic fake runtimes. The guarded Codex path
-> has not been activated for a real model turn. A Linux-only Codex `0.146.0`
-> containment library now exists, but no Capsule descriptor or CLI selects it, its
-> recovery handle is not yet stored by the Mission lifecycle, and macOS parity,
-> registered verification execution, durable local evidence, installed service
-> supervision, and the two-machine proof remain incomplete. A private capability
-> reference monitor is wired only into the persistent fake-Capsule checkpoint.
+> has not been activated for a real model turn. A strict Codex descriptor, durable
+> containment recovery handle, authority-gated Node/Capsule composition, and a
+> non-claiming `doctor-codex` preflight now exist as internal checkpoints. There is no
+> polling `run-codex` command, owner authentication, provider egress, workspace-write
+> authority, registered verification execution, durable local evidence, installed
+> service supervision, or two-machine proof. macOS also fails closed.
 
 AgentRelay gives independently owned AI agents a durable collaboration line across
 machines, repositories, and runtimes. They can exchange questions, contracts, and
@@ -58,16 +58,16 @@ repositories is the first proof, not the final product boundary.
 | --- | --- | --- |
 | **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.1: identities, invites, typed handoffs, messages, blocks, trust, and audit |
 | **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
-| **Experimental** | Node, persistent Capsule, authority monitor, guardian, and containment | Bound authority is enforced on the persistent fake-Capsule path; current commands still select deterministic fake runtimes |
+| **Experimental** | Node, persistent Capsule, authority monitor, guardian, and containment | A guarded read-only Codex composition exists behind internal APIs; polling commands still select deterministic fake runtimes |
 | **Next gate** | Guarded real Codex activation | Guarded Real Mission 0 through the public pipeline, then the two-machine backend ↔ Android proof |
 
 The repository does not yet ship the full autonomous runtime described above. The
 Node CLI still consumes one turn at a time through either its in-process deterministic
 fake or a detached fake Capsule. The provider-neutral Capsule server and injected
-Codex runner are tested through the real Unix wire against fake app-server clients,
-but no current descriptor or CLI activates Codex for a real model turn. The detached
-fake path now installs one private, fenced runtime grant and continuously stops local
-output and final Relay completion when that authority expires or is revoked.
+Codex runner now have a strict v2 descriptor, passive persistent adapter, durable
+read-only containment recovery, and private-authority composition, but no polling CLI
+selects them. `doctor-codex` verifies only the pinned Linux/x64 artifact and version; it
+does not open runtime state or claim Relay work. No path has executed a real model turn.
 
 ### Implemented today
 
@@ -129,21 +129,23 @@ output and final Relay completion when that authority expires or is revoked.
   separately gates final Relay completion and passes a continuous abort signal into
   the request. Bounded, redacted decisions can be emitted to injected evidence sinks,
   but no durable local evidence store is wired by default.
-- An unactivated Codex runtime checkpoint: the pinned guarded client, schema-v2
+- A guarded Codex runtime checkpoint: the pinned client, schema-v2
   Capsule journal, and injected runner implement session start/resume, stable logical
   turn publication before provider binding, exact fresh-generation start
   reconciliation, event replay, and cancellation. Wire-level tests use fake
-  app-server clients; no current descriptor or CLI selects this runner. The Codex
+  app-server clients. A strict v2 descriptor and passive Capsule controller select this
+  runner only through internal composition; no polling CLI selects it. The Codex
   child receives an allowlisted environment and a locally derived, canonical,
   current-user-owned mode-0700 home. For an inherited uncertain interrupt, a fresh
   generation reads the exact intent once, persists an authoritative terminal outcome
   when present, or records a transient failure; it never repeats the interrupt.
-- An unactivated Linux containment library for pinned Codex `0.146.0`. It binds one
+- A Linux containment checkpoint for pinned Codex `0.146.0`. It binds one
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
-  process gate passes; current commands still do not select it. See
+  process gate passes; the internal Codex provisioner durably binds it read-only before
+  Capsule launch, while current polling commands still do not select it. See
   [research 006](docs/research/006-mission-workspace-containment.md).
-- An unactivated provider guardian that atomically owns one Codex generation behind a
+- A guarded provider guardian that atomically owns one Codex generation behind a
   stable kernel lock. Before the durable start barrier or provider spawn, its detached
   guardian prearms an out-of-group teardown witness that retains the same lock. The
   witness independently enforces heartbeat and deadline loss, removes the complete
@@ -159,18 +161,17 @@ output and final Relay completion when that authority expires or is revoked.
 
 ### Next architecture, not shipped yet
 
-- Production descriptor and CLI activation for persistent real-runtime sessions. The
-  generic Capsule server and injected Codex runner exist as libraries, but the
-  current persistent command still selects only the deterministic fake runtime.
-- Mission-lifecycle wiring that durably stores the exact containment recovery handle
-  before provider start and reopens only that retained instance after a crash.
+- Production CLI activation for persistent real-runtime sessions. The strict
+  descriptor, passive Capsule server, provisioner, and adapter are composed internally,
+  but the current persistent command still selects only the deterministic fake runtime.
+- Owner-provisioned ephemeral authentication, provider-only egress, workspace-write
+  authority, and Guarded Real Mission 0 through the public pipeline.
 - Registered verification execution (#93), bounded Mission artifact carriage (#94),
   durable local authority and execution evidence (#99), and adversarial evaluation
   (#104). The current grant deliberately does not authorize verification execution.
-- Descriptor/CLI composition of the authority checkpoint with the real guarded Codex
-  path (#98), complete command/network effect mediation, an installed OS service
-  boundary, and a supported containment boundary beyond Linux; then a Claude runtime
-  adapter.
+- Completion of the guarded Codex path (#98), complete command/network effect
+  mediation, an installed OS service boundary, and a supported containment boundary
+  beyond Linux; then a Claude runtime adapter.
 - A real two-machine, two-repository proof using the public control plane.
 
 The design is in
@@ -385,13 +386,13 @@ fenced, crash-safe authority grant into independent Node and Capsule reference
 monitors. Those monitors continuously gate fake-runtime lifecycle, streamed output,
 usage, artifacts, and final Relay completion, including expiry and revocation. Their
 redacted decisions are emitted only when an evidence sink is injected; they are not
-durably persisted by default. The unactivated Codex libraries also allowlist the child
-environment, derive a private exact-mode-0700 home locally, retire a failed Capsule
-generation, and can construct the Linux boundary described above. No descriptor or
-CLI composes that real-runtime path with the authority checkpoint, and the registered
-verification executor, full path/command/network effect mediation, durable evidence,
-and adversarial real-turn proof remain open. Real autonomous writes are therefore not
-safe to claim. See
+durably persisted by default. The guarded Codex checkpoint also allowlists the child
+environment, derives a private exact-mode-0700 home locally, retires a failed Capsule
+generation, and composes a strict read-only Linux descriptor with the same private
+authority boundary. No polling CLI selects it, and owner authentication, provider
+egress, workspace-write authority, the registered verification executor, durable
+evidence, and adversarial real-turn proof remain open. Real autonomous writes are
+therefore not safe to claim. See
 [`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
 acceptance tests.
 
@@ -416,7 +417,7 @@ this README does not claim full A2A conformance.
 ├── protocol/             Mission schemas, coordinator, fixtures, and adapter contract
 ├── relay/                current Hono + Drizzle + Postgres relay
 ├── mcp-server/           current MCP server and agentrelay CLI
-├── node/                 Node, Capsule wire, fake runtime, and unactivated Codex libraries
+├── node/                 Node, Capsule wire, fake runtime, and guarded Codex checkpoints
 ├── tests/e2e/            relay + MCP and Node/Capsule process test harnesses
 ├── infra/azure/          reviewable Azure team-pilot infrastructure and smoke checks
 ├── landing/              GitHub Pages landing page
@@ -450,8 +451,8 @@ this README does not claim full A2A conformance.
 - Code and tests define what is shipped.
 - [`docs/architecture.md`](docs/architecture.md) defines the current/target boundary.
 - [`protocol/README.md`](protocol/README.md) describes the executable protocol package.
-- [`node/README.md`](node/README.md) documents the private experimental Node and its
-  fake-runtime commands.
+- [`node/README.md`](node/README.md) documents the private experimental Node, its
+  fake-runtime commands, and guarded Codex checkpoints.
 - [`protocol/fixtures/backend-android/README.md`](protocol/fixtures/backend-android/README.md)
   documents the deterministic cross-repository fixture.
 - [`docs/next-steps.md`](docs/next-steps.md) tracks the near-term engineering queue.

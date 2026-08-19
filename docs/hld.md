@@ -1,8 +1,8 @@
 # High-level design: current relay implementation
 
-> **Scope:** Current repository implementation as of 2026-08-17.
+> **Scope:** Current repository implementation as of 2026-08-19.
 > This document describes the existing handoff plane, public Mission delivery
-> control plane, experimental Node, and unactivated Codex runtime libraries.
+> control plane, experimental Node, and guarded Codex runtime checkpoints.
 > It does not describe a complete autonomous coding runtime. See
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the target system.
 
@@ -17,13 +17,14 @@ Humans or active agent sessions still initiate mailbox checks. Separately, the
 foreground `agentrelay-node` command can use a pre-issued Node credential, accept a
 Mission assignment, durably lease one turn, and drive either an in-process fake
 adapter or a detached persistent fake Mission Capsule. A provider-neutral Capsule
-server, injected Codex runner, and provider guardian now exist behind that wire as a
-tested library checkpoint, but the descriptor and CLI still choose the fake. The
+server, injected Codex runner, provider guardian, strict descriptor, provisioner, and
+persistent adapter now exist behind that wire as a guarded checkpoint. Internal APIs
+compose them under private authority, but the polling CLI still chooses the fake. The
 guardian owns provider-generation spawn and live supervision; its prearmed detached
 witness owns post-absence quiescence finalization. No current command activates a real
 model turn or turns Mission work into repository changes. A separate Linux-only
 containment library can construct the pinned Codex `0.146.0` Bubblewrap boundary, but
-no Mission lifecycle or runtime descriptor composes it with the guardian. The
+only the internal read-only Codex composition binds it to the guardian. The
 persistent fake-Capsule path now carries one private, fenced capability grant through
 independent Node and Capsule reference monitors; this is an enforcement checkpoint,
 not Codex activation.
@@ -47,14 +48,14 @@ agentrelay-node -> atomic local journal
         |-- in-process deterministic fake adapter
         `-- private grant + Unix socket -> provider-neutral Capsule server
                                       |-- selected today: deterministic fake
-                                      `-- tested only: injected Codex runner
+                                      `-- internal only: guarded Codex controller
                                                -> detached guardian process group
                                                   |-- pinned provider + descendants
                                                   `-- spawns detached teardown witness
                                                       outside the process group
 
-Unactivated Linux composition:
-owner-prepared checkout -> containment library -> pinned Codex sandbox/app-server
+Internal Linux composition (not selected by a polling command):
+owner-prepared checkout -> read-only containment -> pinned Codex sandbox/app-server
 ```
 
 ### Relay
@@ -139,8 +140,9 @@ emit bounded redacted decisions to injected sinks; no durable evidence sink is w
 by default. See [research 008](research/008-local-runtime-authority.md).
 
 The wire server is now provider-neutral and accepts a locally injected runtime while
-preserving the fake descriptor, CLI entry point, and versioned request/response
-contract. The library also contains a `CodexCapsuleRunner` with probe, session,
+preserving the versioned request/response contract. Schema v1 selects the fake runtime;
+a strict schema-v2 descriptor selects the passive Codex controller and exact retained
+containment identity. The library also contains a `CodexCapsuleRunner` with probe, session,
 start/recover, event, and cancellation behavior. Its schema-v2 journal exposes a
 stable logical turn before a provider ID is known. `CodexProviderGuardian` gives the
 runner one fresh generation only after it owns the stable kernel lock, durable start
@@ -156,8 +158,10 @@ retirement through the runtime lifecycle.
 This Codex path is tested through the real Unix wire with fake app-server clients. Its
 guardian tests use real OS process trees, and the Linux process gate starts pinned
 Codex through the guardian and containment boundary without executing a model turn.
-It has no descriptor/CLI selection, composition with the private authority monitor,
-real model-turn proof, or Claude equivalent. The Codex child environment is
+An internal Node factory runs the non-claiming doctor, then pairs the Codex provisioner
+and persistent adapter under the private authority monitor. No polling CLI selects
+that factory, and it has no owner authentication, provider egress, workspace-write
+authority, real model-turn proof, or Claude equivalent. The Codex child environment is
 allowlisted, and its private home is derived locally beneath the Capsule and
 revalidated as canonical, current-user-owned, and exactly mode 0700. For an inherited uncertain-interrupt
 barrier, a fresh generation reads the exact intent once, persists a terminal provider
@@ -168,8 +172,9 @@ Detailed guardian mechanics live in
 The separate Linux containment library binds an owner-controlled standalone checkout
 to an explicit Bubblewrap policy, mandatory runtime canary, and private
 `retain_for_review` manifest. Recovery requires the exact manifest path, instance ID,
-and binding digest. Future Mission lifecycle wiring must store that handle durably;
-current commands do not. Detailed mechanics live in
+and binding digest. The internal Codex provisioner stores that handle durably in the
+v2 descriptor before Capsule launch and strictly reopens it during dirty recovery;
+current polling commands do not select this path. Detailed mechanics live in
 [research 006](research/006-mission-workspace-containment.md).
 
 ## Core data model
@@ -304,21 +309,21 @@ and the relay-owned idempotency key is not exposed to the model.
   workspace, and owner revocation also cancel active work across affected Missions.
 - Mission trust checks share the block-pair transaction fence, and every delivery
   mutation revalidates its active Node, participant, workspace, and Mission route.
-- At the unactivated library/test boundary, the provider-neutral Capsule wire, Codex
+- At the guarded library/test boundary, the provider-neutral Capsule wire, Codex
   schema-v2 journal, stable pre-binding turn, exact fresh-generation reconciliation,
   bounded zero-match terminalization, pre-binding cancellation, and conservative
   inherited-interrupt terminalization are durable.
-- At that same unactivated boundary, a stable kernel lock excludes overlapping
+- At that same guarded boundary, a stable kernel lock excludes overlapping
   generations. The guardian supervises owner/provider liveness, deadline, and local
   revocation. Its prearmed out-of-group witness terminates and proves the process group
   absent, then authoritatively records durable quiescence; the Capsule waits for that
   proof before releasing replacement authority.
-- At a second unactivated library boundary, the exclusive Linux Codex containment
+- At the internal provisioning boundary, the exclusive Linux Codex containment
   manifest durably binds the workspace, pinned runtime, private paths, policy grant,
-  and `retain_for_review` decision. The API returns an exact recovery handle, but the
-  Mission lifecycle does not persist it. The dedicated Linux process job passes as
-  evidence for this library boundary, not as Mission activation evidence.
-- On the selected persistent fake-Capsule path, Node journal schema 4 durably stores
+  and `retain_for_review` decision. The v2 descriptor retains its exact recovery handle
+  before Capsule launch. The dedicated Linux process job passes as evidence for this
+  library boundary, not as Mission activation evidence.
+- On the persistent Capsule path, Node journal schema 4 durably stores
   one exact active grant or one predecessor awaiting proven retirement. Independent
   Node and Capsule monitors enforce its scope,
   capability set, lease/fence, renewal, expiry, product denials, and aggregate
@@ -340,12 +345,12 @@ and the relay-owned idempotency key is not exposed to the model.
 - Automatic Node installation, OS service supervision, or process respawn. The
   singleton kernel lock now permits direct restart after process death, but it does
   not start the replacement Node.
-- Composition of the verified private authority grant with the guarded Codex
-  descriptor, plus complete local capability enforcement around every concrete side
-  effect.
-- Descriptor/CLI and Mission-lifecycle wiring for the Linux containment boundary,
-  including durable storage of its exact recovery handle before provider start. The
-  dedicated Linux process proof passes, but macOS has no supported equivalent.
+- A polling Codex command with owner-provisioned ephemeral authentication,
+  provider-only egress, workspace-write authority, and complete local capability
+  enforcement around every concrete side effect.
+- Production activation of the internally composed Linux containment boundary. Its
+  exact recovery handle is already durable before Capsule launch and its dedicated
+  Linux process proof passes, but macOS has no supported equivalent.
 - Automatic worktree isolation and complete per-Mission command/network mediation.
 - Contract-acknowledgement and registered verification-command delivery handlers.
 - Durable local command, edit, test, authority, and permission-decision audit.
@@ -363,17 +368,19 @@ revalidation, revocation-driven delivery cancellation, scoped relay audit, prove
 wrappers or markers on teammate-originated mailbox fields, static host permission
 recommendations, and per-acceptance local trust loading.
 
-At an unactivated Linux library boundary, the Node can also require an owner-controlled
-standalone checkout, a writable worktree with read-only Git metadata, explicit read
-and denied roots, private home/temp, no network, rejected ambient Codex configuration,
+At the guarded Linux checkpoint, the Node can also require an owner-controlled
+standalone checkout and expose both the worktree and Git metadata read-only inside
+containment, with explicit read and denied roots, private home/temp, no network,
+rejected ambient Codex configuration,
 disabled legacy Landlock, recursive read-tree alias inspection, and a mandatory
-runtime canary. No active Mission receives these protections yet.
+runtime canary. No polling command activates a Mission under these protections yet.
 
-On the selected persistent fake-Capsule path, the bound grant is enforced outside the
+On the persistent Capsule path, the bound grant is enforced outside the
 model before runtime lifecycle operations, streamed output/usage/artifacts, and final
 Relay completion. Its four limit sources intersect monotonically, and product-denied
-effects remain denied even if a peer or Mission asks for them. This checkpoint exposes
-no command executor, does not grant verification execution, and is not wired to Codex.
+effects remain denied even if a peer or Mission asks for them. The internal Codex
+composition uses the read-only subset; no command grants provider egress,
+workspace-write, or verification execution.
 
 They are not yet one end-to-end enforcement system:
 
@@ -411,7 +418,7 @@ the model. See the security section of [`architecture.md`](architecture.md).
   runtime close while handlers drain so the runtime can release and fence admitted
   operations. Detached runtime work can call `lifecycle.retire()` to trigger the same
   teardown.
-- The unactivated Codex guardian prearms an out-of-group teardown witness before it
+- The guarded Codex guardian prearms an out-of-group teardown witness before it
   writes `spawn_maybe_started` or spawns the provider. Capsule loss, guardian loss,
   provider exit, request timeout, deadline, revocation, and explicit shutdown converge
   through one latched cause. The witness sends bounded TERM/KILL to the complete
@@ -477,12 +484,12 @@ The mailbox remains a compatibility and inspection surface. The relay exposes a
 separate, authenticated Mission and delivery control plane without stretching the
 handoff row into a scheduler. The foreground Node now consumes one turn through that
 API with either an in-process fake or a detached persistent fake Capsule. A pinned
-Codex client, injected runner, and provider guardian now pass the provider-neutral
-Capsule boundary with fake app-server clients, and a Linux-only containment library
-now defines the workspace boundary. Its dedicated Linux process proof starts pinned
-Codex through both unactivated boundaries. The next gates are contract/artifact
-carriage, registered verification execution, descriptor/CLI composition of the new
-authority checkpoint with durable recovery-handle storage, durable structured
+Codex client, injected runner, provider guardian, strict descriptor, provisioner, and
+persistent adapter now form an internal read-only composition. Its dedicated Linux
+process proof starts pinned Codex through both guarded boundaries, while the
+non-claiming doctor verifies the pinned runtime without Relay work. The next gates are
+owner authentication, provider-only egress, workspace-write authority,
+contract/artifact carriage, registered verification execution, durable structured
 execution evidence, adversarial evaluation, and Guarded Real Mission 0 through the
 public pipeline. Installed service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120.
