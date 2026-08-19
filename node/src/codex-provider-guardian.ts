@@ -10,6 +10,7 @@ import type {
 	CodexProviderGuardian,
 	CodexProviderTerminationReason,
 } from "./codex-capsule-runner-contract.js";
+import type { CodexOwnerCredential } from "./codex-owner-credential.js";
 import { CodexProviderGenerationStore } from "./codex-provider-generation-state.js";
 import { CodexSupervisedProcess } from "./codex-supervised-process.js";
 import type { CodexSupervisorCommand } from "./codex-supervised-process.js";
@@ -28,6 +29,7 @@ export const CODEX_PROVIDER_LOCK_FILE = "provider.lock";
 export interface CodexProviderGuardianOptions extends CodexAppServerClientOptions {
 	readonly capsuleId: string;
 	readonly deadlineAtMs: number;
+	readonly claimOwnerCredential: (signal: AbortSignal) => Promise<CodexOwnerCredential>;
 	readonly supervisor?: CodexSupervisorCommand;
 	readonly reaper?: CodexSupervisorCommand;
 	readonly startupTimeoutMs?: number;
@@ -111,42 +113,55 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 		}
 
 		const supervisedRef: { value: CodexSupervisedProcess | null } = { value: null };
+		let ownerCredential: CodexOwnerCredential | null = null;
 		try {
-			const client = await CodexAppServerClient.start({
-				command: this.#options.command,
-				cwd: this.#options.cwd,
-				capsuleDirectory: this.#options.capsuleDirectory,
-				env: this.#options.env,
-				boundary: this.#options.boundary,
-				authoritySignal: this.#options.authoritySignal,
-				requestTimeoutMs: this.#options.requestTimeoutMs,
-				processFactory: async (processOptions) => {
-					if (supervisedRef.value !== null) {
-						throw new Error("Codex provider process was requested twice");
-					}
-					supervisedRef.value = await CodexSupervisedProcess.start(
-						{
-							capsuleId: this.#options.capsuleId,
-							capsuleDirectory: this.#options.capsuleDirectory,
-							generationId,
-							supervisor: this.#options.supervisor ?? defaultSupervisorCommand(),
-							reaper: this.#options.reaper,
-							process: processOptions,
-							lock,
-							store,
-							deadlineAtMs: this.#options.deadlineAtMs,
-							startupTimeoutMs: this.#options.startupTimeoutMs,
-							heartbeatIntervalMs: this.#options.heartbeatIntervalMs,
-							heartbeatTimeoutMs: this.#options.heartbeatTimeoutMs,
-							heartbeatRecordMs: this.#options.heartbeatRecordMs,
-						},
-						(supervised) => {
-							supervisedRef.value = supervised;
-						},
-					);
-					return supervisedRef.value.process;
+			if (this.#options.authoritySignal.aborted) {
+				throw authorityDenied(this.#options.authoritySignal);
+			}
+			ownerCredential = await this.#options.claimOwnerCredential(this.#options.authoritySignal);
+			if (this.#options.authoritySignal.aborted) {
+				throw authorityDenied(this.#options.authoritySignal);
+			}
+			const transferredCredential = ownerCredential;
+			ownerCredential = null;
+			const client = await CodexAppServerClient.start(
+				{
+					command: this.#options.command,
+					cwd: this.#options.cwd,
+					capsuleDirectory: this.#options.capsuleDirectory,
+					env: this.#options.env,
+					boundary: this.#options.boundary,
+					authoritySignal: this.#options.authoritySignal,
+					requestTimeoutMs: this.#options.requestTimeoutMs,
+					processFactory: async (processOptions) => {
+						if (supervisedRef.value !== null) {
+							throw new Error("Codex provider process was requested twice");
+						}
+						supervisedRef.value = await CodexSupervisedProcess.start(
+							{
+								capsuleId: this.#options.capsuleId,
+								capsuleDirectory: this.#options.capsuleDirectory,
+								generationId,
+								supervisor: this.#options.supervisor ?? defaultSupervisorCommand(),
+								reaper: this.#options.reaper,
+								process: processOptions,
+								lock,
+								store,
+								deadlineAtMs: this.#options.deadlineAtMs,
+								startupTimeoutMs: this.#options.startupTimeoutMs,
+								heartbeatIntervalMs: this.#options.heartbeatIntervalMs,
+								heartbeatTimeoutMs: this.#options.heartbeatTimeoutMs,
+								heartbeatRecordMs: this.#options.heartbeatRecordMs,
+							},
+							(supervised) => {
+								supervisedRef.value = supervised;
+							},
+						);
+						return supervisedRef.value.process;
+					},
 				},
-			});
+				transferredCredential,
+			);
 			const supervised = requireSupervisedProcess(supervisedRef.value);
 			if (this.#options.authoritySignal.aborted) {
 				throw authorityDenied(this.#options.authoritySignal);
@@ -185,6 +200,8 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 			if (error instanceof RuntimeAuthorityDeniedError) throw error;
 			if (error instanceof CodexProviderGuardianError) throw error;
 			throw new CodexProviderGuardianError("startup", "Codex provider generation failed to start");
+		} finally {
+			ownerCredential?.dispose();
 		}
 	}
 }

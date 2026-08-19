@@ -38,9 +38,13 @@ export const DISABLED_CODEX_FEATURES = [
 	"workspace_dependencies",
 ] as const;
 
+export const CODEX_EPHEMERAL_AUTH_CONFIG = 'cli_auth_credentials_store="ephemeral"';
+
 export function buildCodexAppServerArguments(): string[] {
 	return [
 		"--strict-config",
+		"--config",
+		CODEX_EPHEMERAL_AUTH_CONFIG,
 		...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 		"app-server",
 		"--listen",

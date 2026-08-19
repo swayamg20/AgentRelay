@@ -1,8 +1,9 @@
-import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
+import { access, chmod, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { directCodexProcessBoundaryForTests } from "../test-support/direct-codex-process-boundary.js";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 
@@ -22,19 +23,27 @@ describe.runIf(process.env.AGENTRELAY_TEST_CODEX_BIN)("installed Codex app-serve
 		if (executable === undefined) throw new Error("AGENTRELAY_TEST_CODEX_BIN is required");
 		capsuleDirectory = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-live-codex-")));
 		await chmod(capsuleDirectory, 0o700);
-		client = await CodexAppServerClient.start({
-			command: { executable },
-			cwd: process.cwd(),
-			capsuleDirectory,
-			env: allowlistedLiveEnvironment(),
-			boundary: directCodexProcessBoundaryForTests,
-			authoritySignal: new AbortController().signal,
-		});
+		client = await CodexAppServerClient.start(
+			{
+				command: { executable },
+				cwd: process.cwd(),
+				capsuleDirectory,
+				env: allowlistedLiveEnvironment(),
+				boundary: directCodexProcessBoundaryForTests,
+				authoritySignal: new AbortController().signal,
+			},
+			createFakeCodexOwnerCredential("agentrelay-live-test-owner-key"),
+		);
+		const authPath = join(capsuleDirectory, "codex-home", "auth.json");
+		await expect(access(authPath)).rejects.toMatchObject({ code: "ENOENT" });
 		expect(await client.startThread()).toMatchObject({
 			thread: { cliVersion: SUPPORTED_CODEX_CLI_VERSION, cwd: process.cwd(), ephemeral: false },
 			approvalPolicy: "never",
 			sandbox: { type: "readOnly", networkAccess: false },
 		});
+		await client.close();
+		client = null;
+		await expect(access(authPath)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 });
 

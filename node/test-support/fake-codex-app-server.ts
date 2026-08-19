@@ -15,6 +15,8 @@ export interface FakeAppServerOptions {
 	readonly readErrorCode?: number;
 	readonly notificationMode?: "valid" | "malformed";
 	readonly initializedFailure?: "invalid_json" | "incomplete_frame" | "stdout_eof";
+	readonly loginMode?: "success" | "error" | "echo_error" | "malformed" | "ignore";
+	readonly accountMode?: "success" | "error" | "malformed" | "ignore";
 	readonly ignoreRead?: boolean;
 	readonly exitAfterRead?: boolean;
 	readonly closeInputAfterRead?: boolean;
@@ -35,6 +37,7 @@ export interface FakeAppServerFixture {
 	readonly environmentPath: string;
 	readonly versionPidPath: string;
 	readonly appServerPidPath: string;
+	readonly credentialDigestPath: string;
 	readonly continuousOutputGatePath: string;
 	readonly env: NodeJS.ProcessEnv;
 	remove(): Promise<void>;
@@ -51,6 +54,7 @@ export async function createFakeAppServer(
 	const environmentPath = join(directory, "environment.json");
 	const versionPidPath = join(directory, "version.pid");
 	const appServerPidPath = join(directory, "app-server.pid");
+	const credentialDigestPath = join(directory, "credential.sha256");
 	const continuousOutputGatePath = join(directory, "continuous-output-go");
 	const configPath = join(directory, "fake-app-server-config.json");
 	await writeFile(scriptPath, `#!${process.execPath}\n${FAKE_APP_SERVER_SOURCE}`, { mode: 0o700 });
@@ -64,6 +68,8 @@ export async function createFakeAppServer(
 			readErrorCode: options.readErrorCode ?? null,
 			notificationMode: options.notificationMode ?? "",
 			initializedFailure: options.initializedFailure ?? "",
+			loginMode: options.loginMode ?? "success",
+			accountMode: options.accountMode ?? "success",
 			ignoreRead: options.ignoreRead ?? false,
 			exitAfterRead: options.exitAfterRead ?? false,
 			closeInputAfterRead: options.closeInputAfterRead ?? false,
@@ -79,6 +85,7 @@ export async function createFakeAppServer(
 			environmentPath,
 			versionPidPath,
 			appServerPidPath,
+			credentialDigestPath,
 		}),
 		{ mode: 0o600 },
 	);
@@ -91,6 +98,7 @@ export async function createFakeAppServer(
 		environmentPath,
 		versionPidPath,
 		appServerPidPath,
+		credentialDigestPath,
 		continuousOutputGatePath,
 		env: {
 			PATH: process.env.PATH,
@@ -174,6 +182,7 @@ export function isProcessAlive(pid: number): boolean {
 
 const FAKE_APP_SERVER_SOURCE = `
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import readline from "node:readline";
@@ -203,6 +212,8 @@ const threadId = config.threadId;
 const readErrorCode = config.readErrorCode;
 const notificationMode = config.notificationMode;
 const initializedFailure = config.initializedFailure;
+const loginMode = config.loginMode;
+const accountMode = config.accountMode;
 const ignoreRead = config.ignoreRead;
 const exitAfterRead = config.exitAfterRead;
 const closeInputAfterRead = config.closeInputAfterRead;
@@ -218,6 +229,14 @@ if (config.spawnDescendant) {
 }
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const log = (message) => appendFileSync(logPath, JSON.stringify(message) + "\\n", { mode: 0o600 });
+const redactForLog = (message) => {
+  if (
+    message.method !== "account/login/start" ||
+    typeof message.params !== "object" ||
+    message.params === null
+  ) return message;
+  return { ...message, params: { ...message.params, apiKey: "[redacted]" } };
+};
 const baseThread = (turns = []) => ({
   id: threadId,
   sessionId: threadId,
@@ -255,7 +274,7 @@ const threadResult = () => ({
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const message = JSON.parse(line);
-  log(message);
+  log(redactForLog(message));
   switch (message.method) {
     case "initialize":
       send({ id: message.id, result: {
@@ -272,6 +291,57 @@ rl.on("line", (line) => {
         process.stdout.end();
       }
       if (initializedFailure === "stdout_eof") process.stdout.end();
+      return;
+    case "account/login/start": {
+      const apiKey = message.params?.type === "apiKey" ? message.params.apiKey : null;
+      if (typeof apiKey !== "string") {
+        send({ id: message.id, error: { code: -32602, message: "invalid API-key login" } });
+        return;
+      }
+      writeFileSync(
+        config.credentialDigestPath,
+        createHash("sha256").update(apiKey, "utf8").digest("hex") + "\\n",
+        { mode: 0o600 },
+      );
+      if (loginMode === "ignore") return;
+      if (loginMode === "error") {
+        send({ id: message.id, error: { code: -32001, message: "fake login rejected" } });
+        return;
+      }
+      if (loginMode === "echo_error") {
+        send({ id: message.id, error: {
+          code: -32001,
+          message: "fake login rejected " + apiKey,
+          data: { echoedApiKey: apiKey },
+        } });
+        return;
+      }
+      if (loginMode === "malformed") {
+        send({ id: message.id, result: { type: "chatgpt", echoedApiKey: apiKey } });
+        return;
+      }
+      send({ id: message.id, result: { type: "apiKey" } });
+      send({
+        method: "account/login/completed",
+        params: { loginId: null, success: true, error: null },
+      });
+      send({ method: "account/updated", params: { authMode: "apikey", planType: null } });
+      return;
+    }
+    case "account/read":
+      if (accountMode === "ignore") return;
+      if (accountMode === "error") {
+        send({ id: message.id, error: { code: -32002, message: "fake account read failed" } });
+        return;
+      }
+      if (accountMode === "malformed") {
+        send({ id: message.id, result: { account: null, requiresOpenaiAuth: true } });
+        return;
+      }
+      send({
+        id: message.id,
+        result: { account: { type: "apiKey" }, requiresOpenaiAuth: true },
+      });
       return;
     case "thread/start":
     case "thread/resume":

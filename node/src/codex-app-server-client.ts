@@ -24,6 +24,8 @@ import {
 	type CodexThread,
 	type CodexThreadStartResult,
 	type CodexTurn,
+	codexApiKeyAccountResponseSchema,
+	codexApiKeyLoginResponseSchema,
 	codexInitializeResponseSchema,
 	codexRelevantNotificationSchema,
 	codexThreadReadResultSchema,
@@ -31,7 +33,11 @@ import {
 	codexTurnStartResultSchema,
 	isCodexRelevantNotificationMethod,
 } from "./codex-app-server-protocol.js";
-import { CodexAppServerTransport } from "./codex-app-server-transport.js";
+import {
+	CodexAppServerResponseError,
+	CodexAppServerTransport,
+} from "./codex-app-server-transport.js";
+import { type CodexOwnerCredential, CodexOwnerCredentialError } from "./codex-owner-credential.js";
 import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 
 export { CodexAppServerError } from "./codex-app-server-process.js";
@@ -75,35 +81,42 @@ export class CodexAppServerClient {
 		this.#authoritySignal = authoritySignal;
 	}
 
-	static async start(options: CodexAppServerClientOptions): Promise<CodexAppServerClient> {
-		let codexHome: string;
+	static async start(
+		options: CodexAppServerClientOptions,
+		ownerCredential: CodexOwnerCredential,
+	): Promise<CodexAppServerClient> {
+		let client: CodexAppServerClient | null = null;
 		try {
-			codexHome = await prepareCodexHome(options.capsuleDirectory);
-		} catch (error) {
-			throw new CodexAppServerError(
-				"policy",
-				"Codex home must be a canonical, current-user-owned mode-0700 directory",
-				{ cause: error },
-			);
-		}
-		const env = buildCodexChildEnvironment(options.env, codexHome);
-		const transport = await CodexAppServerTransport.start({
-			command: options.command,
-			cwd: options.cwd,
-			env,
-			boundary: options.boundary,
-			authoritySignal: options.authoritySignal,
-			requestTimeoutMs: options.requestTimeoutMs,
-			processFactory: options.processFactory,
-			handleServerRequest: denyCodexServerRequest,
-		});
-		const client = new CodexAppServerClient(transport, codexHome, options.authoritySignal);
-		try {
+			let codexHome: string;
+			try {
+				codexHome = await prepareCodexHome(options.capsuleDirectory);
+			} catch (error) {
+				throw new CodexAppServerError(
+					"policy",
+					"Codex home must be a canonical, current-user-owned mode-0700 directory",
+					{ cause: error },
+				);
+			}
+			const env = buildCodexChildEnvironment(options.env, codexHome);
+			const transport = await CodexAppServerTransport.start({
+				command: options.command,
+				cwd: options.cwd,
+				env,
+				boundary: options.boundary,
+				authoritySignal: options.authoritySignal,
+				requestTimeoutMs: options.requestTimeoutMs,
+				processFactory: options.processFactory,
+				handleServerRequest: denyCodexServerRequest,
+			});
+			client = new CodexAppServerClient(transport, codexHome, options.authoritySignal);
 			await client.initialize();
+			await client.authenticate(ownerCredential);
 			return client;
 		} catch (error) {
-			await client.close();
+			await client?.close();
 			throw error;
+		} finally {
+			ownerCredential.dispose();
 		}
 	}
 
@@ -265,6 +278,42 @@ export class CodexAppServerClient {
 		});
 	}
 
+	private async authenticate(ownerCredential: CodexOwnerCredential): Promise<void> {
+		await this.runProviderCall(async () => {
+			try {
+				await ownerCredential.use(async (apiKey) => {
+					const response = await this.requestAuthentication("account/login/start", {
+						type: "apiKey",
+						apiKey,
+					});
+					if (!codexApiKeyLoginResponseSchema.safeParse(response).success) {
+						throw authenticationFailure();
+					}
+				});
+			} catch (error) {
+				if (error instanceof CodexOwnerCredentialError) throw authenticationFailure();
+				throw error;
+			}
+		});
+		await this.runProviderCall(async () => {
+			const account = await this.requestAuthentication("account/read", {
+				refreshToken: false,
+			});
+			if (!codexApiKeyAccountResponseSchema.safeParse(account).success) {
+				throw authenticationFailure();
+			}
+		});
+	}
+
+	private async requestAuthentication(method: string, params: unknown): Promise<unknown> {
+		try {
+			return await this.#transport.request(method, params);
+		} catch (error) {
+			if (error instanceof CodexAppServerResponseError) throw authenticationFailure();
+			throw error;
+		}
+	}
+
 	private async runProviderCall<T>(operation: () => Promise<T>): Promise<T> {
 		this.assertUsable();
 		try {
@@ -332,4 +381,8 @@ export class CodexAppServerClient {
 	private isAuthorityReason(error: unknown): boolean {
 		return this.#authoritySignal.aborted && error === this.#authoritySignal.reason;
 	}
+}
+
+function authenticationFailure(): CodexAppServerError {
+	return new CodexAppServerError("authentication", "Codex owner authentication failed");
 }

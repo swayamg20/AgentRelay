@@ -15,6 +15,7 @@ import {
 } from "./codex-capsule-runner-contract.js";
 import { CodexCapsuleRunner } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { type CodexOwnerCredential, CodexOwnerCredentialError } from "./codex-owner-credential.js";
 import {
 	type CodexProviderGuardianOptions,
 	SupervisedCodexProviderGuardian,
@@ -40,11 +41,13 @@ type RecoverContainment = (
 ) => Promise<CodexSandboxContainment>;
 type CreateGuardian = (options: CodexProviderGuardianOptions) => CodexProviderGuardian;
 type OpenRunner = (options: CodexCapsuleRunnerOptions) => Promise<CapsuleRuntime>;
+type ClaimOwnerCredential = (signal: AbortSignal) => Promise<CodexOwnerCredential>;
 
 export interface CodexCapsuleRuntimeDependencies {
 	readonly recoverContainment?: RecoverContainment;
 	readonly createGuardian?: CreateGuardian;
 	readonly openRunner?: OpenRunner;
+	readonly claimOwnerCredential?: ClaimOwnerCredential;
 	readonly environment?: NodeJS.ProcessEnv;
 }
 
@@ -64,6 +67,7 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 	readonly #recoverContainment: RecoverContainment;
 	readonly #createGuardian: CreateGuardian;
 	readonly #openRunner: OpenRunner;
+	readonly #claimOwnerCredential: ClaimOwnerCredential;
 	readonly #environment: NodeJS.ProcessEnv;
 	#activation: Promise<CapsuleRuntime> | null = null;
 	#activationTeardownFailure: AggregateError | null = null;
@@ -81,6 +85,7 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 			dependencies.createGuardian ??
 			((guardianOptions) => new SupervisedCodexProviderGuardian(guardianOptions));
 		this.#openRunner = dependencies.openRunner ?? CodexCapsuleRunner.open;
+		this.#claimOwnerCredential = dependencies.claimOwnerCredential ?? unavailableOwnerCredential;
 		this.#environment = buildBaseCapsuleEnvironment(dependencies.environment);
 	}
 
@@ -145,6 +150,7 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					capsuleId: this.#descriptor.capsule_id,
 					deadlineAtMs: Date.parse(grant.hard_expires_at),
 					authoritySignal: authority.signal,
+					claimOwnerCredential: this.#claimOwnerCredential,
 					command: { executable: containment.authorization.providerExecutable },
 					cwd: containment.authorization.workspace.root,
 					capsuleDirectory: containment.authorization.runtimeDirectory,
@@ -207,6 +213,10 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 		const reason = runtimeAuthorityDenyCodeSchema.safeParse(signal.reason);
 		throw new RuntimeAuthorityDeniedError(reason.success ? reason.data : "revoked");
 	}
+}
+
+function unavailableOwnerCredential(): Promise<CodexOwnerCredential> {
+	return Promise.reject(new CodexOwnerCredentialError("unavailable"));
 }
 
 function assertDescriptorScope(

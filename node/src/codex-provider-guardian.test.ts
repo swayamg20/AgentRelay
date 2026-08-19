@@ -14,7 +14,9 @@ import {
 	waitForPid,
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import type { CodexProviderGeneration } from "./codex-capsule-runner-contract.js";
+import { CodexOwnerCredentialError } from "./codex-owner-credential.js";
 import {
 	CODEX_PROVIDER_GENERATION_FILE,
 	type CodexProviderGenerationState,
@@ -102,17 +104,20 @@ describe("SupervisedCodexProviderGuardian", () => {
 					},
 				}),
 			).toMatchObject({ id: "turn-1", status: "inProgress" });
-			const messages = await waitForMessages(fixture.logPath, 4);
+			const messages = await waitForMessages(fixture.logPath, 6);
 			expect(messages.map((message) => message.method)).toEqual([
 				"initialize",
 				"initialized",
+				"account/login/start",
+				"account/read",
 				"thread/start",
 				"turn/start",
 			]);
-			expect(messages[3]).toMatchObject({
+			expect(messages[5]).toMatchObject({
 				method: "turn/start",
 				params: { input: [{ type: "text", text: canary }] },
 			});
+			expect(JSON.stringify(messages)).not.toContain("guardian-test-owner");
 			await generation.terminate("capsule_shutdown");
 			await expect(generation.termination).resolves.toEqual({ kind: "stopped" });
 			await expect(readFile(dataPlaneAccessPath, "utf8")).rejects.toMatchObject({
@@ -167,6 +172,168 @@ describe("SupervisedCodexProviderGuardian", () => {
 			});
 			const generation = await firstOpening;
 			generations.push(generation);
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"claims one owner credential with the exact authority signal after taking ownership",
+		async () => {
+			const fixture = await fakeAppServer();
+			const authority = new AbortController();
+			const lockPath = join(fixture.directory, CODEX_PROVIDER_LOCK_FILE);
+			const claimOwnerCredential = vi.fn(async (signal: AbortSignal) => {
+				expect(signal).toBe(authority.signal);
+				await expect(
+					acquireProcessLock(lockPath, { kind: PROVIDER_GENERATION_LOCK_KIND }),
+				).rejects.toThrow();
+				await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+				return createFakeCodexOwnerCredential("guardian-owner-credential");
+			});
+
+			const generation = await openGeneration(fixture, {
+				authoritySignal: authority.signal,
+				claimOwnerCredential,
+			});
+			expect(claimOwnerCredential).toHaveBeenCalledOnce();
+
+			await generation.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it("does not claim an owner credential when generation state cannot be opened", async () => {
+		const fixture = await fakeAppServer();
+		const claimOwnerCredential = vi.fn(async () =>
+			createFakeCodexOwnerCredential("unreachable-owner-credential"),
+		);
+		vi.spyOn(CodexProviderGenerationStore, "open").mockRejectedValueOnce(
+			new Error("state path is unavailable"),
+		);
+
+		await expect(
+			createGuardian(fixture, { claimOwnerCredential }).openGeneration(),
+		).rejects.toMatchObject({
+			name: "CodexProviderGuardianError",
+			reason: "state",
+			message: "Codex provider generation state is not safely recoverable",
+		});
+		expect(claimOwnerCredential).not.toHaveBeenCalled();
+
+		const replacementLock = await acquireProcessLock(
+			join(fixture.directory, CODEX_PROVIDER_LOCK_FILE),
+			{ kind: PROVIDER_GENERATION_LOCK_KIND },
+		);
+		await replacementLock.release();
+	});
+
+	it("does not claim an owner credential after authority is lost while state opens", async () => {
+		const fixture = await fakeAppServer();
+		const authority = new AbortController();
+		const stateOpenStarted = deferred<void>();
+		const stateOpenGate = deferred<void>();
+		const claimOwnerCredential = vi.fn(async () =>
+			createFakeCodexOwnerCredential("revoked-owner-credential"),
+		);
+		const openStore = CodexProviderGenerationStore.open.bind(CodexProviderGenerationStore);
+		vi.spyOn(CodexProviderGenerationStore, "open").mockImplementation(
+			async (directory, capsuleId, now) => {
+				stateOpenStarted.resolve();
+				await stateOpenGate.promise;
+				return openStore(directory, capsuleId, now);
+			},
+		);
+		const opening = createGuardian(fixture, {
+			authoritySignal: authority.signal,
+			claimOwnerCredential,
+		}).openGeneration();
+		await stateOpenStarted.promise;
+
+		authority.abort("expired");
+		stateOpenGate.resolve();
+
+		await expect(opening).rejects.toMatchObject({ code: "expired" });
+		expect(claimOwnerCredential).not.toHaveBeenCalled();
+		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("releases ownership without spawning when the owner credential is unavailable", async () => {
+		const fixture = await fakeAppServer();
+		const claimOwnerCredential = vi.fn(async () => {
+			throw new CodexOwnerCredentialError("unavailable");
+		});
+
+		await expect(
+			createGuardian(fixture, { claimOwnerCredential }).openGeneration(),
+		).rejects.toMatchObject({
+			name: "CodexProviderGuardianError",
+			reason: "startup",
+			message: "Codex provider generation failed to start",
+		});
+		expect(claimOwnerCredential).toHaveBeenCalledOnce();
+		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(
+			readFile(join(fixture.directory, CODEX_PROVIDER_GENERATION_FILE), "utf8"),
+		).rejects.toMatchObject({ code: "ENOENT" });
+
+		const replacementLock = await acquireProcessLock(
+			join(fixture.directory, CODEX_PROVIDER_LOCK_FILE),
+			{ kind: PROVIDER_GENERATION_LOCK_KIND },
+		);
+		await replacementLock.release();
+	});
+
+	it("disposes a claimed credential when authority is lost before provider spawn", async () => {
+		const fixture = await fakeAppServer();
+		const authority = new AbortController();
+		const claimStarted = deferred<void>();
+		const claimGate = deferred<void>();
+		const credential = createFakeCodexOwnerCredential("unused-owner-credential");
+		const opening = createGuardian(fixture, {
+			authoritySignal: authority.signal,
+			claimOwnerCredential: async (signal) => {
+				expect(signal).toBe(authority.signal);
+				claimStarted.resolve();
+				await claimGate.promise;
+				return credential;
+			},
+		}).openGeneration();
+		await claimStarted.promise;
+
+		authority.abort("expired");
+		claimGate.resolve();
+
+		await expect(opening).rejects.toMatchObject({ code: "expired" });
+		expect(credential.useCount).toBe(0);
+		expect(credential.disposeCount).toBe(1);
+		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it.each([
+		["login", { loginMode: "error" }],
+		["account read", { accountMode: "error" }],
+	] as const)(
+		"does not activate a generation when owner %s authentication fails",
+		async (_phase, appServerOptions) => {
+			const fixture = await fakeAppServer(appServerOptions);
+			const activate = vi.spyOn(CodexSupervisedProcess.prototype, "activate");
+			const claimOwnerCredential = vi.fn(async () =>
+				createFakeCodexOwnerCredential("failed-auth-owner"),
+			);
+
+			await expect(
+				createGuardian(fixture, { claimOwnerCredential }).openGeneration(),
+			).rejects.toMatchObject({
+				name: "CodexProviderGuardianError",
+				reason: "startup",
+				message: "Codex provider generation failed to start",
+			});
+			expect(claimOwnerCredential).toHaveBeenCalledOnce();
+			expect(activate).not.toHaveBeenCalled();
+			expect(await generationState(fixture)).toMatchObject({
+				phase: "quiescent",
+				stop_cause: "startup_failure",
+			});
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
 	);
@@ -513,7 +680,13 @@ describe("SupervisedCodexProviderGuardian", () => {
 type GuardianOverrides = Partial<
 	Pick<
 		CodexProviderGuardianOptions,
-		"authoritySignal" | "boundary" | "deadlineAtMs" | "reaper" | "requestTimeoutMs" | "supervisor"
+		| "authoritySignal"
+		| "boundary"
+		| "claimOwnerCredential"
+		| "deadlineAtMs"
+		| "reaper"
+		| "requestTimeoutMs"
+		| "supervisor"
 	>
 >;
 
@@ -529,10 +702,24 @@ function createGuardian(
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,
 		authoritySignal: new AbortController().signal,
+		claimOwnerCredential: async () => createFakeCodexOwnerCredential("guardian-test-owner"),
 		deadlineAtMs: Date.now() + 60_000,
 		supervisor: sourceSupervisorCommand(),
 		...overrides,
 	});
+}
+
+interface Deferred<T> {
+	readonly promise: Promise<T>;
+	resolve(value: T): void;
+}
+
+function deferred<T = void>(): Deferred<T> {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
 }
 
 async function openGeneration(

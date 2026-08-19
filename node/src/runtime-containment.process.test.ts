@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { resolvePinnedCodex, sha256File } from "../test-support/pinned-codex.js";
 import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
 import {
@@ -229,6 +230,7 @@ describe.runIf(
 			boundary: containment.boundary,
 			deadlineAtMs,
 			authoritySignal: authority.signal,
+			claimOwnerCredential: async () => createFakeCodexOwnerCredential("containment-test-owner"),
 			requestTimeoutMs: PROCESS_TIMEOUT_MS,
 			supervisor: {
 				executable: process.execPath,

@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { SupervisedCodexProviderGuardian } from "../src/codex-provider-guardian.js";
 import { directCodexProcessBoundaryForTests } from "./direct-codex-process-boundary.js";
+import { createFakeCodexOwnerCredential } from "./fake-codex-owner-credential.js";
 
 const capsuleId = requiredEnvironment("AGENTRELAY_TEST_CAPSULE_ID");
 const directory = requiredEnvironment("AGENTRELAY_TEST_CAPSULE_DIRECTORY");
@@ -33,6 +34,7 @@ const guardian = new SupervisedCodexProviderGuardian({
 	env: process.env,
 	boundary,
 	authoritySignal: new AbortController().signal,
+	claimOwnerCredential: async () => createFakeCodexOwnerCredential("guardian-owner-worker"),
 	deadlineAtMs: Date.now() + 60_000,
 	supervisor: {
 		executable: process.execPath,

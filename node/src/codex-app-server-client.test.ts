@@ -1,4 +1,5 @@
-import { access, chmod } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, chmod, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,8 +14,12 @@ import {
 	waitForPid,
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
-import { DISABLED_CODEX_FEATURES } from "./codex-app-server-command.js";
+import {
+	CODEX_EPHEMERAL_AUTH_CONFIG,
+	DISABLED_CODEX_FEATURES,
+} from "./codex-app-server-command.js";
 import { startCodexAppServerProcess } from "./codex-app-server-process.js";
 import {
 	CODEX_APP_SERVER_CLIENT_NAME,
@@ -23,6 +28,7 @@ import {
 
 const fixtures: FakeAppServerFixture[] = [];
 const clients: CodexAppServerClient[] = [];
+const TEST_OWNER_API_KEY = "opaque owner key with spaces";
 
 afterEach(async () => {
 	await Promise.all(clients.splice(0).map((client) => client.close()));
@@ -50,8 +56,8 @@ describe("CodexAppServerClient", () => {
 			sandbox: { type: "readOnly", networkAccess: false },
 		});
 
-		const messages = await waitForMessages(fixture.logPath, 3);
-		expect(messages.slice(0, 3)).toEqual([
+		const messages = await waitForMessages(fixture.logPath, 5);
+		expect(messages.slice(0, 5)).toEqual([
 			expect.objectContaining({
 				method: "initialize",
 				params: expect.objectContaining({
@@ -63,6 +69,14 @@ describe("CodexAppServerClient", () => {
 				}),
 			}),
 			{ method: "initialized" },
+			expect.objectContaining({
+				method: "account/login/start",
+				params: { type: "apiKey", apiKey: "[redacted]" },
+			}),
+			expect.objectContaining({
+				method: "account/read",
+				params: { refreshToken: false },
+			}),
 			expect.objectContaining({
 				method: "thread/start",
 				params: expect.objectContaining({
@@ -76,11 +90,16 @@ describe("CodexAppServerClient", () => {
 		]);
 		expect(await waitForArgv(fixture.argvPath)).toEqual([
 			"--strict-config",
+			"--config",
+			CODEX_EPHEMERAL_AUTH_CONFIG,
 			...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 			"app-server",
 			"--listen",
 			"stdio://",
 		]);
+		expect((await readFile(fixture.credentialDigestPath, "utf8")).trim()).toBe(
+			createHash("sha256").update(TEST_OWNER_API_KEY, "utf8").digest("hex"),
+		);
 		const environment = await waitForEnvironment(fixture.environmentPath);
 		expect(environment.HOME).toBe(join(fixture.directory, "codex-home"));
 		expect(environment.CODEX_HOME).toBe(join(fixture.directory, "codex-home"));
@@ -122,7 +141,7 @@ describe("CodexAppServerClient", () => {
 			reason: "policy",
 		});
 
-		const messages = await waitForMessages(fixture.logPath, 4);
+		const messages = await waitForMessages(fixture.logPath, 6);
 		expect(messages.find((message) => message.method === "turn/start")).toMatchObject({
 			params: {
 				threadId: "thread-1",
@@ -185,7 +204,7 @@ describe("CodexAppServerClient", () => {
 			reason: "protocol",
 		});
 		await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "protocol" });
-		expect(await waitForMessages(fixture.logPath, 3)).not.toContainEqual(
+		expect(await waitForMessages(fixture.logPath, 5)).not.toContainEqual(
 			expect.objectContaining({ method: "thread/read" }),
 		);
 	});
@@ -201,7 +220,7 @@ describe("CodexAppServerClient", () => {
 			name: "CodexAppServerError",
 			reason: "protocol",
 		});
-		expect(await waitForMessages(resumeFixture.logPath, 2)).not.toContainEqual(
+		expect(await waitForMessages(resumeFixture.logPath, 5)).not.toContainEqual(
 			expect.objectContaining({ method: "thread/read" }),
 		);
 
@@ -291,7 +310,7 @@ describe("CodexAppServerClient", () => {
 		const client = await openClient(fixture, { authoritySignal: authority.signal });
 		const descendantPid = await waitForPid(fixture.childPidPath);
 		const pending = client.readThread("thread-1");
-		await waitForMessages(fixture.logPath, 3);
+		await waitForMessages(fixture.logPath, 5);
 
 		authority.abort("expired");
 
@@ -373,7 +392,7 @@ describe("CodexAppServerClient", () => {
 			},
 		});
 		const pending = client.readThread("thread-1");
-		await waitForMessages(fixture.logPath, 3);
+		await waitForMessages(fixture.logPath, 5);
 
 		authority.abort("expired");
 		const failure = await settleWithin(
@@ -389,29 +408,29 @@ describe("CodexAppServerClient", () => {
 	it("surfaces cleanup failure instead of the prior provider failure", async () => {
 		const fixture = await fakeAppServer({ initializedFailure: "invalid_json" });
 		const cleanupFailure = new Error("process-group cleanup was not proven");
-		const client = await CodexAppServerClient.start({
-			command: { executable: fixture.scriptPath },
-			cwd: fixture.directory,
-			capsuleDirectory: fixture.directory,
-			env: fixture.env,
-			boundary: directCodexProcessBoundaryForTests,
-			authoritySignal: new AbortController().signal,
-			processFactory: async (options) => {
-				const processRef = await startCodexAppServerProcess(options);
-				return {
-					...processRef,
-					stop: async () => {
-						await processRef.stop?.();
-						throw cleanupFailure;
+		await expect(
+			CodexAppServerClient.start(
+				{
+					command: { executable: fixture.scriptPath },
+					cwd: fixture.directory,
+					capsuleDirectory: fixture.directory,
+					env: fixture.env,
+					boundary: directCodexProcessBoundaryForTests,
+					authoritySignal: new AbortController().signal,
+					processFactory: async (options) => {
+						const processRef = await startCodexAppServerProcess(options);
+						return {
+							...processRef,
+							stop: async () => {
+								await processRef.stop?.();
+								throw cleanupFailure;
+							},
+						};
 					},
-				};
-			},
-		});
-		clients.push(client);
-
-		await expect(client.readThread("thread-1")).rejects.toBe(cleanupFailure);
-		clients.splice(clients.indexOf(client), 1);
-		await client.close().catch(() => undefined);
+				},
+				createFakeCodexOwnerCredential(TEST_OWNER_API_KEY),
+			),
+		).rejects.toBe(cleanupFailure);
 	});
 });
 
@@ -431,16 +450,19 @@ async function openClient(
 		readonly processFactory?: Parameters<typeof CodexAppServerClient.start>[0]["processFactory"];
 	} = {},
 ): Promise<CodexAppServerClient> {
-	const client = await CodexAppServerClient.start({
-		command: { executable: fixture.scriptPath },
-		cwd: fixture.directory,
-		capsuleDirectory: fixture.directory,
-		env: fixture.env,
-		boundary: directCodexProcessBoundaryForTests,
-		authoritySignal: options.authoritySignal ?? new AbortController().signal,
-		requestTimeoutMs: options.requestTimeoutMs,
-		processFactory: options.processFactory,
-	});
+	const client = await CodexAppServerClient.start(
+		{
+			command: { executable: fixture.scriptPath },
+			cwd: fixture.directory,
+			capsuleDirectory: fixture.directory,
+			env: fixture.env,
+			boundary: directCodexProcessBoundaryForTests,
+			authoritySignal: options.authoritySignal ?? new AbortController().signal,
+			requestTimeoutMs: options.requestTimeoutMs,
+			processFactory: options.processFactory,
+		},
+		createFakeCodexOwnerCredential(TEST_OWNER_API_KEY),
+	);
 	clients.push(client);
 	return client;
 }

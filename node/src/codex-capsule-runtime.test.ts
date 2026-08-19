@@ -10,6 +10,7 @@ import type {
 	StartTurnInput,
 } from "@agentrelay/protocol";
 import { afterEach, describe, expect, it } from "vitest";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CapsuleAuthority } from "./capsule-authority.js";
 import {
 	CODEX_CAPSULE_RUNTIME_CONTRACT,
@@ -83,6 +84,7 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(fixture.runnerOptions).toHaveLength(1);
 		const guardian = fixture.guardianOptions[0]!;
 		expect(guardian.authoritySignal).toBe(activationSignals[0]);
+		expect(guardian.claimOwnerCredential).toBe(fixture.claimOwnerCredential);
 		expect(guardian.deadlineAtMs).toBe(Date.parse(grant.hard_expires_at));
 		expect(guardian.command.executable).toBe(fixture.containment.authorization.providerExecutable);
 		expect(guardian.cwd).toBe(fixture.containment.authorization.workspace.root);
@@ -97,6 +99,29 @@ describe("CodexCapsuleRuntimeController", () => {
 		await fixture.controller.close();
 		authority.dispose();
 		expect(fixture.runtime.closeCalls).toBe(1);
+	});
+
+	it("fails closed with the unavailable default credential before provider launch", async () => {
+		const fixture = await createFixture({
+			exerciseGuardianClaim: true,
+			useDefaultOwnerCredential: true,
+		});
+		const authority = installedAuthority(fixture.grant);
+
+		await expect(
+			authority.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			),
+		).rejects.toMatchObject({
+			name: "CodexOwnerCredentialError",
+			reason: "unavailable",
+		});
+		expect(fixture.guardianOpenCalls).toBe(1);
+		expect(fixture.providerLaunchCalls).toBe(0);
+		expect(fixture.runtime.closeCalls).toBe(0);
+
+		await fixture.controller.close();
+		authority.dispose();
 	});
 
 	it("denies a missing workspace-read capability before containment recovery", async () => {
@@ -306,6 +331,8 @@ interface FixtureOptions {
 	readonly recoveryFailure?: Error;
 	readonly recoveryGate?: Deferred<void>;
 	readonly runnerGate?: Deferred<void>;
+	readonly exerciseGuardianClaim?: boolean;
+	readonly useDefaultOwnerCredential?: boolean;
 }
 
 async function createFixture(options: FixtureOptions = {}) {
@@ -344,12 +371,17 @@ async function createFixture(options: FixtureOptions = {}) {
 	const recoveryStarted = deferred<void>();
 	const runnerStarted = deferred<void>();
 	const recoverySignals: AbortSignal[] = [];
+	const claimOwnerCredential = async (_signal: AbortSignal) =>
+		createFakeCodexOwnerCredential("capsule-runtime-owner");
 	let recoveryCalls = 0;
+	let guardianOpenCalls = 0;
+	let providerLaunchCalls = 0;
 	const controller = await CodexCapsuleRuntimeController.open({
 		directory,
 		descriptor,
 		lifecycle: { retire: () => undefined },
 		dependencies: {
+			...(options.useDefaultOwnerCredential ? {} : { claimOwnerCredential }),
 			environment: {
 				PATH: "/usr/bin",
 				OPENAI_API_KEY: "must-not-cross",
@@ -367,11 +399,20 @@ async function createFixture(options: FixtureOptions = {}) {
 			},
 			createGuardian: (guardian) => {
 				guardianOptions.push(guardian);
-				return { openGeneration: async () => Promise.reject(new Error("runner is injected")) };
+				return {
+					openGeneration: async () => {
+						guardianOpenCalls += 1;
+						if (!options.exerciseGuardianClaim) throw new Error("runner is injected");
+						await guardian.claimOwnerCredential(guardian.authoritySignal);
+						providerLaunchCalls += 1;
+						throw new Error("provider launch was reached");
+					},
+				};
 			},
 			openRunner: async (runner) => {
 				runnerOptions.push(runner);
 				runnerStarted.resolve();
+				if (options.exerciseGuardianClaim) await runner.guardian.openGeneration();
 				await options.runnerGate?.promise;
 				return runtime;
 			},
@@ -384,12 +425,19 @@ async function createFixture(options: FixtureOptions = {}) {
 		grant,
 		guardianOptions,
 		runnerOptions,
+		claimOwnerCredential,
 		runtime,
 		recoveryStarted,
 		recoverySignals,
 		runnerStarted,
 		get recoveryCalls() {
 			return recoveryCalls;
+		},
+		get guardianOpenCalls() {
+			return guardianOpenCalls;
+		},
+		get providerLaunchCalls() {
+			return providerLaunchCalls;
 		},
 	};
 }

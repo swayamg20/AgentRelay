@@ -18,6 +18,15 @@ export const codexInitializeResponseSchema = z
 	})
 	.passthrough();
 
+export const codexApiKeyLoginResponseSchema = z.object({ type: z.literal("apiKey") }).passthrough();
+
+export const codexApiKeyAccountResponseSchema = z
+	.object({
+		account: z.object({ type: z.literal("apiKey") }).passthrough(),
+		requiresOpenaiAuth: z.literal(true),
+	})
+	.passthrough();
+
 const codexTurnErrorSchema = z
 	.object({
 		message: boundedString(8_192).min(1),

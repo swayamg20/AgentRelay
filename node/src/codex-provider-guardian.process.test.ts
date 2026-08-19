@@ -13,6 +13,7 @@ import {
 	waitForPid,
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import type { CodexProviderGeneration } from "./codex-capsule-runner-contract.js";
 import {
 	CODEX_PROVIDER_GENERATION_FILE,
@@ -364,6 +365,7 @@ function createGuardian(fixture: FakeAppServerFixture): SupervisedCodexProviderG
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,
 		authoritySignal: new AbortController().signal,
+		claimOwnerCredential: async () => createFakeCodexOwnerCredential("guardian-process-owner"),
 		deadlineAtMs: Date.now() + 60_000,
 		supervisor: sourceSupervisorCommand(),
 	});

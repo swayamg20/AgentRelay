@@ -5,11 +5,13 @@ import {
 	type FakeAppServerFixture,
 	createFakeAppServer,
 } from "../test-support/fake-codex-app-server.js";
+import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import type { CodexProcessBoundary, CodexProcessRequest } from "./codex-process-boundary.js";
 
 const fixtures: FakeAppServerFixture[] = [];
 const clients: CodexAppServerClient[] = [];
+const TEST_OWNER_API_KEY = "containment-owner-key";
 
 afterEach(async () => {
 	await Promise.all(clients.splice(0).map((client) => client.close().catch(() => undefined)));
@@ -61,14 +63,17 @@ async function openClient(
 	fixture: FakeAppServerFixture,
 	boundary: CodexProcessBoundary,
 ): Promise<CodexAppServerClient> {
-	const client = await CodexAppServerClient.start({
-		command: { executable: fixture.scriptPath },
-		cwd: fixture.directory,
-		capsuleDirectory: fixture.directory,
-		env: fixture.env,
-		boundary,
-		authoritySignal: new AbortController().signal,
-	});
+	const client = await CodexAppServerClient.start(
+		{
+			command: { executable: fixture.scriptPath },
+			cwd: fixture.directory,
+			capsuleDirectory: fixture.directory,
+			env: fixture.env,
+			boundary,
+			authoritySignal: new AbortController().signal,
+		},
+		createFakeCodexOwnerCredential(TEST_OWNER_API_KEY),
+	);
 	clients.push(client);
 	return client;
 }

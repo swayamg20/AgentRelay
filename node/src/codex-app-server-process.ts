@@ -55,6 +55,7 @@ export class CodexAppServerError extends Error {
 			| "transport"
 			| "protocol"
 			| "provider"
+			| "authentication"
 			| "version"
 			| "policy"
 			| "closed",
