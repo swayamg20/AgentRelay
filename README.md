@@ -35,8 +35,10 @@
 > containment recovery handle, authority-gated Node/Capsule composition, and a
 > non-claiming `doctor-codex` preflight now exist as internal checkpoints. The internal
 > Codex client requires a one-shot owner API-key handoff and forces Codex's credential
-> store to remain ephemeral. There is still no owner-facing credential source, polling
-> `run-codex` command, provider egress, workspace-write authority, registered
+> store to remain ephemeral. Its retained Linux policy gives only the exact app-server
+> command a managed CONNECT path to `api.openai.com`; version checks, containment probes,
+> and nested workspace sandboxes remain offline. There is still no owner-facing
+> credential source, polling `run-codex` command, workspace-write authority, registered
 > verification execution, durable local evidence, installed service supervision, or
 > two-machine proof. macOS also fails closed.
 
@@ -172,9 +174,9 @@ does not open runtime state or claim Relay work. No path has executed a real mod
 - Production CLI activation for persistent real-runtime sessions. The strict
   descriptor, passive Capsule server, provisioner, and adapter are composed internally,
   but the current persistent command still selects only the deterministic fake runtime.
-- An owner-facing credential source and polling-command composition, provider-only
-  egress, workspace-write authority, and Guarded Real Mission 0 through the public
-  pipeline.
+- An owner-facing credential source and polling-command composition that selects the
+  internal fixed provider-only egress boundary, plus workspace-write authority and
+  Guarded Real Mission 0 through the public pipeline.
 - Registered verification execution (#93), bounded Mission artifact carriage (#94),
   durable local authority and execution evidence (#99), and adversarial evaluation
   (#104). The current grant deliberately does not authorize verification execution.
@@ -397,11 +399,13 @@ usage, artifacts, and final Relay completion, including expiry and revocation. T
 redacted decisions are emitted only when an evidence sink is injected; they are not
 durably persisted by default. The guarded Codex checkpoint also allowlists the child
 environment, derives a private exact-mode-0700 home locally, retires a failed Capsule
-generation, and composes a strict read-only Linux descriptor with the same private
-authority boundary. No polling CLI selects it, and an owner-facing credential source,
-provider egress, workspace-write authority, the registered verification executor,
-durable evidence, and adversarial real-turn proof remain open. Real autonomous writes
-are therefore not safe to claim. See
+generation, composes a strict read-only Linux descriptor with the same private
+authority boundary, and binds the exact app-server command to fixed provider-only
+managed CONNECT egress. Version checks, containment probes, and nested workspace
+sandboxes remain offline. No polling CLI selects it, and an owner-facing credential
+source, workspace-write authority, the registered verification executor, durable
+evidence, and adversarial real-turn proof remain open. Real autonomous writes are
+therefore not safe to claim. See
 [`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
 acceptance tests.
 

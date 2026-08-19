@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-08-19.
+> **Status:** Canonical system overview as of 2026-08-20.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). The accepted next target lives in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
@@ -114,8 +114,9 @@ durable coordination foundations:
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
   process proof passes. Internal Codex provisioning binds its exact recovery handle in
   the v2 descriptor under local workspace-read authority; no polling CLI selects it;
-  [research 006](research/006-mission-workspace-containment.md) owns the detailed
-  policy and evidence boundary.
+  the [original containment checkpoint](research/006-mission-workspace-containment.md)
+  records the earlier offline policy, while the current provider-egress contract is in
+  the [low-level design](lld.md#guarded-linux-containment-checkpoint).
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
   teammate-originated mailbox content.
 - An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
@@ -126,13 +127,13 @@ system does not contain:
 
 - A production-activated coding-agent path. The persistent CLI still hosts only the
   deterministic fake runtime; the guarded Codex composition has no polling command,
-  owner-facing credential source, provider egress, workspace-write authority, service
-  supervisor, or real-turn proof.
+  owner-facing credential source, workspace-write authority, service supervisor, or
+  real-turn proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
 - Production command wiring that opens the guarded Codex composition, connects an
-  approved owner-facing credential source, and enables provider-only egress and
-  workspace-write authority.
+  approved owner-facing credential source, selects its fixed provider-only egress
+  boundary, and enables workspace-write authority.
 - A supported containment boundary outside Linux. macOS explicitly fails closed in
   this checkpoint.
 - A real two-machine execution proof through the public control plane.
@@ -410,12 +411,16 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   content and artifact policy are bounded.
 - The private reference monitor is composed with the guarded Codex descriptor only
   behind internal APIs. Its redacted evidence goes only to injected sinks and is not
-  durably persisted by default. Local verification commands, network effects, and
-  workspace writes are not enabled.
+  durably persisted by default. Local verification commands, peer- or workspace-chosen
+  network effects, and workspace writes are not enabled. The retained runtime authority
+  grants no network capability; the outer Codex sandbox separately configures a fixed
+  provider transport whose hostname allowlist contains only `api.openai.com`.
 - The Linux containment boundary and its exact durable recovery handle are selected by
   internal Codex provisioning, not by a polling Node command. Its dedicated Linux
-  process proof passes as library-level evidence, but owner-facing credential sourcing,
-  provider egress, and real-turn evidence are absent; macOS remains unsupported.
+  process proof verifies exact command/profile selection, managed-proxy environment
+  injection for the app-server case, and failed direct socket access. It does not prove
+  live OpenAI reachability. Owner-facing credential sourcing, workspace-write
+  authority, and real-turn evidence are absent; macOS remains unsupported.
 
 ### Target invariant
 
@@ -478,7 +483,8 @@ processes it after reconnecting.
 - [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md):
   provider-neutral server, schema-v2 turn lifecycle, and wire-level fake-client proof.
 - [`Mission workspace containment`](research/006-mission-workspace-containment.md):
-  Linux-only workspace policy, retained recovery identity, and activation gates.
+  original offline Linux workspace policy, retained recovery identity, and activation
+  gates.
 - [`Codex provider guardian`](research/007-codex-provider-guardian.md): kernel-locked
   provider ownership, liveness, authority inputs, and teardown-witness proof.
 - [`Local runtime authority`](research/008-local-runtime-authority.md): private bound

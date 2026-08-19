@@ -1,6 +1,6 @@
 # Low-level design: current relay contracts
 
-> **Scope:** Current repository implementation as of 2026-08-19.
+> **Scope:** Current repository implementation as of 2026-08-20.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Unimplemented local Node runtime behavior remains in
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
@@ -592,8 +592,9 @@ absence, waits for that durable matching state, and only then releases its own l
 settles termination. A same-boot non-quiescent predecessor fails closed, while a
 changed kernel boot-session ID safely reconciles state left by a host reboot.
 
-This still has no polling CLI wiring, owner-facing credential source, provider egress,
-workspace-write authority, installed service supervisor, or real model-turn evidence.
+This still has no polling CLI wiring, owner-facing credential source, workspace-write
+authority, installed service supervisor, or real model-turn evidence. The internal
+provider generation has only the fixed egress boundary described below.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
 service restart/upgrade/rollback, cgroup containment, and descendants that escape the
@@ -616,7 +617,12 @@ trees are readable, and the owner home, containment control directory, and confi
 forbidden roots are denied.
 `HOME`, `CODEX_HOME`, and all
 temporary variables point to private exact-mode directories; the child environment
-is rebuilt, network is disabled, and legacy Landlock is explicitly disabled. The
+is rebuilt and legacy Landlock is explicitly disabled. The exact app-server argv pins
+`model_provider="openai"` and `openai_base_url="https://api.openai.com/v1"`, then
+selects the outer `agentrelay-runtime` profile whose full Codex-managed CONNECT proxy
+permits only host `api.openai.com`. Exact version checks and the mandatory containment
+probe select `agentrelay-offline`, and each nested read-only workspace sandbox uses
+`networkAccess: false`. The
 launcher rejects `/etc/codex/config.toml`, `managed_config.toml`, and
 `requirements.toml` rather than merging ambient system policy.
 
@@ -631,15 +637,19 @@ and failed network access through a private token-bound result file.
 
 The exclusive private `containment.json` manifest records `retain_for_review` and
 binds the workspace, read/deny roots, executable/helper identities and hashes, config
-path and hash, private paths, base commit, and supplied local-policy-grant digest. The
-returned recovery handle is exactly `{ manifestPath, instanceId, bindingSha256 }`.
+path and hash, private paths, base commit, fixed provider-egress policy, and supplied
+local-policy-grant digest. The returned recovery handle is exactly
+`{ manifestPath, instanceId, bindingSha256 }`.
 `recoverCodexSandboxContainment` reopens only that manifest and binding, reruns
-identity and canary checks, and never resets or deletes the dirty checkout. The Codex
+identity and canary checks, and never resets or deletes the dirty checkout. Legacy
+egress-less or altered provider policies are rejected during parse and recovery even
+when their binding digest was recomputed. The Codex
 provisioner durably stores this exact handle in the v2 descriptor before Capsule launch
 and strictly revalidates it during dirty recovery. No polling CLI selects that path.
 macOS and other platforms fail closed, no real model turn uses this boundary, and the
-passing Linux process job is library-level boundary evidence rather than activation
-evidence.
+Linux process coverage verifies command/profile selection, proxy-environment injection,
+and failed direct sockets without making a live OpenAI request; it is library-level
+boundary evidence rather than activation evidence.
 
 ## CLI surface
 
@@ -789,9 +799,10 @@ provider guardian/reaper, strict descriptor, provisioner, and persistent adapter
 guarded read-only checkpoint with exact retained recovery identity and a passing Linux
 process proof. Internal Codex composition uses the bound reference monitor, but no
 polling CLI selects it. The next gates are an owner-facing credential source and
-polling composition, provider-only egress, workspace-write authority, registered
-verification and artifact carriage, durable structured execution evidence, adversarial
-evaluation, Guarded Real Mission 0, and finally the two-machine proof. Installed
+polling composition that selects the fixed provider-only egress boundary,
+workspace-write authority, registered verification and artifact carriage, durable
+structured execution evidence, adversarial evaluation, Guarded Real Mission 0, and
+finally the two-machine proof. Installed
 service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120. The
 mailbox API remains a compatibility and inspection surface.

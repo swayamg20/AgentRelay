@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-08-19. This roadmap replaces the old mailbox -> Auto Mode ->
+> **Updated:** 2026-08-20. This roadmap replaces the old mailbox -> Auto Mode ->
 > Ambient Agent release sequence. The architectural contract is
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 
@@ -24,10 +24,12 @@ owner-controlled standalone-workspace admission, an explicit Bubblewrap policy,
 mandatory runtime canary, and exact retained-manifest recovery. Internal provisioning
 durably binds that recovery handle before Capsule launch. A Codex-only launcher can
 transfer one fresh opaque owner credential per Capsule generation over fixed inherited
-fd 3, and the client forces API-key login to use an ephemeral credential store. No
-polling command selects this composition, and there is no owner-facing credential
-source, provider egress, workspace-write authority, or real model-turn proof. The
-persistent fake-Capsule path also installs a private, fenced capability grant into
+fd 3, and the client forces API-key login to use an ephemeral credential store. The
+exact app-server command has fixed Codex-managed CONNECT access only to
+`api.openai.com`; version checks, probes, and nested workspace sandboxes remain offline.
+No polling command selects this composition, and there is no owner-facing credential
+source, workspace-write authority, or real model-turn proof. The persistent fake-Capsule
+path also installs a private, fenced capability grant into
 independent Node and Capsule reference monitors. This is the partial issue #97
 reference-monitor checkpoint, not completion of the still-open issue or real-runtime
 activation. The next runtime milestone is guarded Codex activation through the public
@@ -182,9 +184,11 @@ credential source exists, and no test executes a model turn.
   access, secrets, and privilege expansion, and stop output/final completion on
   authority loss. This does not close issue #97, expose polling Codex activation, or
   provide a verification-command executor.
+- [x] Bind the internal exact app-server command to fixed provider-only managed CONNECT
+  egress while keeping version checks, probes, and nested workspace sandboxes offline.
 - [ ] Expose the guarded Codex composition through an explicit polling command with an
-  approved owner-facing credential source, provider-only egress, workspace-write
-  authority, and Guarded Real Mission 0 (#98).
+  approved owner-facing credential source, workspace-write authority, and Guarded Real
+  Mission 0 (#98).
 - [ ] Persist durable local authority and execution evidence (#99).
 - [ ] Run the adversarial capability and recovery matrix against the activated runtime
   (#104).

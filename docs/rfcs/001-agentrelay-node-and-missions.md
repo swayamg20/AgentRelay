@@ -39,10 +39,10 @@ publication boundary outside the model. It cannot yet activate a real coding-age
 runtime or mediate command/network/path effects whose handlers do not exist. The
 repository also has a version-pinned read-only app-server client, durable Codex Capsule
 journal, strict schema-v2 descriptor, provisioner, persistent adapter, provider
-guardian, and one-shot owner API-key handoff behind internal APIs. The Capsule entry
-point can construct that guarded controller, but the polling Node CLI still cannot
-select it. There is no owner-facing credential source, provider egress,
-workspace-write authority, or real model-turn proof.
+guardian, one-shot owner API-key handoff, and fixed provider-only managed CONNECT
+egress behind internal APIs. The Capsule entry point can construct that guarded
+controller, but the polling Node CLI still cannot select it. There is no owner-facing
+credential source, workspace-write authority, or real model-turn proof.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -394,9 +394,11 @@ access, and privilege expansion; authority loss stops streamed output and final 
 completion. Internal APIs now compose that authority with the guarded Codex descriptor
 and read-only Linux containment boundary. A fresh opaque owner credential can cross
 only fixed inherited fd 3 under one non-resettable 30-second Capsule activation
-deadline, then is consumed once by an ephemeral API-key login. This is not selected by
-the polling Node CLI, does not provide an owner-facing credential source, provider
-egress, workspace-write or verification authority, or durable decision evidence.
+deadline, then is consumed once by an ephemeral API-key login. The exact app-server
+command has fixed provider-only egress to `api.openai.com`; version checks, containment
+probes, and nested workspace sandboxes remain offline. This is not selected by the
+polling Node CLI and does not provide an owner-facing credential source,
+workspace-write or verification authority, or durable decision evidence.
 Autonomous writes are not safe to claim until the Node activates the boundary and
 mediates every concrete command, network, path, and side effect outside the model.
 
@@ -474,10 +476,11 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    without resend, exact-input replay, redacted terminal normalization, cancellation
    intent, and provider teardown. Internal composition carries the private authority
    grant and a one-shot fixed-fd3 owner credential into the guarded Codex controller,
-   whose client forces ephemeral API-key login. Polling CLI activation, an owner-facing
-   credential source, provider-only egress, workspace-write authority, registered
-   verification, bounded artifact carriage, durable evidence, adversarial evaluation,
-   and a real model turn remain.
+   whose client forces ephemeral API-key login and whose exact app-server command uses
+   fixed provider-only managed CONNECT egress. Polling CLI activation, an owner-facing
+   credential source, workspace-write authority, registered verification, bounded
+   artifact carriage, durable evidence, adversarial evaluation, and a real model turn
+   remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or
