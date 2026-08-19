@@ -160,12 +160,20 @@ guardian tests use real OS process trees, and the Linux process gate starts pinn
 Codex through the guardian and containment boundary without executing a model turn.
 An internal Node factory runs the non-claiming doctor, then pairs the Codex provisioner
 and persistent adapter under the private authority monitor. No polling CLI selects
-that factory, and it has no owner authentication, provider egress, workspace-write
-authority, real model-turn proof, or Claude equivalent. The Codex child environment is
-allowlisted, and its private home is derived locally beneath the Capsule and
-revalidated as canonical, current-user-owned, and exactly mode 0700. For an inherited uncertain-interrupt
-barrier, a fresh generation reads the exact intent once, persists a terminal provider
-outcome when present, or records a transient failure without resending the interrupt.
+that factory. Its Codex-only launcher can transfer one fresh opaque owner credential
+per Capsule generation over fixed inherited fd 3; a validated schema-v2 controller
+owns the channel under one non-resettable 30-second activation deadline.
+Authority-gated provider activation consumes it once for API-key login, then reads the
+resulting API-key account state with refresh-token loading disabled. Codex's credential
+store is forced ephemeral. The credential appears in neither argv, environment,
+durable state, nor `auth.json`. There is still no owner-facing credential source,
+provider egress, workspace-write authority, real model-turn proof, or Claude
+equivalent. The Codex child environment is allowlisted,
+and its private home is derived locally beneath the Capsule and revalidated as
+canonical, current-user-owned, and exactly mode 0700. For an inherited
+uncertain-interrupt barrier, a fresh generation reads the exact intent once, persists a
+terminal provider outcome when present, or records a transient failure without
+resending the interrupt.
 Detailed guardian mechanics live in
 [research 007](research/007-codex-provider-guardian.md).
 
@@ -345,9 +353,9 @@ and the relay-owned idempotency key is not exposed to the model.
 - Automatic Node installation, OS service supervision, or process respawn. The
   singleton kernel lock now permits direct restart after process death, but it does
   not start the replacement Node.
-- A polling Codex command with owner-provisioned ephemeral authentication,
-  provider-only egress, workspace-write authority, and complete local capability
-  enforcement around every concrete side effect.
+- A polling Codex command that supplies a credential from an approved owner-facing
+  source and enables provider-only egress, workspace-write authority, and complete
+  local capability enforcement around every concrete side effect.
 - Production activation of the internally composed Linux containment boundary. Its
   exact recovery handle is already durable before Capsule launch and its dedicated
   Linux process proof passes, but macOS has no supported equivalent.
@@ -488,9 +496,9 @@ Codex client, injected runner, provider guardian, strict descriptor, provisioner
 persistent adapter now form an internal read-only composition. Its dedicated Linux
 process proof starts pinned Codex through both guarded boundaries, while the
 non-claiming doctor verifies the pinned runtime without Relay work. The next gates are
-owner authentication, provider-only egress, workspace-write authority,
-contract/artifact carriage, registered verification execution, durable structured
-execution evidence, adversarial evaluation, and Guarded Real Mission 0 through the
-public pipeline. Installed service/cgroup containment,
+an owner-facing credential source and polling composition, provider-only egress,
+workspace-write authority, contract/artifact carriage, registered verification
+execution, durable structured execution evidence, adversarial evaluation, and Guarded
+Real Mission 0 through the public pipeline. Installed service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120.
 The two-machine proof follows; see the roadmap for the dependency order.

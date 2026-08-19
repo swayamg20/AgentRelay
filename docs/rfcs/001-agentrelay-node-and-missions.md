@@ -2,10 +2,11 @@
 
 - **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
   persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
-  ownership, and unactivated Codex client, journal, runner, guardian, and Linux
-  containment checkpoints are implemented; a private capability reference monitor is
-  wired only to the persistent fake-Capsule path; descriptor/CLI activation and the
-  two-machine proof remain
+  ownership, and a guarded internal Codex client, journal, runner, guardian, Linux
+  containment, strict descriptor, provisioner, adapter, and one-shot authentication
+  checkpoint are implemented; the private capability reference monitor is selected by
+  the fake polling path and composed with Codex only behind internal APIs; polling
+  activation and the two-machine proof remain
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -36,8 +37,12 @@ host state across Node-process death. That fake-Capsule path now receives one pr
 fenced grant and enforces its lifecycle, output, usage, artifact, expiry, and final
 publication boundary outside the model. It cannot yet activate a real coding-agent
 runtime or mediate command/network/path effects whose handlers do not exist. The
-repository also has a version-pinned read-only app-server client and a pure durable
-Codex Capsule journal, but neither is reachable from the Node or Capsule CLI.
+repository also has a version-pinned read-only app-server client, durable Codex Capsule
+journal, strict schema-v2 descriptor, provisioner, persistent adapter, provider
+guardian, and one-shot owner API-key handoff behind internal APIs. The Capsule entry
+point can construct that guarded controller, but the polling Node CLI still cannot
+select it. There is no owner-facing credential source, provider egress,
+workspace-write authority, or real model-turn proof.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -386,10 +391,14 @@ the persistent fake path, independent Node and Capsule monitors now enforce an e
 journaled grant derived from current Relay authority and trusted local inputs. The
 grant hard-denies push, merge, publish, deploy, arbitrary network access, secret
 access, and privilege expansion; authority loss stops streamed output and final Relay
-completion. This is not composed with Codex, does not grant verification execution,
-and does not durably persist decision evidence by default. Autonomous writes are not
-safe to claim until the Node activates the boundary and mediates every concrete
-command, network, path, and side effect outside the model.
+completion. Internal APIs now compose that authority with the guarded Codex descriptor
+and read-only Linux containment boundary. A fresh opaque owner credential can cross
+only fixed inherited fd 3 under one non-resettable 30-second Capsule activation
+deadline, then is consumed once by an ephemeral API-key login. This is not selected by
+the polling Node CLI, does not provide an owner-facing credential source, provider
+egress, workspace-write or verification authority, or durable decision evidence.
+Autonomous writes are not safe to claim until the Node activates the boundary and
+mediates every concrete command, network, path, and side effect outside the model.
 
 ## Relay-visible versus local data
 
@@ -459,13 +468,16 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    contender. Pre-claim/after-claim process cuts, busy-session, and full adversarial
    coverage remain.
 6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned. The
-   unactivated provider-neutral Capsule server, schema-v2 journal, injected runner,
-   provider guardian, and Linux containment boundary prove local at-most-once
-   barriers, ambiguous-start recovery without resend, exact-input replay, redacted
-   terminal normalization, cancellation intent, and provider teardown. One private,
-   crash-safe reference-monitor grant now protects the persistent fake-Capsule path.
-   Descriptor/CLI composition with Codex, registered verification, bounded artifact
-   carriage, durable evidence, adversarial evaluation, and a real model turn remain.
+   guarded provider-neutral Capsule server, schema-v2 journal, injected runner, strict
+   descriptor, provisioner, persistent adapter, provider guardian, and Linux
+   containment boundary prove local at-most-once barriers, ambiguous-start recovery
+   without resend, exact-input replay, redacted terminal normalization, cancellation
+   intent, and provider teardown. Internal composition carries the private authority
+   grant and a one-shot fixed-fd3 owner credential into the guarded Codex controller,
+   whose client forces ephemeral API-key login. Polling CLI activation, an owner-facing
+   credential source, provider-only egress, workspace-write authority, registered
+   verification, bounded artifact carriage, durable evidence, adversarial evaluation,
+   and a real model turn remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or

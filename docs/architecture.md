@@ -101,7 +101,14 @@ durable coordination foundations:
   fresh-generation proof to reconcile uncertain starts and inherited interrupts
   without replay. Tests traverse the real Unix wire with fake app-server clients; the
   Linux process gate also starts pinned Codex through the guardian and containment
-  boundary. No test executes a model turn.
+  boundary. The internal authentication boundary claims one fresh opaque credential
+  per Capsule generation and transfers it only over fixed inherited fd 3, never argv,
+  environment, or durable state. A schema-v2 Capsule owns that channel under one
+  non-resettable 30-second activation deadline and consumes it once during
+  authority-gated provider activation. The client performs API-key login and account
+  verification with the credential store forced ephemeral; the live handshake leaves
+  no `auth.json`. No owner-facing credential source exists, no polling command selects
+  this path, and no test executes a model turn.
 - A Linux containment checkpoint for Codex `0.146.0`. It binds an
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
@@ -119,12 +126,13 @@ system does not contain:
 
 - A production-activated coding-agent path. The persistent CLI still hosts only the
   deterministic fake runtime; the guarded Codex composition has no polling command,
-  owner authentication, provider egress, workspace-write authority, service
+  owner-facing credential source, provider egress, workspace-write authority, service
   supervisor, or real-turn proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
-- Production command wiring that opens the guarded Codex composition and supplies
-  owner authentication, provider-only egress, and workspace-write authority.
+- Production command wiring that opens the guarded Codex composition, connects an
+  approved owner-facing credential source, and enables provider-only egress and
+  workspace-write authority.
 - A supported containment boundary outside Linux. macOS explicitly fails closed in
   this checkpoint.
 - A real two-machine execution proof through the public control plane.
@@ -369,7 +377,8 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   exact-mode-0700 home, and generic internal Capsule errors that retire the affected
   running server generation. Concurrent runtime close fences admitted work, and a
   detached driver failure requests retirement. These apply only to the internally
-  composed Codex checkpoint.
+  composed Codex checkpoint. The owner API key enters the schema-v2 Capsule only through
+  the fixed fd 3 channel and is consumed by the ephemeral login handshake.
 - Kernel-locked provider-generation ownership with a private redacted lifecycle
   record, owner heartbeat, absolute deadline, local revocation signal, provider exit
   and request-timeout observation, reboot-gated recovery, and an out-of-group witness
@@ -405,8 +414,8 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   workspace writes are not enabled.
 - The Linux containment boundary and its exact durable recovery handle are selected by
   internal Codex provisioning, not by a polling Node command. Its dedicated Linux
-  process proof passes as library-level evidence, but owner authentication, provider
-  egress, and real-turn evidence are absent; macOS remains unsupported.
+  process proof passes as library-level evidence, but owner-facing credential sourcing,
+  provider egress, and real-turn evidence are absent; macOS remains unsupported.
 
 ### Target invariant
 

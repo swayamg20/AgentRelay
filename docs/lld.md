@@ -396,14 +396,25 @@ the versioned newline-delimited JSON wire. The Codex controller opens only passi
 state until an authority-gated start, recovery, or cancellation of a durable turn
 activates containment and the provider.
 
+`agentrelay-capsule` reserves inherited fd 3 only for a validated schema-v2 Codex
+controller. The Codex-only detached launcher claims one fresh opaque owner credential
+for each actual Capsule start and writes it once to that fd; schema v1 leaves the
+channel untouched. The Capsule arms one refed, non-resettable 30-second deadline when
+the schema-v2 controller is constructed. The credential is read lazily only during
+authority-gated activation. Expiry closes or aborts the unclaimed channel and requests
+generation retirement. Controller shutdown instead closes or aborts any still-unclaimed
+channel and awaits an in-progress read before resolving.
+
 The wire exposes `probe`, `install_authority`, `assert_authority`, `renew_authority`,
 `revoke_authority`, `ensure_session`, `lookup_turn`, `start_turn`, `recover_turn`,
 `cancel_turn`, and `shutdown`. Each request carries the exact Capsule ID, a random
 local capability, and a request ID; responses repeat Capsule and request identity.
 Capsule directories are mode 0700, and descriptor/state files plus the Unix socket
-are mode 0600. The detached child receives a small environment allowlist, not the Node
-credential, Relay credential, inherited `HOME`, provider credentials, proxy settings,
-or process-loader injection variables. Authentication happens before any runtime call.
+are mode 0600. The detached child receives a small environment allowlist that excludes
+Node and Relay credentials, inherited `HOME`, provider-credential environment
+variables, proxy settings, and process-loader injection variables. For a schema-v2
+Capsule, the owner API key enters only through fixed fd 3, never argv or environment.
+Capability authentication happens before any runtime call.
 Unexpected internal runtime errors are returned as the fixed public message `Capsule
 runtime failed`; the server then removes its owned socket and closes that running
 generation. `PersistentCapsuleServer.close()` starts runtime close while socket
@@ -551,6 +562,13 @@ otherwise allowlisted child environment. That client boundary alone does not pro
 filesystem isolation; the separate containment library below must wrap its process
 boundary on Linux.
 
+After `initialize` and `initialized`, the client performs `account/login/start` with
+the one-shot API key, then `account/read` with refresh-token loading disabled. It
+requires API-key-shaped responses and `requiresOpenaiAuth: true` before any thread
+operation. App-server starts with
+`cli_auth_credentials_store="ephemeral"`; the live handshake test proves no
+`auth.json` exists before or after client close.
+
 The guardian uses the stable `provider.lock` inode as kernel authority and writes
 bounded private lifecycle evidence to `provider-generation.json`. Its phases are
 `spawn_maybe_started`, `running`, `stop_requested`, and `quiescent`; the record also
@@ -574,7 +592,7 @@ absence, waits for that durable matching state, and only then releases its own l
 settles termination. A same-boot non-quiescent predecessor fails closed, while a
 changed kernel boot-session ID safely reconciles state left by a host reboot.
 
-This still has no polling CLI wiring, owner authentication, provider egress,
+This still has no polling CLI wiring, owner-facing credential source, provider egress,
 workspace-write authority, installed service supervisor, or real model-turn evidence.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
@@ -770,9 +788,10 @@ after Node-process death. The provider-neutral server, injected Codex runner, an
 provider guardian/reaper, strict descriptor, provisioner, and persistent adapter add a
 guarded read-only checkpoint with exact retained recovery identity and a passing Linux
 process proof. Internal Codex composition uses the bound reference monitor, but no
-polling CLI selects it. The next gates are owner authentication, provider-only egress,
-workspace-write authority, registered verification and artifact carriage, durable
-structured execution evidence, adversarial evaluation, Guarded Real Mission 0,
-and finally the two-machine proof. Installed service/cgroup containment,
+polling CLI selects it. The next gates are an owner-facing credential source and
+polling composition, provider-only egress, workspace-write authority, registered
+verification and artifact carriage, durable structured execution evidence, adversarial
+evaluation, Guarded Real Mission 0, and finally the two-machine proof. Installed
+service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120. The
 mailbox API remains a compatibility and inspection surface.

@@ -60,6 +60,16 @@ internal, non-production composition.
   The dedicated Linux process job starts pinned Codex through both boundaries. An
   internal factory pairs the provisioner and adapter after a pinned-runtime doctor,
   but no polling CLI selects it and no test executes a real model turn.
+- An internal one-shot Codex authentication boundary. The Codex-only detached launcher
+  claims a fresh opaque owner credential for each actual Capsule start and transfers it
+  only through fixed inherited fd 3, never argv, environment, or durable state. A
+  validated schema-v2 Capsule owns that channel under one non-resettable 30-second
+  activation deadline; schema v1 leaves it untouched. Authority-gated provider
+  activation consumes the credential once in `account/login/start`, then verifies
+  `account/read` with refresh-token loading disabled. Codex is forced to
+  `cli_auth_credentials_store="ephemeral"`, and the live handshake leaves no
+  `auth.json`. No owner-facing credential source exists, and no polling command selects
+  this path.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
@@ -150,8 +160,9 @@ local turn limit, reported-token bound, product hard denials, lease/hard expiry,
 renewal, revocation, cumulative stream limits, and final Relay publication. The fake
 runtime exposes no command or network handler, and registered verification-command
 execution remains unimplemented. The internal Codex path composes the guardian and
-read-only Linux containment boundary with this grant, but no polling command selects
-that path. Owner authentication, provider egress, workspace-write authority, and real
+read-only Linux containment boundary with this grant and now includes the one-shot owner
+API-key handoff and ephemeral-login boundary, but no polling command selects that path.
+An owner-facing credential source, provider egress, workspace-write authority, and real
 model-turn evidence remain absent.
 
 Enrollment currently uses the agent-authenticated Relay route
@@ -184,9 +195,9 @@ node node/dist/bin/agentrelay-node.js doctor-codex
 ```
 
 It verifies the exact pinned package artifacts and bounded version probe before any
-Node/Capsule runtime state is opened. Passing it does not enable Codex execution: owner
-authentication, provider egress, workspace-write authority, and a polling
-`run-codex` command are still absent.
+Node/Capsule runtime state is opened. Passing it does not enable Codex execution or load
+an owner credential: an owner-facing credential source, provider egress,
+workspace-write authority, and a polling `run-codex` command are still absent.
 
 Use `--capsule-root <absolute-path>` to override the default
 `state/capsules` directory beside the Node config, and

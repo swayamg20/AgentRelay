@@ -33,10 +33,12 @@
 > but the local Node still selects deterministic fake runtimes. The guarded Codex path
 > has not been activated for a real model turn. A strict Codex descriptor, durable
 > containment recovery handle, authority-gated Node/Capsule composition, and a
-> non-claiming `doctor-codex` preflight now exist as internal checkpoints. There is no
-> polling `run-codex` command, owner authentication, provider egress, workspace-write
-> authority, registered verification execution, durable local evidence, installed
-> service supervision, or two-machine proof. macOS also fails closed.
+> non-claiming `doctor-codex` preflight now exist as internal checkpoints. The internal
+> Codex client requires a one-shot owner API-key handoff and forces Codex's credential
+> store to remain ephemeral. There is still no owner-facing credential source, polling
+> `run-codex` command, provider egress, workspace-write authority, registered
+> verification execution, durable local evidence, installed service supervision, or
+> two-machine proof. macOS also fails closed.
 
 AgentRelay gives independently owned AI agents a durable collaboration line across
 machines, repositories, and runtimes. They can exchange questions, contracts, and
@@ -136,9 +138,15 @@ does not open runtime state or claim Relay work. No path has executed a real mod
   app-server clients. A strict v2 descriptor and passive Capsule controller select this
   runner only through internal composition; no polling CLI selects it. The Codex
   child receives an allowlisted environment and a locally derived, canonical,
-  current-user-owned mode-0700 home. For an inherited uncertain interrupt, a fresh
-  generation reads the exact intent once, persists an authoritative terminal outcome
-  when present, or records a transient failure; it never repeats the interrupt.
+  current-user-owned mode-0700 home. A Codex-only launcher can transfer one fresh
+  opaque owner credential per Capsule generation over fixed inherited fd 3. A
+  validated schema-v2 Capsule owns that channel under one non-resettable 30-second
+  activation deadline, then consumes it once for API-key login and verifies the
+  resulting account state with the credential store forced ephemeral. The credential
+  appears in neither argv, environment, durable state, nor `auth.json`. For an
+  inherited uncertain interrupt, a fresh generation reads the exact intent once,
+  persists an authoritative terminal outcome when present, or records a transient
+  failure; it never repeats the interrupt.
 - A Linux containment checkpoint for pinned Codex `0.146.0`. It binds one
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
@@ -164,8 +172,9 @@ does not open runtime state or claim Relay work. No path has executed a real mod
 - Production CLI activation for persistent real-runtime sessions. The strict
   descriptor, passive Capsule server, provisioner, and adapter are composed internally,
   but the current persistent command still selects only the deterministic fake runtime.
-- Owner-provisioned ephemeral authentication, provider-only egress, workspace-write
-  authority, and Guarded Real Mission 0 through the public pipeline.
+- An owner-facing credential source and polling-command composition, provider-only
+  egress, workspace-write authority, and Guarded Real Mission 0 through the public
+  pipeline.
 - Registered verification execution (#93), bounded Mission artifact carriage (#94),
   durable local authority and execution evidence (#99), and adversarial evaluation
   (#104). The current grant deliberately does not authorize verification execution.
@@ -389,10 +398,10 @@ redacted decisions are emitted only when an evidence sink is injected; they are 
 durably persisted by default. The guarded Codex checkpoint also allowlists the child
 environment, derives a private exact-mode-0700 home locally, retires a failed Capsule
 generation, and composes a strict read-only Linux descriptor with the same private
-authority boundary. No polling CLI selects it, and owner authentication, provider
-egress, workspace-write authority, the registered verification executor, durable
-evidence, and adversarial real-turn proof remain open. Real autonomous writes are
-therefore not safe to claim. See
+authority boundary. No polling CLI selects it, and an owner-facing credential source,
+provider egress, workspace-write authority, the registered verification executor,
+durable evidence, and adversarial real-turn proof remain open. Real autonomous writes
+are therefore not safe to claim. See
 [`docs/architecture.md`](docs/architecture.md) for the boundary and the RFC for the
 acceptance tests.
 
