@@ -2,6 +2,8 @@ import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { digestCanonicalJson } from "./capsule-correlation.js";
+import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import type { RuntimeContainmentBinding } from "./runtime-containment-manifest.js";
 import {
 	containmentEvidence,
@@ -109,6 +111,54 @@ describe("runtime containment manifest", () => {
 		).rejects.toThrow("does not authorize this exact workspace and policy");
 	});
 
+	it("rejects legacy egress-less and altered provider policies", async () => {
+		const directory = await realpath(
+			await mkdtemp(join(tmpdir(), "agentrelay-containment-manifest-")),
+		);
+		temporaryDirectories.push(directory);
+		const path = join(directory, "containment.json");
+		const binding = validBinding();
+		const created = await createRuntimeContainmentManifest(path, binding);
+		expect(created.schema_version).toBe(1);
+		expect(created.binding.provider_egress).toEqual(codexProviderEgressBinding());
+		expect(JSON.stringify(created)).not.toContain("OPENAI_API_KEY");
+		expect(JSON.stringify(created)).not.toContain("CODEX_API_KEY");
+
+		const legacyBinding = structuredClone(binding) as unknown as Record<string, unknown>;
+		delete legacyBinding.provider_egress;
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				...created,
+				binding_sha256: digestCanonicalJson(legacyBinding),
+				binding: legacyBinding,
+			})}\n`,
+		);
+		await expect(readRuntimeContainmentManifest(path)).rejects.toThrow(
+			"Containment manifest does not authorize the required provider egress policy",
+		);
+
+		const alteredBinding = structuredClone(binding);
+		const alteredEgress = {
+			...alteredBinding.provider_egress,
+			base_url: "https://evil.test/v1",
+		};
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				...created,
+				binding_sha256: digestCanonicalJson({
+					...alteredBinding,
+					provider_egress: alteredEgress,
+				}),
+				binding: { ...alteredBinding, provider_egress: alteredEgress },
+			})}\n`,
+		);
+		await expect(readRuntimeContainmentManifest(path)).rejects.toThrow(
+			"Containment manifest does not authorize the required provider egress policy",
+		);
+	});
+
 	it("rejects tampering and exposes no local path as evidence", async () => {
 		const directory = await realpath(
 			await mkdtemp(join(tmpdir(), "agentrelay-containment-manifest-")),
@@ -160,6 +210,7 @@ function validBinding(): RuntimeContainmentBinding {
 			executable_sha256: "d".repeat(64),
 			read_root: path("/private/provider", "31"),
 		},
+		provider_egress: codexProviderEgressBinding(),
 		probe: {
 			executable: path("/private/node/bin/node", "32"),
 			executable_sha256: "1".repeat(64),

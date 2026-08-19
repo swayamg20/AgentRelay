@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { digestCanonicalJson } from "./capsule-correlation.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import { CODEX_PROVIDER_EGRESS_POLICY } from "./codex-provider-egress-policy.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
 import { publishPrivateJsonExclusive, readPrivateJsonIfPresent } from "./private-state-file.js";
 
@@ -20,6 +21,16 @@ const localPathSchema = z
 	.refine((value) => normalize(value) === value, "Path must be normalized");
 const boundPathSchema = z
 	.object({ path: localPathSchema, identity: filesystemIdentitySchema })
+	.strict();
+const providerEgressSchema = z
+	.object({
+		policy_id: z.literal(CODEX_PROVIDER_EGRESS_POLICY.policyId),
+		provider_id: z.literal(CODEX_PROVIDER_EGRESS_POLICY.providerId),
+		base_url: z.literal(CODEX_PROVIDER_EGRESS_POLICY.baseUrl),
+		allowed_hosts: z.tuple([z.literal(CODEX_PROVIDER_EGRESS_POLICY.allowedHosts[0])]),
+		proxy_mode: z.literal(CODEX_PROVIDER_EGRESS_POLICY.proxyMode),
+		workspace_network: z.literal(CODEX_PROVIDER_EGRESS_POLICY.workspaceNetwork),
+	})
 	.strict();
 
 export const RUNTIME_CONTAINMENT_BACKEND = "codex_bubblewrap_0_146";
@@ -61,6 +72,7 @@ export const runtimeContainmentBindingSchema = z
 				read_root: boundPathSchema,
 			})
 			.strict(),
+		provider_egress: providerEgressSchema,
 		probe: z
 			.object({
 				executable: boundPathSchema,
@@ -143,7 +155,12 @@ export async function readRuntimeContainmentManifest(
 ): Promise<RuntimeContainmentManifest> {
 	const decoded = await readPrivateJsonIfPresent(path);
 	if (decoded === null) throw new Error("Containment manifest is missing");
-	const manifest = runtimeContainmentManifestSchema.parse(decoded);
+	return parseRuntimeContainmentManifest(decoded);
+}
+
+export function parseRuntimeContainmentManifest(value: unknown): RuntimeContainmentManifest {
+	assertRequiredProviderEgress(value);
+	const manifest = runtimeContainmentManifestSchema.parse(value);
 	assertValidManifestDigest(manifest);
 	return manifest;
 }
@@ -178,5 +195,22 @@ export function workspaceBinding(workspace: PreparedMissionWorkspace) {
 function assertValidManifestDigest(manifest: RuntimeContainmentManifest): void {
 	if (manifest.binding_sha256 !== digestCanonicalJson(manifest.binding)) {
 		throw new Error("Containment manifest binding digest is invalid");
+	}
+}
+
+function assertRequiredProviderEgress(value: unknown): void {
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		!("binding" in value) ||
+		typeof value.binding !== "object" ||
+		value.binding === null
+	) {
+		return;
+	}
+	const providerEgress =
+		"provider_egress" in value.binding ? value.binding.provider_egress : undefined;
+	if (!providerEgressSchema.safeParse(providerEgress).success) {
+		throw new Error("Containment manifest does not authorize the required provider egress policy");
 	}
 }

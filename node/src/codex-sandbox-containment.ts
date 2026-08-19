@@ -1,10 +1,15 @@
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+	type AdmittedCodexProcessKind,
+	classifyAdmittedCodexProcessArguments,
+} from "./codex-app-server-command.js";
 import type { CodexProcessBoundary, CodexProcessRequest } from "./codex-process-boundary.js";
 import { buildRuntimeContainmentBinding } from "./codex-sandbox-binding.js";
 import {
 	CODEX_SANDBOX_MANIFEST_FILE,
+	CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
 	CODEX_SANDBOX_PROFILE_NAME,
 	type CodexSandboxAuthorization,
 	type CodexSandboxContainment,
@@ -182,7 +187,6 @@ async function prepareContainment(
 			launcherExecutable: input.launcher.executable,
 			launcherHome: layout.launcherHome,
 			launcherPath: layout.launcherPath,
-			profileName: CODEX_SANDBOX_PROFILE_NAME,
 			workspaceRoot: input.workspace.root,
 			workspaceAccess: input.workspaceAccess ?? "write",
 			gitDirectory: input.workspace.gitDirectory,
@@ -249,7 +253,7 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 	async prepare(request: CodexProcessRequest, signal: AbortSignal) {
 		signal.throwIfAborted();
 		assertSupportedLinuxContainment();
-		assertProcessRequest(request, this.input, this.layout);
+		const processKind = assertProcessRequest(request, this.input, this.layout);
 		await assertNoAmbientCodexConfiguration();
 		signal.throwIfAborted();
 		const config = await readPrivateContainmentConfig(this.layout.launcherPath);
@@ -276,8 +280,11 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 				"sandbox",
 				"--disable",
 				"use_legacy_landlock",
+				...(processKind === "version_probe" ? ["--disable", "network_proxy"] : []),
 				"--permission-profile",
-				CODEX_SANDBOX_PROFILE_NAME,
+				processKind === "version_probe"
+					? CODEX_SANDBOX_OFFLINE_PROFILE_NAME
+					: CODEX_SANDBOX_PROFILE_NAME,
 				"--cd",
 				this.input.workspace.root,
 				"--",
@@ -322,11 +329,16 @@ function assertProcessRequest(
 	request: CodexProcessRequest,
 	input: CodexSandboxContainmentInput,
 	layout: ContainmentLayout,
-): void {
+): AdmittedCodexProcessKind {
 	if (request.executable !== input.provider.executable || request.cwd !== input.workspace.root) {
 		throw new Error("Containment request does not match its pinned provider workspace");
 	}
 	if (request.env.HOME !== layout.runtimeHome || request.env.CODEX_HOME !== layout.runtimeHome) {
 		throw new Error("Containment request does not use the private runtime home");
 	}
+	const processKind = classifyAdmittedCodexProcessArguments(request.argv);
+	if (processKind === null) {
+		throw new Error("Containment request does not match an admitted Codex command");
+	}
+	return processKind;
 }

@@ -19,16 +19,22 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { resolvePinnedCodex, sha256File } from "../test-support/pinned-codex.js";
+import { buildCodexAppServerArguments } from "./codex-app-server-command.js";
+import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
 import {
 	prepareCodexSandboxContainment,
 	recoverCodexSandboxContainment,
 } from "./codex-sandbox-containment.js";
+import {
+	CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
+	CODEX_SANDBOX_PROFILE_NAME,
+} from "./codex-sandbox-contract.js";
 import { prepareMissionWorkspace } from "./mission-workspace.js";
 import {
 	LocalReferenceMonitor,
@@ -84,10 +90,7 @@ describe.runIf(
 				policyGrantSha256: "a".repeat(64),
 				workspaceAccess,
 			};
-			const containment = await prepareCodexSandboxContainment(input, liveOwnerControlledSignal());
-			expect(containment.authorization.workspaceAccess).toBe(workspaceAccess);
-			const parentNetworkNamespace = await readlink("/proc/self/ns/net");
-			const resultPath = join(containment.runtimeTmp, `.agentrelay-${randomUUID()}.result`);
+			const resultPath = join(fixture.runtime, "tmp", `.agentrelay-${randomUUID()}.result`);
 			const resultToken = randomUUID();
 			const paths = {
 				workspaceFile: join(fixture.workspace.root, "tracked.txt"),
@@ -105,15 +108,43 @@ describe.runIf(
 				launcherConfig: join(fixture.control, "sandbox-launcher", "config.toml"),
 				symlinkEscape: join(fixture.workspace.root, "sibling-link"),
 				traversalEscape: join(fixture.workspace.root, "..", "sibling", "secret.txt"),
-				runtimeHomeWrite: join(containment.runtimeHome, "state.txt"),
-				runtimeTmpWrite: join(containment.runtimeTmp, "scratch.txt"),
+				runtimeHomeWrite: join(fixture.runtime, "codex-home", "state.txt"),
+				runtimeTmpWrite: join(fixture.runtime, "tmp", "scratch.txt"),
 				resultPath,
 				resultToken,
 			};
+			await writeProviderRequest(fixture.providerRequest, { kind: "probe", paths });
+			const containment = await prepareCodexSandboxContainment(input, liveOwnerControlledSignal());
+			expect(containment.authorization.workspaceAccess).toBe(workspaceAccess);
+			await expect(
+				containment.boundary.prepare(
+					{
+						executable: provider.executable,
+						argv: [fixture.probe, JSON.stringify(paths)],
+						cwd: fixture.workspace.root,
+						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
+					},
+					liveOwnerControlledSignal(),
+				),
+			).rejects.toThrow("Containment request does not match an admitted Codex command");
+			const parentNetworkNamespace = await readlink("/proc/self/ns/net");
+			const versionProbe = await containment.boundary.prepare(
+				{
+					executable: provider.executable,
+					argv: ["--version"],
+					cwd: fixture.workspace.root,
+					env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
+				},
+				liveOwnerControlledSignal(),
+			);
+			const versionSeparator = versionProbe.argv.indexOf("--");
+			expect(versionProbe.argv.slice(0, versionSeparator)).toEqual(
+				expect.arrayContaining([CODEX_SANDBOX_OFFLINE_PROFILE_NAME, "network_proxy"]),
+			);
 			const prepared = await containment.boundary.prepare(
 				{
 					executable: provider.executable,
-					argv: [fixture.probe, JSON.stringify(paths)],
+					argv: buildCodexAppServerArguments(),
 					cwd: fixture.workspace.root,
 					env: {
 						HOME: containment.runtimeHome,
@@ -123,6 +154,10 @@ describe.runIf(
 				},
 				liveOwnerControlledSignal(),
 			);
+			const commandSeparator = prepared.argv.indexOf("--");
+			expect(commandSeparator).toBeGreaterThan(0);
+			expect(prepared.argv.slice(0, commandSeparator)).toContain(CODEX_SANDBOX_PROFILE_NAME);
+			expect(prepared.argv.slice(0, commandSeparator)).not.toContain("network_proxy");
 			let result: Record<string, unknown>;
 			try {
 				const output = await run(prepared);
@@ -152,6 +187,7 @@ describe.runIf(
 				runtimeHomeWrite: true,
 				runtimeTmpWrite: true,
 				environmentSecretPresent: false,
+				managedProxyEnvironmentPresent: true,
 				home: containment.runtimeHome,
 				codexHome: containment.runtimeHome,
 				tmpdir: containment.runtimeTmp,
@@ -186,7 +222,7 @@ describe.runIf(
 				containment.boundary.prepare(
 					{
 						executable: provider.executable,
-						argv: [fixture.probe, JSON.stringify(paths)],
+						argv: buildCodexAppServerArguments(),
 						cwd: fixture.workspace.root,
 						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
 					},
@@ -338,14 +374,14 @@ describe.runIf(
 		expect(recovered.evidence.bindingSha256).toBe(legacyManifest.binding_sha256);
 
 		const workspaceWrite = join(fixture.workspace.root, "legacy-recovery-write.txt");
+		await writeProviderRequest(fixture.providerRequest, {
+			kind: "write",
+			path: workspaceWrite,
+		});
 		const prepared = await recovered.boundary.prepare(
 			{
 				executable: provider.executable,
-				argv: [
-					"-e",
-					"require('node:fs').writeFileSync(process.argv[1], 'legacy-write\\n')",
-					workspaceWrite,
-				],
+				argv: buildCodexAppServerArguments(),
 				cwd: fixture.workspace.root,
 				env: { HOME: recovered.runtimeHome, CODEX_HOME: recovered.runtimeHome },
 			},
@@ -414,7 +450,12 @@ async function createFixture() {
 	const control = join(root, "control");
 	const runtime = join(root, "runtime");
 	const providerRoot = join(root, "provider-runtime");
-	const providerExecutable = join(providerRoot, "node");
+	const providerNodeExecutable = join(providerRoot, "node");
+	const providerExecutable = join(providerRoot, "codex-provider.mjs");
+	const providerRequest = join(providerRoot, "request.json");
+	const probe = await realpath(
+		join(dirname(fileURLToPath(import.meta.url)), "../test-support/runtime-containment-probe.mjs"),
+	);
 	const sharedTemp = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-shared-temp-")));
 	temporaryRoots.push(sharedTemp);
 	await Promise.all([
@@ -427,8 +468,13 @@ async function createFixture() {
 		mkdir(control, { mode: 0o700 }),
 		mkdir(providerRoot, { mode: 0o700 }),
 	]);
-	await copyFile(await realpath(process.execPath), providerExecutable);
-	await chmod(providerExecutable, 0o500);
+	await copyFile(await realpath(process.execPath), providerNodeExecutable);
+	await writeFile(
+		providerExecutable,
+		fakeProviderSource(providerNodeExecutable, pathToFileURL(probe).href, providerRequest),
+		{ mode: 0o500 },
+	);
+	await Promise.all([chmod(providerNodeExecutable, 0o500), chmod(providerExecutable, 0o500)]);
 	await Promise.all([
 		writeFile(join(readOnly, "allowed.txt"), "approved\n"),
 		writeFile(join(sibling, "secret.txt"), "sibling-canary\n"),
@@ -456,9 +502,6 @@ async function createFixture() {
 		},
 		{ repository_url: REPOSITORY_URL, expected_base_commit: baseCommit },
 	);
-	const probe = await realpath(
-		join(dirname(fileURLToPath(import.meta.url)), "../test-support/runtime-containment-probe.mjs"),
-	);
 	const recoveryHelper = await realpath(
 		join(
 			dirname(fileURLToPath(import.meta.url)),
@@ -475,10 +518,35 @@ async function createFixture() {
 		runtime,
 		providerRoot,
 		providerExecutable,
+		providerRequest,
 		sharedTemp,
 		probe,
 		recoveryHelper,
 	};
+}
+
+async function writeProviderRequest(path: string, value: unknown): Promise<void> {
+	await writeFile(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+}
+
+function fakeProviderSource(nodeExecutable: string, probeUrl: string, requestPath: string): string {
+	return `#!${nodeExecutable}
+import { readFile, writeFile } from "node:fs/promises";
+
+if (process.argv.length === 3 && process.argv[2] === "--version") {
+  process.stdout.write(${JSON.stringify(`codex-cli ${SUPPORTED_CODEX_CLI_VERSION}\n`)});
+} else {
+  const request = JSON.parse(await readFile(${JSON.stringify(requestPath)}, "utf8"));
+  if (request.kind === "probe") {
+    process.argv[2] = JSON.stringify(request.paths);
+    await import(${JSON.stringify(probeUrl)});
+  } else if (request.kind === "write") {
+    await writeFile(request.path, "legacy-write\\n");
+  } else {
+    throw new Error("unsupported test provider request");
+  }
+}
+`;
 }
 
 async function git(cwd: string, argv: readonly string[]): Promise<string> {

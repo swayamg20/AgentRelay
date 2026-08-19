@@ -4,6 +4,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import type {
 	CodexSandboxContainmentInput,
 	ContainmentLayout,
@@ -103,6 +104,7 @@ export async function buildRuntimeContainmentBinding(
 			executable_sha256: input.provider.sha256,
 			read_root: provider.readRoot,
 		},
+		provider_egress: codexProviderEgressBinding(),
 		probe: {
 			executable: inspectedProbe.executable,
 			executable_sha256: probe.sha256,

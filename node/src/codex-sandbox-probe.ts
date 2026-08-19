@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+	CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
 	CodexContainmentTerminationError,
 	type CodexWorkspaceAccess,
 	type PinnedExecutable,
@@ -24,7 +25,6 @@ export interface CodexSandboxProbeInput {
 	readonly launcherExecutable: string;
 	readonly launcherHome: string;
 	readonly launcherPath: string;
-	readonly profileName: string;
 	readonly workspaceRoot: string;
 	readonly workspaceAccess: CodexWorkspaceAccess;
 	readonly gitDirectory: string;
@@ -69,8 +69,10 @@ export async function runCodexSandboxProbe(
 				"sandbox",
 				"--disable",
 				"use_legacy_landlock",
+				"--disable",
+				"network_proxy",
 				"--permission-profile",
-				input.profileName,
+				CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
 				"--cd",
 				input.workspaceRoot,
 				"--",
@@ -336,6 +338,11 @@ const canConnect = () => new Promise((resolve) => {
   socket.once("connect", () => { clearTimeout(timer); socket.destroy(); resolve(true); });
   socket.once("error", () => { clearTimeout(timer); resolve(false); });
 });
+const managedProxyEnvironmentPresent = Object.keys(process.env).some((name) =>
+  name.toUpperCase().includes("PROXY") ||
+  name === "NODE_USE_ENV_PROXY" ||
+  name === "ELECTRON_GET_USE_PROXY"
+);
 
 const checks = {
   workspaceRead: await canRead(paths.workspaceRead),
@@ -346,6 +353,7 @@ const checks = {
   ownerHomeRead: await canRead(paths.ownerHomeCanary),
   sharedTempRead: await canRead(paths.sharedTempCanary),
   environmentSecretPresent: process.env.AGENTRELAY_CONTAINMENT_PROBE_SECRET !== undefined,
+  managedProxyEnvironmentPresent,
   networkNamespaceChanged: await readlink("/proc/self/ns/net") !== paths.parentNetworkNamespace,
   networkConnect: await canConnect(),
 };
@@ -355,6 +363,7 @@ const workspaceAccessOk = paths.workspaceAccess === "read"
 const ok = checks.workspaceRead && workspaceAccessOk && !checks.gitWrite &&
   checks.runtimeTmpWrite && !checks.controlRead && !checks.ownerHomeRead &&
   !checks.sharedTempRead && !checks.environmentSecretPresent &&
+  !checks.managedProxyEnvironmentPresent &&
   checks.networkNamespaceChanged && !checks.networkConnect;
 if (!ok) {
   process.stderr.write("Codex sandbox capability probe contradicted the required policy\n");

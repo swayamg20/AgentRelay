@@ -5,6 +5,7 @@ import type { PreparedMissionWorkspace } from "./mission-workspace.js";
 import type { RuntimeContainmentEvidence } from "./runtime-containment-manifest.js";
 
 export const CODEX_SANDBOX_PROFILE_NAME = "agentrelay-runtime";
+export const CODEX_SANDBOX_OFFLINE_PROFILE_NAME = "agentrelay-offline";
 export const CODEX_SANDBOX_CONFIG_FILE = "config.toml";
 export const CODEX_SANDBOX_MANIFEST_FILE = "containment.json";
 

@@ -99,6 +99,37 @@ describe("Codex sandbox policy", () => {
 		expect(config).toContain(`${JSON.stringify(workspaceDeny)} = "deny"`);
 		expect(config).not.toContain(`${JSON.stringify(rootlessDeny)} = "deny"`);
 		expect(config).not.toContain(`${JSON.stringify(input.controlDirectory)} = "deny"`);
+		expect(config).toContain(
+			["[features]", "use_legacy_landlock = false", "network_proxy = true"].join("\n"),
+		);
+		expect(config.startsWith('default_permissions = "agentrelay-offline"\n')).toBe(true);
+		expect(config).toContain(
+			[
+				"[permissions.agentrelay-runtime.network]",
+				"enabled = true",
+				"enable_socks5 = false",
+				"enable_socks5_udp = false",
+				"allow_upstream_proxy = false",
+				"dangerously_allow_non_loopback_proxy = false",
+				"dangerously_allow_all_unix_sockets = false",
+				"allow_local_binding = false",
+				'mode = "full"',
+				"",
+				"[permissions.agentrelay-runtime.network.domains]",
+				'"api.openai.com" = "allow"',
+			].join("\n"),
+		);
+		expect(config).toContain(
+			[
+				"[permissions.agentrelay-offline]",
+				'extends = "agentrelay-runtime"',
+				"",
+				"[permissions.agentrelay-offline.network]",
+				"enabled = false",
+			].join("\n"),
+		);
+		expect(config).not.toContain("OPENAI_API_KEY");
+		expect(config).not.toContain("CODEX_API_KEY");
 	});
 
 	it.each([

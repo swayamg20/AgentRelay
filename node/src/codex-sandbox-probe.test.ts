@@ -3,10 +3,44 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
-import { CodexContainmentTerminationError } from "./codex-sandbox-contract.js";
+import {
+	CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
+	CodexContainmentTerminationError,
+} from "./codex-sandbox-contract.js";
 import { type CodexSandboxProbeInput, runCodexSandboxProbe } from "./codex-sandbox-probe.js";
 
 describe.runIf(process.platform === "linux")("Codex sandbox probe lifecycle", () => {
+	it("selects the fixed offline profile with managed proxy disabled", async () => {
+		const markerPath = join(tmpdir(), `agentrelay-probe-${process.pid}-${Date.now()}.json`);
+		const fixture = await createProbeFixture(
+			"offline-profile",
+			nodeLauncher(`
+const { writeFileSync } = require("node:fs");
+const paths = JSON.parse(process.argv.at(-1));
+writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });
+writeFileSync(paths.resultPath, paths.resultToken, { flag: "wx", mode: 0o600 });
+`),
+		);
+
+		try {
+			await expect(
+				runCodexSandboxProbe(fixture.input, new AbortController().signal),
+			).resolves.toBeUndefined();
+			const argv = JSON.parse(await waitForFile(markerPath)) as string[];
+			expect(argv.slice(0, 7)).toEqual([
+				"sandbox",
+				"--disable",
+				"use_legacy_landlock",
+				"--disable",
+				"network_proxy",
+				"--permission-profile",
+				CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
+			]);
+		} finally {
+			await Promise.all([rm(markerPath, { force: true }), rm(fixture.root, { recursive: true })]);
+		}
+	});
+
 	it("kills the detached probe process group promptly when authority is revoked", async () => {
 		const markerPath = join(tmpdir(), `agentrelay-probe-${process.pid}-${Date.now()}.pid`);
 		const fixture = await createProbeFixture(
@@ -162,7 +196,6 @@ async function createProbeFixture(name: string, launcherSource: string): Promise
 			launcherExecutable,
 			launcherHome,
 			launcherPath,
-			profileName: "agentrelay-test",
 			workspaceRoot,
 			workspaceAccess: "read",
 			gitDirectory,

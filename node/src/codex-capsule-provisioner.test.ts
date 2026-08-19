@@ -26,6 +26,7 @@ import {
 	type CodexCapsuleProvisioningAuthority,
 	type CodexContainmentProvisioningPort,
 } from "./codex-capsule-provisioner.js";
+import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import type {
 	CodexSandboxContainment,
 	CodexSandboxContainmentInput,
@@ -620,6 +621,7 @@ async function runtimeBinding(
 			executable_sha256: input.provider.sha256,
 			read_root: await inspectedPath(input.provider.readRoot),
 		},
+		provider_egress: codexProviderEgressBinding(),
 		probe: {
 			executable: await inspectedPath(probe),
 			executable_sha256: sha256("test-probe"),

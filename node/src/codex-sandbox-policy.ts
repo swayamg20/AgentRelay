@@ -2,9 +2,11 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
+import { buildCodexProviderEgressToml } from "./codex-provider-egress-policy.js";
 import {
 	CODEX_SANDBOX_CONFIG_FILE,
 	CODEX_SANDBOX_MANIFEST_FILE,
+	CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
 	CODEX_SANDBOX_PROFILE_NAME,
 	type CodexSandboxContainmentInput,
 	type ContainmentLayout,
@@ -184,10 +186,11 @@ export async function buildCodexSandboxConfig(
 	filesystemEntries.set(layout.runtimeTmp, "write");
 
 	return [
-		`default_permissions = ${tomlString(CODEX_SANDBOX_PROFILE_NAME)}`,
+		`default_permissions = ${tomlString(CODEX_SANDBOX_OFFLINE_PROFILE_NAME)}`,
 		"",
 		"[features]",
 		"use_legacy_landlock = false",
+		"network_proxy = true",
 		"",
 		`[projects.${tomlString(input.workspace.root)}]`,
 		'trust_level = "untrusted"',
@@ -212,7 +215,11 @@ export async function buildCodexSandboxConfig(
 			.sort(([left], [right]) => left.localeCompare(right))
 			.map(([path, access]) => `${tomlString(path)} = ${tomlString(access)}`),
 		"",
-		`[permissions.${CODEX_SANDBOX_PROFILE_NAME}.network]`,
+		buildCodexProviderEgressToml(),
+		`[permissions.${CODEX_SANDBOX_OFFLINE_PROFILE_NAME}]`,
+		`extends = ${tomlString(CODEX_SANDBOX_PROFILE_NAME)}`,
+		"",
+		`[permissions.${CODEX_SANDBOX_OFFLINE_PROFILE_NAME}.network]`,
 		"enabled = false",
 		"",
 	].join("\n");

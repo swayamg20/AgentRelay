@@ -25,6 +25,10 @@ import {
 	CODEX_APP_SERVER_CLIENT_NAME,
 	SUPPORTED_CODEX_CLI_VERSION,
 } from "./codex-app-server-protocol.js";
+import {
+	CODEX_PROVIDER_BASE_URL_CONFIG,
+	CODEX_PROVIDER_CONFIG,
+} from "./codex-provider-egress-policy.js";
 
 const fixtures: FakeAppServerFixture[] = [];
 const clients: CodexAppServerClient[] = [];
@@ -92,6 +96,10 @@ describe("CodexAppServerClient", () => {
 			"--strict-config",
 			"--config",
 			CODEX_EPHEMERAL_AUTH_CONFIG,
+			"--config",
+			CODEX_PROVIDER_CONFIG,
+			"--config",
+			CODEX_PROVIDER_BASE_URL_CONFIG,
 			...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 			"app-server",
 			"--listen",

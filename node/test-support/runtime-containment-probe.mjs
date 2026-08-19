@@ -3,6 +3,12 @@ import { access, readFile, readlink, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 
 const paths = JSON.parse(process.argv[2]);
+const managedProxyEnvironmentPresent = Object.keys(process.env).some(
+	(name) =>
+		name.toUpperCase().includes("PROXY") ||
+		name === "NODE_USE_ENV_PROXY" ||
+		name === "ELECTRON_GET_USE_PROXY",
+);
 
 const result = {
 	workspaceRead: await canRead(paths.workspaceFile),
@@ -24,6 +30,7 @@ const result = {
 	runtimeHomeWrite: await canWrite(paths.runtimeHomeWrite),
 	runtimeTmpWrite: await canWrite(paths.runtimeTmpWrite),
 	environmentSecretPresent: process.env.AGENTRELAY_NODE_TOKEN !== undefined,
+	managedProxyEnvironmentPresent,
 	home: process.env.HOME,
 	codexHome: process.env.CODEX_HOME,
 	tmpdir: process.env.TMPDIR,

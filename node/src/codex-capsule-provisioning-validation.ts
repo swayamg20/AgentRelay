@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { type SessionInput, sessionInputSchema } from "@agentrelay/protocol";
 import { z } from "zod";
-import { digestCanonicalJson } from "./capsule-correlation.js";
 import type { CodexCapsuleLaunchDescriptor } from "./capsule-launch-descriptor.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import { sha256PinnedFile } from "./codex-sandbox-binding.js";
 import {
 	CODEX_SANDBOX_CONFIG_FILE,
@@ -23,7 +23,7 @@ import {
 } from "./runtime-authority.js";
 import {
 	type RuntimeContainmentManifest,
-	runtimeContainmentManifestSchema,
+	parseRuntimeContainmentManifest,
 	workspaceBinding,
 } from "./runtime-containment-manifest.js";
 import { workspaceResourceSha256 } from "./workspace-resource.js";
@@ -135,11 +135,7 @@ export async function assertPinnedCodexArtifact(launcher: PinnedCodexLauncher): 
 }
 
 export function parseCodexContainmentManifest(value: unknown): RuntimeContainmentManifest {
-	const manifest = runtimeContainmentManifestSchema.parse(value);
-	if (manifest.binding_sha256 !== digestCanonicalJson(manifest.binding)) {
-		throw new Error("Codex containment manifest binding digest is invalid");
-	}
-	return manifest;
+	return parseRuntimeContainmentManifest(value);
 }
 
 export function codexContainmentRecovery(
@@ -191,6 +187,7 @@ export async function assertCurrentCodexContainmentManifest(
 		binding.provider.executable.path === launcher.executable &&
 		binding.provider.executable_sha256 === launcher.sha256 &&
 		binding.provider.read_root.path === launcher.readRoot &&
+		isDeepStrictEqual(binding.provider_egress, codexProviderEgressBinding()) &&
 		binding.probe.read_root.path === join(runtimeDirectory, "probe-runtime") &&
 		binding.probe.executable.path === join(runtimeDirectory, "probe-runtime", "bin", "node") &&
 		binding.read_only_roots.length === 0 &&
