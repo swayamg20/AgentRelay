@@ -866,7 +866,8 @@ export class DeliveryProcessor {
 	}
 
 	private runtimeProvisioningMode(entry: JournalDelivery): "fresh" | "recover" {
-		return this.#runtimeProvisioner !== undefined && entry.start_turn_input !== null
+		return this.#runtimeProvisioner !== undefined &&
+			(entry.start_turn_input !== null || entry.host_attempt_history.length > 0)
 			? "recover"
 			: "fresh";
 	}

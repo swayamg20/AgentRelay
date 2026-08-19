@@ -1,4 +1,10 @@
-import type { AdapterInfo, AgentHostAdapter, HostTurnRef } from "@agentrelay/protocol";
+import type {
+	AdapterInfo,
+	AgentHostAdapter,
+	HostSessionRef,
+	HostTurnRef,
+	SessionInput,
+} from "@agentrelay/protocol";
 import type {
 	RuntimeAuthorityEvidenceSink,
 	RuntimeWorkspaceReadAuthority,
@@ -29,6 +35,8 @@ export type CapsuleRuntimeActivation = RuntimeWorkspaceReadAuthority;
  */
 export interface CapsuleRuntimeController {
 	probe(): Promise<AdapterInfo>;
+	/** Establishes only the durable local session identity; it must not activate a provider. */
+	ensureSession(input: SessionInput): Promise<HostSessionRef>;
 	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null>;
 	activate(authority: CapsuleRuntimeActivation): Promise<CapsuleRuntime>;
 	close(): Promise<void>;

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
 	type HostEvent,
 	type HostSessionRef,
@@ -9,17 +10,20 @@ import {
 	hostExecutionAttemptSchema,
 	hostTurnRefSchema,
 	hostUsageSchema,
+	sessionInputSchema,
 	startTurnInputSchema,
 	uuidSchema,
 } from "@agentrelay/protocol";
 import { z } from "zod";
 import { executionKey } from "./capsule-correlation.js";
+import { CapsuleOperationError } from "./capsule-operation-error.js";
 import { assertSameInput, publicIntent, requireTurnByRef } from "./codex-capsule-records.js";
 import {
 	type CodexCapsuleIdentity,
 	type CodexCapsuleState,
 	cloneStoredEvents,
 	createCodexCapsuleState,
+	hostSessionFromState,
 	hostTurnFromStored,
 	validateCodexCapsuleState,
 } from "./codex-capsule-state.js";
@@ -95,6 +99,15 @@ export class CodexCapsuleStore {
 	async sessionScope(): Promise<SessionInput> {
 		await this.#pendingWrite;
 		return structuredClone(this.#state.session.input);
+	}
+
+	async ensureSession(inputValue: SessionInput): Promise<HostSessionRef> {
+		const input = sessionInputSchema.parse(inputValue);
+		await this.#pendingWrite;
+		if (!isDeepStrictEqual(input, this.#state.session.input)) {
+			throw new CapsuleOperationError("scope_mismatch", "Codex Capsule session scope changed");
+		}
+		return hostSessionFromState(this.#state);
 	}
 
 	async acceptSession(codexThreadIdValue: string): Promise<HostSessionRef> {

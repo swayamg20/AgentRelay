@@ -239,10 +239,9 @@ export class PersistentCapsuleServer {
 				return this.writeUnary(
 					socket,
 					request,
-					await this.#authority.performSession(request.params.input, async (authority) => {
-						const runtime = await this.activateRuntime(authority);
-						return runtime.ensureSession(request.params.input);
-					}),
+					await this.#authority.performSession(request.params.input, () =>
+						this.#controller.ensureSession(request.params.input),
+					),
 				);
 			case "lookup_turn":
 				// An authenticated read is needed to discover recoverable local state before

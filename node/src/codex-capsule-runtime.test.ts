@@ -47,6 +47,10 @@ describe("CodexCapsuleRuntimeController", () => {
 		const fixture = await createFixture();
 
 		expect(await fixture.controller.probe()).toMatchObject({ name: "capsule-codex" });
+		expect(await fixture.controller.ensureSession(fixture.descriptor.session)).toMatchObject({
+			...fixture.descriptor.session,
+			sessionId: expect.stringMatching(/^capsule-session-/),
+		});
 		await expect(fixture.controller.lookupTurn(randomUUID(), 1)).resolves.toBeNull();
 		expect(fixture.recoveryCalls).toBe(0);
 		expect(fixture.guardianOptions).toHaveLength(0);

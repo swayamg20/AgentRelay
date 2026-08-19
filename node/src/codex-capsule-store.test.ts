@@ -23,6 +23,24 @@ afterEach(async () => {
 });
 
 describe("CodexCapsuleStore", () => {
+	it("returns the stable local session before opening a provider session barrier", async () => {
+		const { store } = await openStore();
+		const input = {
+			missionId: IDS.mission,
+			participantId: IDS.participant,
+			workspaceAlias: "backend-primary",
+		};
+
+		const session = await store.ensureSession(input);
+
+		expect(session).toEqual({ ...input, sessionId: expect.stringMatching(/^capsule-session-/) });
+		expect(await store.ensureSession(input)).toEqual(session);
+		expect(await store.claimSessionStart()).toEqual({ kind: "send" });
+		await expect(
+			store.ensureSession({ ...input, workspaceAlias: "other-workspace" }),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "scope_mismatch" });
+	});
+
 	it("persists an at-most-once session start barrier and stable local session identity", async () => {
 		const { directory, store } = await openStore();
 		expect(

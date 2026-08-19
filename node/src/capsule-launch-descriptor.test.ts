@@ -75,7 +75,7 @@ describe("Capsule launch descriptors", () => {
 	});
 
 	it.each([
-		["unknown runtime contract", { runtime_contract: "agentrelay/codex-capsule/v2" }],
+		["old runtime contract", { runtime_contract: "agentrelay/codex-capsule/v1" }],
 		["unsupported Codex CLI", { codex_cli_version: "0.147.0" }],
 		["invented protocol version", { protocolVersion: "1" }],
 	])("rejects an %s", (_name, runtimeOverride) => {

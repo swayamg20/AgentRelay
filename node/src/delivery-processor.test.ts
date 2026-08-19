@@ -212,6 +212,29 @@ describe("DeliveryProcessor", () => {
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
+	it("checkpoints the exact turn input before crossing the runtime start boundary", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const harness = await createHarness({
+			authorityPort,
+			runtimeProvisioner: freshRuntimeProvisioner(async () => undefined),
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+		});
+		const adapter: AgentHostAdapter = {
+			...adapterDelegates(harness.adapter),
+			startTurn(input) {
+				const entry = harness.journal.snapshot().deliveries[IDS.delivery];
+				expect(entry?.runtime_authority).toEqual(authorityPort.installed.at(-1));
+				expect(entry?.host_session).toEqual(input.session);
+				expect(entry?.start_turn_input).toEqual(input);
+				return harness.adapter.startTurn(input);
+			},
+		};
+
+		await processorFor({ ...harness, adapter }).process(IDS.delivery);
+
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
 	it("keeps journaled fake-runtime recovery on the clean preflight path", async () => {
 		let crashBeforePublish = true;
 		const harness = await createHarness({
@@ -1894,6 +1917,48 @@ describe("DeliveryProcessor", () => {
 		const completed = harness.journal.snapshot().deliveries[IDS.delivery]!;
 		expect(completed.phase).toBe("acknowledged");
 		expect(completed.start_turn_input?.executionAttempt).toBe(2);
+	});
+
+	it("recovers provisioned runtime state after a transient host retry", async () => {
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const provision = vi.fn<RuntimeProvisioner["provision"]>();
+		const recover = vi.fn<RuntimeProvisioner["recover"]>();
+		const preflight = vi.fn(successfulPreflight);
+		const preflightRecovery = vi.fn(successfulRecoveryPreflight);
+		const prepareRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const recoverRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const harness = await createHarness({
+			authorityPort,
+			runtimeProvisioner: { provision, recover },
+			preflight,
+			preflightRecovery,
+			prepareRuntimeWorkspace,
+			recoverRuntimeWorkspace,
+			outcome: {
+				kind: "failed",
+				failure: { class: "transient", message: "host temporarily unavailable" },
+			},
+		});
+		harness.client.transientRelease = true;
+		harness.adapter.queueOutcome({
+			kind: "completed",
+			disposition: { kind: "reply", message_type: "progress", message: "retry succeeded" },
+		});
+
+		await harness.processor.process(IDS.delivery);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.host_attempt_history).toHaveLength(
+			1,
+		);
+
+		await harness.processor.process(IDS.delivery, undefined, new Date("2026-08-02T00:11:00.000Z"));
+
+		expect(preflight).toHaveBeenCalledOnce();
+		expect(prepareRuntimeWorkspace).toHaveBeenCalledOnce();
+		expect(provision).toHaveBeenCalledOnce();
+		expect(preflightRecovery).toHaveBeenCalledOnce();
+		expect(recoverRuntimeWorkspace).toHaveBeenCalledOnce();
+		expect(recover).toHaveBeenCalledOnce();
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
 	it("recovers after release authority is lost instead of replaying a poison intent forever", async () => {

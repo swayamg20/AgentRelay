@@ -137,7 +137,7 @@ describe("PersistentCapsuleServer", () => {
 		expect(runtime.calls).toEqual(["probe", "lookupTurn"]);
 	});
 
-	it("keeps the controller passive until the first authorized runtime operation", async () => {
+	it("keeps the controller passive until the first authorized turn operation", async () => {
 		const runtime = new RecordingRuntime();
 		const { identity, controller } = await startServer(runtime, { installAuthority: false });
 
@@ -156,6 +156,9 @@ describe("PersistentCapsuleServer", () => {
 
 		await capsuleResultValue(identity, "ensure_session", { input: sessionInput() });
 		await capsuleResultValue(identity, "ensure_session", { input: sessionInput() });
+		expect(controller.activations).toHaveLength(0);
+
+		await sendCapsuleRequest(identity, "start_turn", { input: turnInput(runtime.session) });
 
 		expect(controller.activations).toHaveLength(1);
 		expect(controller.activations[0]).toMatchObject({ grant: SERVER_AUTHORITY });
@@ -168,8 +171,8 @@ describe("PersistentCapsuleServer", () => {
 		controller.activationGate = deferred();
 		controller.activationStarted = deferred();
 
-		const pendingSession = sendCapsuleRequest(identity, "ensure_session", {
-			input: sessionInput(),
+		const pendingTurn = sendCapsuleRequest(identity, "start_turn", {
+			input: turnInput(runtime.session),
 		});
 		await controller.activationStarted.promise;
 		await capsuleResultValue(identity, "revoke_authority", {
@@ -178,12 +181,12 @@ describe("PersistentCapsuleServer", () => {
 			reason: "revoked",
 		});
 		controller.activationGate.resolve();
-		await pendingSession.catch(() => []);
+		await pendingTurn.catch(() => []);
 		await server.waitUntilClosed();
 
 		expect(controller.activations).toHaveLength(1);
 		expect(controller.activations[0]?.signal.aborted).toBe(true);
-		expect(runtime.calls).not.toContain("ensureSession");
+		expect(runtime.calls).not.toContain("startTurn");
 		expect(runtime.closeCalls).toBe(1);
 	});
 
@@ -195,8 +198,8 @@ describe("PersistentCapsuleServer", () => {
 		controller.activationGate = deferred();
 		controller.activationStarted = deferred();
 
-		const pendingSession = sendCapsuleRequest(identity, "ensure_session", {
-			input: sessionInput(),
+		const pendingTurn = sendCapsuleRequest(identity, "start_turn", {
+			input: turnInput(runtime.session),
 		});
 		await controller.activationStarted.promise;
 		await capsuleResultValue(identity, "revoke_authority", {
@@ -206,7 +209,7 @@ describe("PersistentCapsuleServer", () => {
 		});
 		controller.activationGate.resolve();
 
-		await expect(pendingSession).resolves.toEqual([
+		await expect(pendingTurn).resolves.toEqual([
 			expect.objectContaining({
 				kind: "error",
 				code: "internal",
@@ -727,6 +730,10 @@ class RecordingController implements CapsuleRuntimeController {
 
 	probe() {
 		return this.#runtime.probe();
+	}
+
+	ensureSession(input: SessionInput) {
+		return this.#runtime.ensureSession(input);
 	}
 
 	lookupTurn(deliveryId: string, executionAttempt: number) {

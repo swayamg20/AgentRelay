@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import type { AdapterInfo, HostTurnRef } from "@agentrelay/protocol";
+import type { AdapterInfo, HostSessionRef, HostTurnRef, SessionInput } from "@agentrelay/protocol";
 import { buildBaseCapsuleEnvironment } from "./capsule-environment.js";
 import type { CodexCapsuleLaunchDescriptor } from "./capsule-launch-descriptor.js";
 import type {
@@ -96,6 +96,10 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 
 	async probe(): Promise<AdapterInfo> {
 		return structuredClone(CODEX_CAPSULE_ADAPTER_INFO);
+	}
+
+	ensureSession(input: SessionInput): Promise<HostSessionRef> {
+		return this.#store.ensureSession(input);
 	}
 
 	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {

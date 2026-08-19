@@ -9,7 +9,7 @@ import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import { codexSandboxRecoveryExpectationSchema } from "./codex-sandbox-contract.js";
 
 export const CAPSULE_DESCRIPTOR_FILE = "launch.json";
-export const CODEX_CAPSULE_RUNTIME_CONTRACT = "agentrelay/codex-capsule/v1";
+export const CODEX_CAPSULE_RUNTIME_CONTRACT = "agentrelay/codex-capsule/v2";
 
 const MAX_CAPSULE_SOCKET_PATH_BYTES = 100;
 const capsuleDescriptorCommonShape = {

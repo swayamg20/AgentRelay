@@ -104,7 +104,7 @@ describe("PersistentCodexCapsuleAdapter", () => {
 	});
 
 	it.each([
-		["runtime contract", { runtime_contract: "agentrelay/codex-capsule/v2" }],
+		["runtime contract", { runtime_contract: "agentrelay/codex-capsule/v1" }],
 		["Codex CLI version", { codex_cli_version: "0.147.0" }],
 	])("rejects a mismatched %s without repairing the descriptor", async (_name, runtimeOverride) => {
 		const rootDirectory = await temporaryDirectory();
@@ -269,6 +269,9 @@ const PersistentCapsuleServerForTest = {
 			openController: async (): Promise<CapsuleRuntimeController> => ({
 				async probe() {
 					return structuredClone(CAPSULE_ADAPTER_INFO);
+				},
+				async ensureSession() {
+					throw new Error("runtime session was not expected");
 				},
 				async lookupTurn() {
 					return null;

@@ -80,7 +80,7 @@ describe("CodexCapsuleRunner", () => {
 		const session = (await capsuleResultValue(fixture.identity, "ensure_session", {
 			input: sessionInput(),
 		})) as HostSessionRef;
-		expect(fixture.guardian.openCalls).toBe(1);
+		expect(fixture.guardian.openCalls).toBe(0);
 		const input = turnInput(session);
 		const frames = await sendCapsuleRequest(fixture.identity, "start_turn", { input });
 
@@ -291,6 +291,9 @@ describe("CodexCapsuleRunner", () => {
 		const session = await capsuleResultValue(fixture.identity, "ensure_session", {
 			input: sessionInput(),
 		});
+		await sendCapsuleRequest(fixture.identity, "start_turn", {
+			input: turnInput(session as HostSessionRef),
+		});
 
 		expect(session).toMatchObject({ sessionId: expect.stringMatching(/^capsule-session-/) });
 		expect(fixture.client.calls).toContain("startThread");
@@ -305,11 +308,14 @@ describe("CodexCapsuleRunner", () => {
 		firstClient.threadStartBarrier = startGate.promise;
 		firstClient.threadStartFailure = new Error("Fake lost the detached thread/start response");
 		const firstServer = await fixture.startServer();
+		const session = (await capsuleResultValue(fixture.identity, "ensure_session", {
+			input: sessionInput(),
+		})) as HostSessionRef;
 		const socket = await connectCapsule(fixture.identity.socketPath);
 		socket.on("error", () => undefined);
 		socket.write(
 			`${JSON.stringify(
-				buildCapsuleRequest(fixture.identity, "ensure_session", { input: sessionInput() }),
+				buildCapsuleRequest(fixture.identity, "start_turn", { input: turnInput(session) }),
 			)}\n`,
 		);
 		await expect.poll(() => firstClient.calls).toContain("startThread");
@@ -319,10 +325,13 @@ describe("CodexCapsuleRunner", () => {
 
 		fixture.replaceClient();
 		await fixture.startServer();
-		const session = await capsuleResultValue(fixture.identity, "ensure_session", {
+		const recoveredSession = (await capsuleResultValue(fixture.identity, "ensure_session", {
 			input: sessionInput(),
+		})) as HostSessionRef;
+		await sendCapsuleRequest(fixture.identity, "start_turn", {
+			input: turnInput(recoveredSession),
 		});
-		expect(session).toMatchObject({ sessionId: expect.stringMatching(/^capsule-session-/) });
+		expect(recoveredSession).toEqual(session);
 		expect(firstClient.calls.filter((call) => call === "startThread")).toHaveLength(1);
 		expect(fixture.client.calls.filter((call) => call === "startThread")).toHaveLength(1);
 		expect(fixture.guardian.openCalls).toBe(2);
@@ -333,8 +342,11 @@ describe("CodexCapsuleRunner", () => {
 		fixture.guardian.failure = new Error("previous provider may still be live");
 
 		const server = await fixture.startServer();
-		const failed = await sendCapsuleRequest(fixture.identity, "ensure_session", {
+		const session = (await capsuleResultValue(fixture.identity, "ensure_session", {
 			input: sessionInput(),
+		})) as HostSessionRef;
+		const failed = await sendCapsuleRequest(fixture.identity, "start_turn", {
+			input: turnInput(session),
 		});
 		expect(failed).toEqual([
 			expect.objectContaining({
@@ -473,8 +485,11 @@ describe("CodexCapsuleRunner", () => {
 		async (kind) => {
 			const fixture = await createFixture();
 			const server = await fixture.startServer();
-			await capsuleResultValue(fixture.identity, "ensure_session", {
+			const session = (await capsuleResultValue(fixture.identity, "ensure_session", {
 				input: sessionInput(),
+			})) as HostSessionRef;
+			await sendCapsuleRequest(fixture.identity, "start_turn", {
+				input: turnInput(session),
 			});
 
 			fixture.guardian.generations[0]?.finish(kind);
@@ -596,6 +611,10 @@ class CodexWireController implements CapsuleRuntimeController {
 
 	async probe() {
 		return structuredClone(CODEX_CAPSULE_ADAPTER_INFO);
+	}
+
+	ensureSession(input: SessionInput) {
+		return this.#store.ensureSession(input);
 	}
 
 	lookupTurn(deliveryId: string, executionAttempt: number) {

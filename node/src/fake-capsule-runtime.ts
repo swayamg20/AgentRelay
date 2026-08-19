@@ -85,6 +85,10 @@ export class FakeCapsuleRuntimeController implements CapsuleRuntimeController {
 		return this.#runtime.probe();
 	}
 
+	ensureSession(input: SessionInput): Promise<HostSessionRef> {
+		return this.#runtime.ensureSession(input);
+	}
+
 	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
 		return this.#runtime.lookupTurn(deliveryId, executionAttempt);
 	}
