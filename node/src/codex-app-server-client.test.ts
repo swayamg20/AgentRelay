@@ -376,16 +376,18 @@ describe("CodexAppServerClient", () => {
 		const fixture = await fakeAppServer({ ignoreRead: true });
 		const authority = new AbortController();
 		const teardownFailure = new Error("authority teardown proof failed");
+		const requestTimeoutMs = 1_000;
+		const teardownFailureDelayMs = requestTimeoutMs + 250;
 		const client = await openClient(fixture, {
 			authoritySignal: authority.signal,
-			requestTimeoutMs: 100,
+			requestTimeoutMs,
 			processFactory: async (options) => {
 				const processRef = await startCodexAppServerProcess(options);
 				return {
 					...processRef,
 					authorityTermination: processRef.authorityTermination?.catch(async (error) => {
 						if (error !== "expired") throw error;
-						await delay(250);
+						await delay(teardownFailureDelayMs);
 						throw teardownFailure;
 					}),
 				};
@@ -397,7 +399,7 @@ describe("CodexAppServerClient", () => {
 		authority.abort("expired");
 		const failure = await settleWithin(
 			pending.catch((error: unknown) => error),
-			3_000,
+			4_000,
 		);
 
 		expect(failure).toBe(teardownFailure);

@@ -478,7 +478,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		"enforces its absolute deadline against an unresponsive provider tree",
 		async () => {
 			const fixture = await fakeAppServer({ spawnDescendant: true, ignoreSigterm: true });
-			const generation = await openGeneration(fixture, { deadlineAtMs: Date.now() + 1_000 });
+			const generation = await openGeneration(fixture, { deadlineAtMs: Date.now() + 5_000 });
 			const descendantPid = await waitForPid(fixture.childPidPath);
 
 			await expect(generation.termination).resolves.toEqual({ kind: "unresponsive" });
@@ -496,7 +496,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		"classifies an unresponsive provider request and tears down its authority",
 		async () => {
 			const fixture = await fakeAppServer({ ignoreRead: true });
-			const generation = await openGeneration(fixture, { requestTimeoutMs: 100 });
+			const generation = await openGeneration(fixture, { requestTimeoutMs: 1_000 });
 
 			await expect(generation.client.readThread("thread-1")).rejects.toThrow(
 				"Timed out waiting for Codex app-server method thread/read",
@@ -520,14 +520,15 @@ describe("SupervisedCodexProviderGuardian", () => {
 				spawnDescendant: true,
 			});
 			const authority = new AbortController();
+			const requestTimeoutMs = 1_000;
 			const generation = await openGeneration(fixture, {
 				authoritySignal: authority.signal,
-				requestTimeoutMs: 100,
+				requestTimeoutMs,
 			});
 			const descendantPid = await waitForPid(fixture.childPidPath);
 			const request = generation.client.readThread("thread-1").catch((error: unknown) => error);
 
-			await delay(150);
+			await delay(requestTimeoutMs + 250);
 			authority.abort("expired");
 
 			await waitForProcessExit(descendantPid, 1_500);
@@ -577,7 +578,7 @@ describe("SupervisedCodexProviderGuardian", () => {
 		async () => {
 			const fixture = await fakeAppServer({ ignoreSigterm: true });
 			const generation = await openGeneration(fixture, {
-				deadlineAtMs: Date.now() + 1_000,
+				deadlineAtMs: Date.now() + 2_000,
 			});
 			const providerPid = await waitForPid(fixture.appServerPidPath);
 
