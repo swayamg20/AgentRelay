@@ -266,7 +266,7 @@ function assertFrameSize(value: string, direction: "request" | "response"): void
 	}
 }
 
-async function verifyCodexCliVersion(
+export async function verifyCodexCliVersion(
 	executable: string,
 	cwd: string,
 	env: NodeJS.ProcessEnv,

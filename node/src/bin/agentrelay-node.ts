@@ -7,6 +7,8 @@ import type { AgentHostAdapter } from "@agentrelay/protocol";
 import { FakeAgentHostAdapter } from "@agentrelay/protocol/testing";
 import { cac } from "cac";
 import pino from "pino";
+import { PINNED_CODEX_CLI_VERSION } from "../codex-artifact.js";
+import { runCodexRuntimeDoctor } from "../codex-runtime-doctor.js";
 import { loadNodeConfig, resolveNodeConfigPath } from "../config.js";
 import { ForegroundNode } from "../daemon.js";
 import { assertFakeRuntimeCredential } from "../fake-runtime.js";
@@ -63,6 +65,13 @@ cli
 		}),
 	);
 
+cli
+	.command(
+		"doctor-codex",
+		"Verify the pinned Codex runtime locally without polling or claiming Relay work",
+	)
+	.action(runCodexDoctor);
+
 cli.help();
 cli.version("0.0.1");
 
@@ -95,6 +104,22 @@ function fakeAdapter(outcome: unknown): FakeAgentHostAdapter {
 					},
 	});
 	return adapter;
+}
+
+async function runCodexDoctor(): Promise<void> {
+	const controller = new AbortController();
+	const stop = () => controller.abort();
+	process.once("SIGINT", stop);
+	process.once("SIGTERM", stop);
+	try {
+		await runCodexRuntimeDoctor({ signal: controller.signal });
+		process.stdout.write(
+			`Pinned Codex ${PINNED_CODEX_CLI_VERSION} preflight passed on linux/x64.\nNo Relay work was claimed. Codex execution remains disabled; owner authentication, provider egress, and write authority are not configured.\n`,
+		);
+	} finally {
+		process.removeListener("SIGINT", stop);
+		process.removeListener("SIGTERM", stop);
+	}
 }
 
 interface RunContext {

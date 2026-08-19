@@ -13,6 +13,7 @@ import {
 	readCodexLines,
 	startCodexAppServerProcess,
 	stopCodexAppServerProcess,
+	verifyCodexCliVersion,
 } from "./codex-app-server-process.js";
 import { MAX_CODEX_APP_SERVER_FRAME_BYTES } from "./codex-app-server-protocol.js";
 
@@ -39,13 +40,13 @@ describe.runIf(process.platform !== "win32")("Codex app-server authority teardow
 		const authority = new AbortController();
 		let processGroupId: number | null = null;
 		try {
-			const starting = startCodexAppServerProcess({
-				command: { executable: fixture.scriptPath },
-				cwd: fixture.directory,
-				env: fixture.env,
-				boundary: directCodexProcessBoundaryForTests,
-				authoritySignal: authority.signal,
-			});
+			const starting = verifyCodexCliVersion(
+				fixture.scriptPath,
+				fixture.directory,
+				fixture.env,
+				directCodexProcessBoundaryForTests,
+				authority.signal,
+			);
 			processGroupId = await waitForPid(fixture.versionPidPath);
 
 			authority.abort("expired");
