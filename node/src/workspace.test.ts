@@ -12,6 +12,7 @@ import {
 	WorkspacePreflightError,
 	defaultWorkspaceCommandRunner,
 	preflightWorkspace,
+	preflightWorkspaceRecovery,
 } from "./workspace.js";
 
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
@@ -180,6 +181,35 @@ describe("defaultWorkspaceCommandRunner", () => {
 });
 
 describe("preflightWorkspace", () => {
+	it("revalidates a started workspace without claiming that its edits are clean", async () => {
+		const commands: WorkspaceCommand[] = [];
+		const result = await preflightWorkspaceRecovery(WORKSPACE, expectation(), {
+			realpath: async (path) => path,
+			runCommand: async (command) => {
+				commands.push(command);
+				return commandResult(command);
+			},
+		});
+
+		expect(result).toEqual({
+			root: ROOT,
+			repository_url: REPOSITORY_URL,
+			head_commit: BASE_COMMIT,
+			reachable_from_ref: "release/stable",
+		});
+		expect(result).not.toHaveProperty("clean");
+		expect(commands.some((command) => command.argv[0] === "status")).toBe(false);
+		expect(commands).toEqual([
+			git(CONFIG_INSPECTION_ARGV),
+			git(GITLINK_INSPECTION_ARGV),
+			git(["rev-parse", "--show-toplevel"]),
+			git(["remote", "get-url", "origin"]),
+			git(["rev-parse", "--verify", "HEAD^{commit}"]),
+			git(["merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/main"]),
+			git(["merge-base", "--is-ancestor", "HEAD", "release/stable"]),
+		]);
+	});
+
 	it("uses only the canonical local root and fixed shell-free Git commands", async () => {
 		const commands: WorkspaceCommand[] = [];
 		const remoteWithAuthorityFields = {

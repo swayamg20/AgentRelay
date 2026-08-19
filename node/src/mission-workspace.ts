@@ -16,6 +16,7 @@ import {
 	type WorkspaceCommandRunner,
 	defaultWorkspaceCommandRunner,
 	preflightWorkspace,
+	preflightWorkspaceRecovery,
 } from "./workspace.js";
 
 export {
@@ -32,6 +33,24 @@ export async function prepareMissionWorkspace(
 	expectation: MissionWorkspaceExpectation,
 	dependencies: MissionWorkspaceDependencies = {},
 ): Promise<PreparedMissionWorkspace> {
+	return inspectMissionWorkspace(workspace, expectation, dependencies, "require_clean");
+}
+
+/** Reopens one already-started Mission checkout while preserving its expected edits. */
+export function recoverMissionWorkspace(
+	workspace: WorkspaceConfig,
+	expectation: MissionWorkspaceExpectation,
+	dependencies: MissionWorkspaceDependencies = {},
+): Promise<PreparedMissionWorkspace> {
+	return inspectMissionWorkspace(workspace, expectation, dependencies, "allow_dirty");
+}
+
+async function inspectMissionWorkspace(
+	workspace: WorkspaceConfig,
+	expectation: MissionWorkspaceExpectation,
+	dependencies: MissionWorkspaceDependencies,
+	cleanliness: "require_clean" | "allow_dirty",
+): Promise<PreparedMissionWorkspace> {
 	if (process.platform === "win32" || process.getuid === undefined) {
 		throw new MissionWorkspaceError(
 			"unsupported_platform",
@@ -43,7 +62,9 @@ export async function prepareMissionWorkspace(
 	const runCommand = scopedWorkspaceCommandRunner(dependencies);
 	const realpath = dependencies.realpath ?? fsRealpath;
 	signal?.throwIfAborted();
-	const preflight = await preflightWorkspace(workspace, expectation, { runCommand, realpath });
+	const preflight = await (cleanliness === "require_clean"
+		? preflightWorkspace(workspace, expectation, { runCommand, realpath, signal })
+		: preflightWorkspaceRecovery(workspace, expectation, { runCommand, realpath, signal }));
 	signal?.throwIfAborted();
 	const rootIdentity = await assertOwnedDirectoryIdentity(preflight.root, "workspace root");
 	const gitDirectory = await inspectStandaloneGitDirectory(preflight.root, runCommand, realpath);
@@ -58,7 +79,9 @@ export async function prepareMissionWorkspace(
 		reachableFromRef: preflight.reachable_from_ref,
 	});
 	await revalidateMissionWorkspaceIsolation(prepared, { runCommand, realpath, signal });
-	await assertMissionWorkspaceClean(prepared, { runCommand, signal });
+	if (cleanliness === "require_clean") {
+		await assertMissionWorkspaceClean(prepared, { runCommand, signal });
+	}
 	return prepared;
 }
 

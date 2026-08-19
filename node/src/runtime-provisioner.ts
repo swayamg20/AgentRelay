@@ -14,4 +14,9 @@ export interface RuntimeProvisioner {
 		input: RuntimeProvisioningInput,
 		authority: RuntimeWorkspaceReadAuthority,
 	): Promise<unknown>;
+	/** Reopens exact durable runtime state and must never create or repair it. */
+	recover(
+		input: RuntimeProvisioningInput,
+		authority: RuntimeWorkspaceReadAuthority,
+	): Promise<unknown>;
 }

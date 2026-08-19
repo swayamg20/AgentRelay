@@ -151,6 +151,7 @@ describe("ForegroundNode cycle ordering and shutdown fencing", () => {
 	it("forwards runtime provisioning configuration to the delivery boundary", async () => {
 		const runtimeProvisioner: RuntimeProvisioner = {
 			provision: async () => undefined,
+			recover: async () => undefined,
 		};
 
 		await expect(createHarness({ runtimeProvisioner })).rejects.toThrow(

@@ -100,6 +100,53 @@ describe("CodexCapsuleProvisioner", () => {
 		expect(fixture.port.recoverCalls).toBe(1);
 	});
 
+	it("recovers only an exact prepublished descriptor without creating containment", async () => {
+		const fixture = await createFixture();
+		const descriptor = await fixture.provisioner.provision(
+			fixture.input,
+			activationFor(fixture.input).authority,
+		);
+		await writeFile(join(fixture.workspace.root, "model-created.txt"), "expected edit\n");
+		const prepareCalls = fixture.port.prepareCalls;
+
+		await expect(
+			fixture.provisioner.recover(fixture.input, activationFor(fixture.input).authority),
+		).resolves.toEqual(descriptor);
+
+		expect(fixture.port.prepareCalls).toBe(prepareCalls);
+		expect(fixture.port.recoverCalls).toBe(1);
+	});
+
+	it("does not create or repair runtime state when recover-only state is missing", async () => {
+		const fixture = await createFixture();
+		const missionDirectory = join(fixture.controlRoot, IDS.mission);
+
+		await expect(
+			fixture.provisioner.recover(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("launch descriptor is missing");
+
+		expect(fixture.port.prepareCalls).toBe(0);
+		expect(fixture.port.recoverCalls).toBe(0);
+		await expect(stat(missionDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("does not promote an orphan manifest during recover-only provisioning", async () => {
+		const fixture = await createFixture();
+		const descriptorPath = join(fixture.controlRoot, IDS.mission, CAPSULE_DESCRIPTOR_FILE);
+		await fixture.port.seed(
+			containmentInput(fixture),
+			join(fixture.controlRoot, IDS.mission, "containment.json"),
+		);
+
+		await expect(
+			fixture.provisioner.recover(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("launch descriptor is missing");
+
+		expect(fixture.port.prepareCalls).toBe(0);
+		expect(fixture.port.recoverCalls).toBe(0);
+		await expect(stat(descriptorPath)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	it("recovers an exact manifest-before-descriptor crash without creating new containment", async () => {
 		const fixture = await createFixture();
 		await fixture.port.seed(

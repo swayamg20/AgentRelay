@@ -183,7 +183,7 @@ describe("DeliveryProcessor", () => {
 		});
 		const harness = await createHarness({
 			authorityPort,
-			runtimeProvisioner: { provision },
+			runtimeProvisioner: freshRuntimeProvisioner(provision),
 			prepareRuntimeWorkspace,
 		});
 
@@ -209,6 +209,41 @@ describe("DeliveryProcessor", () => {
 		await harness.processor.process(IDS.delivery);
 
 		expect(prepareRuntimeWorkspace).not.toHaveBeenCalled();
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("keeps journaled fake-runtime recovery on the clean preflight path", async () => {
+		let crashBeforePublish = true;
+		const harness = await createHarness({
+			onCheckpoint(checkpoint) {
+				if (crashBeforePublish && checkpoint === "complete_intent") {
+					crashBeforePublish = false;
+					throw new Error("crash before completion request");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"crash before completion request",
+		);
+		const preflight = vi.fn(successfulPreflight);
+		const preflightRecovery = vi.fn(async () => {
+			throw new Error("fake runtime must not use dirty recovery admission");
+		});
+		const processor = new DeliveryProcessor({
+			config: harness.config,
+			client: harness.client,
+			journal: harness.journal,
+			adapter: harness.adapter,
+			authorityPort: new FakeRuntimeAuthorityPort(),
+			now: () => new Date(TIMES.renewed),
+			preflight,
+			preflightRecovery,
+		});
+
+		await processor.process(IDS.delivery);
+
+		expect(preflight).toHaveBeenCalledOnce();
+		expect(preflightRecovery).not.toHaveBeenCalled();
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
@@ -245,7 +280,7 @@ describe("DeliveryProcessor", () => {
 		});
 		const harness = await createHarness({
 			authorityPort,
-			runtimeProvisioner: { provision },
+			runtimeProvisioner: freshRuntimeProvisioner(provision),
 			prepareRuntimeWorkspace,
 		});
 
@@ -273,7 +308,7 @@ describe("DeliveryProcessor", () => {
 		});
 		const harness = await createHarness({
 			authorityPort,
-			runtimeProvisioner: { provision },
+			runtimeProvisioner: freshRuntimeProvisioner(provision),
 			prepareRuntimeWorkspace: async () => preparedWorkspace(),
 		});
 
@@ -317,7 +352,7 @@ describe("DeliveryProcessor", () => {
 				config,
 				mission: assignment({ config }),
 				authorityPort,
-				runtimeProvisioner: { provision },
+				runtimeProvisioner: freshRuntimeProvisioner(provision),
 				prepareRuntimeWorkspace,
 				now: () => now,
 			});
@@ -360,7 +395,7 @@ describe("DeliveryProcessor", () => {
 			});
 			const harness = await createHarness({
 				authorityPort,
-				runtimeProvisioner: { provision: async () => undefined },
+				runtimeProvisioner: freshRuntimeProvisioner(async () => undefined),
 				prepareRuntimeWorkspace,
 				now: () => new Date(Date.now()),
 			});
@@ -400,7 +435,7 @@ describe("DeliveryProcessor", () => {
 		});
 		const harness = await createHarness({
 			authorityPort,
-			runtimeProvisioner: { provision },
+			runtimeProvisioner: freshRuntimeProvisioner(provision),
 			prepareRuntimeWorkspace: async () => preparedWorkspace(),
 		});
 
@@ -484,7 +519,13 @@ describe("DeliveryProcessor", () => {
 		const failure = new Error("runtime descriptor unavailable");
 		const authorityPort = new FakeRuntimeAuthorityPort();
 		let failProvisioning = true;
-		const provision = vi.fn<RuntimeProvisioner["provision"]>(async (_input, authority) => {
+		let recoverySignal: AbortSignal | undefined;
+		let provisioningSignal: AbortSignal | undefined;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>(async () => {
+			throw new Error("fresh provisioning must not run for a journaled turn");
+		});
+		const recover = vi.fn<RuntimeProvisioner["recover"]>(async (_input, authority) => {
+			provisioningSignal = authority.signal;
 			expect(authorityPort.installed).toHaveLength(0);
 			expect(authority.signal.aborted).toBe(false);
 			if (failProvisioning) {
@@ -498,10 +539,17 @@ describe("DeliveryProcessor", () => {
 			journal: harness.journal,
 			adapter: harness.adapter,
 			authorityPort,
-			runtimeProvisioner: { provision },
+			runtimeProvisioner: { provision, recover },
 			now: () => new Date(TIMES.renewed),
 			preflight: successfulPreflight,
-			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+			preflightRecovery: successfulRecoveryPreflight,
+			prepareRuntimeWorkspace: async () => {
+				throw new Error("fresh workspace preparation must not run for a journaled turn");
+			},
+			recoverRuntimeWorkspace: async (_workspace, _expectation, dependencies = {}) => {
+				recoverySignal = dependencies.signal;
+				return preparedWorkspace();
+			},
 		});
 
 		await expect(restarted.process(IDS.delivery)).rejects.toBe(failure);
@@ -510,7 +558,9 @@ describe("DeliveryProcessor", () => {
 
 		await restarted.process(IDS.delivery);
 
-		expect(provision).toHaveBeenCalledTimes(2);
+		expect(provision).not.toHaveBeenCalled();
+		expect(recover).toHaveBeenCalledTimes(2);
+		expect(provisioningSignal).toBe(recoverySignal);
 		expect(authorityPort.installed).toHaveLength(1);
 		expect(harness.client.completeInputs).toHaveLength(1);
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
@@ -1085,7 +1135,13 @@ describe("DeliveryProcessor", () => {
 
 	it("recovers an accepted host turn after runner reconstruction without duplicating it", async () => {
 		let crash = true;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>();
+		const recover = vi.fn<RuntimeProvisioner["recover"]>();
 		const harness = await createHarness({
+			authorityPort: new FakeRuntimeAuthorityPort(),
+			runtimeProvisioner: { provision, recover },
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+			recoverRuntimeWorkspace: async () => preparedWorkspace(),
 			onCheckpoint(checkpoint) {
 				if (crash && checkpoint === "host_accepted") {
 					crash = false;
@@ -1102,6 +1158,8 @@ describe("DeliveryProcessor", () => {
 		expect(harness.adapter.counters.turnsCreated).toBe(1);
 		expect(harness.adapter.counters.startTurnCalls).toBe(1);
 		expect(harness.adapter.counters.recoverTurnCalls).toBe(1);
+		expect(provision).toHaveBeenCalledOnce();
+		expect(recover).toHaveBeenCalledOnce();
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
@@ -1355,6 +1413,56 @@ describe("DeliveryProcessor", () => {
 
 		expect(harness.adapter.counters.turnsCancelled).toBe(1);
 		expect(harness.adapter.eventsFor(IDS.delivery, 1).at(-1)?.kind).toBe("cancelled");
+		expect(harness.client.releaseInputs.at(-1)?.classification).toBe("policy_denied");
+	});
+
+	it("does not contact a provisioned runtime when recovery preflight rejects", async () => {
+		let crash = true;
+		const provision = vi.fn<RuntimeProvisioner["provision"]>();
+		const recover = vi.fn<RuntimeProvisioner["recover"]>();
+		const harness = await createHarness({
+			authorityPort: new FakeRuntimeAuthorityPort(),
+			runtimeProvisioner: { provision, recover },
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+			recoverRuntimeWorkspace: async () => preparedWorkspace(),
+			outcome: { kind: "pending" },
+			onCheckpoint(checkpoint) {
+				if (crash && checkpoint === "host_accepted") {
+					crash = false;
+					throw new Error("injected crash after provisioned host acceptance");
+				}
+			},
+		});
+		await expect(harness.processor.process(IDS.delivery)).rejects.toThrow(
+			"injected crash after provisioned host acceptance",
+		);
+		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.start_turn_input).not.toBeNull();
+		expect(provision).toHaveBeenCalledOnce();
+		const hostCallsBeforeRejection = harness.adapter.counters;
+
+		const preflightRecovery = vi.fn(async () => {
+			const { WorkspacePreflightError } = await import("./workspace.js");
+			throw new WorkspacePreflightError("base_commit_mismatch", "workspace changed");
+		});
+		const restarted = new DeliveryProcessor({
+			config: harness.config,
+			client: harness.client,
+			journal: harness.journal,
+			adapter: harness.adapter,
+			authorityPort: harness.authorityPort,
+			runtimeProvisioner: { provision, recover },
+			now: () => new Date(TIMES.renewed),
+			preflight: successfulPreflight,
+			preflightRecovery,
+			prepareRuntimeWorkspace: async () => preparedWorkspace(),
+			recoverRuntimeWorkspace: async () => preparedWorkspace(),
+		});
+
+		await restarted.process(IDS.delivery);
+
+		expect(preflightRecovery).toHaveBeenCalledOnce();
+		expect(recover).not.toHaveBeenCalled();
+		expect(harness.adapter.counters).toEqual(hostCallsBeforeRejection);
 		expect(harness.client.releaseInputs.at(-1)?.classification).toBe("policy_denied");
 	});
 
@@ -2051,6 +2159,7 @@ describe("DeliveryProcessor", () => {
 interface HarnessOptions {
 	readonly onCheckpoint?: (checkpoint: DeliveryCheckpoint) => void | Promise<void>;
 	readonly preflight?: DeliveryProcessorOptions["preflight"];
+	readonly preflightRecovery?: DeliveryProcessorOptions["preflightRecovery"];
 	readonly now?: () => Date;
 	readonly outcome?: FakeTurnOutcome;
 	readonly config?: NodeConfig;
@@ -2058,6 +2167,7 @@ interface HarnessOptions {
 	readonly authorityPort?: RuntimeAuthorityPort;
 	readonly runtimeProvisioner?: RuntimeProvisioner;
 	readonly prepareRuntimeWorkspace?: DeliveryProcessorOptions["prepareRuntimeWorkspace"];
+	readonly recoverRuntimeWorkspace?: DeliveryProcessorOptions["recoverRuntimeWorkspace"];
 }
 
 async function createHarness(options: HarnessOptions = {}) {
@@ -2081,6 +2191,7 @@ async function createHarness(options: HarnessOptions = {}) {
 		authorityPort: options.authorityPort,
 		runtimeProvisioner: options.runtimeProvisioner,
 		prepareRuntimeWorkspace: options.prepareRuntimeWorkspace,
+		recoverRuntimeWorkspace: options.recoverRuntimeWorkspace,
 	};
 	return {
 		...harness,
@@ -2088,6 +2199,7 @@ async function createHarness(options: HarnessOptions = {}) {
 			...harness,
 			now: options.now ?? (() => new Date(TIMES.renewed)),
 			preflight: options.preflight ?? successfulPreflight,
+			preflightRecovery: options.preflightRecovery ?? successfulRecoveryPreflight,
 			onCheckpoint: options.onCheckpoint
 				? (checkpoint) => options.onCheckpoint?.(checkpoint)
 				: undefined,
@@ -2104,8 +2216,10 @@ function processorFor(harness: Awaited<ReturnType<typeof createHarness>>): Deliv
 		authorityPort: harness.authorityPort,
 		runtimeProvisioner: harness.runtimeProvisioner,
 		prepareRuntimeWorkspace: harness.prepareRuntimeWorkspace,
+		recoverRuntimeWorkspace: harness.recoverRuntimeWorkspace,
 		now: () => new Date(TIMES.renewed),
 		preflight: successfulPreflight,
+		preflightRecovery: successfulRecoveryPreflight,
 	});
 }
 
@@ -2230,6 +2344,24 @@ async function successfulPreflight() {
 		head_commit: "1".repeat(40),
 		reachable_from_ref: "refs/heads/main",
 		clean: true as const,
+	};
+}
+
+async function successfulRecoveryPreflight() {
+	return {
+		root: "/tmp/agentrelay-backend",
+		repository_url: "https://github.com/acme/backend.git",
+		head_commit: "1".repeat(40),
+		reachable_from_ref: "refs/heads/main",
+	};
+}
+
+function freshRuntimeProvisioner(provision: RuntimeProvisioner["provision"]): RuntimeProvisioner {
+	return {
+		provision,
+		recover: async () => {
+			throw new Error("recover-only provisioning must not run for a fresh turn");
+		},
 	};
 }
 

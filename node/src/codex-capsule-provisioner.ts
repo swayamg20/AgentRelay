@@ -135,9 +135,24 @@ export class CodexCapsuleProvisioner {
 		inputValue: CodexCapsuleProvisionInput,
 		authority: CodexCapsuleProvisioningAuthority,
 	): Promise<CodexCapsuleLaunchDescriptor> {
+		return this.scheduleProvisioning(inputValue, authority, "create_or_recover");
+	}
+
+	async recover(
+		inputValue: CodexCapsuleProvisionInput,
+		authority: CodexCapsuleProvisioningAuthority,
+	): Promise<CodexCapsuleLaunchDescriptor> {
+		return this.scheduleProvisioning(inputValue, authority, "recover_only");
+	}
+
+	private scheduleProvisioning(
+		inputValue: CodexCapsuleProvisionInput,
+		authority: CodexCapsuleProvisioningAuthority,
+		mode: "create_or_recover" | "recover_only",
+	): Promise<CodexCapsuleLaunchDescriptor> {
 		const input = parseCodexCapsuleProvisionInput(inputValue);
 		assertCodexProvisioningAuthorityScope(authority, input);
-		const key = `${input.session.missionId}:${digestCanonicalJson(input)}`;
+		const key = `${mode}:${input.session.missionId}:${digestCanonicalJson(input)}`;
 		const existing = this.#inflight.get(key);
 		if (existing !== undefined) {
 			return performCodexProvisioningAuthorized(authority, input, () => existing);
@@ -149,7 +164,9 @@ export class CodexCapsuleProvisioner {
 			.catch(() => undefined)
 			.then(() =>
 				performCodexProvisioningAuthorized(authority, input, () =>
-					this.provisionAuthorized(input, authority.signal),
+					mode === "recover_only"
+						? this.recoverAuthorized(input, authority.signal)
+						: this.provisionAuthorized(input, authority.signal),
 				),
 			);
 		const tail = provision.then(
@@ -163,6 +180,26 @@ export class CodexCapsuleProvisioner {
 			if (this.#missionTails.get(missionId) === tail) this.#missionTails.delete(missionId);
 		});
 		return provision;
+	}
+
+	private async recoverAuthorized(
+		input: ParsedCodexCapsuleProvisionInput,
+		signal: AbortSignal,
+	): Promise<CodexCapsuleLaunchDescriptor> {
+		assertCodexProvisioningAuthorityAvailable(signal);
+		const controlDirectory = join(this.#controlRootDirectory, input.session.missionId);
+		const descriptor = await readDescriptorIfPresent(controlDirectory);
+		if (descriptor === null) {
+			throw new Error("Existing Codex Capsule launch descriptor is missing");
+		}
+		return this.recoverExistingDescriptor(
+			descriptor,
+			input,
+			controlDirectory,
+			join(this.#runtimeRootDirectory, input.session.missionId),
+			this.#launcher,
+			signal,
+		);
 	}
 
 	private async provisionAuthorized(

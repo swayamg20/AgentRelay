@@ -76,11 +76,14 @@ export interface WorkspacePreflightDependencies {
 	readonly signal?: AbortSignal;
 }
 
-export interface WorkspacePreflightResult {
+export interface WorkspaceAuthorityResource {
 	readonly root: string;
 	readonly repository_url: string;
 	readonly head_commit: string;
 	readonly reachable_from_ref: string;
+}
+
+export interface WorkspacePreflightResult extends WorkspaceAuthorityResource {
 	readonly clean: true;
 }
 
@@ -93,6 +96,30 @@ export async function preflightWorkspace(
 	expectation: MissionWorkspaceExpectation,
 	dependencies: WorkspacePreflightDependencies = {},
 ): Promise<WorkspacePreflightResult> {
+	const resource = await inspectWorkspaceAuthorityResource(
+		workspace,
+		expectation,
+		dependencies,
+		"require_clean",
+	);
+	return Object.freeze({ ...resource, clean: true });
+}
+
+/** Revalidates a previously started turn without rejecting its expected workspace edits. */
+export function preflightWorkspaceRecovery(
+	workspace: WorkspaceConfig,
+	expectation: MissionWorkspaceExpectation,
+	dependencies: WorkspacePreflightDependencies = {},
+): Promise<WorkspaceAuthorityResource> {
+	return inspectWorkspaceAuthorityResource(workspace, expectation, dependencies, "allow_dirty");
+}
+
+async function inspectWorkspaceAuthorityResource(
+	workspace: WorkspaceConfig,
+	expectation: MissionWorkspaceExpectation,
+	dependencies: WorkspacePreflightDependencies,
+	cleanliness: "require_clean" | "allow_dirty",
+): Promise<WorkspaceAuthorityResource> {
 	assertLocalWorkspaceConfig(workspace);
 	assertMissionExpectation(expectation);
 
@@ -177,13 +204,18 @@ export async function preflightWorkspace(
 		);
 	}
 
-	const status = await requireGitSuccess(runGit, [
-		"status",
-		"--porcelain=v1",
-		"--untracked-files=all",
-	]);
-	if (status.stdout.length > 0) {
-		throw new WorkspacePreflightError("workspace_dirty", "Workspace contains uncommitted changes");
+	if (cleanliness === "require_clean") {
+		const status = await requireGitSuccess(runGit, [
+			"status",
+			"--porcelain=v1",
+			"--untracked-files=all",
+		]);
+		if (status.stdout.length > 0) {
+			throw new WorkspacePreflightError(
+				"workspace_dirty",
+				"Workspace contains uncommitted changes",
+			);
+		}
 	}
 
 	return Object.freeze({
@@ -191,7 +223,6 @@ export async function preflightWorkspace(
 		repository_url: originUrl,
 		head_commit: headCommit,
 		reachable_from_ref: reachableFromRef,
-		clean: true,
 	});
 }
 

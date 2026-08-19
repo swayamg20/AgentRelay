@@ -18,7 +18,7 @@ import type {
 	RuntimeAuthorityGrant,
 	RuntimeAuthorityRenewal,
 } from "./runtime-authority.js";
-import type { WorkspacePreflightResult } from "./workspace.js";
+import type { WorkspaceAuthorityResource } from "./workspace.js";
 
 // Durable decision storage is owned by #99. The Capsule records its own remote
 // decisions; this sink keeps the Node-side monitor free of payload logs.
@@ -27,7 +27,7 @@ const NOOP_EVIDENCE: RuntimeAuthorityEvidenceSink = { record: () => undefined };
 export interface DeliveryRuntimeAuthorityInput {
 	readonly assignment: NodeMissionAssignment;
 	readonly workspaceAlias: string;
-	readonly workspace: WorkspacePreflightResult;
+	readonly workspace: WorkspaceAuthorityResource;
 	readonly policy: ResolvedPolicyProfile;
 	readonly adapter: AdapterInfo;
 	readonly entry: JournalDelivery;

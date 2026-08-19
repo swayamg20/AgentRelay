@@ -12,7 +12,7 @@ import {
 	compileRuntimeAuthorityGrant,
 } from "./runtime-authority.js";
 import { workspaceResourceSha256 } from "./workspace-resource.js";
-import type { WorkspacePreflightResult } from "./workspace.js";
+import type { WorkspaceAuthorityResource } from "./workspace.js";
 
 export interface RuntimeAuthorityGrantInput {
 	readonly assignment: NodeMissionAssignment;
@@ -20,7 +20,7 @@ export interface RuntimeAuthorityGrantInput {
 	readonly executionAttempt: number;
 	readonly nodeId: string;
 	readonly workspaceAlias: string;
-	readonly workspace: WorkspacePreflightResult;
+	readonly workspace: WorkspaceAuthorityResource;
 	readonly policy: ResolvedPolicyProfile;
 	readonly adapter: AdapterInfo;
 	readonly now: Date;

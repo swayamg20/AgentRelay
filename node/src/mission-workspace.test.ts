@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { WorkspaceConfig } from "./config.js";
 import {
 	prepareMissionWorkspace,
+	recoverMissionWorkspace,
 	revalidateMissionWorkspaceIsolation,
 } from "./mission-workspace.js";
 
@@ -32,6 +33,23 @@ afterEach(async () => {
 describe.skipIf(process.platform === "win32" || process.getuid === undefined)(
 	"prepareMissionWorkspace",
 	() => {
+		it("reopens the exact started checkout without rejecting its expected edits", async () => {
+			const repository = await createRepository();
+			await writeFile(join(repository.root, "model-created.txt"), "expected edit\n");
+
+			await expect(
+				prepareMissionWorkspace(repository.workspace, repository.expectation),
+			).rejects.toMatchObject({ code: "workspace_dirty" });
+
+			const recovered = await recoverMissionWorkspace(repository.workspace, repository.expectation);
+			expect(recovered).toMatchObject({
+				root: repository.root,
+				gitDirectory: join(repository.root, ".git"),
+				baseCommit: repository.head,
+			});
+			await expect(revalidateMissionWorkspaceIsolation(recovered)).resolves.toBeUndefined();
+		});
+
 		it("accepts an owner-controlled standalone checkout", async () => {
 			const repository = await createRepository();
 

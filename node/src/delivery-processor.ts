@@ -33,7 +33,7 @@ import {
 	startTurnInputDigest,
 	terminalResultFromEvents,
 } from "./journal.js";
-import { prepareMissionWorkspace } from "./mission-workspace.js";
+import { prepareMissionWorkspace, recoverMissionWorkspace } from "./mission-workspace.js";
 import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from "./policy.js";
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
 import {
@@ -48,9 +48,10 @@ import {
 import { RuntimeAuthorityDeniedError, runtimeAuthorityRequest } from "./runtime-authority.js";
 import type { RuntimeProvisioner } from "./runtime-provisioner.js";
 import {
+	type WorkspaceAuthorityResource,
 	WorkspacePreflightError,
-	type WorkspacePreflightResult,
 	preflightWorkspace,
+	preflightWorkspaceRecovery,
 } from "./workspace.js";
 
 const TERMINAL_PHASES = new Set(["acknowledged", "dead_lettered", "authority_lost"]);
@@ -67,7 +68,9 @@ export interface DeliveryProcessorOptions {
 	readonly now?: () => Date;
 	readonly monotonicNow?: () => number;
 	readonly preflight?: typeof preflightWorkspace;
+	readonly preflightRecovery?: typeof preflightWorkspaceRecovery;
 	readonly prepareRuntimeWorkspace?: typeof prepareMissionWorkspace;
+	readonly recoverRuntimeWorkspace?: typeof recoverMissionWorkspace;
 	readonly onCheckpoint?: (
 		checkpoint: DeliveryCheckpoint,
 		deliveryId: string,
@@ -96,7 +99,9 @@ export class DeliveryProcessor {
 	readonly #now: () => Date;
 	readonly #monotonicNow: () => number;
 	readonly #preflight: typeof preflightWorkspace;
+	readonly #preflightRecovery: typeof preflightWorkspaceRecovery;
 	readonly #prepareRuntimeWorkspace: typeof prepareMissionWorkspace;
+	readonly #recoverRuntimeWorkspace: typeof recoverMissionWorkspace;
 	readonly #checkpoint: NonNullable<DeliveryProcessorOptions["onCheckpoint"]>;
 
 	constructor(options: DeliveryProcessorOptions) {
@@ -117,7 +122,9 @@ export class DeliveryProcessor {
 		});
 		this.#monotonicNow = options.monotonicNow ?? (() => performance.now());
 		this.#preflight = options.preflight ?? preflightWorkspace;
+		this.#preflightRecovery = options.preflightRecovery ?? preflightWorkspaceRecovery;
 		this.#prepareRuntimeWorkspace = options.prepareRuntimeWorkspace ?? prepareMissionWorkspace;
+		this.#recoverRuntimeWorkspace = options.recoverRuntimeWorkspace ?? recoverMissionWorkspace;
 		this.#checkpoint = options.onCheckpoint ?? (() => undefined);
 	}
 
@@ -261,14 +268,16 @@ export class DeliveryProcessor {
 
 		let authorization: AuthorizedDelivery;
 		try {
-			authorization = await this.authorize(entry.item, signal);
+			authorization = await this.authorize(entry, signal);
 		} catch (error) {
 			if (error instanceof AuthorityLostError || isDefinitiveAuthorityLoss(error)) {
 				await this.cancelAndMarkAuthorityLost(deliveryId, error);
 				return;
 			}
 			if (error instanceof PolicyError || error instanceof WorkspacePreflightError) {
-				await this.cancelHostExecutionBounded(deliveryId, executionAttempt, hostTurn);
+				if (this.runtimeProvisioningMode(entry) === "fresh") {
+					await this.cancelHostExecutionBounded(deliveryId, executionAttempt, hostTurn);
+				}
 				await this.releaseOrLoseLease(deliveryId, "policy_denied", safeError(error), signal);
 				return;
 			}
@@ -795,9 +804,10 @@ export class DeliveryProcessor {
 	}
 
 	private async authorize(
-		item: MissionDeliveryItem,
+		entry: JournalDelivery,
 		signal?: AbortSignal,
 	): Promise<AuthorizedDelivery> {
+		const item = entry.item;
 		signal?.throwIfAborted();
 		const assignment = await this.#client.getAssignment(item.delivery.mission_id);
 		signal?.throwIfAborted();
@@ -841,8 +851,24 @@ export class DeliveryProcessor {
 				"Current local policy no longer matches the accepted Mission grant",
 			);
 		}
-		const preflight = await this.#preflight(workspace, participant, { signal });
-		return { assignment, participant, workspaceConfig: workspace, policy, preflight };
+		const runtimeProvisioningMode = this.runtimeProvisioningMode(entry);
+		const preflight = await (runtimeProvisioningMode === "recover"
+			? this.#preflightRecovery(workspace, participant, { signal })
+			: this.#preflight(workspace, participant, { signal }));
+		return {
+			assignment,
+			participant,
+			workspaceConfig: workspace,
+			policy,
+			preflight,
+			runtimeProvisioningMode,
+		};
+	}
+
+	private runtimeProvisioningMode(entry: JournalDelivery): "fresh" | "recover" {
+		return this.#runtimeProvisioner !== undefined && entry.start_turn_input !== null
+			? "recover"
+			: "fresh";
 	}
 
 	private async installAuthorityForPendingCompletion(
@@ -850,7 +876,7 @@ export class DeliveryProcessor {
 		signal?: AbortSignal,
 	): Promise<NodeRuntimeAuthoritySession | null> {
 		if (!this.#runtimeAuthority.enabled) return null;
-		const authorization = await this.authorize(entry.item, signal);
+		const authorization = await this.authorize(entry, signal);
 		const lease = requireLease(entry.item.delivery);
 		if (
 			entry.item.delivery.status !== "executing" ||
@@ -923,19 +949,25 @@ export class DeliveryProcessor {
 			workspaceAlias: authorization.participant.workspace_alias,
 		};
 		const workspace = await authority.performWorkspaceRead(() =>
-			this.#prepareRuntimeWorkspace(authorization.workspaceConfig, authorization.participant, {
-				signal: authority.signal,
-			}),
+			authorization.runtimeProvisioningMode === "recover"
+				? this.#recoverRuntimeWorkspace(authorization.workspaceConfig, authorization.participant, {
+						signal: authority.signal,
+					})
+				: this.#prepareRuntimeWorkspace(authorization.workspaceConfig, authorization.participant, {
+						signal: authority.signal,
+					}),
 		);
 		authority.signal.throwIfAborted();
-		await provisioner.provision(
-			{
-				session,
-				workspace,
-				policyGrantSha256: authorization.policy.grant.grant_sha256,
-			},
-			authority,
-		);
+		const input = {
+			session,
+			workspace,
+			policyGrantSha256: authorization.policy.grant.grant_sha256,
+		};
+		if (authorization.runtimeProvisioningMode === "recover") {
+			await provisioner.recover(input, authority);
+		} else {
+			await provisioner.provision(input, authority);
+		}
 	}
 
 	private async revokeRuntimeAuthority(
@@ -1158,7 +1190,8 @@ interface AuthorizedDelivery {
 	readonly participant: NodeMissionAssignment["coordinator_config"]["mission_context"]["manifest"]["participants"][number];
 	readonly workspaceConfig: NodeConfig["workspaces"][string];
 	readonly policy: ResolvedPolicyProfile;
-	readonly preflight: WorkspacePreflightResult;
+	readonly preflight: WorkspaceAuthorityResource;
+	readonly runtimeProvisioningMode: "fresh" | "recover";
 }
 
 async function consumeHostEvents(options: ConsumeHostEventsOptions): Promise<readonly HostEvent[]> {
