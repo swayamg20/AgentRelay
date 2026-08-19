@@ -10,6 +10,7 @@ import {
 	codexCapsuleLaunchDescriptorSchema,
 	fakeCapsuleLaunchDescriptorSchema,
 	readCapsuleLaunchDescriptor,
+	readCodexCapsuleLaunchDescriptor,
 	readFakeCapsuleLaunchDescriptor,
 } from "./capsule-launch-descriptor.js";
 import { writeDurableJson } from "./durable-file.js";
@@ -132,8 +133,27 @@ describe("Capsule launch descriptors", () => {
 		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), descriptor);
 
 		await expect(readCapsuleLaunchDescriptor(directory)).resolves.toEqual(descriptor);
+		await expect(readCodexCapsuleLaunchDescriptor(directory)).resolves.toEqual(descriptor);
 		await expect(readFakeCapsuleLaunchDescriptor(directory)).rejects.toThrow(
 			/Capsule launch descriptor does not select the fake runtime/,
+		);
+	});
+
+	it("keeps the Codex reader narrowed to provisioned v2 descriptors", async () => {
+		const directory = await temporaryDirectory();
+		const descriptor = fakeCapsuleLaunchDescriptorSchema.parse({
+			schema_version: 1,
+			capsule_id: IDS.capsule,
+			capability_token: `ar_capsule_${"d".repeat(64)}`,
+			socket_path: capsuleSocketPath(IDS.capsule),
+			session: codexDescriptor().session,
+			runtime: { kind: "fake", outcome: "ready", completion_delay_ms: 0 },
+		});
+		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), descriptor);
+
+		await expect(readFakeCapsuleLaunchDescriptor(directory)).resolves.toEqual(descriptor);
+		await expect(readCodexCapsuleLaunchDescriptor(directory)).rejects.toThrow(
+			/Capsule launch descriptor does not select Codex/,
 		);
 	});
 });

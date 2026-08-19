@@ -85,6 +85,16 @@ export async function readFakeCapsuleLaunchDescriptor(
 	return descriptor;
 }
 
+export async function readCodexCapsuleLaunchDescriptor(
+	directory: string,
+): Promise<CodexCapsuleLaunchDescriptor> {
+	const descriptor = await readCapsuleLaunchDescriptor(directory);
+	if (descriptor.schema_version !== 2) {
+		throw new Error("Capsule launch descriptor does not select Codex");
+	}
+	return descriptor;
+}
+
 export function capsuleSocketPath(capsuleId: string): string {
 	assertUnixSocketSupport();
 	const owner = process.getuid?.() ?? "unknown";

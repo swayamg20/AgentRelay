@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DropInstallResponseLauncher } from "../test-support/capsule-fault-proxy.js";
 import {
 	CAPSULE_DESCRIPTOR_FILE,
+	CODEX_CAPSULE_RUNTIME_CONTRACT,
+	codexCapsuleLaunchDescriptorSchema,
 	readFakeCapsuleLaunchDescriptor,
 } from "./capsule-launch-descriptor.js";
 import { writeDurableJson } from "./durable-file.js";
@@ -30,6 +32,7 @@ const IDS = {
 	owner: "10000000-0000-4000-8000-000000000003",
 	delivery: "10000000-0000-4000-8000-000000000004",
 	secondDelivery: "10000000-0000-4000-8000-000000000005",
+	otherMission: "10000000-0000-4000-8000-000000000006",
 } as const;
 
 const TEST_AUTHORITY = authorityGrant({
@@ -842,6 +845,70 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		await expect(
 			reopened.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
 		).rejects.toThrow(/Capsule descriptor contains an invalid local socket path/);
+	});
+
+	it("rejects a registry capsule stored under a different Mission scope", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const launcher = capsuleLauncher();
+		const options = adapterOptions(rootDirectory, launcher);
+		const adapter = await openAuthorizedAdapter(options);
+		const session = await adapter.ensureSession(sessionInput());
+		await collect(adapter.startTurn(turnInput(session)));
+		await launcher.closeAll();
+		const directory = join(rootDirectory, IDS.mission);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
+		await writeDurableJson(
+			join(directory, CAPSULE_DESCRIPTOR_FILE),
+			{
+				...descriptor,
+				session: { ...descriptor.session, missionId: IDS.otherMission },
+			},
+			{ fileMode: 0o600, directoryMode: 0o700 },
+		);
+		const reopened = await PersistentFakeCapsuleAdapter.open(options);
+
+		await expect(reopened.lookupTurn(IDS.delivery, 1)).rejects.toMatchObject({
+			code: "scope_mismatch",
+			message: "Mission capsule descriptor is stored under a different Mission directory",
+		});
+		await expect(reopened.terminateAll()).rejects.toMatchObject({
+			name: "AggregateError",
+			errors: [expect.objectContaining({ code: "scope_mismatch" })],
+		});
+		expect(launcher.startCalls).toBe(1);
+	});
+
+	it("does not mask an opposite-runtime descriptor as an uninitialized session", async () => {
+		const { adapter, launcher, rootDirectory } = await openedAdapter();
+		const session = await adapter.ensureSession(sessionInput());
+		const directory = join(rootDirectory, IDS.mission);
+		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
+		const codexDescriptor = codexCapsuleLaunchDescriptorSchema.parse({
+			schema_version: 2,
+			capsule_id: descriptor.capsule_id,
+			capability_token: descriptor.capability_token,
+			socket_path: descriptor.socket_path,
+			session: descriptor.session,
+			runtime: {
+				kind: "codex",
+				runtime_contract: CODEX_CAPSULE_RUNTIME_CONTRACT,
+				codex_cli_version: "0.146.0",
+				containment: {
+					manifestPath: join(directory, "containment.json"),
+					instanceId: IDS.otherMission,
+					bindingSha256: "c".repeat(64),
+				},
+			},
+		});
+		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), codexDescriptor, {
+			fileMode: 0o600,
+			directoryMode: 0o700,
+		});
+
+		await expect(collect(adapter.startTurn(turnInput(session)))).rejects.toThrow(
+			/Capsule launch descriptor does not select the fake runtime/,
+		);
+		expect(launcher.startCalls).toBe(1);
 	});
 
 	it("persists private capsule files and strips unrelated credentials from the child environment", async () => {

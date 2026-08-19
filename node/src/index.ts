@@ -26,6 +26,7 @@ export * from "./journal.js";
 export * from "./mission-acceptance.js";
 export * from "./mission-workspace.js";
 export * from "./persistent-capsule-adapter.js";
+export * from "./persistent-codex-capsule-adapter.js";
 export * from "./policy.js";
 export * from "./process-lock.js";
 export * from "./relay-client.js";
