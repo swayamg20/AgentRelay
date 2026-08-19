@@ -98,7 +98,7 @@ interface SocketIdentity {
 type CapsuleLaunchPreparation = "ready" | "launch" | "retry";
 
 export interface CapsuleLauncher {
-	start(capsuleDirectory: string): Promise<void>;
+	start(capsuleDirectory: string, descriptor: CapsuleLaunchDescriptor): Promise<void>;
 }
 
 export interface CapsuleProcessCommand {
@@ -653,7 +653,10 @@ export class PersistentCapsuleAdapter<Descriptor extends CapsuleLaunchDescriptor
 					if (preparation === "launch") {
 						launchAttempted = true;
 						try {
-							await this.#launcher.start(this.capsuleDirectory(descriptor.session.missionId));
+							await this.#launcher.start(
+								this.capsuleDirectory(descriptor.session.missionId),
+								descriptor,
+							);
 						} catch (launchError) {
 							// A concurrent launcher may have won publication. The authenticated
 							// probe below decides whether the Capsule is actually ready.
@@ -913,7 +916,10 @@ export function createDetachedCapsuleLauncher(command: CapsuleProcessCommand): C
 		throw new Error("Capsule process arguments cannot contain NUL");
 	}
 	return {
-		start(capsuleDirectory: string): Promise<void> {
+		start(capsuleDirectory: string, descriptor: CapsuleLaunchDescriptor): Promise<void> {
+			if (descriptor.schema_version !== 1) {
+				return Promise.reject(new Error("Fake Capsule launcher requires a schema-v1 descriptor"));
+			}
 			return new Promise((resolve, reject) => {
 				const child = spawn(
 					command.executable,

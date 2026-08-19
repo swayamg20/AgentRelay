@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { constants, type PathLike, close, fstatSync, open } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { promisify } from "node:util";
 import type {
 	AdapterInfo,
 	HostEvent,
@@ -9,22 +12,32 @@ import type {
 	SessionInput,
 	StartTurnInput,
 } from "@agentrelay/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { capsuleResultValue } from "../test-support/capsule-wire-client.js";
 import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CapsuleAuthority } from "./capsule-authority.js";
 import {
+	CAPSULE_DESCRIPTOR_FILE,
 	CODEX_CAPSULE_RUNTIME_CONTRACT,
+	type CapsuleLaunchDescriptor,
 	type CodexCapsuleLaunchDescriptor,
+	capsuleSocketPath,
 	codexCapsuleLaunchDescriptorSchema,
 } from "./capsule-launch-descriptor.js";
+import {
+	openCapsuleRuntimeController,
+	startConfiguredCapsuleServer,
+} from "./capsule-runtime-factory.js";
 import type { CapsuleRuntime } from "./capsule-runtime.js";
 import type { CodexCapsuleRunnerOptions } from "./codex-capsule-runner-contract.js";
 import { CodexCapsuleRuntimeController } from "./codex-capsule-runtime.js";
+import type { InheritedCodexOwnerCredentialChannel } from "./codex-owner-credential-channel.js";
 import type { CodexProviderGuardianOptions } from "./codex-provider-guardian.js";
 import {
 	CodexContainmentTerminationError,
 	type CodexSandboxContainment,
 } from "./codex-sandbox-contract.js";
+import { writeDurableJson } from "./durable-file.js";
 import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
 import { RUNTIME_CONTAINMENT_BACKEND } from "./runtime-containment-manifest.js";
@@ -38,8 +51,13 @@ const IDS = {
 } as const;
 
 const temporaryDirectories: string[] = [];
+const cleanupFds = new Set<number>();
+const run = promisify(execFile);
 
 afterEach(async () => {
+	vi.useRealTimers();
+	for (const fd of cleanupFds) await closeFd(fd).catch(() => undefined);
+	cleanupFds.clear();
 	await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
@@ -58,6 +76,148 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(fixture.runnerOptions).toHaveLength(0);
 
 		await fixture.controller.close();
+	});
+
+	it("retires and destroys an inherited credential when authority is never installed", async () => {
+		const channel = await openFifo();
+		vi.useFakeTimers();
+		const fixture = await createFixture({
+			ownerCredentialChannel: {
+				fd: channel.reader,
+				testOnlyActivationTimeoutMs: 100,
+			},
+		});
+
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(fixture.retireCalls).toBe(1);
+		expectFdClosed(channel.reader);
+		await fixture.controller.close();
+		await closeTrackedFd(channel.writer);
+	});
+
+	it("expires after server authority install when no runtime operation starts", async () => {
+		const channel = await openFifo();
+		const directory = await temporaryDirectory();
+		const descriptor = codexDescriptor(directory, randomUUID());
+		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), descriptor);
+		let recoveryCalls = 0;
+		const server = await startConfiguredCapsuleServer(directory, {
+			codex: {
+				ownerCredentialChannel: {
+					fd: channel.reader,
+					testOnlyActivationTimeoutMs: 1_000,
+				},
+				recoverContainment: async () => {
+					recoveryCalls += 1;
+					throw new Error("runtime activation must not start");
+				},
+			},
+		});
+		try {
+			const grant = authorityGrant({
+				agent_id: descriptor.session.participantId,
+				mission_id: descriptor.session.missionId,
+				workspace_alias: descriptor.session.workspaceAlias,
+				lease_expires_at: "2099-08-17T00:01:00.000Z",
+				hard_expires_at: "2099-08-17T00:05:00.000Z",
+			});
+			await expect(
+				capsuleResultValue(
+					{
+						capsuleId: descriptor.capsule_id,
+						capabilityToken: descriptor.capability_token,
+						socketPath: descriptor.socket_path,
+					},
+					"install_authority",
+					{
+						grant,
+						current_lease: {
+							grant_id: grant.grant_id,
+							lease_id: grant.lease_id,
+							fencing_token: grant.fencing_token,
+							lease_expires_at: grant.lease_expires_at,
+						},
+					},
+				),
+			).resolves.toEqual({});
+
+			await server.waitUntilClosed();
+
+			expectFdClosed(channel.reader);
+			expect(recoveryCalls).toBe(0);
+		} finally {
+			await server.close().catch(() => undefined);
+			if (cleanupFds.has(channel.writer)) await closeTrackedFd(channel.writer);
+		}
+	});
+
+	it("rejects simultaneous injected and inherited credential sources", async () => {
+		const directory = await temporaryDirectory();
+		const descriptor = codexDescriptor(directory);
+
+		await expect(
+			CodexCapsuleRuntimeController.open({
+				directory,
+				descriptor,
+				lifecycle: { retire: () => undefined },
+				dependencies: {
+					claimOwnerCredential: async () => createFakeCodexOwnerCredential("injected-owner"),
+					ownerCredentialChannel: { fd: -1 },
+				},
+			}),
+		).rejects.toThrow("multiple configured sources");
+	});
+
+	it("preserves an inherited channel close-proof failure during controller shutdown", async () => {
+		const channel = await openFifo();
+		const fixture = await createFixture({
+			ownerCredentialChannel: {
+				fd: channel.reader,
+				testOnlyActivationTimeoutMs: 1_000,
+			},
+		});
+		await closeTrackedFd(channel.reader);
+
+		await expect(fixture.controller.close()).rejects.toMatchObject({
+			name: "CodexOwnerCredentialError",
+			reason: "channel",
+		});
+		expect(fixture.retireCalls).toBe(0);
+		await closeTrackedFd(channel.writer);
+	});
+
+	it("leaves an inherited channel untouched for a validated schema-v1 fake descriptor", async () => {
+		const channel = await openFifo();
+		const directory = await temporaryDirectory();
+		let retireCalls = 0;
+		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), fakeDescriptor());
+		vi.useFakeTimers();
+		const controller = await openCapsuleRuntimeController(
+			directory,
+			fakeDescriptor(),
+			{
+				retire: () => {
+					retireCalls += 1;
+				},
+			},
+			{
+				codex: {
+					ownerCredentialChannel: {
+						fd: channel.reader,
+						testOnlyActivationTimeoutMs: 100,
+					},
+				},
+			},
+		);
+
+		await vi.advanceTimersByTimeAsync(100);
+		await controller.close();
+
+		expect(retireCalls).toBe(0);
+		expect(() => fstatSync(channel.reader)).not.toThrow();
+		await closeTrackedFd(channel.reader);
+		await closeTrackedFd(channel.writer);
 	});
 
 	it("guards exact recovery and provider activation with workspace-read authority", async () => {
@@ -121,6 +281,33 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(fixture.runtime.closeCalls).toBe(0);
 
 		await fixture.controller.close();
+		authority.dispose();
+	});
+
+	it("aborts and awaits an inherited credential read before waiting on activation", async () => {
+		const channel = await openFifo();
+		const fixture = await createFixture({
+			exerciseGuardianClaim: true,
+			ownerCredentialChannel: {
+				fd: channel.reader,
+				testOnlyActivationTimeoutMs: 1_000,
+			},
+		});
+		const authority = installedAuthority(fixture.grant);
+		const activation = authority.performSession(fixture.descriptor.session, (runtimeAuthority) =>
+			fixture.controller.activate(runtimeAuthority),
+		);
+		await vi.waitFor(() => expect(fixture.guardianOpenCalls).toBe(1));
+		const activationFailure = expect(activation).rejects.toMatchObject({ reason: "cancelled" });
+
+		const closing = fixture.controller.close();
+		await closeTrackedFd(channel.writer);
+
+		await activationFailure;
+		await expect(closing).resolves.toBeUndefined();
+		expectFdClosed(channel.reader);
+		expect(fixture.retireCalls).toBe(1);
+		expect(fixture.providerLaunchCalls).toBe(0);
 		authority.dispose();
 	});
 
@@ -333,6 +520,7 @@ interface FixtureOptions {
 	readonly runnerGate?: Deferred<void>;
 	readonly exerciseGuardianClaim?: boolean;
 	readonly useDefaultOwnerCredential?: boolean;
+	readonly ownerCredentialChannel?: InheritedCodexOwnerCredentialChannel;
 }
 
 async function createFixture(options: FixtureOptions = {}) {
@@ -376,12 +564,21 @@ async function createFixture(options: FixtureOptions = {}) {
 	let recoveryCalls = 0;
 	let guardianOpenCalls = 0;
 	let providerLaunchCalls = 0;
+	let retireCalls = 0;
 	const controller = await CodexCapsuleRuntimeController.open({
 		directory,
 		descriptor,
-		lifecycle: { retire: () => undefined },
+		lifecycle: {
+			retire: () => {
+				retireCalls += 1;
+			},
+		},
 		dependencies: {
-			...(options.useDefaultOwnerCredential ? {} : { claimOwnerCredential }),
+			...(options.ownerCredentialChannel === undefined
+				? options.useDefaultOwnerCredential
+					? {}
+					: { claimOwnerCredential }
+				: { ownerCredentialChannel: options.ownerCredentialChannel }),
 			environment: {
 				PATH: "/usr/bin",
 				OPENAI_API_KEY: "must-not-cross",
@@ -439,6 +636,9 @@ async function createFixture(options: FixtureOptions = {}) {
 		get providerLaunchCalls() {
 			return providerLaunchCalls;
 		},
+		get retireCalls() {
+			return retireCalls;
+		},
 	};
 }
 
@@ -459,12 +659,12 @@ function installedAuthority(
 	return authority;
 }
 
-function codexDescriptor(directory: string): CodexCapsuleLaunchDescriptor {
+function codexDescriptor(directory: string, capsuleId = IDS.capsule): CodexCapsuleLaunchDescriptor {
 	return codexCapsuleLaunchDescriptorSchema.parse({
 		schema_version: 2,
-		capsule_id: IDS.capsule,
+		capsule_id: capsuleId,
 		capability_token: `ar_capsule_${"a".repeat(64)}`,
-		socket_path: "/tmp/ar-capsules-501/runtime.sock",
+		socket_path: capsuleSocketPath(capsuleId),
 		session: {
 			missionId: IDS.mission,
 			participantId: IDS.agent,
@@ -481,6 +681,21 @@ function codexDescriptor(directory: string): CodexCapsuleLaunchDescriptor {
 			},
 		},
 	});
+}
+
+function fakeDescriptor(): CapsuleLaunchDescriptor {
+	return {
+		schema_version: 1,
+		capsule_id: IDS.capsule,
+		capability_token: `ar_capsule_${"a".repeat(64)}`,
+		socket_path: capsuleSocketPath(IDS.capsule),
+		session: {
+			missionId: IDS.mission,
+			participantId: IDS.agent,
+			workspaceAlias: "backend",
+		},
+		runtime: { kind: "fake", outcome: "ready", completion_delay_ms: 0 },
+	};
 }
 
 function recoveredContainment(
@@ -629,4 +844,45 @@ async function temporaryDirectory(): Promise<string> {
 	const path = await realpath(await mkdtemp("/tmp/agentrelay-codex-controller-"));
 	temporaryDirectories.push(path);
 	return path;
+}
+
+async function openFifo(): Promise<{ reader: number; writer: number }> {
+	const directory = await temporaryDirectory();
+	const path = join(directory, "credential.pipe");
+	await run("mkfifo", [path]);
+	const [reader, writer] = await Promise.all([
+		openFd(path, constants.O_RDONLY),
+		openFd(path, constants.O_WRONLY),
+	]);
+	cleanupFds.add(reader);
+	cleanupFds.add(writer);
+	return { reader, writer };
+}
+
+function openFd(path: PathLike, flags: number): Promise<number> {
+	return new Promise((resolve, reject) => {
+		open(path, flags, (error, fd) => (error ? reject(error) : resolve(fd)));
+	});
+}
+
+function closeFd(fd: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		close(fd, (error) => (error ? reject(error) : resolve()));
+	});
+}
+
+async function closeTrackedFd(fd: number): Promise<void> {
+	await closeFd(fd);
+	cleanupFds.delete(fd);
+}
+
+function expectFdClosed(fd: number): void {
+	let error: unknown;
+	try {
+		fstatSync(fd);
+	} catch (caught) {
+		error = caught;
+	}
+	expect(error).toMatchObject({ code: "EBADF" });
+	cleanupFds.delete(fd);
 }

@@ -15,6 +15,10 @@ import {
 } from "./codex-capsule-runner-contract.js";
 import { CodexCapsuleRunner } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
+import {
+	CodexOwnerCredentialChannel,
+	type InheritedCodexOwnerCredentialChannel,
+} from "./codex-owner-credential-channel.js";
 import { type CodexOwnerCredential, CodexOwnerCredentialError } from "./codex-owner-credential.js";
 import {
 	type CodexProviderGuardianOptions,
@@ -48,6 +52,7 @@ export interface CodexCapsuleRuntimeDependencies {
 	readonly createGuardian?: CreateGuardian;
 	readonly openRunner?: OpenRunner;
 	readonly claimOwnerCredential?: ClaimOwnerCredential;
+	readonly ownerCredentialChannel?: InheritedCodexOwnerCredentialChannel;
 	readonly environment?: NodeJS.ProcessEnv;
 }
 
@@ -68,6 +73,7 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 	readonly #createGuardian: CreateGuardian;
 	readonly #openRunner: OpenRunner;
 	readonly #claimOwnerCredential: ClaimOwnerCredential;
+	readonly #ownerCredentialChannel: CodexOwnerCredentialChannel | null;
 	readonly #environment: NodeJS.ProcessEnv;
 	#activation: Promise<CapsuleRuntime> | null = null;
 	#activationTeardownFailure: AggregateError | null = null;
@@ -85,18 +91,41 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 			dependencies.createGuardian ??
 			((guardianOptions) => new SupervisedCodexProviderGuardian(guardianOptions));
 		this.#openRunner = dependencies.openRunner ?? CodexCapsuleRunner.open;
-		this.#claimOwnerCredential = dependencies.claimOwnerCredential ?? unavailableOwnerCredential;
+		this.#ownerCredentialChannel =
+			dependencies.ownerCredentialChannel === undefined
+				? null
+				: new CodexOwnerCredentialChannel(
+						dependencies.ownerCredentialChannel,
+						options.lifecycle.retire,
+					);
+		const ownerCredentialChannel = this.#ownerCredentialChannel;
+		this.#claimOwnerCredential =
+			dependencies.claimOwnerCredential ??
+			(ownerCredentialChannel === null
+				? unavailableOwnerCredential
+				: (signal) => ownerCredentialChannel.claim(signal));
 		this.#environment = buildBaseCapsuleEnvironment(dependencies.environment);
 	}
 
 	static async open(
 		options: CodexCapsuleRuntimeControllerOptions,
 	): Promise<CodexCapsuleRuntimeController> {
+		if (
+			options.dependencies?.claimOwnerCredential !== undefined &&
+			options.dependencies.ownerCredentialChannel !== undefined
+		) {
+			throw new Error("Codex owner credential has multiple configured sources");
+		}
 		const store = await CodexCapsuleStore.open(options.directory, {
 			capsuleId: options.descriptor.capsule_id,
 			session: options.descriptor.session,
 		});
-		return new CodexCapsuleRuntimeController(options, store);
+		try {
+			return new CodexCapsuleRuntimeController(options, store);
+		} catch (error) {
+			await store.close();
+			throw error;
+		}
 	}
 
 	async probe(): Promise<AdapterInfo> {
@@ -187,8 +216,13 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 	}
 
 	private async performClose(): Promise<void> {
-		const runtime = await this.#activation?.catch(() => null);
 		const failures: unknown[] = [];
+		try {
+			await this.#ownerCredentialChannel?.close();
+		} catch (error) {
+			failures.push(error);
+		}
+		const runtime = await this.#activation?.catch(() => null);
 		try {
 			if (runtime === null || runtime === undefined) {
 				await this.#store.close();

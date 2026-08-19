@@ -2,6 +2,7 @@
 
 import { cac } from "cac";
 import { startConfiguredCapsuleServer } from "../capsule-runtime-factory.js";
+import { CODEX_OWNER_CREDENTIAL_FD } from "../codex-owner-credential-channel.js";
 
 const cli = cac("agentrelay-capsule");
 
@@ -12,7 +13,9 @@ cli
 		if (typeof options.directory !== "string" || options.directory.length === 0) {
 			throw new Error("--directory is required");
 		}
-		const server = await startConfiguredCapsuleServer(options.directory);
+		const server = await startConfiguredCapsuleServer(options.directory, {
+			codex: { ownerCredentialChannel: { fd: CODEX_OWNER_CREDENTIAL_FD } },
+		});
 		const stop = () => void server.close();
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);

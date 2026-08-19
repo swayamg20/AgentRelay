@@ -9,16 +9,26 @@ import { DropInstallResponseLauncher } from "../test-support/capsule-fault-proxy
 import {
 	CAPSULE_DESCRIPTOR_FILE,
 	CODEX_CAPSULE_RUNTIME_CONTRACT,
+	type CapsuleLaunchDescriptor,
+	type FakeCapsuleLaunchDescriptor,
+	capsuleSocketPath,
 	codexCapsuleLaunchDescriptorSchema,
+	fakeCapsuleLaunchDescriptorSchema,
 	readFakeCapsuleLaunchDescriptor,
 } from "./capsule-launch-descriptor.js";
+import { CAPSULE_ADAPTER_INFO } from "./capsule-protocol.js";
 import { writeDurableJson } from "./durable-file.js";
 import { PersistentFakeCapsuleServer } from "./fake-capsule-server.js";
 import { CAPSULE_STATE_FILE } from "./fake-capsule-store.js";
 import {
+	type CapsuleDescriptorSelection,
+	PersistentCapsuleAdapter,
+} from "./persistent-capsule-adapter-core.js";
+import {
 	type CapsuleLauncher,
 	PersistentFakeCapsuleAdapter,
 	buildCapsuleEnvironment,
+	createDetachedCapsuleLauncher,
 } from "./persistent-capsule-adapter.js";
 import type { RuntimeAuthorityPort } from "./runtime-authority-port.js";
 import { NodeRuntimeAuthoritySession } from "./runtime-authority-session.js";
@@ -53,6 +63,55 @@ afterEach(async () => {
 });
 
 describe("PersistentFakeCapsuleAdapter", () => {
+	it("passes the exact validated descriptor object into the launcher", async () => {
+		const rootDirectory = await temporaryDirectory();
+		const descriptor = testFakeDescriptor(rootDirectory);
+		let launchedDescriptor: CapsuleLaunchDescriptor | null = null;
+		const launcher: CapsuleLauncher = {
+			async start(_directory, receivedDescriptor) {
+				launchedDescriptor = receivedDescriptor;
+				throw new Error("Test launcher intentionally stayed offline");
+			},
+		};
+		const selection: CapsuleDescriptorSelection<FakeCapsuleLaunchDescriptor> = {
+			adapterInfo: CAPSULE_ADAPTER_INFO,
+			resolveForInstall: async () => descriptor,
+			readPersisted: async () => descriptor,
+			assertCompatible: () => undefined,
+		};
+		const adapter = await PersistentCapsuleAdapter.open({
+			rootDirectory,
+			launcher,
+			selection,
+			startupTimeoutMs: 100,
+		});
+
+		await expect(
+			adapter.installAuthority(TEST_AUTHORITY, currentLease(TEST_AUTHORITY)),
+		).rejects.toMatchObject({ code: "transport" });
+
+		expect(launchedDescriptor).toBe(descriptor);
+	});
+
+	it("rejects a schema-v2 descriptor in the detached fake launcher before spawn", async () => {
+		const directory = await temporaryDirectory();
+		const markerPath = join(directory, "spawned");
+		const launcher = createDetachedCapsuleLauncher({
+			executable: process.execPath,
+			args: [
+				"--input-type=module",
+				"--eval",
+				`import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(markerPath)}, "spawned");`,
+			],
+		});
+
+		await expect(launcher.start(directory, testCodexDescriptor(directory))).rejects.toThrow(
+			"Fake Capsule launcher requires a schema-v1 descriptor",
+		);
+		await delay(50);
+		await expect(stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
 	it("requires a local authority grant before activating a Mission capsule", async () => {
 		const rootDirectory = await temporaryDirectory();
 		const launcher = capsuleLauncher();
@@ -1090,6 +1149,37 @@ function turnInput(session: HostSessionRef, deliveryId = IDS.delivery): StartTur
 		peerMessages: [],
 		artifacts: [],
 	};
+}
+
+function testFakeDescriptor(directory: string): FakeCapsuleLaunchDescriptor {
+	return fakeCapsuleLaunchDescriptorSchema.parse({
+		schema_version: 1,
+		capsule_id: IDS.otherMission,
+		capability_token: `ar_capsule_${"d".repeat(64)}`,
+		socket_path: join(directory, "unpublished.sock"),
+		session: sessionInput(),
+		runtime: { kind: "fake", outcome: "ready", completion_delay_ms: 0 },
+	});
+}
+
+function testCodexDescriptor(directory: string): CapsuleLaunchDescriptor {
+	return codexCapsuleLaunchDescriptorSchema.parse({
+		schema_version: 2,
+		capsule_id: IDS.otherMission,
+		capability_token: `ar_capsule_${"e".repeat(64)}`,
+		socket_path: capsuleSocketPath(IDS.otherMission),
+		session: sessionInput(),
+		runtime: {
+			kind: "codex",
+			runtime_contract: CODEX_CAPSULE_RUNTIME_CONTRACT,
+			codex_cli_version: "0.146.0",
+			containment: {
+				manifestPath: join(directory, "containment.json"),
+				instanceId: IDS.otherMission,
+				bindingSha256: "f".repeat(64),
+			},
+		},
+	});
 }
 
 function currentLease(grant: RuntimeAuthorityGrant) {
