@@ -1,4 +1,5 @@
-import { type ChildProcess, type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcess, type ChildProcessByStdio, spawn } from "node:child_process";
+import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import type { CodexPreparedProcess } from "./codex-provider-supervisor-protocol.js";
@@ -17,7 +18,7 @@ export class CodexSupervisorProcessError extends Error {
 }
 
 export async function verifyPreparedCodexVersion(command: CodexPreparedProcess): Promise<void> {
-	const child = spawnPrepared(command, ["ignore", "pipe", "pipe"]);
+	const child = spawnPreparedVersionProbe(command);
 	const closed = childClose(child);
 	child.stderr.resume();
 	let stdout = "";
@@ -53,8 +54,8 @@ export async function verifyPreparedCodexVersion(command: CodexPreparedProcess):
 
 export async function startPreparedCodexProvider(
 	command: CodexPreparedProcess,
-): Promise<ChildProcessWithoutNullStreams> {
-	const child = spawnPrepared(command, ["pipe", "pipe", "pipe"]);
+): Promise<ChildProcess> {
+	const child = spawnPreparedProvider(command);
 	try {
 		await waitForSpawn(child);
 		return child;
@@ -77,17 +78,27 @@ export function assertSupervisorProcessGroup(): void {
 	}
 }
 
-function spawnPrepared(
+function spawnPreparedVersionProbe(
 	command: CodexPreparedProcess,
-	stdio: ["ignore" | "pipe", "pipe", "pipe"],
-): ChildProcessWithoutNullStreams {
+): ChildProcessByStdio<null, Readable, Readable> {
 	return spawn(command.executable, [...command.argv], {
 		cwd: command.cwd,
 		detached: false,
 		env: { ...command.env },
-		stdio,
+		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
-	}) as ChildProcessWithoutNullStreams;
+	});
+}
+
+function spawnPreparedProvider(command: CodexPreparedProcess): ChildProcess {
+	// Keep protocol bytes in inherited OS pipes; the guardian owns only lifecycle control.
+	return spawn(command.executable, [...command.argv], {
+		cwd: command.cwd,
+		detached: false,
+		env: { ...command.env },
+		stdio: [0, 1, "ignore"],
+		shell: false,
+	});
 }
 
 function waitForSpawn(child: ChildProcess): Promise<void> {

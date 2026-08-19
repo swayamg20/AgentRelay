@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { currentBootSessionId } from "./boot-session.js";
 import {
@@ -34,7 +34,7 @@ export class CodexProviderSupervisor {
 	#ownerPid: number | null = null;
 	#store: CodexProviderGenerationStore | null = null;
 	#reaper: CodexProviderReaperClient | null = null;
-	#provider: ChildProcessWithoutNullStreams | null = null;
+	#provider: ChildProcess | null = null;
 	#lastHeartbeat = performance.now();
 	#lastRecordedHeartbeat = performance.now();
 	#heartbeatTimer: NodeJS.Timeout | null = null;
@@ -60,9 +60,6 @@ export class CodexProviderSupervisor {
 			});
 		});
 		process.once("disconnect", () => void this.stop("owner_lost", "stopped"));
-		process.stdin.once("end", () => void this.stop("owner_lost", "stopped"));
-		process.stdin.once("error", () => void this.stop("owner_lost", "stopped"));
-		process.stdout.once("error", () => void this.stop("owner_lost", "stopped"));
 		process.once("SIGINT", () => void this.stop("owner_lost", "stopped"));
 		process.once("SIGTERM", () => void this.stop(this.#stopCause ?? "owner_lost", "stopped"));
 	}
@@ -139,17 +136,13 @@ export class CodexProviderSupervisor {
 			const provider = await startPreparedCodexProvider(command.app_server);
 			this.#provider = provider;
 			this.assertAuthorityActive();
-			provider.stderr.resume();
-			process.stdin.pipe(provider.stdin);
-			provider.stdout.pipe(process.stdout);
 			provider.once("close", () => {
-				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
-			});
-			provider.stdin.once("error", () => {
-				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
-			});
-			provider.stdout.once("error", () => {
-				if (this.#stopping === null) void this.stop("provider_failure", "crashed");
+				if (this.#stopping !== null) return;
+				if (!this.hasLiveOwner()) {
+					void this.stop("owner_lost", "stopped");
+					return;
+				}
+				void this.stop("provider_failure", "crashed");
 			});
 			await this.#store.markRunning(command.generation_id);
 			this.assertAuthorityActive();
@@ -213,9 +206,13 @@ export class CodexProviderSupervisor {
 	}
 
 	private assertOwnerAlive(): void {
-		if (this.#ownerPid === null || process.ppid !== this.#ownerPid || !process.connected) {
+		if (!this.hasLiveOwner()) {
 			throw new Error("Codex provider supervisor owner disappeared during startup");
 		}
+	}
+
+	private hasLiveOwner(): boolean {
+		return this.#ownerPid !== null && process.ppid === this.#ownerPid && process.connected;
 	}
 
 	private assertAuthorityActive(): void {

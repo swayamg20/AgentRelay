@@ -10,6 +10,7 @@ import {
 	type FakeAppServerFixture,
 	createFakeAppServer,
 	waitForEnvironment,
+	waitForMessages,
 	waitForPid,
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
@@ -68,6 +69,55 @@ describe("SupervisedCodexProviderGuardian", () => {
 			expect(providerEnvironment).not.toHaveProperty("AGENTRELAY_NODE_TOKEN");
 			expect(providerEnvironment).not.toHaveProperty("OPENAI_API_KEY");
 			expect(providerEnvironment).not.toHaveProperty("CODEX_API_KEY");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"round-trips provider traffic without guardian JavaScript touching the data plane",
+		async () => {
+			const fixture = await fakeAppServer();
+			const canary = `sk-test-direct-stdio-${randomUUID()}`;
+			const dataPlaneAccessPath = join(fixture.directory, "guardian-data-plane-access");
+			const generation = await openGeneration(fixture, {
+				reaper: sourceReaperCommand(),
+				requestTimeoutMs: 1_000,
+				supervisor: await dataPlaneGuardSupervisorCommand(fixture.directory, dataPlaneAccessPath),
+			});
+
+			expect(await generation.client.startThread()).toMatchObject({
+				thread: { id: "thread-1" },
+			});
+			expect(
+				await generation.client.startReadOnlyTurn({
+					threadId: "thread-1",
+					clientUserMessageId: "direct-stdio-canary:1",
+					text: canary,
+					cwd: fixture.directory,
+					outputSchema: {
+						type: "object",
+						properties: { kind: { const: "reply" } },
+						required: ["kind"],
+						additionalProperties: false,
+					},
+				}),
+			).toMatchObject({ id: "turn-1", status: "inProgress" });
+			const messages = await waitForMessages(fixture.logPath, 4);
+			expect(messages.map((message) => message.method)).toEqual([
+				"initialize",
+				"initialized",
+				"thread/start",
+				"turn/start",
+			]);
+			expect(messages[3]).toMatchObject({
+				method: "turn/start",
+				params: { input: [{ type: "text", text: canary }] },
+			});
+			await generation.terminate("capsule_shutdown");
+			await expect(generation.termination).resolves.toEqual({ kind: "stopped" });
+			await expect(readFile(dataPlaneAccessPath, "utf8")).rejects.toMatchObject({
+				code: "ENOENT",
+			});
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
 	);
@@ -508,6 +558,41 @@ function sourceSupervisorCommand(): CodexSupervisorCommand {
 function sourceReaperCommand(): CodexSupervisorCommand {
 	const supervisor = sourceSupervisorCommand();
 	return { ...supervisor, args: [...supervisor.args, "--reaper"] };
+}
+
+async function dataPlaneGuardSupervisorCommand(
+	directory: string,
+	accessPath: string,
+): Promise<CodexSupervisorCommand> {
+	const wrapperPath = join(directory, "data-plane-guard-supervisor.mjs");
+	const supervisorModuleUrl = new URL("./codex-provider-supervisor.ts", import.meta.url).href;
+	await writeFile(
+		wrapperPath,
+		`import { writeFileSync } from "node:fs";
+
+const { CodexProviderSupervisor } = await import(${JSON.stringify(supervisorModuleUrl)});
+for (const streamName of ["stdin", "stdout"]) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, streamName);
+  if (descriptor?.get === undefined || descriptor.configurable !== true) {
+    throw new Error("Guardian data-plane descriptor is not interceptable");
+  }
+  Object.defineProperty(process, streamName, {
+    ...descriptor,
+    get() {
+      writeFileSync(${JSON.stringify(accessPath)}, streamName, { mode: 0o600 });
+      throw new Error("Guardian JavaScript accessed the provider data plane");
+    },
+  });
+}
+
+new CodexProviderSupervisor().run();
+`,
+		{ mode: 0o600 },
+	);
+	return {
+		executable: process.execPath,
+		args: ["--import", createRequire(import.meta.url).resolve("tsx"), wrapperPath],
+	};
 }
 
 async function fakeAppServer(

@@ -90,6 +90,29 @@ describe.runIf(process.platform !== "win32")("Codex provider guardian owner deat
 	);
 
 	it(
+		"records owner loss when provider EOF races IPC disconnect after readiness",
+		async () => {
+			const fixture = await fakeAppServer();
+			const owner = startOwner(fixture);
+			await waitForOwner(fixture);
+
+			owner.kill("SIGKILL");
+			await childClose(owner);
+			await expect
+				.poll(() => generationState(fixture), { timeout: 5_000 })
+				.toMatchObject({
+					phase: "quiescent",
+					stop_cause: "owner_lost",
+					observation: "stopped",
+				});
+
+			const replacement = await openGenerationWhenAvailable(fixture);
+			await replacement.terminate("capsule_shutdown");
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it(
 		"kills the provider tree when its Capsule owner is SIGKILLed",
 		async () => {
 			const fixture = await fakeAppServer({
