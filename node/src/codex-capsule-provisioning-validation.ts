@@ -12,12 +12,13 @@ import {
 	CODEX_SANDBOX_MANIFEST_FILE,
 	type CodexSandboxContainment,
 	type CodexSandboxRecoveryExpectation,
+	type CodexWorkspaceAccess,
 	type PinnedCodexLauncher,
 } from "./codex-sandbox-contract.js";
 import type { PreparedMissionWorkspace } from "./mission-workspace.js";
 import {
 	RuntimeAuthorityDeniedError,
-	type RuntimeWorkspaceReadAuthority,
+	type RuntimeWorkspaceAuthority,
 	parseRuntimeAuthorityGrant,
 	runtimeAuthorityDenyCodeSchema,
 } from "./runtime-authority.js";
@@ -34,19 +35,22 @@ export interface CodexCapsuleProvisionInput {
 	readonly session: SessionInput;
 	readonly workspace: PreparedMissionWorkspace;
 	readonly policyGrantSha256: string;
+	readonly workspaceAccess: CodexWorkspaceAccess;
 }
 
-export type CodexCapsuleProvisioningAuthority = RuntimeWorkspaceReadAuthority;
+export type CodexCapsuleProvisioningAuthority = RuntimeWorkspaceAuthority;
 
 export interface ParsedCodexCapsuleProvisionInput {
 	readonly session: SessionInput;
 	readonly workspace: PreparedMissionWorkspace;
 	readonly policyGrantSha256: string;
+	readonly workspaceAccess: CodexWorkspaceAccess;
 }
 
 export interface CodexContainmentProvisioningExpectation {
 	readonly workspace: PreparedMissionWorkspace;
 	readonly policyGrantSha256: string;
+	readonly workspaceAccess: CodexWorkspaceAccess;
 }
 
 export function parseCodexCapsuleProvisionInput(
@@ -65,6 +69,7 @@ export function parseCodexCapsuleProvisionInput(
 		session: sessionInputSchema.parse(input.session),
 		workspace,
 		policyGrantSha256: sha256Schema.parse(input.policyGrantSha256),
+		workspaceAccess: z.enum(["read", "write"]).parse(input.workspaceAccess),
 	});
 }
 
@@ -97,11 +102,10 @@ export function assertCodexProvisioningAuthorityScope(
 	if (grant.workspace_resource_sha256 !== resourceSha256) {
 		throw new RuntimeAuthorityDeniedError("wrong_resource");
 	}
-	if (
-		!grant.capabilities.some(
-			(capability) => capability.action === "workspace_read" && capability.resource === "workspace",
-		)
-	) {
+	if (!hasWorkspaceCapability(grant, "workspace_read")) {
+		throw new RuntimeAuthorityDeniedError("capability_missing");
+	}
+	if (input.workspaceAccess === "write" && !hasWorkspaceCapability(grant, "workspace_write")) {
 		throw new RuntimeAuthorityDeniedError("capability_missing");
 	}
 }
@@ -112,7 +116,9 @@ export async function performCodexProvisioningAuthorized<T>(
 	effect: () => Promise<T>,
 ): Promise<T> {
 	assertCodexProvisioningAuthorityScope(authority, input);
-	return authority.performWorkspaceRead(async () => {
+	const perform =
+		input.workspaceAccess === "write" ? "performWorkspaceWrite" : "performWorkspaceRead";
+	return authority[perform](async () => {
 		assertCodexProvisioningAuthorityScope(authority, input);
 		const result = await effect();
 		assertCodexProvisioningAuthorityScope(authority, input);
@@ -168,7 +174,7 @@ export async function assertCurrentCodexContainmentManifest(
 	const expectedDeniedRoots = [ownerHome, controlDirectory].sort();
 	const actualDeniedRoots = binding.denied_roots.map((root) => root.path).sort();
 	const exact =
-		binding.workspace_access === "read" &&
+		binding.workspace_access === expectation.workspaceAccess &&
 		isDeepStrictEqual(binding.workspace, workspaceBinding(expectation.workspace)) &&
 		binding.policy_grant_sha256 === expectation.policyGrantSha256 &&
 		binding.private_paths.control_root.path === expectedPrivatePaths.controlRoot &&
@@ -235,7 +241,7 @@ export function assertRecoveredCodexContainment(
 		containment.authorization.providerExecutable === manifest.binding.provider.executable.path &&
 		containment.authorization.runtimeVersion === SUPPORTED_CODEX_CLI_VERSION &&
 		containment.authorization.policyGrantSha256 === expectation.policyGrantSha256 &&
-		containment.authorization.workspaceAccess === "read" &&
+		containment.authorization.workspaceAccess === expectation.workspaceAccess &&
 		isDeepStrictEqual(containment.authorization.workspace, {
 			root: expectation.workspace.root,
 			repositoryUrl: expectation.workspace.repositoryUrl,
@@ -245,6 +251,15 @@ export function assertRecoveredCodexContainment(
 	if (!exact) {
 		throw new Error("Recovered Codex containment changed its Node-owned provisioning authority");
 	}
+}
+
+function hasWorkspaceCapability(
+	grant: ReturnType<typeof parseRuntimeAuthorityGrant>,
+	action: "workspace_read" | "workspace_write",
+): boolean {
+	return grant.capabilities.some(
+		(capability) => capability.action === action && capability.resource === "workspace",
+	);
 }
 
 async function currentArtifactMatches(

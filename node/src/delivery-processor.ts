@@ -34,7 +34,12 @@ import {
 	terminalResultFromEvents,
 } from "./journal.js";
 import { prepareMissionWorkspace, recoverMissionWorkspace } from "./mission-workspace.js";
-import { PolicyError, type ResolvedPolicyProfile, resolvePolicyProfile } from "./policy.js";
+import {
+	PolicyError,
+	type ResolvedPolicyProfile,
+	policyWorkspaceAccess,
+	resolvePolicyProfile,
+} from "./policy.js";
 import { type NodeRelayClient, RelayHttpError } from "./relay-client.js";
 import {
 	RuntimeAuthorityLeaseSynchronizer,
@@ -866,10 +871,14 @@ export class DeliveryProcessor {
 	}
 
 	private runtimeProvisioningMode(entry: JournalDelivery): "fresh" | "recover" {
-		return this.#runtimeProvisioner !== undefined &&
-			(entry.start_turn_input !== null || entry.host_attempt_history.length > 0)
-			? "recover"
-			: "fresh";
+		if (this.#runtimeProvisioner === undefined) return "fresh";
+		const missionId = entry.item.delivery.mission_id;
+		const retainedAttempt = Object.values(this.#journal.snapshot().deliveries).some(
+			(candidate) =>
+				candidate.item.delivery.mission_id === missionId &&
+				(candidate.start_turn_input !== null || candidate.host_attempt_history.length > 0),
+		);
+		return retainedAttempt ? "recover" : "fresh";
 	}
 
 	private async installAuthorityForPendingCompletion(
@@ -963,6 +972,7 @@ export class DeliveryProcessor {
 			session,
 			workspace,
 			policyGrantSha256: authorization.policy.grant.grant_sha256,
+			workspaceAccess: policyWorkspaceAccess(authorization.policy.profile),
 		};
 		if (authorization.runtimeProvisioningMode === "recover") {
 			await provisioner.recover(input, authority);

@@ -7,7 +7,7 @@ import type {
 } from "@agentrelay/protocol";
 import type {
 	RuntimeAuthorityEvidenceSink,
-	RuntimeWorkspaceReadAuthority,
+	RuntimeWorkspaceAuthority,
 } from "./runtime-authority.js";
 
 /**
@@ -25,7 +25,7 @@ export interface CapsuleRuntime extends AgentHostAdapter {
 }
 
 /** Installed Capsule authority under which a provider runtime may be activated. */
-export type CapsuleRuntimeActivation = RuntimeWorkspaceReadAuthority;
+export type CapsuleRuntimeActivation = RuntimeWorkspaceAuthority;
 
 /**
  * Passive Mission-scoped state opened after exclusive socket publication.

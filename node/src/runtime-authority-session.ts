@@ -7,7 +7,7 @@ import {
 	type RuntimeAuthorityGrant,
 	type RuntimeAuthorityRenewal,
 	type RuntimeAuthorityRequest,
-	type RuntimeWorkspaceReadAuthority,
+	type RuntimeWorkspaceAuthority,
 	advanceRuntimeAuthorityLease,
 	runtimeAuthorityDenyCodeSchema,
 	runtimeAuthorityRequest,
@@ -45,7 +45,7 @@ export class RuntimeAuthorityRetirementError extends AggregateError {
  * raw assertion method. That keeps local liveness and the effect in one guarded
  * operation while the runtime independently records and revalidates the request.
  */
-export class NodeRuntimeAuthoritySession implements RuntimeWorkspaceReadAuthority {
+export class NodeRuntimeAuthoritySession implements RuntimeWorkspaceAuthority {
 	readonly #port: RuntimeAuthorityPort;
 	readonly #monitor: LocalReferenceMonitor;
 	#phase: RuntimeAuthoritySessionPhase = "local_preinstall";
@@ -169,6 +169,10 @@ export class NodeRuntimeAuthoritySession implements RuntimeWorkspaceReadAuthorit
 		return this.#monitor.perform(this.workspaceReadRequest(), effect);
 	}
 
+	async performWorkspaceWrite<T>(effect: () => T | Promise<T>): Promise<T> {
+		return this.#monitor.perform(this.workspaceWriteRequest(), effect);
+	}
+
 	async perform<T>(
 		request: RuntimeAuthorityRequest,
 		effect: (signal: AbortSignal) => T | Promise<T>,
@@ -239,6 +243,13 @@ export class NodeRuntimeAuthoritySession implements RuntimeWorkspaceReadAuthorit
 	private workspaceReadRequest(): RuntimeAuthorityRequest {
 		return runtimeAuthorityRequest(this.grant, {
 			action: "workspace_read",
+			resource: "workspace",
+		});
+	}
+
+	private workspaceWriteRequest(): RuntimeAuthorityRequest {
+		return runtimeAuthorityRequest(this.grant, {
+			action: "workspace_write",
 			resource: "workspace",
 		});
 	}

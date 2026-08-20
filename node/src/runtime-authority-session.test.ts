@@ -16,9 +16,10 @@ import { AUTHORITY_NOW, authorityGrant, startRequest } from "./runtime-authority
 const noEvidence = { record: () => undefined };
 
 describe("NodeRuntimeAuthoritySession", () => {
-	it("allows only local workspace reads before the first remote install", async () => {
+	it("allows local reads but denies ungranted writes before the first remote install", async () => {
 		const port = new FakeAuthorityPort();
 		const workspaceRead = vi.fn(() => "prepared");
+		const workspaceWrite = vi.fn(() => "changed");
 		const runtimeEffect = vi.fn();
 
 		const session = await NodeRuntimeAuthoritySession.install({
@@ -30,6 +31,9 @@ describe("NodeRuntimeAuthoritySession", () => {
 			beforeRemoteInstall: async (installing) => {
 				expect(port.installations).toBe(0);
 				await expect(installing.performWorkspaceRead(workspaceRead)).resolves.toBe("prepared");
+				await expect(installing.performWorkspaceWrite(workspaceWrite)).rejects.toMatchObject({
+					code: "capability_missing",
+				});
 				await expect(installing.perform(startRequest(), runtimeEffect)).rejects.toThrow(
 					"Runtime authority session is not active",
 				);
@@ -39,8 +43,34 @@ describe("NodeRuntimeAuthoritySession", () => {
 
 		expect(port.installations).toBe(1);
 		expect(workspaceRead).toHaveBeenCalledOnce();
+		expect(workspaceWrite).not.toHaveBeenCalled();
 		expect(runtimeEffect).not.toHaveBeenCalled();
 		await expect(session.perform(startRequest(), () => "active")).resolves.toBe("active");
+	});
+
+	it("allows an explicitly granted local workspace write before remote install", async () => {
+		const port = new FakeAuthorityPort();
+		const base = authorityGrant();
+		const grant = authorityGrant({
+			capabilities: [...base.capabilities, { action: "workspace_write", resource: "workspace" }],
+		});
+		const workspaceWrite = vi.fn(() => "changed");
+
+		await NodeRuntimeAuthoritySession.install({
+			port,
+			grant,
+			currentLease: currentLease(grant),
+			evidenceSink: noEvidence,
+			now: () => new Date(AUTHORITY_NOW),
+			beforeRemoteInstall: async (installing) => {
+				expect(port.installations).toBe(0);
+				await expect(installing.performWorkspaceWrite(workspaceWrite)).resolves.toBe("changed");
+				expect(port.assertions).toHaveLength(0);
+			},
+		});
+
+		expect(workspaceWrite).toHaveBeenCalledOnce();
+		expect(port.installations).toBe(1);
 	});
 
 	it("installs the exact journaled renewal received during local preinstall", async () => {

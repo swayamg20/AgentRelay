@@ -5,7 +5,7 @@ import {
 	type Delivery,
 	type NodeMissionAssignment,
 } from "@agentrelay/protocol";
-import type { ResolvedPolicyProfile } from "./policy.js";
+import { type ResolvedPolicyProfile, policyWorkspaceAccess } from "./policy.js";
 import {
 	type RuntimeAuthorityGrant,
 	type RuntimeAuthorityLimits,
@@ -125,6 +125,9 @@ export function createRuntimeAuthorityGrant(
 				? ([{ action: "runtime_cancel", resource: "runtime" }] as const)
 				: []),
 			{ action: "workspace_read", resource: "workspace" },
+			...(policyWorkspaceAccess(input.policy.profile) === "write"
+				? ([{ action: "workspace_write", resource: "workspace" }] as const)
+				: []),
 			{ action: "usage_report", resource: "usage" },
 			{ action: "artifact_publish", resource: "artifact" },
 			{ action: "outbound_publish", resource: "relay" },

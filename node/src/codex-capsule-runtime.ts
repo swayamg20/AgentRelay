@@ -30,6 +30,7 @@ import {
 	CodexContainmentTerminationError,
 	type CodexSandboxContainment,
 	type CodexSandboxRecoveryExpectation,
+	type CodexWorkspaceAccess,
 } from "./codex-sandbox-contract.js";
 import {
 	RuntimeAuthorityDeniedError,
@@ -61,6 +62,15 @@ export interface CodexCapsuleRuntimeControllerOptions {
 	readonly descriptor: CodexCapsuleLaunchDescriptor;
 	readonly lifecycle: CapsuleRuntimeLifecycle;
 	readonly dependencies?: CodexCapsuleRuntimeDependencies;
+}
+
+export class CodexWorkspaceWriteActivationNotEnabledError extends Error {
+	readonly code = "workspace_write_activation_not_enabled";
+
+	constructor() {
+		super("Codex workspace-write provider activation is not enabled");
+		this.name = "CodexWorkspaceWriteActivationNotEnabledError";
+	}
 }
 
 /** Passive Codex state owner that activates containment and the provider only under authority. */
@@ -156,10 +166,11 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 		const grant = parseRuntimeAuthorityGrant(authority.grant);
 		this.assertAvailable(authority.signal);
 		assertDescriptorScope(this.#descriptor, grant);
+		const workspaceAccess = workspaceAccessForGrant(grant);
 
 		let runtime: CapsuleRuntime | null = null;
 		try {
-			const guardedRuntime = await authority.performWorkspaceRead(async () => {
+			const guardedRuntime = await performWorkspaceAccess(authority, workspaceAccess, async () => {
 				this.assertAvailable(authority.signal);
 				let containment: CodexSandboxContainment;
 				try {
@@ -173,7 +184,16 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					throw error;
 				}
 				this.assertAvailable(authority.signal);
-				assertRecoveredContainment(this.#directory, this.#descriptor, grant, containment);
+				assertRecoveredContainment(
+					this.#directory,
+					this.#descriptor,
+					grant,
+					containment,
+					workspaceAccess,
+				);
+				if (workspaceAccess === "write") {
+					throw new CodexWorkspaceWriteActivationNotEnabledError();
+				}
 
 				const guardian = this.#createGuardian({
 					capsuleId: this.#descriptor.capsule_id,
@@ -273,6 +293,7 @@ function assertRecoveredContainment(
 	descriptor: CodexCapsuleLaunchDescriptor,
 	grant: RuntimeAuthorityGrant,
 	containment: CodexSandboxContainment,
+	expectedWorkspaceAccess: CodexWorkspaceAccess,
 ): void {
 	const expected = descriptor.runtime.containment;
 	if (
@@ -285,8 +306,8 @@ function assertRecoveredContainment(
 		throw new Error("Recovered containment does not match the Capsule descriptor");
 	}
 	const authorization = containment.authorization;
-	if (authorization.workspaceAccess !== "read") {
-		throw new Error("Recovered containment does not enforce read-only workspace access");
+	if (authorization.workspaceAccess !== expectedWorkspaceAccess) {
+		throw new Error("Recovered containment does not enforce the granted workspace access");
 	}
 	if (
 		authorization.controlDirectory !== directory ||
@@ -324,4 +345,26 @@ function assertRecoveredContainment(
 	if (workspaceDigest !== grant.workspace_resource_sha256) {
 		throw new RuntimeAuthorityDeniedError("wrong_resource");
 	}
+}
+
+function workspaceAccessForGrant(grant: RuntimeAuthorityGrant): CodexWorkspaceAccess {
+	return hasWorkspaceCapability(grant, "workspace_write") ? "write" : "read";
+}
+
+function hasWorkspaceCapability(
+	grant: RuntimeAuthorityGrant,
+	action: "workspace_read" | "workspace_write",
+): boolean {
+	return grant.capabilities.some(
+		(capability) => capability.action === action && capability.resource === "workspace",
+	);
+}
+
+function performWorkspaceAccess<T>(
+	authority: CapsuleRuntimeActivation,
+	workspaceAccess: CodexWorkspaceAccess,
+	effect: () => T | Promise<T>,
+): Promise<T> {
+	if (workspaceAccess === "read") return authority.performWorkspaceRead(effect);
+	return authority.performWorkspaceRead(() => authority.performWorkspaceWrite(effect));
 }

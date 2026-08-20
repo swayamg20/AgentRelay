@@ -77,6 +77,38 @@ describe("resolvePolicyProfile", () => {
 		);
 	});
 
+	it("preserves the existing read digest and binds only explicit workspace write authority", () => {
+		const omitted = policyGrantSha256("restricted", PROFILE);
+		const explicitRead = policyGrantSha256("restricted", {
+			...PROFILE,
+			workspace_access: "read",
+		});
+		const explicitWrite = policyGrantSha256("restricted", {
+			...PROFILE,
+			workspace_access: "write",
+		});
+
+		expect(omitted).toBe("7c2968fd598231f76513f4052f9949f8c87cb73084e248e75006aff7e7ea6fed");
+		expect(explicitRead).toBe(omitted);
+		expect(explicitWrite).not.toBe(omitted);
+		expect(
+			canonicalPolicyGrant("restricted", { ...PROFILE, workspace_access: "read" }),
+		).not.toContain("workspace_access");
+		expect(
+			JSON.parse(canonicalPolicyGrant("restricted", { ...PROFILE, workspace_access: "write" })),
+		).toMatchObject({ workspace_access: "write" });
+	});
+
+	it("normalizes explicit read to the immutable legacy-read snapshot", () => {
+		const resolved = resolvePolicyProfile(
+			{ restricted: { ...PROFILE, workspace_access: "read" } },
+			"restricted",
+		);
+
+		expect(resolved.profile.workspace_access).toBeUndefined();
+		expect(resolved.grant.grant_sha256).toBe(policyGrantSha256("restricted", PROFILE));
+	});
+
 	it("snapshots mutable input so a grant cannot be redefined afterward", () => {
 		const mutable = structuredClone(PROFILE);
 		const resolved = resolvePolicyProfile({ restricted: mutable }, "restricted");

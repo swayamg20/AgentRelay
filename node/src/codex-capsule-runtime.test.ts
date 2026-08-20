@@ -13,7 +13,7 @@ import type {
 	StartTurnInput,
 } from "@agentrelay/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { capsuleResultValue } from "../test-support/capsule-wire-client.js";
+import { capsuleResultValue, sendCapsuleRequest } from "../test-support/capsule-wire-client.js";
 import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CapsuleAuthority } from "./capsule-authority.js";
 import {
@@ -30,12 +30,16 @@ import {
 } from "./capsule-runtime-factory.js";
 import type { CapsuleRuntime } from "./capsule-runtime.js";
 import type { CodexCapsuleRunnerOptions } from "./codex-capsule-runner-contract.js";
-import { CodexCapsuleRuntimeController } from "./codex-capsule-runtime.js";
+import {
+	CodexCapsuleRuntimeController,
+	CodexWorkspaceWriteActivationNotEnabledError,
+} from "./codex-capsule-runtime.js";
 import type { InheritedCodexOwnerCredentialChannel } from "./codex-owner-credential-channel.js";
 import type { CodexProviderGuardianOptions } from "./codex-provider-guardian.js";
 import {
 	CodexContainmentTerminationError,
 	type CodexSandboxContainment,
+	type CodexWorkspaceAccess,
 } from "./codex-sandbox-contract.js";
 import { writeDurableJson } from "./durable-file.js";
 import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
@@ -152,6 +156,94 @@ describe("CodexCapsuleRuntimeController", () => {
 		}
 	});
 
+	it("retires a schema-v2 write Capsule before credential or provider activation", async () => {
+		const channel = await openFifo();
+		const directory = await temporaryDirectory();
+		const descriptor = codexDescriptor(directory, randomUUID());
+		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), descriptor);
+		const containment = recoveredContainment(directory, descriptor, "b".repeat(64), "write");
+		const workspaceResource = workspaceResourceSha256({
+			workspaceBindingId: "97000000-0000-4000-8000-000000000004",
+			workspaceAlias: descriptor.session.workspaceAlias,
+			root: containment.authorization.workspace.root,
+			repositoryUrl: containment.authorization.workspace.repositoryUrl,
+			headCommit: containment.authorization.workspace.headCommit,
+			reachableFromRef: containment.authorization.workspace.reachableFromRef,
+		});
+		const grant = authorityGrant({
+			agent_id: descriptor.session.participantId,
+			mission_id: descriptor.session.missionId,
+			workspace_alias: descriptor.session.workspaceAlias,
+			workspace_resource_sha256: workspaceResource,
+			lease_expires_at: "2099-08-17T00:01:00.000Z",
+			hard_expires_at: "2099-08-17T00:05:00.000Z",
+			capabilities: fixtureCapabilities("write"),
+		});
+		let recoveryCalls = 0;
+		let guardianCalls = 0;
+		let runnerCalls = 0;
+		const server = await startConfiguredCapsuleServer(directory, {
+			codex: {
+				ownerCredentialChannel: {
+					fd: channel.reader,
+					testOnlyActivationTimeoutMs: 10_000,
+				},
+				recoverContainment: async (expectation) => {
+					recoveryCalls += 1;
+					expect(expectation).toEqual(descriptor.runtime.containment);
+					return containment;
+				},
+				createGuardian: () => {
+					guardianCalls += 1;
+					throw new Error("guardian activation must not start");
+				},
+				openRunner: async () => {
+					runnerCalls += 1;
+					throw new Error("provider activation must not start");
+				},
+			},
+		});
+		const identity = {
+			capsuleId: descriptor.capsule_id,
+			capabilityToken: descriptor.capability_token,
+			socketPath: descriptor.socket_path,
+		};
+		try {
+			await capsuleResultValue(identity, "install_authority", {
+				grant,
+				current_lease: {
+					grant_id: grant.grant_id,
+					lease_id: grant.lease_id,
+					fencing_token: grant.fencing_token,
+					lease_expires_at: grant.lease_expires_at,
+				},
+			});
+			const session = (await capsuleResultValue(identity, "ensure_session", {
+				input: descriptor.session,
+			})) as HostSessionRef;
+
+			const frames = await sendCapsuleRequest(identity, "start_turn", {
+				input: serverTurnInput(session, grant),
+			});
+
+			expect(frames).toEqual([
+				expect.objectContaining({
+					kind: "error",
+					code: "internal",
+					message: "Capsule runtime failed",
+				}),
+			]);
+			await server.waitUntilClosed();
+			expect(recoveryCalls).toBe(1);
+			expect(guardianCalls).toBe(0);
+			expect(runnerCalls).toBe(0);
+			expectFdClosed(channel.reader);
+		} finally {
+			await server.close().catch(() => undefined);
+			if (cleanupFds.has(channel.writer)) await closeTrackedFd(channel.writer);
+		}
+	});
+
 	it("rejects simultaneous injected and inherited credential sources", async () => {
 		const directory = await temporaryDirectory();
 		const descriptor = codexDescriptor(directory);
@@ -261,6 +353,59 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(fixture.runtime.closeCalls).toBe(1);
 	});
 
+	it("attests granted write containment but stops before every provider activation side effect", async () => {
+		const evidence: RuntimeAuthorityEvidence[] = [];
+		const fixture = await createFixture({ workspaceAccess: "write" });
+		const authority = installedAuthority(fixture.grant, evidence);
+
+		await expect(
+			authority.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			),
+		).rejects.toMatchObject({
+			name: CodexWorkspaceWriteActivationNotEnabledError.name,
+			code: "workspace_write_activation_not_enabled",
+		});
+
+		expect(fixture.recoveryCalls).toBe(1);
+		expect(fixture.guardianOptions).toHaveLength(0);
+		expect(fixture.runnerOptions).toHaveLength(0);
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
+		expect(fixture.guardianOpenCalls).toBe(0);
+		expect(fixture.providerLaunchCalls).toBe(0);
+		expect(evidence.filter((item) => item.decision === "allow")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ action: "workspace_read" }),
+				expect.objectContaining({ action: "workspace_write" }),
+			]),
+		);
+
+		await fixture.controller.close();
+		authority.dispose();
+	});
+
+	it("rejects read containment recovered for a write grant before guardian construction", async () => {
+		const fixture = await createFixture({
+			workspaceAccess: "write",
+			containmentMismatch: "workspace_access",
+		});
+		const authority = installedAuthority(fixture.grant);
+
+		await expect(
+			authority.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			),
+		).rejects.toThrow("granted workspace access");
+
+		expect(fixture.recoveryCalls).toBe(1);
+		expect(fixture.guardianOptions).toHaveLength(0);
+		expect(fixture.runnerOptions).toHaveLength(0);
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
+
+		await fixture.controller.close();
+		authority.dispose();
+	});
+
 	it("fails closed with the unavailable default credential before provider launch", async () => {
 		const fixture = await createFixture({
 			exerciseGuardianClaim: true,
@@ -348,6 +493,7 @@ describe("CodexCapsuleRuntimeController", () => {
 				grant: fixture.grant,
 				signal: abort.signal,
 				performWorkspaceRead: async (effect) => effect(),
+				performWorkspaceWrite: async (effect) => effect(),
 			}),
 		).rejects.toMatchObject({ code: "expired" });
 		expect(fixture.recoveryCalls).toBe(0);
@@ -410,7 +556,7 @@ describe("CodexCapsuleRuntimeController", () => {
 	it.each([
 		["runtime version", "runtime_version", /unsupported Codex runtime/],
 		["control directory", "control_directory", /Capsule control directory/],
-		["workspace access", "workspace_access", /read-only workspace access/],
+		["workspace access", "workspace_access", /granted workspace access/],
 	] as const)(
 		"rejects a recovered %s mismatch before guardian construction",
 		async (_name, mismatch, expected) => {
@@ -511,6 +657,7 @@ describe("CodexCapsuleRuntimeController", () => {
 });
 
 interface FixtureOptions {
+	readonly workspaceAccess?: CodexWorkspaceAccess;
 	readonly containmentPolicySha256?: string;
 	readonly containmentMismatch?: "runtime_version" | "control_directory" | "workspace_access";
 	readonly grantOverrides?: Parameters<typeof authorityGrant>[0];
@@ -526,10 +673,12 @@ interface FixtureOptions {
 async function createFixture(options: FixtureOptions = {}) {
 	const directory = await temporaryDirectory();
 	const descriptor = codexDescriptor(directory);
+	const workspaceAccess = options.workspaceAccess ?? "read";
 	const baseContainment = recoveredContainment(
 		directory,
 		descriptor,
 		options.containmentPolicySha256 ?? "b".repeat(64),
+		workspaceAccess,
 	);
 	const containment = containmentWithMismatch(
 		baseContainment,
@@ -551,6 +700,7 @@ async function createFixture(options: FixtureOptions = {}) {
 		workspace_resource_sha256: workspaceResource,
 		lease_expires_at: "2099-08-17T00:01:00.000Z",
 		hard_expires_at: "2099-08-17T00:05:00.000Z",
+		capabilities: fixtureCapabilities(workspaceAccess),
 		...options.grantOverrides,
 	});
 	const guardianOptions: CodexProviderGuardianOptions[] = [];
@@ -559,8 +709,11 @@ async function createFixture(options: FixtureOptions = {}) {
 	const recoveryStarted = deferred<void>();
 	const runnerStarted = deferred<void>();
 	const recoverySignals: AbortSignal[] = [];
-	const claimOwnerCredential = async (_signal: AbortSignal) =>
-		createFakeCodexOwnerCredential("capsule-runtime-owner");
+	let ownerCredentialClaimCalls = 0;
+	const claimOwnerCredential = async (_signal: AbortSignal) => {
+		ownerCredentialClaimCalls += 1;
+		return createFakeCodexOwnerCredential("capsule-runtime-owner");
+	};
 	let recoveryCalls = 0;
 	let guardianOpenCalls = 0;
 	let providerLaunchCalls = 0;
@@ -636,6 +789,9 @@ async function createFixture(options: FixtureOptions = {}) {
 		get providerLaunchCalls() {
 			return providerLaunchCalls;
 		},
+		get ownerCredentialClaimCalls() {
+			return ownerCredentialClaimCalls;
+		},
 		get retireCalls() {
 			return retireCalls;
 		},
@@ -657,6 +813,36 @@ function installedAuthority(
 		lease_expires_at: grant.lease_expires_at,
 	});
 	return authority;
+}
+
+function serverTurnInput(session: HostSessionRef, grant: RuntimeAuthorityGrant): StartTurnInput {
+	return {
+		session,
+		missionId: grant.mission_id,
+		deliveryId: grant.delivery_id,
+		executionAttempt: grant.execution_attempt,
+		contractVersion: 1,
+		missionSequence: 2,
+		objective: {
+			text: "Build compatible backend and client changes.",
+			authorPrincipalId: grant.agent_id,
+			provenance: "mission_manifest",
+		},
+		assignment: {
+			text: "Analyze the backend contract.",
+			authorPrincipalId: grant.agent_id,
+			provenance: "mission_manifest",
+		},
+		acceptanceCriteria: [
+			{
+				text: "Return one compatible recommendation.",
+				authorPrincipalId: grant.agent_id,
+				provenance: "mission_manifest",
+			},
+		],
+		peerMessages: [],
+		artifacts: [],
+	};
 }
 
 function codexDescriptor(directory: string, capsuleId = IDS.capsule): CodexCapsuleLaunchDescriptor {
@@ -702,6 +888,7 @@ function recoveredContainment(
 	directory: string,
 	descriptor: CodexCapsuleLaunchDescriptor,
 	policyGrantSha256: string,
+	workspaceAccess: CodexWorkspaceAccess = "read",
 ): CodexSandboxContainment {
 	const runtimeDirectory = join(dirname(directory), `${basename(directory)}-runtime`);
 	return {
@@ -722,7 +909,7 @@ function recoveredContainment(
 			providerExecutable: "/opt/agentrelay/codex",
 			runtimeVersion: "0.146.0",
 			policyGrantSha256,
-			workspaceAccess: "read",
+			workspaceAccess,
 			workspace: {
 				root: "/work/backend",
 				repositoryUrl: "https://example.com/backend.git",
@@ -756,7 +943,7 @@ function containmentWithMismatch(
 			...containment,
 			authorization: {
 				...containment.authorization,
-				workspaceAccess: "write",
+				workspaceAccess: containment.authorization.workspaceAccess === "read" ? "write" : "read",
 			},
 		};
 	}
@@ -769,12 +956,15 @@ function containmentWithMismatch(
 	} as unknown as CodexSandboxContainment;
 }
 
-function fixtureCapabilities() {
+function fixtureCapabilities(workspaceAccess: CodexWorkspaceAccess = "read") {
 	return [
 		{ action: "runtime_start", resource: "runtime" },
 		{ action: "runtime_recover", resource: "runtime" },
 		{ action: "runtime_cancel", resource: "runtime" },
 		{ action: "workspace_read", resource: "workspace" },
+		...(workspaceAccess === "write"
+			? ([{ action: "workspace_write", resource: "workspace" }] as const)
+			: []),
 		{ action: "usage_report", resource: "usage" },
 		{ action: "artifact_publish", resource: "artifact" },
 		{ action: "outbound_publish", resource: "relay" },

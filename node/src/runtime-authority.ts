@@ -29,6 +29,11 @@ export interface RuntimeWorkspaceReadAuthority {
 	performWorkspaceRead<T>(effect: () => T | Promise<T>): Promise<T>;
 }
 
+/** One live, scoped reference-monitor boundary for workspace read and write effects. */
+export interface RuntimeWorkspaceAuthority extends RuntimeWorkspaceReadAuthority {
+	performWorkspaceWrite<T>(effect: () => T | Promise<T>): Promise<T>;
+}
+
 export class RuntimeAuthorityDeniedError extends Error {
 	constructor(readonly code: RuntimeAuthorityDenyCode) {
 		super(`Runtime authority denied: ${code}`);

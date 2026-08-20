@@ -148,6 +148,35 @@ describe("DeliveryProcessor", () => {
 		expect(authorityPort.operations.at(-1)).toBe("revoke:revoked");
 	});
 
+	it("adds workspace write only for the exact locally accepted write policy", async () => {
+		const config = localConfig();
+		config.policy_profiles.coding = {
+			...config.policy_profiles.coding!,
+			workspace_access: "write",
+		};
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const harness = await createHarness({
+			config,
+			mission: assignment({ config }),
+			authorityPort,
+		});
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(authorityPort.installed[0]?.capabilities).toEqual(
+			expect.arrayContaining([
+				{ action: "workspace_read", resource: "workspace" },
+				{ action: "workspace_write", resource: "workspace" },
+			]),
+		);
+		expect(authorityPort.installed[0]?.capabilities).not.toEqual(
+			expect.arrayContaining([
+				{ action: "verification_execute", resource: "verification_command" },
+				{ action: "network_access", resource: "network" },
+			]),
+		);
+	});
+
 	it("provisions the exact owner workspace under local authority before remote install", async () => {
 		const authorityPort = new FakeRuntimeAuthorityPort();
 		let preparationSignal: AbortSignal | undefined;
@@ -179,6 +208,7 @@ describe("DeliveryProcessor", () => {
 				workspace: preparedWorkspace(),
 				policyGrantSha256: resolvePolicyProfile(localConfig().policy_profiles, "coding").grant
 					.grant_sha256,
+				workspaceAccess: "read",
 			});
 		});
 		const harness = await createHarness({
@@ -195,6 +225,32 @@ describe("DeliveryProcessor", () => {
 		expect(provisioningSignal).toBe(preparationSignal);
 		expect(authorityPort.installed).toHaveLength(1);
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
+	});
+
+	it("passes exact write access through provisioning without write-gating workspace inspection", async () => {
+		const config = localConfig();
+		config.policy_profiles.coding = {
+			...config.policy_profiles.coding!,
+			workspace_access: "write",
+		};
+		const authorityPort = new FakeRuntimeAuthorityPort();
+		const prepareRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const provision = vi.fn<RuntimeProvisioner["provision"]>(async (input, authority) => {
+			expect(input.workspaceAccess).toBe("write");
+			await expect(authority.performWorkspaceWrite(() => "changed")).resolves.toBe("changed");
+		});
+		const harness = await createHarness({
+			config,
+			mission: assignment({ config }),
+			authorityPort,
+			runtimeProvisioner: freshRuntimeProvisioner(provision),
+			prepareRuntimeWorkspace,
+		});
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(prepareRuntimeWorkspace).toHaveBeenCalledOnce();
+		expect(provision).toHaveBeenCalledOnce();
 	});
 
 	it("does not prepare a runtime workspace when no provisioner is configured", async () => {
@@ -1961,6 +2017,78 @@ describe("DeliveryProcessor", () => {
 		expect(harness.journal.snapshot().deliveries[IDS.delivery]?.phase).toBe("acknowledged");
 	});
 
+	it("recovers a new delivery when another retained attempt belongs to the same Mission", async () => {
+		const provision = vi.fn<RuntimeProvisioner["provision"]>();
+		const recover = vi.fn<RuntimeProvisioner["recover"]>();
+		const preflight = vi.fn(successfulPreflight);
+		const preflightRecovery = vi.fn(successfulRecoveryPreflight);
+		const prepareRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const recoverRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const harness = await createHarness({
+			authorityPort: new FakeRuntimeAuthorityPort(),
+			runtimeProvisioner: { provision, recover },
+			preflight,
+			preflightRecovery,
+			prepareRuntimeWorkspace,
+			recoverRuntimeWorkspace,
+		});
+		await retainPriorAttempt(harness.journal, {
+			deliveryId: IDS.secondDelivery,
+			missionId: IDS.mission,
+			eventId: IDS.secondEvent,
+			cursor: "2",
+		});
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(preflight).not.toHaveBeenCalled();
+		expect(prepareRuntimeWorkspace).not.toHaveBeenCalled();
+		expect(provision).not.toHaveBeenCalled();
+		expect(preflightRecovery).toHaveBeenCalledOnce();
+		expect(recoverRuntimeWorkspace).toHaveBeenCalledOnce();
+		expect(recover).toHaveBeenCalledOnce();
+		expect(recover.mock.calls[0]?.[0].workspaceAccess).toBe("read");
+	});
+
+	it("keeps a different-Mission attempt and a session record from selecting recovery", async () => {
+		const provision = vi.fn<RuntimeProvisioner["provision"]>();
+		const recover = vi.fn<RuntimeProvisioner["recover"]>();
+		const preflight = vi.fn(successfulPreflight);
+		const preflightRecovery = vi.fn(successfulRecoveryPreflight);
+		const prepareRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const recoverRuntimeWorkspace = vi.fn(async () => preparedWorkspace());
+		const harness = await createHarness({
+			authorityPort: new FakeRuntimeAuthorityPort(),
+			runtimeProvisioner: { provision, recover },
+			preflight,
+			preflightRecovery,
+			prepareRuntimeWorkspace,
+			recoverRuntimeWorkspace,
+		});
+		await retainPriorAttempt(harness.journal, {
+			deliveryId: IDS.secondDelivery,
+			missionId: IDS.secondMission,
+			eventId: IDS.secondEvent,
+			cursor: "2",
+		});
+		await harness.journal.setMissionSession(
+			await harness.adapter.ensureSession({
+				missionId: IDS.mission,
+				participantId: IDS.agent,
+				workspaceAlias: "backend",
+			}),
+		);
+
+		await harness.processor.process(IDS.delivery);
+
+		expect(preflight).toHaveBeenCalledOnce();
+		expect(prepareRuntimeWorkspace).toHaveBeenCalledOnce();
+		expect(provision).toHaveBeenCalledOnce();
+		expect(preflightRecovery).not.toHaveBeenCalled();
+		expect(recoverRuntimeWorkspace).not.toHaveBeenCalled();
+		expect(recover).not.toHaveBeenCalled();
+	});
+
 	it("recovers after release authority is lost instead of replaying a poison intent forever", async () => {
 		const harness = await createHarness({
 			preflight: async () => {
@@ -2884,6 +3012,43 @@ function storedItem(): MissionDeliveryItem {
 		source_delivery_id: null,
 		causal_parent_event_id: null,
 	};
+}
+
+async function retainPriorAttempt(
+	journal: NodeJournal,
+	input: {
+		readonly deliveryId: string;
+		readonly missionId: string;
+		readonly eventId: string;
+		readonly cursor: string;
+	},
+): Promise<void> {
+	const item = storedItem();
+	item.delivery = {
+		...item.delivery,
+		delivery_id: input.deliveryId,
+		mission_id: input.missionId,
+		mission_event_id: input.eventId,
+		cursor: input.cursor,
+		idempotency_key: `delivery:${input.cursor}`,
+	};
+	item.event = {
+		...item.event,
+		event_id: input.eventId,
+		mission_id: input.missionId,
+		idempotency_key: `participants:${input.cursor}`,
+	};
+	await journal.ingestCursorPage([item], input.cursor, new Date(TIMES.created));
+	await journal.updateDelivery(input.deliveryId, (entry) => {
+		entry.execution_attempt = 2;
+		entry.host_attempt_history.push({
+			execution_attempt: 1,
+			start_input_sha256: "f".repeat(64),
+			host_events: [],
+			result: null,
+			archived_at: TIMES.completed,
+		});
+	});
 }
 
 function baseDelivery(): Delivery {

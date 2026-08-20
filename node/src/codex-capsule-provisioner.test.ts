@@ -31,6 +31,7 @@ import type {
 	CodexSandboxContainment,
 	CodexSandboxContainmentInput,
 	CodexSandboxRecoveryExpectation,
+	CodexWorkspaceAccess,
 	PinnedCodexLauncher,
 } from "./codex-sandbox-contract.js";
 import { CodexContainmentTerminationError } from "./codex-sandbox-contract.js";
@@ -115,6 +116,29 @@ describe("CodexCapsuleProvisioner", () => {
 		).resolves.toEqual(descriptor);
 
 		expect(fixture.port.prepareCalls).toBe(prepareCalls);
+		expect(fixture.port.recoverCalls).toBe(1);
+	});
+
+	it("provisions and recovers explicit write containment only under write authority", async () => {
+		const fixture = await createFixture("write");
+		const provisionAuthority = activationFor(fixture.input);
+
+		const descriptor = await fixture.provisioner.provision(
+			fixture.input,
+			provisionAuthority.authority,
+		);
+
+		expect(provisionAuthority.readEffectCalls).toBe(0);
+		expect(provisionAuthority.writeEffectCalls).toBe(1);
+		expect(fixture.port.prepareInputs[0]?.workspaceAccess).toBe("write");
+		expect(fixture.port.manifest?.binding.workspace_access).toBe("write");
+
+		const recoveryAuthority = activationFor(fixture.input);
+		await expect(
+			fixture.provisioner.recover(fixture.input, recoveryAuthority.authority),
+		).resolves.toEqual(descriptor);
+		expect(recoveryAuthority.readEffectCalls).toBe(0);
+		expect(recoveryAuthority.writeEffectCalls).toBe(1);
 		expect(fixture.port.recoverCalls).toBe(1);
 	});
 
@@ -230,6 +254,42 @@ describe("CodexCapsuleProvisioner", () => {
 		).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
+	it("does not treat an access-less legacy manifest as current write authority", async () => {
+		const fixture = await createFixture("write");
+		await fixture.port.seed(
+			containmentInput(fixture),
+			join(fixture.controlRoot, IDS.mission, "containment.json"),
+		);
+		fixture.port.mutateBinding((binding) => {
+			delete binding.workspace_access;
+		});
+
+		await expect(
+			fixture.provisioner.provision(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("Node-owned provisioning input");
+
+		expect(fixture.port.prepareCalls).toBe(0);
+		expect(fixture.port.recoverCalls).toBe(0);
+	});
+
+	it("rejects a read manifest for a write grant before containment recovery", async () => {
+		const fixture = await createFixture("write");
+		await fixture.port.seed(
+			containmentInput(fixture),
+			join(fixture.controlRoot, IDS.mission, "containment.json"),
+		);
+		fixture.port.mutateBinding((binding) => {
+			binding.workspace_access = "read";
+		});
+
+		await expect(
+			fixture.provisioner.provision(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("Node-owned provisioning input");
+
+		expect(fixture.port.prepareCalls).toBe(0);
+		expect(fixture.port.recoverCalls).toBe(0);
+	});
+
 	it.each(["path", "instance", "digest"] as const)(
 		"rejects a descriptor containment %s mismatch before alternate recovery",
 		async (mismatch) => {
@@ -325,6 +385,28 @@ describe("CodexCapsuleProvisioner", () => {
 		await expect(
 			fixture.provisioner.provision(fixture.input, expired.authority),
 		).rejects.toMatchObject({ code: "expired" });
+		expect(fixture.port.prepareCalls).toBe(0);
+	});
+
+	it("rejects write provisioning without both workspace capabilities", async () => {
+		const fixture = await createFixture("write");
+		const missingWrite = activationFor(fixture.input, {
+			capabilities: authorityGrant().capabilities,
+		});
+
+		await expect(
+			fixture.provisioner.provision(fixture.input, missingWrite.authority),
+		).rejects.toMatchObject({ code: "capability_missing" });
+		expect(fixture.port.prepareCalls).toBe(0);
+
+		const missingRead = activationFor(fixture.input, {
+			capabilities: writeCapabilities().filter(
+				(capability) => capability.action !== "workspace_read",
+			),
+		});
+		await expect(
+			fixture.provisioner.provision(fixture.input, missingRead.authority),
+		).rejects.toMatchObject({ code: "capability_missing" });
 		expect(fixture.port.prepareCalls).toBe(0);
 	});
 
@@ -431,7 +513,7 @@ interface Fixture {
 	readonly resolveCalls: number;
 }
 
-async function createFixture(): Promise<Fixture> {
+async function createFixture(workspaceAccess: CodexWorkspaceAccess = "read"): Promise<Fixture> {
 	const root = await temporaryDirectory();
 	const controlRoot = join(root, "control");
 	const runtimeRoot = join(root, "runtime");
@@ -446,6 +528,7 @@ async function createFixture(): Promise<Fixture> {
 		},
 		workspace,
 		policyGrantSha256: POLICY_SHA256,
+		workspaceAccess,
 	};
 	const port = new RecordingContainmentPort();
 	let resolveCalls = 0;
@@ -688,7 +771,7 @@ function containmentInput(fixture: Fixture): CodexSandboxContainmentInput {
 		launcher: fixture.launcher,
 		provider: fixture.launcher,
 		policyGrantSha256: POLICY_SHA256,
-		workspaceAccess: "read",
+		workspaceAccess: fixture.input.workspaceAccess,
 	};
 }
 
@@ -697,7 +780,8 @@ function activationFor(
 	grantOverrides: Parameters<typeof authorityGrant>[0] = {},
 ) {
 	const abort = new AbortController();
-	let effectCalls = 0;
+	let readEffectCalls = 0;
+	let writeEffectCalls = 0;
 	const workspaceResource = workspaceResourceSha256({
 		workspaceBindingId: "97000000-0000-4000-8000-000000000004",
 		workspaceAlias: input.session.workspaceAlias,
@@ -706,6 +790,8 @@ function activationFor(
 		headCommit: input.workspace.baseCommit,
 		reachableFromRef: input.workspace.reachableFromRef,
 	});
+	const capabilities =
+		input.workspaceAccess === "write" ? writeCapabilities() : authorityGrant().capabilities;
 	const grant = authorityGrant({
 		agent_id: input.session.participantId,
 		mission_id: input.session.missionId,
@@ -714,13 +800,18 @@ function activationFor(
 		policy_grant_sha256: input.policyGrantSha256,
 		lease_expires_at: "2099-08-19T00:01:00.000Z",
 		hard_expires_at: "2099-08-19T00:05:00.000Z",
+		capabilities,
 		...grantOverrides,
 	});
 	const authority: CodexCapsuleProvisioningAuthority = {
 		grant,
 		signal: abort.signal,
 		async performWorkspaceRead<T>(effect: () => T | Promise<T>): Promise<T> {
-			effectCalls += 1;
+			readEffectCalls += 1;
+			return effect();
+		},
+		async performWorkspaceWrite<T>(effect: () => T | Promise<T>): Promise<T> {
+			writeEffectCalls += 1;
 			return effect();
 		},
 	};
@@ -728,9 +819,22 @@ function activationFor(
 		authority,
 		abort,
 		get effectCalls() {
-			return effectCalls;
+			return readEffectCalls + writeEffectCalls;
+		},
+		get readEffectCalls() {
+			return readEffectCalls;
+		},
+		get writeEffectCalls() {
+			return writeEffectCalls;
 		},
 	};
+}
+
+function writeCapabilities() {
+	return [
+		...authorityGrant().capabilities,
+		{ action: "workspace_write", resource: "workspace" } as const,
+	];
 }
 
 async function createLauncher(root: string): Promise<PinnedCodexLauncher> {

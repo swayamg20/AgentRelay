@@ -235,6 +235,14 @@ export class CapsuleAuthority {
 					}),
 					effect,
 				),
+			performWorkspaceWrite: <T>(effect: () => T | Promise<T>) =>
+				monitor.perform(
+					runtimeAuthorityRequest(monitor.grant, {
+						action: "workspace_write",
+						resource: "workspace",
+					}),
+					effect,
+				),
 		});
 	}
 

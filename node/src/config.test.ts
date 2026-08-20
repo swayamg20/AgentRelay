@@ -91,6 +91,22 @@ describe("nodeConfigSchema", () => {
 		];
 		expect(() => nodeConfigSchema.parse(duplicateEnvironment)).toThrow(/unique/);
 	});
+
+	it("keeps workspace write authority explicit and owner-local", () => {
+		const omitted = nodeConfigSchema.parse(validConfig());
+		expect(omitted.policy_profiles.default.workspace_access).toBeUndefined();
+
+		const read = validConfig("read");
+		expect(nodeConfigSchema.parse(read).policy_profiles.default.workspace_access).toBe("read");
+
+		const write = validConfig("write");
+		expect(nodeConfigSchema.parse(write).policy_profiles.default.workspace_access).toBe("write");
+
+		const invalid = validConfig();
+		(invalid.policy_profiles.default as Record<string, unknown>).workspace_access =
+			"danger-full-access";
+		expect(nodeConfigSchema.safeParse(invalid).success).toBe(false);
+	});
 });
 
 describe("Node config files", () => {
@@ -163,7 +179,7 @@ describe("Node config files", () => {
 	});
 });
 
-function validConfig() {
+function validConfig(workspaceAccess?: "read" | "write") {
 	return {
 		schema_version: 1 as const,
 		relay_url: "https://relay.example.test/",
@@ -185,6 +201,7 @@ function validConfig() {
 			default: {
 				max_turn_seconds: 300,
 				max_reported_tokens: 100_000,
+				...(workspaceAccess === undefined ? {} : { workspace_access: workspaceAccess }),
 				network_access: "denied" as const,
 				verification_commands: {
 					test: {

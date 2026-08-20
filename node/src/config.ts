@@ -111,6 +111,7 @@ export const policyProfileConfigSchema = z
 	.object({
 		max_turn_seconds: z.number().int().positive().max(86_400),
 		max_reported_tokens: z.number().int().positive().max(100_000_000),
+		workspace_access: z.enum(["read", "write"]).optional(),
 		network_access: z.literal("denied"),
 		verification_commands: z
 			.record(policyProfileNameSchema, verificationCommandConfigSchema)

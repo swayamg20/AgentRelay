@@ -408,7 +408,7 @@ function containmentInput(
 		launcher,
 		provider: launcher,
 		policyGrantSha256: input.policyGrantSha256,
-		workspaceAccess: "read",
+		workspaceAccess: input.workspaceAccess,
 	});
 }
 

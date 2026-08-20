@@ -32,6 +32,13 @@ export interface ResolvedPolicyProfile {
 	readonly grant: LocalPolicyGrant;
 }
 
+export type PolicyWorkspaceAccess = "read" | "write";
+
+/** Omitted and explicit read policy are the same legacy-safe authority. */
+export function policyWorkspaceAccess(profile: PolicyProfileConfig): PolicyWorkspaceAccess {
+	return profile.workspace_access === "write" ? "write" : "read";
+}
+
 export interface VerificationCommandSelection {
 	readonly commandId: string;
 }
@@ -205,6 +212,7 @@ export function canonicalPolicyGrant(profileName: string, profile: PolicyProfile
 		profile_name: profileName,
 		max_turn_seconds: profile.max_turn_seconds,
 		max_reported_tokens: profile.max_reported_tokens,
+		...(profile.workspace_access === "write" ? { workspace_access: "write" } : {}),
 		network_access: profile.network_access,
 		verification_commands: verificationCommands,
 	});
@@ -220,6 +228,7 @@ function immutableProfileSnapshot(profile: PolicyProfileConfig): PolicyProfileCo
 	return Object.freeze({
 		max_turn_seconds: profile.max_turn_seconds,
 		max_reported_tokens: profile.max_reported_tokens,
+		...(profile.workspace_access === "write" ? { workspace_access: "write" as const } : {}),
 		network_access: profile.network_access,
 		verification_commands: Object.freeze(verificationCommands),
 	});
