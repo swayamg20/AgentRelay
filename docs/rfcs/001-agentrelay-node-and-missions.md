@@ -402,10 +402,14 @@ model/provider activation. A fresh opaque owner credential can cross
 only fixed inherited fd 3 under one non-resettable 30-second Capsule activation
 deadline, then is consumed once by an ephemeral API-key login. The exact app-server
 command has fixed provider-only egress to `api.openai.com`; version checks, containment
-probes, and nested workspace sandboxes remain offline. This is not selected by the
-polling Node CLI and does not provide an owner-facing credential source, guarded
-workspace-write model activation, verification authority, patch mediation, or durable
-write/decision evidence.
+probes, and nested workspace sandboxes remain offline. It also pins agents and web
+search off and disables shell, hooks, plugins, apps, multi-agent, and code-mode
+features, removing command tools. Native `apply_patch` remains independently eligible
+when the selected model exposes it, but any resulting file-change approval is declined
+and fatal. This is not selected by the polling Node CLI and does not provide an
+owner-facing credential source, guarded workspace-write
+model activation, verification authority, patch mediation, or durable write/decision
+evidence.
 Autonomous writes are not safe to claim until the Node activates the boundary and
 mediates every concrete command, network, path, and side effect outside the model.
 

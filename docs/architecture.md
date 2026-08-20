@@ -109,8 +109,13 @@ durable coordination foundations:
   non-resettable 30-second activation deadline and consumes it once during
   authority-gated provider activation. The client performs API-key login and account
   verification with the credential store forced ephemeral; the live handshake leaves
-  no `auth.json`. No owner-facing credential source exists, no polling command selects
-  this path, and no test executes a model turn.
+  no `auth.json`. The exact app-server command also pins agents and web search off and
+  disables shell, hooks, plugins, apps, multi-agent, and code-mode features, removing
+  `exec_command`, `write_stdin`, and the legacy shell. Native `apply_patch` remains
+  independently eligible when the selected model exposes it, but any resulting
+  file-change approval is declined and fatal; no patch mediation exists. No owner-facing
+  credential source exists, no polling command selects this path, and no test executes
+  a model turn.
 - A Linux containment checkpoint for Codex `0.146.0`. It binds an
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux

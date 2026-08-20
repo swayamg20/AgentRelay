@@ -623,10 +623,16 @@ forbidden roots are denied.
 `HOME`, `CODEX_HOME`, and all
 temporary variables point to private exact-mode directories; the child environment
 is rebuilt and legacy Landlock is explicitly disabled. The exact app-server argv pins
-`model_provider="openai"` and `openai_base_url="https://api.openai.com/v1"`, then
-selects the outer `agentrelay-runtime` profile whose full Codex-managed CONNECT proxy
-permits only host `api.openai.com`. Exact version checks and the mandatory containment
-probe select `agentrelay-offline`, and each nested read-only workspace sandbox uses
+`model_provider="openai"`, `openai_base_url="https://api.openai.com/v1"`,
+`agents.enabled=false`, and `web_search="disabled"`. It also disables `shell_tool`,
+hooks, plugins, apps, multi-agent, and code-mode features, removing `exec_command`,
+`write_stdin`, and the legacy shell while leaving native `apply_patch` independently
+eligible when the selected model exposes it. Any resulting
+`item/fileChange/requestApproval` is still declined and made fatal, so this is
+command-surface reduction rather than exact patch mediation. The command selects the
+outer `agentrelay-runtime` profile whose full Codex-managed CONNECT proxy permits only
+host `api.openai.com`. Exact version checks and the mandatory containment probe select
+`agentrelay-offline`, and each nested read-only workspace sandbox uses
 `networkAccess: false`. The
 launcher rejects `/etc/codex/config.toml`, `managed_config.toml`, and
 `requirements.toml` rather than merging ambient system policy.

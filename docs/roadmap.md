@@ -197,6 +197,10 @@ containment and authority checkpoint, not a model-write or live-runtime proof.
   provide a verification-command executor.
 - [x] Bind the internal exact app-server command to fixed provider-only managed CONNECT
   egress while keeping version checks, probes, and nested workspace sandboxes offline.
+- [x] Pin the exact app-server command with agents and web search off and shell, hooks,
+  plugins, apps, multi-agent, and code-mode features disabled. Native `apply_patch`
+  remains independently eligible when the selected model exposes it, but resulting
+  file-change approvals are declined and fatal; exact patch mediation remains open.
 - [x] Add owner-local opt-in workspace-write authority and exact write containment
   provision/recovery, with write activation intentionally fenced before credentials or
   provider startup.

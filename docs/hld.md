@@ -172,8 +172,13 @@ resulting API-key account state with refresh-token loading disabled. Codex's cre
 store is forced ephemeral. The credential appears in neither argv, environment,
 durable state, nor `auth.json`. The exact app-server command now selects a retained
 Linux profile with Codex-managed CONNECT access only to `api.openai.com`; version
-checks, containment probes, and nested workspace sandboxes remain offline. There is
-still no owner-facing credential source, guarded workspace-write model activation,
+checks, containment probes, and nested workspace sandboxes remain offline. Its exact
+argv pins agents and web search off and disables shell, hooks, plugins, apps,
+multi-agent, and code-mode features, so no command tool is registered. Native
+`apply_patch` remains independently eligible when the selected model exposes it, but
+any resulting file-change approval is declined and made fatal; no exact patch mediation
+exists. There is still no owner-facing credential
+source, guarded workspace-write model activation,
 real model-turn proof, or Claude equivalent. The Codex child environment is allowlisted,
 and its private home is derived locally beneath the Capsule and revalidated as
 canonical, current-user-owned, and exactly mode 0700. For an inherited

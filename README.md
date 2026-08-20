@@ -37,7 +37,12 @@
 > Codex client requires a one-shot owner API-key handoff and forces Codex's credential
 > store to remain ephemeral. Its retained Linux policy gives only the exact app-server
 > command a managed CONNECT path to `api.openai.com`; version checks, containment probes,
-> and nested workspace sandboxes remain offline. There is still no owner-facing
+> and nested workspace sandboxes remain offline. That command also disables agents,
+> web search, the shell tool, hooks, plugins, apps, multi-agent, and code-mode surfaces,
+> so Codex cannot register `exec_command`, `write_stdin`, or the legacy shell. Native
+> `apply_patch` remains independently eligible when the selected model exposes it, but
+> any resulting file-change approval is declined and fatal; this is not patch mediation.
+> There is still no owner-facing
 > credential source, polling `run-codex` command, guarded workspace-write model
 > activation, registered verification execution, durable local evidence, installed
 > service supervision, or two-machine proof. macOS also fails closed.

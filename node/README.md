@@ -78,8 +78,14 @@ internal, non-production composition.
 - An internal provider-only egress boundary. Only the exact pinned app-server command
   selects the retained runtime profile, whose Codex-managed CONNECT proxy allows
   `api.openai.com`; version checks and containment probes select an offline profile,
-  and nested read-only workspace sandboxes use `networkAccess: false`. This path is not
-  selected by a polling command and has not executed a real model turn.
+  and nested read-only workspace sandboxes use `networkAccess: false`. Its exact argv
+  pins `agents.enabled=false` and `web_search="disabled"` and disables the shell tool,
+  hooks, plugins, apps, multi-agent, and code-mode features. This removes
+  `exec_command`, `write_stdin`, and the legacy shell. Native `apply_patch` remains
+  independently eligible when the selected model exposes it, but any resulting
+  `item/fileChange/requestApproval` is declined and made fatal; exact patch mediation
+  is not implemented. This path is not selected by a polling
+  command and has not executed a real model turn.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
