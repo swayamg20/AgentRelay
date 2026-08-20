@@ -36,6 +36,7 @@ export const DISABLED_CODEX_FEATURES = [
 	"remote_plugin",
 	"request_permissions_tool",
 	"shell_snapshot",
+	"shell_tool",
 	"skill_mcp_dependency_install",
 	"skill_search",
 	"standalone_web_search",
@@ -45,6 +46,8 @@ export const DISABLED_CODEX_FEATURES = [
 ] as const;
 
 export const CODEX_EPHEMERAL_AUTH_CONFIG = 'cli_auth_credentials_store="ephemeral"';
+export const CODEX_DISABLED_AGENTS_CONFIG = "agents.enabled=false";
+export const CODEX_DISABLED_WEB_SEARCH_CONFIG = 'web_search="disabled"';
 
 export function buildCodexAppServerArguments(): string[] {
 	return [
@@ -55,6 +58,10 @@ export function buildCodexAppServerArguments(): string[] {
 		CODEX_PROVIDER_CONFIG,
 		"--config",
 		CODEX_PROVIDER_BASE_URL_CONFIG,
+		"--config",
+		CODEX_DISABLED_AGENTS_CONFIG,
+		"--config",
+		CODEX_DISABLED_WEB_SEARCH_CONFIG,
 		...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 		"app-server",
 		"--listen",

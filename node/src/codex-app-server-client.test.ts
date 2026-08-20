@@ -17,6 +17,8 @@ import {
 import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import {
+	CODEX_DISABLED_AGENTS_CONFIG,
+	CODEX_DISABLED_WEB_SEARCH_CONFIG,
 	CODEX_EPHEMERAL_AUTH_CONFIG,
 	DISABLED_CODEX_FEATURES,
 } from "./codex-app-server-command.js";
@@ -100,6 +102,10 @@ describe("CodexAppServerClient", () => {
 			CODEX_PROVIDER_CONFIG,
 			"--config",
 			CODEX_PROVIDER_BASE_URL_CONFIG,
+			"--config",
+			CODEX_DISABLED_AGENTS_CONFIG,
+			"--config",
+			CODEX_DISABLED_WEB_SEARCH_CONFIG,
 			...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 			"app-server",
 			"--listen",
