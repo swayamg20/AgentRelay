@@ -41,8 +41,11 @@ repository also has a version-pinned read-only app-server client, durable Codex 
 journal, strict schema-v2 descriptor, provisioner, persistent adapter, provider
 guardian, one-shot owner API-key handoff, and fixed provider-only managed CONNECT
 egress behind internal APIs. The Capsule entry point can construct that guarded
-controller, but the polling Node CLI still cannot select it. There is no owner-facing
-credential source, workspace-write authority, or real model-turn proof.
+controller. Owner-local policy can also opt into workspace-write authority and exact
+write-mode containment, but activation deliberately fails before the credential is
+claimed or the guardian, provider, or runner is opened. The polling Node CLI still
+cannot select this path. There is no owner-facing credential source, guarded
+workspace-write model activation, or real model-turn proof.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -392,13 +395,17 @@ journaled grant derived from current Relay authority and trusted local inputs. T
 grant hard-denies push, merge, publish, deploy, arbitrary network access, secret
 access, and privilege expansion; authority loss stops streamed output and final Relay
 completion. Internal APIs now compose that authority with the guarded Codex descriptor
-and read-only Linux containment boundary. A fresh opaque owner credential can cross
+and exact policy-selected Linux containment boundary. Omitted or explicit read policy
+preserves the legacy read-only grant and hash; explicit accepted write policy adds
+workspace-write authority and exact write containment, then fails before any
+model/provider activation. A fresh opaque owner credential can cross
 only fixed inherited fd 3 under one non-resettable 30-second Capsule activation
 deadline, then is consumed once by an ephemeral API-key login. The exact app-server
 command has fixed provider-only egress to `api.openai.com`; version checks, containment
 probes, and nested workspace sandboxes remain offline. This is not selected by the
-polling Node CLI and does not provide an owner-facing credential source,
-workspace-write or verification authority, or durable decision evidence.
+polling Node CLI and does not provide an owner-facing credential source, guarded
+workspace-write model activation, verification authority, patch mediation, or durable
+write/decision evidence.
 Autonomous writes are not safe to claim until the Node activates the boundary and
 mediates every concrete command, network, path, and side effect outside the model.
 
@@ -477,8 +484,12 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    intent, and provider teardown. Internal composition carries the private authority
    grant and a one-shot fixed-fd3 owner credential into the guarded Codex controller,
    whose client forces ephemeral API-key login and whose exact app-server command uses
-   fixed provider-only managed CONNECT egress. Polling CLI activation, an owner-facing
-   credential source, workspace-write authority, registered verification, bounded
+   fixed provider-only managed CONNECT egress. Owner-local policy now adds opt-in
+   workspace-write authority and exact write containment provision/recovery, while
+   write activation stops before credentials or provider startup. Retained
+   same-Mission start intent or host-attempt history forces recovery-only provisioning.
+   Polling CLI activation, an owner-facing credential source, guarded workspace-write
+   model activation, registered verification, bounded
    artifact carriage, durable evidence, adversarial evaluation, and a real model turn
    remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong

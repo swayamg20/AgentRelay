@@ -43,17 +43,22 @@ internal, non-production composition.
   Journal schema 4 preserves that grant and any older-fence predecessor awaiting
   proven Capsule retirement. Independent Node and Capsule monitors enforce lifetime,
   cumulative output/usage/artifact limits, and final Relay publication outside the
-  model. This is a partial issue #97 checkpoint on the deterministic fake path, not
-  completion of the issue or real-runtime activation. See
+  model. An optional owner-local `workspace_access: "write"` adds the exact
+  workspace-write capability; omission or explicit `read` preserves the legacy
+  read-only grant and accepted policy hash. This is a partial issue #97 checkpoint on
+  the deterministic fake path, not completion of the issue or real-runtime activation.
+  See
   [`Local runtime authority`](../docs/research/008-local-runtime-authority.md).
 - A guarded Codex client, injected Capsule runner, provider guardian, strict v2 launch
   descriptor, persistent adapter, and Linux-only Codex `0.146.0` containment boundary.
-  The Node provisioner durably binds an exact read-only containment recovery handle
-  before remote authority installation. The Capsule remains provider-passive through
-  session establishment; starting, recovering, or cancelling an existing durable turn
-  may activate the guardian after the exact start input is journaled. The guardian
-  owns one
-  kernel-locked provider generation, absolute deadline, local revocation signal,
+  The Node provisioner durably binds an exact policy-selected read or write
+  containment recovery handle before remote authority installation. The Capsule
+  remains provider-passive through session establishment; starting, recovering, or
+  cancelling an existing durable read-only turn may activate the guardian after the
+  exact start input is journaled. Write-mode activation instead validates the retained
+  containment and fails before the credential is claimed or the guardian, provider, or
+  runner is opened. The guardian owns one kernel-locked provider generation, absolute
+  deadline, local revocation signal,
   and liveness classification. It prearms a detached out-of-group witness before the
   start barrier; that witness retains the lock, removes the guardian/provider process
   group, and alone records same-boot teardown quiescence after proving the group absent.
@@ -107,7 +112,8 @@ The Capsule checkpoint is experimental and Unix-only because its transport is a 
 domain socket. It is not a general local daemon manager: there is no installer, OS
 service supervisor, automatic process respawn, or production Codex/Claude activation.
 The guarded Codex client, injected runner, guardian, descriptor, provisioner, adapter,
-and Linux containment boundary form an internal read-only checkpoint; see
+and Linux containment boundary form an internal read-only activation path plus a
+fail-closed write-authority/containment checkpoint; see
 [`Codex provider guardian`](../docs/research/007-codex-provider-guardian.md) and
 [`Mission workspace containment`](../docs/research/006-mission-workspace-containment.md).
 `agentrelay-codex-guardian` is the guardian's internal child-process entry point, not
@@ -164,12 +170,17 @@ private grant from current Relay authority and trusted local inputs; it enforces
 local turn limit, reported-token bound, product hard denials, lease/hard expiry,
 renewal, revocation, cumulative stream limits, and final Relay publication. The fake
 runtime exposes no command or network handler, and registered verification-command
-execution remains unimplemented. The internal Codex path composes the guardian and
-read-only Linux containment boundary with this grant and now includes the one-shot owner
-API-key handoff, ephemeral-login boundary, and fixed provider-only managed CONNECT
-egress for the exact app-server command. No polling command selects that path. An
-owner-facing credential source, workspace-write authority, and real model-turn evidence
-remain absent.
+execution remains unimplemented. `workspace_access` is optional and owner-local.
+Omitted or explicit `read` produces the legacy read-only authority and canonical policy
+hash; explicit `write` changes the accepted policy grant, adds workspace-write
+authority, and selects exact write-mode containment. For read mode, the internal Codex
+path composes the guardian and containment boundary with this grant and now includes the
+one-shot owner API-key handoff, ephemeral-login boundary, and fixed provider-only
+managed CONNECT egress for the exact app-server command. Write-mode activation stops
+before the credential is claimed or those runtime components are opened. No polling
+command selects either path. An owner-facing credential source, guarded
+workspace-write model activation, patch mediation, durable write evidence, and real
+model-turn evidence remain absent.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this
@@ -203,8 +214,8 @@ node node/dist/bin/agentrelay-node.js doctor-codex
 It verifies the exact pinned package artifacts and bounded version probe before any
 Node/Capsule runtime state is opened. Passing it does not enable Codex execution, select
 the internal provider-egress profile, or load an owner credential: an owner-facing
-credential source, workspace-write authority, and a polling `run-codex` command are
-still absent.
+credential source, guarded workspace-write model activation, and a polling `run-codex`
+command are still absent.
 
 Use `--capsule-root <absolute-path>` to override the default
 `state/capsules` directory beside the Node config, and
@@ -248,6 +259,11 @@ predecessor awaiting proven Capsule retirement. Schema-2 and schema-3 journals m
 without inventing authority. Empty schema-1 journals migrate automatically; a
 schema-1 journal with deliveries is rejected because its missing start inputs cannot
 be reconstructed safely. Preserve and reconcile that state before replacing it.
+
+Once any retained delivery for a Mission has a start input or host-attempt history,
+Codex provisioning for later work in that same Mission is recovery-only. It must reopen
+the exact retained containment instance and may accept expected dirty Mission edits; it
+never creates a fresh boundary over that dirty checkout.
 
 Each `launch.json` retains its original short private socket path, even if the
 restarted Node has a different `TMPDIR`. A direct Capsule server start refuses any

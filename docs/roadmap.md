@@ -17,7 +17,8 @@ an independently persistent fake Mission Capsule. The detached Capsule and Node-
 process restart proof are implemented. The first pinned Codex client, durable journal,
 provider-neutral Capsule server, injected runner, strict v2 descriptor, provisioner,
 persistent adapter, and provider guardian now form a guarded internal read-only
-composition. The guardian owns provider-generation spawn, liveness, and local authority
+activation path plus a fail-closed write-authority/containment checkpoint. The guardian
+owns provider-generation spawn, liveness, and local authority
 inputs; its prearmed persistent out-of-group witness owns process-group removal and
 post-absence quiescence proof. A Linux-only Codex `0.146.0` containment boundary adds
 owner-controlled standalone-workspace admission, an explicit Bubblewrap policy,
@@ -28,8 +29,8 @@ fd 3, and the client forces API-key login to use an ephemeral credential store. 
 exact app-server command has fixed Codex-managed CONNECT access only to
 `api.openai.com`; version checks, probes, and nested workspace sandboxes remain offline.
 No polling command selects this composition, and there is no owner-facing credential
-source, workspace-write authority, or real model-turn proof. The persistent fake-Capsule
-path also installs a private, fenced capability grant into
+source, guarded workspace-write model activation, or real model-turn proof. The
+persistent fake-Capsule path also installs a private, fenced capability grant into
 independent Node and Capsule reference monitors. This is the partial issue #97
 reference-monitor checkpoint, not completion of the still-open issue or real-runtime
 activation. The next runtime milestone is guarded Codex activation through the public
@@ -172,6 +173,16 @@ Linux. The dedicated Linux process job starts pinned Codex through the guardian 
 containment boundary, but no polling command selects this composition, no owner-facing
 credential source exists, and no test executes a model turn.
 
+Owner-local policy now has an optional `workspace_access` gate. Omitted or explicit
+`read` preserves the legacy read-only grant and hash; explicit accepted `write` adds
+workspace-write authority and provisions or strictly recovers the exact write-mode
+containment. Activation deliberately fails closed before the credential is claimed or
+the guardian, provider, or runner is opened. Its local sentinel is
+`workspace_write_activation_not_enabled`; the private wire redacts it to `internal` and
+retires the Capsule. Retained same-Mission start intent or host-attempt history forces
+recovery-only provisioning, including for an expected dirty checkout. This is a
+containment and authority checkpoint, not a model-write or live-runtime proof.
+
 - [ ] Add registered verification delivery and execution handling (#93), with a
   canonical absolute executable identity bound into local authority instead of a
   restart-sensitive bare `PATH` lookup.
@@ -186,9 +197,12 @@ credential source exists, and no test executes a model turn.
   provide a verification-command executor.
 - [x] Bind the internal exact app-server command to fixed provider-only managed CONNECT
   egress while keeping version checks, probes, and nested workspace sandboxes offline.
+- [x] Add owner-local opt-in workspace-write authority and exact write containment
+  provision/recovery, with write activation intentionally fenced before credentials or
+  provider startup.
 - [ ] Expose the guarded Codex composition through an explicit polling command with an
-  approved owner-facing credential source, workspace-write authority, and Guarded Real
-  Mission 0 (#98).
+  approved owner-facing credential source, guarded workspace-write model activation,
+  and Guarded Real Mission 0 (#98).
 - [ ] Persist durable local authority and execution evidence (#99).
 - [ ] Run the adversarial capability and recovery matrix against the activated runtime
   (#104).

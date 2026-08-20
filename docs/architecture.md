@@ -90,10 +90,12 @@ durable coordination foundations:
   handlers drain, and detached background work can request retirement.
 - A guarded Codex checkpoint with a pinned app-server client, schema-v2 durable
   journal, strict launch descriptor, persistent adapter, provisioner, injected runner,
-  and provider guardian. The provisioner writes the exact read-only containment handle
-  before remote authority installation; session establishment remains provider-passive,
-  and start, recovery, or cancellation of a durable turn may activate only after the
-  exact start input is durable. The guardian
+  and provider guardian. The provisioner writes the exact locally selected read or
+  write containment handle before remote authority installation; session establishment
+  remains provider-passive, and start, recovery, or cancellation of a durable read-only
+  turn may activate only after the exact start input is durable. Explicit write mode
+  validates the retained containment and fails before the credential is claimed or the
+  guardian, provider, or runner is opened. The guardian
   owns one kernel-locked generation and prearms an out-of-group teardown witness before
   writing the start barrier or spawning the provider. The witness retains the lock,
   independently observes heartbeat and deadline loss, proves the guardian/provider
@@ -113,7 +115,8 @@ durable coordination foundations:
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
   process proof passes. Internal Codex provisioning binds its exact recovery handle in
-  the v2 descriptor under local workspace-read authority; no polling CLI selects it;
+  the v2 descriptor under matching local workspace-read or workspace-write authority;
+  no polling CLI selects it;
   the [original containment checkpoint](research/006-mission-workspace-containment.md)
   records the earlier offline policy, while the current provider-egress contract is in
   the [low-level design](lld.md#guarded-linux-containment-checkpoint).
@@ -127,13 +130,13 @@ system does not contain:
 
 - A production-activated coding-agent path. The persistent CLI still hosts only the
   deterministic fake runtime; the guarded Codex composition has no polling command,
-  owner-facing credential source, workspace-write authority, service supervisor, or
-  real-turn proof.
+  owner-facing credential source, guarded workspace-write model activation, service
+  supervisor, or real-turn proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
 - Production command wiring that opens the guarded Codex composition, connects an
   approved owner-facing credential source, selects its fixed provider-only egress
-  boundary, and enables workspace-write authority.
+  boundary, and enables the already-authorized workspace-write mode to reach the model.
 - A supported containment boundary outside Linux. macOS explicitly fails closed in
   this checkpoint.
 - A real two-machine execution proof through the public control plane.
@@ -277,10 +280,15 @@ not add a manager LLM with global access to every repository.
 
 The guarded Codex library strengthens the available local boundary: an optional
 Mission runtime provisioner prepares or strictly recovers the Linux containment
-instance under local workspace-read authority, durably stores its exact handle in a
-v2 descriptor. The Node installs Capsule authority only after that provisioning and
-before activation. No polling command opens that composition, so this is not a
-production runtime path.
+instance under the matching local workspace-read or workspace-write authority, then
+durably stores its exact handle in a v2 descriptor. Omitted or explicit read policy
+retains the legacy read-only grant and policy hash; only an explicit accepted write
+profile adds workspace-write authority. The Node installs Capsule authority only after
+provisioning and before activation. Once retained same-Mission start intent or attempt
+history exists, later provisioning is recovery-only and must reopen that exact
+containment over the expected dirty checkout. Write mode then deliberately fails before
+the credential is claimed or the guardian, provider, or runner is opened. No polling
+command opens this composition, so this is not a production runtime path.
 
 ### Guarded Codex execution checkpoint
 
@@ -412,15 +420,18 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 - The private reference monitor is composed with the guarded Codex descriptor only
   behind internal APIs. Its redacted evidence goes only to injected sinks and is not
   durably persisted by default. Local verification commands, peer- or workspace-chosen
-  network effects, and workspace writes are not enabled. The retained runtime authority
-  grants no network capability; the outer Codex sandbox separately configures a fixed
-  provider transport whose hostname allowlist contains only `api.openai.com`.
+  network effects, and model workspace writes are not enabled. Owner-local policy can
+  now grant workspace write and provision the exact matching containment, but
+  activation fails before any model or provider receives it. The retained runtime
+  authority grants no network capability; the outer Codex sandbox separately configures
+  a fixed provider transport whose hostname allowlist contains only `api.openai.com`.
 - The Linux containment boundary and its exact durable recovery handle are selected by
   internal Codex provisioning, not by a polling Node command. Its dedicated Linux
   process proof verifies exact command/profile selection, managed-proxy environment
   injection for the app-server case, and failed direct socket access. It does not prove
-  live OpenAI reachability. Owner-facing credential sourcing, workspace-write
-  authority, and real-turn evidence are absent; macOS remains unsupported.
+  live OpenAI reachability. Owner-facing credential sourcing, guarded workspace-write
+  model activation, durable write evidence, and real-turn evidence are absent; macOS
+  remains unsupported.
 
 ### Target invariant
 
@@ -459,8 +470,8 @@ Loss of the witness or every local lifecycle owner fails closed; an installed
 service/cgroup boundary is still needed for restart, upgrade, rollback, and descendants
 that escape the supervised process group (#120). The provider-neutral server,
 guardian, injected Codex runner, provisioner, and Linux containment library form an
-internal read-only composition, but do not change which runtime the current polling
-CLI launches.
+internal read-only activation path plus a fail-closed write-authority/containment
+checkpoint, but do not change which runtime the current polling CLI launches.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.

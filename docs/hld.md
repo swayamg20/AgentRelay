@@ -23,8 +23,10 @@ compose them under private authority, but the polling CLI still chooses the fake
 guardian owns provider-generation spawn and live supervision; its prearmed detached
 witness owns post-absence quiescence finalization. No current command activates a real
 model turn or turns Mission work into repository changes. A separate Linux-only
-containment library can construct the pinned Codex `0.146.0` Bubblewrap boundary, but
-only the internal read-only Codex composition binds it to the guardian. The
+containment library can construct the pinned Codex `0.146.0` Bubblewrap boundary. The
+internal Codex composition binds exact policy-selected read or write containment to
+its durable descriptor. Read mode may continue to the guardian; write mode fails before
+the credential is claimed or the guardian, provider, or runner is opened. The
 persistent fake-Capsule path now carries one private, fenced capability grant through
 independent Node and Capsule reference monitors; this is an enforcement checkpoint,
 not Codex activation.
@@ -55,7 +57,7 @@ agentrelay-node -> atomic local journal
                                                       outside the process group
 
 Internal Linux composition (not selected by a polling command):
-owner-prepared checkout -> read-only containment -> pinned Codex sandbox/app-server
+owner-prepared checkout -> policy-selected containment -> pinned Codex sandbox/app-server
 ```
 
 ### Relay
@@ -137,7 +139,9 @@ Node monitor separately gates final Relay completion and passes its live abort s
 into the request. Product policy cannot grant push, merge, package publish, deploy,
 arbitrary network access, secret access, or privilege expansion. Both monitors can
 emit bounded redacted decisions to injected sinks; no durable evidence sink is wired
-by default. See [research 008](research/008-local-runtime-authority.md).
+by default. Owner-local policy may explicitly add workspace-write authority; omitted
+or explicit read preserves the legacy read-only grant and policy hash. See
+[research 008](research/008-local-runtime-authority.md).
 
 The wire server is now provider-neutral and accepts a locally injected runtime while
 preserving the versioned request/response contract. Schema v1 selects the fake runtime;
@@ -169,8 +173,8 @@ store is forced ephemeral. The credential appears in neither argv, environment,
 durable state, nor `auth.json`. The exact app-server command now selects a retained
 Linux profile with Codex-managed CONNECT access only to `api.openai.com`; version
 checks, containment probes, and nested workspace sandboxes remain offline. There is
-still no owner-facing credential source, workspace-write authority, real model-turn
-proof, or Claude equivalent. The Codex child environment is allowlisted,
+still no owner-facing credential source, guarded workspace-write model activation,
+real model-turn proof, or Claude equivalent. The Codex child environment is allowlisted,
 and its private home is derived locally beneath the Capsule and revalidated as
 canonical, current-user-owned, and exactly mode 0700. For an inherited
 uncertain-interrupt barrier, a fresh generation reads the exact intent once, persists a
@@ -184,7 +188,9 @@ to an explicit Bubblewrap policy, mandatory runtime canary, and private
 `retain_for_review` manifest. Recovery requires the exact manifest path, instance ID,
 and binding digest. The internal Codex provisioner stores that handle durably in the
 v2 descriptor before Capsule launch and strictly reopens it during dirty recovery;
-current polling commands do not select this path. The
+once any retained same-Mission delivery has a start intent or host-attempt history,
+later provisioning is recovery-only rather than creating a new boundary over that
+dirty checkout. Current polling commands do not select this path. The
 [original containment checkpoint](research/006-mission-workspace-containment.md)
 records the earlier offline policy; current mechanics live in the
 [low-level design](lld.md#guarded-linux-containment-checkpoint).
@@ -358,9 +364,9 @@ and the relay-owned idempotency key is not exposed to the model.
   singleton kernel lock now permits direct restart after process death, but it does
   not start the replacement Node.
 - A polling Codex command that supplies a credential from an approved owner-facing
-  source, selects the fixed provider-only egress boundary, enables workspace-write
-  authority, and completes local capability enforcement around every concrete side
-  effect.
+  source, selects the fixed provider-only egress boundary, activates the already-bound
+  workspace-write mode for a model, and completes local capability enforcement around
+  every concrete side effect.
 - Production activation of the internally composed Linux containment boundary. Its
   exact recovery handle is already durable before Capsule launch and its dedicated
   Linux process proof passes, but macOS has no supported equivalent.
@@ -382,8 +388,9 @@ wrappers or markers on teammate-originated mailbox fields, static host permissio
 recommendations, and per-acceptance local trust loading.
 
 At the guarded Linux checkpoint, the Node can also require an owner-controlled
-standalone checkout and expose both the worktree and Git metadata read-only inside
-containment, with explicit read and denied roots, private home/temp, fixed provider-only
+standalone checkout and expose the workspace with exact locally selected read or write
+access while keeping Git metadata read-only inside containment, with explicit read,
+write, and denied roots, private home/temp, fixed provider-only
 managed CONNECT egress, offline probes and nested workspace sandboxes, rejected ambient
 Codex configuration,
 disabled legacy Landlock, recursive read-tree alias inspection, and a mandatory
@@ -393,8 +400,10 @@ On the persistent Capsule path, the bound grant is enforced outside the
 model before runtime lifecycle operations, streamed output/usage/artifacts, and final
 Relay completion. Its four limit sources intersect monotonically, and product-denied
 effects remain denied even if a peer or Mission asks for them. The internal Codex
-composition uses the read-only subset and fixed provider-only egress; no polling command
-selects it, and no command grants workspace-write or verification execution.
+composition uses the read-only subset and fixed provider-only egress. Owner-local
+policy may grant workspace write and provision the matching containment, but activation
+fails before the credential is claimed or the guardian, provider, or runner is opened.
+No polling command selects either mode, and verification execution remains ungranted.
 
 They are not yet one end-to-end enforcement system:
 
@@ -499,11 +508,13 @@ separate, authenticated Mission and delivery control plane without stretching th
 handoff row into a scheduler. The foreground Node now consumes one turn through that
 API with either an in-process fake or a detached persistent fake Capsule. A pinned
 Codex client, injected runner, provider guardian, strict descriptor, provisioner, and
-persistent adapter now form an internal read-only composition. Its dedicated Linux
-process proof starts pinned Codex through both guarded boundaries, while the
+persistent adapter now form an internal read-only activation path plus a fail-closed
+write-authority/containment checkpoint. Its dedicated Linux process proof starts pinned
+Codex through both guarded boundaries, while the
 non-claiming doctor verifies the pinned runtime without Relay work. The next gates are
 an owner-facing credential source and polling composition that selects the fixed
-provider-only egress boundary, workspace-write authority, contract/artifact carriage,
+provider-only egress boundary, guarded workspace-write model activation,
+contract/artifact carriage,
 registered verification execution, durable structured execution evidence, adversarial
 evaluation, and Guarded Real Mission 0 through the public pipeline. Installed
 service/cgroup containment,

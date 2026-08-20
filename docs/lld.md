@@ -25,10 +25,11 @@ consumer for fake-adapter turn deliveries. It validates local workspace/policy s
 journals discovery and operation intent, and can recover exact host events from an
 independently persistent fake Mission Capsule after the Node process is killed. There
 is now a provider-neutral Capsule server, injected Codex runner, provider guardian,
-strict v2 descriptor, persistent adapter, and read-only provisioner. Internal APIs
-compose them under the private authority boundary, but no polling CLI selects them and
-no test executes a real model turn. The guardian owns generation spawn and live
-supervision; its prearmed detached
+strict v2 descriptor, persistent adapter, and policy-selected read/write provisioner.
+Internal APIs compose them under the private authority boundary, but write activation
+deliberately stops before the credential is claimed or the guardian, provider, or
+runner is opened. No polling CLI selects either mode and no test executes a real model
+turn. The guardian owns generation spawn and live supervision; its prearmed detached
 reaper owns teardown proof and post-absence quiescence. There is also no
 contract-acknowledgement or verification-delivery handler, so this still does not
 prove execution on two machines. A Linux-only Codex containment library now exists,
@@ -479,8 +480,10 @@ types are their intersection. Capabilities must use their canonical action/resou
 pair. Product policy rejects repository push/merge, package publish, deployment,
 arbitrary network access, secret access, and privilege expansion even if such a
 capability appears in an input. The compiled fake-runtime grant includes lifecycle,
-workspace-read, usage-report, artifact-publish, and outbound-publish capabilities. It
-does not include workspace write or verification execution.
+workspace-read, usage-report, artifact-publish, and outbound-publish capabilities. An
+explicit accepted owner-local `workspace_access: "write"` profile also adds
+workspace-write. Omitted or explicit `read` preserves the legacy read-only grant and
+canonical policy hash. Verification execution remains absent.
 
 Before runtime activation, Node journal schema 4 checkpoints the exact grant in the
 delivery entry. Reopening must reproduce it from the same trusted local inputs; a
@@ -592,8 +595,9 @@ absence, waits for that durable matching state, and only then releases its own l
 settles termination. A same-boot non-quiescent predecessor fails closed, while a
 changed kernel boot-session ID safely reconciles state left by a host reboot.
 
-This still has no polling CLI wiring, owner-facing credential source, workspace-write
-authority, installed service supervisor, or real model-turn evidence. The internal
+This still has no polling CLI wiring, owner-facing credential source, guarded
+workspace-write model activation, installed service supervisor, or real model-turn
+evidence. The internal
 provider generation has only the fixed egress boundary described below.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
@@ -611,8 +615,9 @@ fail closed. Recovery revalidates the same identity while allowing expected dirt
 Mission edits.
 
 `prepareCodexSandboxContainment` builds a Linux-only Codex `0.146.0` boundary with an
-explicit read or write workspace mode. The current Codex provisioner requires read
-mode; `.git` remains read-only, the pinned minimal system view plus explicit approved
+explicit read or write workspace mode. The Codex provisioner selects the exact mode
+from the accepted owner-local policy and requires matching workspace authority;
+`.git` remains read-only, the pinned minimal system view plus explicit approved
 trees are readable, and the owner home, containment control directory, and configured
 forbidden roots are denied.
 `HOME`, `CODEX_HOME`, and all
@@ -645,7 +650,13 @@ identity and canary checks, and never resets or deletes the dirty checkout. Lega
 egress-less or altered provider policies are rejected during parse and recovery even
 when their binding digest was recomputed. The Codex
 provisioner durably stores this exact handle in the v2 descriptor before Capsule launch
-and strictly revalidates it during dirty recovery. No polling CLI selects that path.
+and strictly revalidates it during dirty recovery. Once any retained delivery for the
+same Mission contains a start intent or host-attempt history, later provisioning is
+recovery-only and cannot create a fresh containment instance over the dirty checkout.
+Write-mode Capsule activation validates that recovered mode, then fails closed before
+claiming the credential or opening the guardian, provider, or runner. The local
+controller identifies this as `workspace_write_activation_not_enabled`; the private
+wire redacts it to `internal` and retires the Capsule. No polling CLI selects that path.
 macOS and other platforms fail closed, no real model turn uses this boundary, and the
 Linux process coverage verifies command/profile selection, proxy-environment injection,
 and failed direct sockets without making a live OpenAI request; it is library-level
@@ -796,11 +807,12 @@ deliveries have a separate model and public control plane. The local Node now pr
 both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
 after Node-process death. The provider-neutral server, injected Codex runner, and
 provider guardian/reaper, strict descriptor, provisioner, and persistent adapter add a
-guarded read-only checkpoint with exact retained recovery identity and a passing Linux
-process proof. Internal Codex composition uses the bound reference monitor, but no
-polling CLI selects it. The next gates are an owner-facing credential source and
-polling composition that selects the fixed provider-only egress boundary,
-workspace-write authority, registered verification and artifact carriage, durable
+guarded read-only activation path plus a fail-closed write-authority/containment
+checkpoint with exact retained recovery identity and a passing Linux process proof.
+Internal Codex composition uses the bound reference monitor, but no polling CLI selects
+it. The next gates are an owner-facing credential source and polling composition that
+selects the fixed provider-only egress boundary, guarded workspace-write model
+activation, registered verification and artifact carriage, durable
 structured execution evidence, adversarial evaluation, Guarded Real Mission 0, and
 finally the two-machine proof. Installed
 service/cgroup containment,
