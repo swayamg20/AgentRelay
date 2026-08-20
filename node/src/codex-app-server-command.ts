@@ -1,3 +1,4 @@
+import { isAbsolute, normalize } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
 	CODEX_PROVIDER_BASE_URL_CONFIG,
@@ -49,7 +50,12 @@ export const CODEX_EPHEMERAL_AUTH_CONFIG = 'cli_auth_credentials_store="ephemera
 export const CODEX_DISABLED_AGENTS_CONFIG = "agents.enabled=false";
 export const CODEX_DISABLED_WEB_SEARCH_CONFIG = 'web_search="disabled"';
 
-export function buildCodexAppServerArguments(): string[] {
+export function codexUntrustedProjectConfig(workspaceCwd: string): string {
+	assertCanonicalWorkspace(workspaceCwd);
+	return `projects={${JSON.stringify(workspaceCwd)}={trust_level="untrusted"}}`;
+}
+
+export function buildCodexAppServerArguments(workspaceCwd: string): string[] {
 	return [
 		"--strict-config",
 		"--config",
@@ -62,6 +68,8 @@ export function buildCodexAppServerArguments(): string[] {
 		CODEX_DISABLED_AGENTS_CONFIG,
 		"--config",
 		CODEX_DISABLED_WEB_SEARCH_CONFIG,
+		"--config",
+		codexUntrustedProjectConfig(workspaceCwd),
 		...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 		"app-server",
 		"--listen",
@@ -73,12 +81,26 @@ export type AdmittedCodexProcessKind = "version_probe" | "app_server";
 
 export function classifyAdmittedCodexProcessArguments(
 	argv: readonly string[],
+	workspaceCwd: string,
 ): AdmittedCodexProcessKind | null {
 	if (isDeepStrictEqual(argv, ["--version"])) return "version_probe";
-	if (isDeepStrictEqual(argv, buildCodexAppServerArguments())) return "app_server";
+	if (isDeepStrictEqual(argv, buildCodexAppServerArguments(workspaceCwd))) return "app_server";
 	return null;
 }
 
-export function isAdmittedCodexProcessArguments(argv: readonly string[]): boolean {
-	return classifyAdmittedCodexProcessArguments(argv) !== null;
+export function isAdmittedCodexProcessArguments(
+	argv: readonly string[],
+	workspaceCwd: string,
+): boolean {
+	return classifyAdmittedCodexProcessArguments(argv, workspaceCwd) !== null;
+}
+
+function assertCanonicalWorkspace(workspaceCwd: string): void {
+	if (
+		!isAbsolute(workspaceCwd) ||
+		normalize(workspaceCwd) !== workspaceCwd ||
+		workspaceCwd.includes("\0")
+	) {
+		throw new Error("Codex workspace must be an absolute normalized path without NUL");
+	}
 }

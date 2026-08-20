@@ -201,7 +201,7 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					authoritySignal: authority.signal,
 					claimOwnerCredential: this.#claimOwnerCredential,
 					command: { executable: containment.authorization.providerExecutable },
-					cwd: containment.authorization.workspace.root,
+					workspaceCwd: containment.authorization.workspace.root,
 					capsuleDirectory: containment.authorization.runtimeDirectory,
 					env: this.#environment,
 					boundary: containment.boundary,

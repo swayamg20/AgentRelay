@@ -24,7 +24,8 @@ export interface CodexAppServerCommand {
 
 export interface CodexAppServerProcessOptions {
 	readonly command: CodexAppServerCommand;
-	readonly cwd: string;
+	readonly workspaceCwd: string;
+	readonly processCwd: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly boundary: CodexProcessBoundary;
 	readonly authoritySignal: AbortSignal;
@@ -32,7 +33,8 @@ export interface CodexAppServerProcessOptions {
 
 export interface CodexAppServerProcess {
 	readonly child: ChildProcessWithoutNullStreams;
-	readonly cwd: string;
+	readonly workspaceCwd: string;
+	readonly processCwd: string;
 	readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	readonly closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 	readonly inputError: Promise<Error>;
@@ -74,14 +76,16 @@ export async function startCodexAppServerProcess(
 		throw new CodexAppServerError("policy", "Codex Mission Capsules currently require Unix");
 	}
 	const executable = validateCommand(options.command);
-	const cwd = validateAbsolutePath(options.cwd, "Codex working directory");
+	const workspaceCwd = validateAbsolutePath(options.workspaceCwd, "Codex workspace");
+	const processCwd = validateAbsolutePath(options.processCwd, "Codex process working directory");
 	options.authoritySignal.throwIfAborted();
 	await verifyCodexCliVersion(
 		executable,
-		cwd,
+		processCwd,
 		options.env,
 		options.boundary,
 		options.authoritySignal,
+		workspaceCwd,
 	);
 	options.authoritySignal.throwIfAborted();
 
@@ -89,12 +93,14 @@ export async function startCodexAppServerProcess(
 		options.boundary,
 		{
 			executable,
-			argv: buildCodexAppServerArguments(),
-			cwd,
+			argv: buildCodexAppServerArguments(workspaceCwd),
+			workspaceCwd,
+			cwd: processCwd,
 			env: options.env,
 		},
 		options.authoritySignal,
 	);
+	assertPreparedScope(prepared, workspaceCwd, processCwd);
 	options.authoritySignal.throwIfAborted();
 	const child = spawn(prepared.executable, [...prepared.argv], {
 		cwd: prepared.cwd,
@@ -128,7 +134,8 @@ export async function startCodexAppServerProcess(
 	child.stderr.resume();
 	return {
 		child,
-		cwd,
+		workspaceCwd,
+		processCwd,
 		exited,
 		closed,
 		inputError,
@@ -269,21 +276,24 @@ function assertFrameSize(value: string, direction: "request" | "response"): void
 
 export async function verifyCodexCliVersion(
 	executable: string,
-	cwd: string,
+	processCwd: string,
 	env: NodeJS.ProcessEnv,
 	boundary: CodexProcessBoundary,
 	signal: AbortSignal,
+	workspaceCwd: string = processCwd,
 ): Promise<void> {
 	const prepared = await prepareContainedProcess(
 		boundary,
 		{
 			executable,
 			argv: ["--version"],
-			cwd,
+			workspaceCwd,
+			cwd: processCwd,
 			env,
 		},
 		signal,
 	);
+	assertPreparedScope(prepared, workspaceCwd, processCwd);
 	signal.throwIfAborted();
 	const child = spawn(prepared.executable, [...prepared.argv], {
 		cwd: prepared.cwd,
@@ -432,6 +442,19 @@ async function prepareContainedProcess(
 
 function validateCommand(command: CodexAppServerCommand): string {
 	return validateAbsolutePath(command.executable, "Codex executable");
+}
+
+function assertPreparedScope(
+	prepared: { readonly workspaceCwd: string; readonly cwd: string },
+	workspaceCwd: string,
+	processCwd: string,
+): void {
+	if (prepared.workspaceCwd !== workspaceCwd || prepared.cwd !== processCwd) {
+		throw new CodexAppServerError(
+			"policy",
+			"Codex process containment changed its bound working directories",
+		);
+	}
 }
 
 function validateAbsolutePath(path: string, label: string): string {

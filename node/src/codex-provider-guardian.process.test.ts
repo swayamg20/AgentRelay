@@ -360,7 +360,7 @@ function createGuardian(fixture: FakeAppServerFixture): SupervisedCodexProviderG
 	return new SupervisedCodexProviderGuardian({
 		capsuleId: CAPSULE_ID,
 		command: { executable: fixture.scriptPath },
-		cwd: fixture.directory,
+		workspaceCwd: fixture.directory,
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,

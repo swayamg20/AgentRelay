@@ -121,18 +121,44 @@ describe.runIf(
 					{
 						executable: provider.executable,
 						argv: [fixture.probe, JSON.stringify(paths)],
-						cwd: fixture.workspace.root,
+						workspaceCwd: fixture.workspace.root,
+						cwd: containment.runtimeHome,
 						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
 					},
 					liveOwnerControlledSignal(),
 				),
 			).rejects.toThrow("Containment request does not match an admitted Codex command");
+			await expect(
+				containment.boundary.prepare(
+					{
+						executable: provider.executable,
+						argv: buildCodexAppServerArguments(join(fixture.workspace.root, "other")),
+						workspaceCwd: fixture.workspace.root,
+						cwd: containment.runtimeHome,
+						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
+					},
+					liveOwnerControlledSignal(),
+				),
+			).rejects.toThrow("Containment request does not match an admitted Codex command");
+			await expect(
+				containment.boundary.prepare(
+					{
+						executable: provider.executable,
+						argv: buildCodexAppServerArguments(fixture.workspace.root),
+						workspaceCwd: fixture.workspace.root,
+						cwd: fixture.workspace.root,
+						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
+					},
+					liveOwnerControlledSignal(),
+				),
+			).rejects.toThrow("Containment request does not match its pinned provider workspace");
 			const parentNetworkNamespace = await readlink("/proc/self/ns/net");
 			const versionProbe = await containment.boundary.prepare(
 				{
 					executable: provider.executable,
 					argv: ["--version"],
-					cwd: fixture.workspace.root,
+					workspaceCwd: fixture.workspace.root,
+					cwd: containment.runtimeHome,
 					env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
 				},
 				liveOwnerControlledSignal(),
@@ -144,8 +170,9 @@ describe.runIf(
 			const prepared = await containment.boundary.prepare(
 				{
 					executable: provider.executable,
-					argv: buildCodexAppServerArguments(),
-					cwd: fixture.workspace.root,
+					argv: buildCodexAppServerArguments(fixture.workspace.root),
+					workspaceCwd: fixture.workspace.root,
+					cwd: containment.runtimeHome,
 					env: {
 						HOME: containment.runtimeHome,
 						CODEX_HOME: containment.runtimeHome,
@@ -156,6 +183,11 @@ describe.runIf(
 			);
 			const commandSeparator = prepared.argv.indexOf("--");
 			expect(commandSeparator).toBeGreaterThan(0);
+			expect(prepared.cwd).toBe(containment.runtimeHome);
+			expect(prepared.workspaceCwd).toBe(fixture.workspace.root);
+			expect(prepared.argv.slice(0, commandSeparator)).toEqual(
+				expect.arrayContaining(["--cd", containment.runtimeHome]),
+			);
 			expect(prepared.argv.slice(0, commandSeparator)).toContain(CODEX_SANDBOX_PROFILE_NAME);
 			expect(prepared.argv.slice(0, commandSeparator)).not.toContain("network_proxy");
 			let result: Record<string, unknown>;
@@ -222,8 +254,9 @@ describe.runIf(
 				containment.boundary.prepare(
 					{
 						executable: provider.executable,
-						argv: buildCodexAppServerArguments(),
-						cwd: fixture.workspace.root,
+						argv: buildCodexAppServerArguments(fixture.workspace.root),
+						workspaceCwd: fixture.workspace.root,
+						cwd: containment.runtimeHome,
 						env: { HOME: containment.runtimeHome, CODEX_HOME: containment.runtimeHome },
 					},
 					liveOwnerControlledSignal(),
@@ -260,7 +293,7 @@ describe.runIf(
 		const generation = await new SupervisedCodexProviderGuardian({
 			capsuleId: randomUUID(),
 			command: { executable: launcher.executable },
-			cwd: fixture.workspace.root,
+			workspaceCwd: fixture.workspace.root,
 			capsuleDirectory: fixture.runtime,
 			env: {},
 			boundary: containment.boundary,
@@ -381,8 +414,9 @@ describe.runIf(
 		const prepared = await recovered.boundary.prepare(
 			{
 				executable: provider.executable,
-				argv: buildCodexAppServerArguments(),
-				cwd: fixture.workspace.root,
+				argv: buildCodexAppServerArguments(fixture.workspace.root),
+				workspaceCwd: fixture.workspace.root,
+				cwd: recovered.runtimeHome,
 				env: { HOME: recovered.runtimeHome, CODEX_HOME: recovered.runtimeHome },
 			},
 			liveOwnerControlledSignal(),

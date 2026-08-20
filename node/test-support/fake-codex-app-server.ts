@@ -26,15 +26,26 @@ export interface FakeAppServerOptions {
 	readonly ignoreSigterm?: boolean;
 	readonly continuousOutput?: boolean;
 	readonly gateContinuousOutput?: boolean;
+	readonly workspacePath?: string;
+	readonly effectiveTrust?: "untrusted" | "trusted" | "missing";
+	readonly effectiveMcpServers?: Readonly<Record<string, unknown>>;
+	readonly featurePages?: readonly (readonly Readonly<{
+		readonly name: string;
+		readonly enabled: boolean;
+	}>[])[];
+	readonly featureError?: boolean;
+	readonly maliciousMcpMarkerPath?: string;
 }
 
 export interface FakeAppServerFixture {
 	readonly directory: string;
+	readonly workspacePath: string;
 	readonly scriptPath: string;
 	readonly logPath: string;
 	readonly childPidPath: string;
 	readonly argvPath: string;
 	readonly environmentPath: string;
+	readonly processCwdPath: string;
 	readonly versionPidPath: string;
 	readonly appServerPidPath: string;
 	readonly credentialDigestPath: string;
@@ -52,11 +63,13 @@ export async function createFakeAppServer(
 	const childPidPath = join(directory, "child.pid");
 	const argvPath = join(directory, "argv.json");
 	const environmentPath = join(directory, "environment.json");
+	const processCwdPath = join(directory, "process-cwd.txt");
 	const versionPidPath = join(directory, "version.pid");
 	const appServerPidPath = join(directory, "app-server.pid");
 	const credentialDigestPath = join(directory, "credential.sha256");
 	const continuousOutputGatePath = join(directory, "continuous-output-go");
 	const configPath = join(directory, "fake-app-server-config.json");
+	const workspacePath = options.workspacePath ?? directory;
 	await writeFile(scriptPath, `#!${process.execPath}\n${FAKE_APP_SERVER_SOURCE}`, { mode: 0o700 });
 	await writeFile(
 		configPath,
@@ -79,10 +92,17 @@ export async function createFakeAppServer(
 			ignoreSigterm: options.ignoreSigterm ?? false,
 			continuousOutput: options.continuousOutput ?? false,
 			continuousOutputGatePath: options.gateContinuousOutput ? continuousOutputGatePath : null,
+			workspacePath,
+			effectiveTrust: options.effectiveTrust ?? "untrusted",
+			effectiveMcpServers: options.effectiveMcpServers ?? null,
+			featurePages: options.featurePages ?? [[{ name: "shell_tool", enabled: false }]],
+			featureError: options.featureError ?? false,
+			maliciousMcpMarkerPath: options.maliciousMcpMarkerPath ?? null,
 			logPath,
 			childPidPath,
 			argvPath,
 			environmentPath,
+			processCwdPath,
 			versionPidPath,
 			appServerPidPath,
 			credentialDigestPath,
@@ -91,11 +111,13 @@ export async function createFakeAppServer(
 	);
 	return {
 		directory,
+		workspacePath,
 		scriptPath,
 		logPath,
 		childPidPath,
 		argvPath,
 		environmentPath,
+		processCwdPath,
 		versionPidPath,
 		appServerPidPath,
 		credentialDigestPath,
@@ -184,11 +206,12 @@ const FAKE_APP_SERVER_SOURCE = `
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
 const config = JSON.parse(readFileSync(
-  join(process.cwd(), "fake-app-server-config.json"),
+  join(dirname(fileURLToPath(import.meta.url)), "fake-app-server-config.json"),
   "utf8",
 ));
 const version = config.version;
@@ -205,8 +228,9 @@ if (process.argv.includes("--version")) {
 function startAppServer() {
 writeFileSync(config.appServerPidPath, String(process.pid), { mode: 0o600 });
 writeFileSync(config.argvPath, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });
+writeFileSync(config.processCwdPath, process.cwd(), { mode: 0o600 });
 const logPath = config.logPath;
-const cwd = process.cwd();
+const cwd = config.workspacePath;
 const codexHome = config.codexHome ?? process.env.CODEX_HOME;
 const threadId = config.threadId;
 const readErrorCode = config.readErrorCode;
@@ -219,8 +243,18 @@ const exitAfterRead = config.exitAfterRead;
 const closeInputAfterRead = config.closeInputAfterRead;
 const unsafePolicy = config.unsafePolicy;
 const requestApproval = config.requestApproval;
+const argv = process.argv.slice(2);
+const untrustedProjectOverride = "projects={" + JSON.stringify(cwd) + "={trust_level=\\\"untrusted\\\"}}";
+if (
+  config.maliciousMcpMarkerPath !== null &&
+  existsSync(join(cwd, ".codex", "config.toml")) &&
+  !argv.includes(untrustedProjectOverride)
+) {
+  writeFileSync(config.maliciousMcpMarkerPath, "launched\\n", { mode: 0o600 });
+}
 if (config.ignoreSigterm) process.on("SIGTERM", () => undefined);
 let continuousOutputStarted = false;
+let threadLoaded = false;
 if (config.spawnDescendant) {
   const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",
@@ -237,12 +271,12 @@ const redactForLog = (message) => {
   ) return message;
   return { ...message, params: { ...message.params, apiKey: "[redacted]" } };
 };
-const baseThread = (turns = []) => ({
+const baseThread = (turns = [], status = threadLoaded ? { type: "idle" } : { type: "notLoaded" }) => ({
   id: threadId,
   sessionId: threadId,
   ephemeral: false,
   modelProvider: "openai",
-  status: { type: "idle" },
+  status,
   cwd,
   cliVersion: version,
   turns,
@@ -265,7 +299,7 @@ const threadResult = () => ({
   serviceTier: null,
   cwd,
   instructionSources: [],
-  approvalPolicy: "never",
+  approvalPolicy: "untrusted",
   approvalsReviewer: "user",
   sandbox: unsafePolicy ? { type: "dangerFullAccess" } : { type: "readOnly", networkAccess: false },
   reasoningEffort: null,
@@ -343,8 +377,41 @@ rl.on("line", (line) => {
         result: { account: { type: "apiKey" }, requiresOpenaiAuth: true },
       });
       return;
+    case "config/read": {
+      const project = config.effectiveTrust === "missing"
+        ? {}
+        : { [cwd]: { trust_level: config.effectiveTrust } };
+      const effective = {
+        projects: project,
+        features: { shell_tool: false },
+        ...(config.effectiveMcpServers === null
+          ? {}
+          : { mcp_servers: config.effectiveMcpServers }),
+      };
+      send({ id: message.id, result: { config: effective, origins: {} } });
+      return;
+    }
+    case "experimentalFeature/list": {
+      if (config.featureError) {
+        send({ id: message.id, error: { code: -32003, message: "feature list failed" } });
+        return;
+      }
+      const page = message.params?.cursor === undefined
+        ? 0
+        : Number(String(message.params.cursor).replace("page-", ""));
+      const next = page + 1 < config.featurePages.length ? "page-" + (page + 1) : null;
+      send({ id: message.id, result: { data: config.featurePages[page] ?? [], nextCursor: next } });
+      return;
+    }
+    case "thread/loaded/list":
+      send({
+        id: message.id,
+        result: { data: threadLoaded ? [threadId] : [], nextCursor: null },
+      });
+      return;
     case "thread/start":
     case "thread/resume":
+      threadLoaded = true;
       send({ id: message.id, result: threadResult() });
       send({ method: "thread/started", params: { thread: baseThread() } });
       if (config.continuousOutput && !continuousOutputStarted) {

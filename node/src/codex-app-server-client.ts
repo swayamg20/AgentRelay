@@ -1,3 +1,5 @@
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 import { buildCodexChildEnvironment, prepareCodexHome } from "./capsule-environment.js";
 import {
 	CODEX_APP_SERVER_CLIENT_VERSION,
@@ -26,8 +28,11 @@ import {
 	type CodexTurn,
 	codexApiKeyAccountResponseSchema,
 	codexApiKeyLoginResponseSchema,
+	codexConfigReadResultSchema,
+	codexExperimentalFeatureListResultSchema,
 	codexInitializeResponseSchema,
 	codexRelevantNotificationSchema,
+	codexThreadLoadedListResultSchema,
 	codexThreadReadResultSchema,
 	codexThreadStartResultSchema,
 	codexTurnStartResultSchema,
@@ -47,7 +52,7 @@ export type { StartCodexTurnInput } from "./codex-app-server-policy.js";
 
 export interface CodexAppServerClientOptions {
 	readonly command: CodexAppServerCommand;
-	readonly cwd: string;
+	readonly workspaceCwd: string;
 	readonly capsuleDirectory: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly boundary: CodexProcessBoundary;
@@ -100,7 +105,8 @@ export class CodexAppServerClient {
 			const env = buildCodexChildEnvironment(options.env, codexHome);
 			const transport = await CodexAppServerTransport.start({
 				command: options.command,
-				cwd: options.cwd,
+				workspaceCwd: options.workspaceCwd,
+				processCwd: codexHome,
 				env,
 				boundary: options.boundary,
 				authoritySignal: options.authoritySignal,
@@ -128,19 +134,24 @@ export class CodexAppServerClient {
 
 	async startThread(): Promise<CodexThreadStartResult> {
 		return this.runProviderCall(async () => {
+			await this.attestEffectiveConfig(this.#transport.workspaceCwd);
 			const result = parseCodexProviderResult(
 				codexThreadStartResultSchema,
 				await this.#transport.request("thread/start", {
-					cwd: this.#transport.cwd,
-					approvalPolicy: "never",
+					cwd: this.#transport.workspaceCwd,
+					approvalPolicy: "untrusted",
 					approvalsReviewer: "user",
 					sandbox: "read-only",
+					config: threadConfig(this.#transport.workspaceCwd),
+					environments: [],
 					serviceName: "agentrelay_node",
 					ephemeral: false,
 				}),
 				"thread/start",
 			);
-			assertReadOnlyThread(result, this.#transport.cwd);
+			assertReadOnlyThread(result, this.#transport.workspaceCwd);
+			await this.attestDisabledShellTool(result.thread.id);
+			await this.attestPrivateHome();
 			return result;
 		});
 	}
@@ -149,18 +160,23 @@ export class CodexAppServerClient {
 		this.assertUsable();
 		const threadId = parseCodexReference(threadIdValue);
 		return this.runProviderCall(async () => {
+			await this.attestEffectiveConfig(this.#transport.workspaceCwd);
+			await this.assertColdResume(threadId);
 			const result = parseCodexProviderResult(
 				codexThreadStartResultSchema,
 				await this.#transport.request("thread/resume", {
 					threadId,
-					cwd: this.#transport.cwd,
-					approvalPolicy: "never",
+					cwd: this.#transport.workspaceCwd,
+					approvalPolicy: "untrusted",
 					approvalsReviewer: "user",
 					sandbox: "read-only",
+					config: threadConfig(this.#transport.workspaceCwd),
 				}),
 				"thread/resume",
 			);
-			assertReadOnlyThread(result, this.#transport.cwd, threadId);
+			assertReadOnlyThread(result, this.#transport.workspaceCwd, threadId);
+			await this.attestDisabledShellTool(result.thread.id);
+			await this.attestPrivateHome();
 			return result;
 		});
 	}
@@ -174,14 +190,14 @@ export class CodexAppServerClient {
 				await this.#transport.request("thread/read", { threadId, includeTurns: true }),
 				"thread/read",
 			);
-			assertThreadVersionAndScope(result.thread, this.#transport.cwd, threadId);
+			assertThreadVersionAndScope(result.thread, this.#transport.workspaceCwd, threadId);
 			return result.thread;
 		});
 	}
 
 	async startReadOnlyTurn(inputValue: StartCodexTurnInput): Promise<CodexTurn> {
 		this.assertUsable();
-		const input = parseStartCodexTurnInput(inputValue, this.#transport.cwd);
+		const input = parseStartCodexTurnInput(inputValue, this.#transport.workspaceCwd);
 		return this.runProviderCall(async () => {
 			const result = parseCodexProviderResult(
 				codexTurnStartResultSchema,
@@ -189,10 +205,11 @@ export class CodexAppServerClient {
 					threadId: input.threadId,
 					clientUserMessageId: input.clientUserMessageId,
 					input: [{ type: "text", text: input.text, text_elements: [] }],
-					cwd: this.#transport.cwd,
-					approvalPolicy: "never",
+					cwd: this.#transport.workspaceCwd,
+					approvalPolicy: "untrusted",
 					approvalsReviewer: "user",
 					sandboxPolicy: { type: "readOnly", networkAccess: false },
+					environments: [],
 					outputSchema: input.outputSchema,
 				}),
 				"turn/start",
@@ -264,7 +281,7 @@ export class CodexAppServerClient {
 						version: CODEX_APP_SERVER_CLIENT_VERSION,
 					},
 					capabilities: {
-						experimentalApi: false,
+						experimentalApi: true,
 						requestAttestation: false,
 						mcpServerOpenaiFormElicitation: false,
 						optOutNotificationMethods: QUIET_CODEX_NOTIFICATION_METHODS,
@@ -276,6 +293,114 @@ export class CodexAppServerClient {
 			this.#identity = response;
 			await this.#transport.sendNotification("initialized");
 		});
+	}
+
+	private async attestEffectiveConfig(cwd: string): Promise<void> {
+		let value: unknown;
+		try {
+			value = await this.#transport.request("config/read", { cwd, includeLayers: false });
+		} catch (error) {
+			if (!(error instanceof CodexAppServerResponseError)) throw error;
+			throw new CodexAppServerError("policy", "Codex effective configuration is unavailable", {
+				cause: error,
+			});
+		}
+		const result = parseCodexProviderResult(codexConfigReadResultSchema, value, "config/read");
+		assertEffectiveConfig(result.config, this.#transport.workspaceCwd);
+	}
+
+	private async attestPrivateHome(): Promise<void> {
+		await this.attestEffectiveConfig(this.#codexHome);
+		try {
+			await lstat(join(this.#codexHome, "config.toml"));
+		} catch (error) {
+			if (errorCode(error) === "ENOENT") return;
+			throw new CodexAppServerError("policy", "Codex private configuration is not inspectable", {
+				cause: error,
+			});
+		}
+		throw new CodexAppServerError("policy", "Codex persisted unexpected private configuration");
+	}
+
+	private async assertColdResume(threadId: string): Promise<void> {
+		let cursor: string | undefined;
+		const seenCursors = new Set<string>();
+		for (let page = 0; page < 256; page += 1) {
+			let value: unknown;
+			try {
+				value = await this.#transport.request("thread/loaded/list", {
+					limit: 256,
+					...(cursor === undefined ? {} : { cursor }),
+				});
+			} catch (error) {
+				if (!(error instanceof CodexAppServerResponseError)) throw error;
+				throw new CodexAppServerError("policy", "Codex loaded-thread state is unavailable", {
+					cause: error,
+				});
+			}
+			const result = parseCodexProviderResult(
+				codexThreadLoadedListResultSchema,
+				value,
+				"thread/loaded/list",
+			);
+			if (result.data.includes(threadId)) {
+				throw new CodexAppServerError("policy", "Codex resume requires a cold stored thread");
+			}
+			if (result.nextCursor === null) return;
+			if (seenCursors.has(result.nextCursor)) {
+				throw new CodexAppServerError(
+					"protocol",
+					"Codex loaded-thread pagination repeated a cursor",
+				);
+			}
+			seenCursors.add(result.nextCursor);
+			cursor = result.nextCursor;
+		}
+		throw new CodexAppServerError("protocol", "Codex loaded-thread pagination exceeded its bound");
+	}
+
+	private async attestDisabledShellTool(threadId: string): Promise<void> {
+		let cursor: string | undefined;
+		const seenCursors = new Set<string>();
+		let shellToolEntries = 0;
+		for (let page = 0; page < 256; page += 1) {
+			let value: unknown;
+			try {
+				value = await this.#transport.request("experimentalFeature/list", {
+					threadId,
+					...(cursor === undefined ? {} : { cursor }),
+				});
+			} catch (error) {
+				if (!(error instanceof CodexAppServerResponseError)) throw error;
+				throw new CodexAppServerError("policy", "Codex feature state is unavailable", {
+					cause: error,
+				});
+			}
+			const result = parseCodexProviderResult(
+				codexExperimentalFeatureListResultSchema,
+				value,
+				"experimentalFeature/list",
+			);
+			for (const feature of result.data) {
+				if (feature.name !== "shell_tool") continue;
+				shellToolEntries += 1;
+				if (feature.enabled) {
+					throw new CodexAppServerError("policy", "Codex shell tool remained enabled");
+				}
+			}
+			if (result.nextCursor === null) {
+				if (shellToolEntries !== 1) {
+					throw new CodexAppServerError("policy", "Codex shell tool feature state is not singular");
+				}
+				return;
+			}
+			if (seenCursors.has(result.nextCursor)) {
+				throw new CodexAppServerError("protocol", "Codex feature pagination repeated a cursor");
+			}
+			seenCursors.add(result.nextCursor);
+			cursor = result.nextCursor;
+		}
+		throw new CodexAppServerError("protocol", "Codex feature pagination exceeded its bound");
 	}
 
 	private async authenticate(ownerCredential: CodexOwnerCredential): Promise<void> {
@@ -385,4 +510,44 @@ export class CodexAppServerClient {
 
 function authenticationFailure(): CodexAppServerError {
 	return new CodexAppServerError("authentication", "Codex owner authentication failed");
+}
+
+function threadConfig(workspaceCwd: string): Record<string, unknown> {
+	return {
+		projects: { [workspaceCwd]: { trust_level: "untrusted" } },
+		features: { shell_tool: false },
+	};
+}
+
+function assertEffectiveConfig(config: Record<string, unknown>, workspaceCwd: string): void {
+	const projects = objectValue(config.projects);
+	const project = projects === null ? null : objectValue(projects[workspaceCwd]);
+	const features = objectValue(config.features);
+	if (project?.trust_level !== "untrusted" || features?.shell_tool !== false) {
+		throw new CodexAppServerError(
+			"policy",
+			"Codex did not preserve the required untrusted project configuration",
+		);
+	}
+	const mcpServers = config.mcp_servers;
+	const effectiveMcpServers = objectValue(mcpServers);
+	if (
+		mcpServers !== undefined &&
+		mcpServers !== null &&
+		(effectiveMcpServers === null || Object.keys(effectiveMcpServers).length > 0)
+	) {
+		throw new CodexAppServerError("policy", "Codex effective configuration includes MCP servers");
+	}
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function errorCode(error: unknown): string | undefined {
+	return typeof error === "object" && error !== null && "code" in error
+		? String(error.code)
+		: undefined;
 }

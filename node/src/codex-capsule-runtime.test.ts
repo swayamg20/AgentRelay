@@ -339,7 +339,7 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(guardian.claimOwnerCredential).toBe(fixture.claimOwnerCredential);
 		expect(guardian.deadlineAtMs).toBe(Date.parse(grant.hard_expires_at));
 		expect(guardian.command.executable).toBe(fixture.containment.authorization.providerExecutable);
-		expect(guardian.cwd).toBe(fixture.containment.authorization.workspace.root);
+		expect(guardian.workspaceCwd).toBe(fixture.containment.authorization.workspace.root);
 		expect(guardian.capsuleDirectory).toBe(fixture.containment.authorization.runtimeDirectory);
 		expect(guardian.env).not.toHaveProperty("OPENAI_API_KEY");
 		expect(evidence.filter((item) => item.action === "workspace_read")).toHaveLength(1);

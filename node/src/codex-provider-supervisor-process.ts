@@ -2,7 +2,7 @@ import { type ChildProcess, type ChildProcessByStdio, spawn } from "node:child_p
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
-import type { CodexPreparedProcess } from "./codex-provider-supervisor-protocol.js";
+import type { CodexProviderPreparedProcess } from "./codex-provider-supervisor-protocol.js";
 
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
 
@@ -17,7 +17,9 @@ export class CodexSupervisorProcessError extends Error {
 	}
 }
 
-export async function verifyPreparedCodexVersion(command: CodexPreparedProcess): Promise<void> {
+export async function verifyPreparedCodexVersion(
+	command: CodexProviderPreparedProcess,
+): Promise<void> {
 	const child = spawnPreparedVersionProbe(command);
 	const closed = childClose(child);
 	child.stderr.resume();
@@ -53,7 +55,7 @@ export async function verifyPreparedCodexVersion(command: CodexPreparedProcess):
 }
 
 export async function startPreparedCodexProvider(
-	command: CodexPreparedProcess,
+	command: CodexProviderPreparedProcess,
 ): Promise<ChildProcess> {
 	const child = spawnPreparedProvider(command);
 	try {
@@ -79,7 +81,7 @@ export function assertSupervisorProcessGroup(): void {
 }
 
 function spawnPreparedVersionProbe(
-	command: CodexPreparedProcess,
+	command: CodexProviderPreparedProcess,
 ): ChildProcessByStdio<null, Readable, Readable> {
 	return spawn(command.executable, [...command.argv], {
 		cwd: command.cwd,
@@ -90,7 +92,7 @@ function spawnPreparedVersionProbe(
 	});
 }
 
-function spawnPreparedProvider(command: CodexPreparedProcess): ChildProcess {
+function spawnPreparedProvider(command: CodexProviderPreparedProcess): ChildProcess {
 	// Keep protocol bytes in inherited OS pipes; the guardian owns only lifecycle control.
 	return spawn(command.executable, [...command.argv], {
 		cwd: command.cwd,

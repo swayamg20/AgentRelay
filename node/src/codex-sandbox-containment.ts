@@ -286,12 +286,13 @@ class PinnedCodexSandboxBoundary implements CodexProcessBoundary {
 					? CODEX_SANDBOX_OFFLINE_PROFILE_NAME
 					: CODEX_SANDBOX_PROFILE_NAME,
 				"--cd",
-				this.input.workspace.root,
+				this.layout.runtimeHome,
 				"--",
 				request.executable,
 				...request.argv,
 			],
-			cwd: this.input.workspace.root,
+			workspaceCwd: this.input.workspace.root,
+			cwd: this.layout.runtimeHome,
 			env: {
 				HOME: this.layout.launcherHome,
 				CODEX_HOME: this.layout.launcherHome,
@@ -330,13 +331,17 @@ function assertProcessRequest(
 	input: CodexSandboxContainmentInput,
 	layout: ContainmentLayout,
 ): AdmittedCodexProcessKind {
-	if (request.executable !== input.provider.executable || request.cwd !== input.workspace.root) {
+	if (
+		request.executable !== input.provider.executable ||
+		request.workspaceCwd !== input.workspace.root ||
+		request.cwd !== layout.runtimeHome
+	) {
 		throw new Error("Containment request does not match its pinned provider workspace");
 	}
 	if (request.env.HOME !== layout.runtimeHome || request.env.CODEX_HOME !== layout.runtimeHome) {
 		throw new Error("Containment request does not use the private runtime home");
 	}
-	const processKind = classifyAdmittedCodexProcessArguments(request.argv);
+	const processKind = classifyAdmittedCodexProcessArguments(request.argv, input.workspace.root);
 	if (processKind === null) {
 		throw new Error("Containment request does not match an admitted Codex command");
 	}

@@ -130,7 +130,38 @@ export const codexThreadStartResultSchema = z
 
 export const codexThreadReadResultSchema = z.object({ thread: codexThreadSchema }).passthrough();
 
+export const codexThreadLoadedListResultSchema = z
+	.object({
+		data: z.array(boundedString(4_096).min(1)).max(256),
+		nextCursor: boundedString(4_096).min(1).nullable(),
+	})
+	.passthrough();
+
 export const codexTurnStartResultSchema = z.object({ turn: codexTurnSchema }).passthrough();
+
+export const codexConfigReadResultSchema = z
+	.object({
+		config: z.record(z.unknown()),
+		origins: z.record(z.unknown()),
+		layers: z.never().optional(),
+	})
+	.passthrough();
+
+export const codexExperimentalFeatureListResultSchema = z
+	.object({
+		data: z
+			.array(
+				z
+					.object({
+						name: boundedString(256).min(1),
+						enabled: z.boolean(),
+					})
+					.passthrough(),
+			)
+			.max(4_096),
+		nextCursor: boundedString(4_096).min(1).nullable(),
+	})
+	.passthrough();
 
 const tokenUsageBreakdownSchema = z
 	.object({

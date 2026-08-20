@@ -33,6 +33,10 @@ describe("Codex app-server containment gate", () => {
 		expect(requests).toHaveLength(2);
 		expect(requests[0]?.argv).toEqual(["--version"]);
 		expect(requests[1]?.argv).toContain("app-server");
+		expect(requests.every((request) => request.workspaceCwd === fixture.directory)).toBe(true);
+		expect(requests.every((request) => request.cwd === `${fixture.directory}/codex-home`)).toBe(
+			true,
+		);
 		await client.close();
 		clients.splice(clients.indexOf(client), 1);
 	});
@@ -51,6 +55,28 @@ describe("Codex app-server containment gate", () => {
 		});
 		await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 	});
+
+	it.each([
+		["workspace", { workspaceCwd: "/srv/agentrelay/other" }],
+		["process cwd", { cwd: "/srv/agentrelay/runtime/other" }],
+	] as const)(
+		"starts no provider when containment changes the bound %s",
+		async (_name, changed) => {
+			const fixture = await fakeAppServer();
+			const boundary: CodexProcessBoundary = {
+				prepare: async (request, signal) => ({
+					...(await directCodexProcessBoundaryForTests.prepare(request, signal)),
+					...changed,
+				}),
+			};
+
+			await expect(openClient(fixture, boundary)).rejects.toMatchObject({
+				name: "CodexAppServerError",
+				reason: "policy",
+			});
+			await expect(readFile(fixture.argvPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+		},
+	);
 });
 
 async function fakeAppServer(): Promise<FakeAppServerFixture> {
@@ -66,7 +92,7 @@ async function openClient(
 	const client = await CodexAppServerClient.start(
 		{
 			command: { executable: fixture.scriptPath },
-			cwd: fixture.directory,
+			workspaceCwd: fixture.directory,
 			capsuleDirectory: fixture.directory,
 			env: fixture.env,
 			boundary,

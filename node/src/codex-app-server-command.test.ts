@@ -6,6 +6,7 @@ import {
 	DISABLED_CODEX_FEATURES,
 	buildCodexAppServerArguments,
 	classifyAdmittedCodexProcessArguments,
+	codexUntrustedProjectConfig,
 } from "./codex-app-server-command.js";
 import {
 	CODEX_PROVIDER_BASE_URL_CONFIG,
@@ -52,11 +53,12 @@ const EXPECTED_DISABLED_FEATURES = [
 	"tool_suggest",
 	"workspace_dependencies",
 ] as const;
+const WORKSPACE = "/srv/agentrelay/workspace";
 
 describe("Codex app-server command", () => {
 	it("pins the patch-only process configuration", () => {
 		expect(DISABLED_CODEX_FEATURES).toEqual(EXPECTED_DISABLED_FEATURES);
-		expect(buildCodexAppServerArguments()).toEqual([
+		expect(buildCodexAppServerArguments(WORKSPACE)).toEqual([
 			"--strict-config",
 			"--config",
 			CODEX_EPHEMERAL_AUTH_CONFIG,
@@ -68,6 +70,8 @@ describe("Codex app-server command", () => {
 			CODEX_DISABLED_AGENTS_CONFIG,
 			"--config",
 			CODEX_DISABLED_WEB_SEARCH_CONFIG,
+			"--config",
+			codexUntrustedProjectConfig(WORKSPACE),
 			...EXPECTED_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
 			"app-server",
 			"--listen",
@@ -98,17 +102,35 @@ describe("Codex app-server command", () => {
 	] as const)("rejects changed %s process configuration", (_name, current, replacement) => {
 		expect(
 			classifyAdmittedCodexProcessArguments(
-				buildCodexAppServerArguments().map((value) => (value === current ? replacement : value)),
+				buildCodexAppServerArguments(WORKSPACE).map((value) =>
+					value === current ? replacement : value,
+				),
+				WORKSPACE,
 			),
 		).toBeNull();
 	});
 
 	it("rejects a process command that restores a native shell surface", () => {
-		const argv = buildCodexAppServerArguments();
+		const argv = buildCodexAppServerArguments(WORKSPACE);
 		const shellTool = argv.indexOf("shell_tool");
 		expect(shellTool).toBeGreaterThan(0);
 		argv[shellTool - 1] = "--enable";
 
-		expect(classifyAdmittedCodexProcessArguments(argv)).toBeNull();
+		expect(classifyAdmittedCodexProcessArguments(argv, WORKSPACE)).toBeNull();
+	});
+
+	it("binds the exact canonical workspace in the highest-precedence trust override", () => {
+		expect(codexUntrustedProjectConfig('/srv/workspace/owner "quoted"')).toBe(
+			'projects={"/srv/workspace/owner \\"quoted\\""={trust_level="untrusted"}}',
+		);
+		expect(() => buildCodexAppServerArguments("relative/workspace")).toThrow(
+			"Codex workspace must be an absolute normalized path without NUL",
+		);
+		expect(
+			classifyAdmittedCodexProcessArguments(
+				buildCodexAppServerArguments(WORKSPACE),
+				"/srv/agentrelay/other",
+			),
+		).toBeNull();
 	});
 });

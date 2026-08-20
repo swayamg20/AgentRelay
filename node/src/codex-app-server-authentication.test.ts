@@ -226,7 +226,7 @@ function clientOptions(
 ): CodexAppServerClientOptions {
 	return {
 		command: { executable: fixture.scriptPath },
-		cwd: fixture.directory,
+		workspaceCwd: fixture.directory,
 		capsuleDirectory: fixture.directory,
 		env: fixture.env,
 		boundary: directCodexProcessBoundaryForTests,

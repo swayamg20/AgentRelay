@@ -36,6 +36,12 @@ export const codexPreparedProcessSchema = z
 
 export type CodexPreparedProcess = z.infer<typeof codexPreparedProcessSchema>;
 
+export const codexProviderPreparedProcessSchema = codexPreparedProcessSchema.extend({
+	workspace_cwd: absolutePathSchema,
+});
+
+export type CodexProviderPreparedProcess = z.infer<typeof codexProviderPreparedProcessSchema>;
+
 const initSchema = z
 	.object({
 		version: z.literal(1),
@@ -49,8 +55,8 @@ const initSchema = z
 		heartbeat_timeout_ms: z.number().int().min(250).max(60_000),
 		heartbeat_record_ms: z.number().int().min(100).max(60_000),
 		reaper: codexPreparedProcessSchema,
-		version_probe: codexPreparedProcessSchema,
-		app_server: codexPreparedProcessSchema,
+		version_probe: codexProviderPreparedProcessSchema,
+		app_server: codexProviderPreparedProcessSchema,
 	})
 	.strict();
 

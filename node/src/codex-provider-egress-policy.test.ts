@@ -13,6 +13,8 @@ import {
 	codexProviderEgressBinding,
 } from "./codex-provider-egress-policy.js";
 
+const WORKSPACE = "/srv/agentrelay/workspace";
+
 describe("Codex provider egress policy", () => {
 	it("renders the exact outer managed CONNECT proxy policy", () => {
 		expect(CODEX_PROVIDER_EGRESS_POLICY).toEqual({
@@ -51,7 +53,7 @@ describe("Codex provider egress policy", () => {
 	});
 
 	it("pins the inner provider while keeping its nested network proxy disabled", () => {
-		const argv = buildCodexAppServerArguments();
+		const argv = buildCodexAppServerArguments(WORKSPACE);
 
 		expect(CODEX_PROVIDER_CONFIG).toBe('model_provider="openai"');
 		expect(CODEX_PROVIDER_BASE_URL_CONFIG).toBe('openai_base_url="https://api.openai.com/v1"');
@@ -68,21 +70,23 @@ describe("Codex provider egress policy", () => {
 			withChangedConfig(CODEX_PROVIDER_BASE_URL_CONFIG, 'openai_base_url="https://evil.test"'),
 		],
 		["alternate provider", withChangedConfig(CODEX_PROVIDER_CONFIG, 'model_provider="other"')],
-		["extra app-server argument", [...buildCodexAppServerArguments(), "--help"]],
-		["missing app-server argument", buildCodexAppServerArguments().slice(0, -1)],
+		["extra app-server argument", [...buildCodexAppServerArguments(WORKSPACE), "--help"]],
+		["missing app-server argument", buildCodexAppServerArguments(WORKSPACE).slice(0, -1)],
 	] as const)("rejects a %s containment argv", (_name, argv) => {
-		expect(isAdmittedCodexProcessArguments(argv)).toBe(false);
+		expect(isAdmittedCodexProcessArguments(argv, WORKSPACE)).toBe(false);
 	});
 
 	it("admits only the exact version probe and pinned app-server commands", () => {
-		expect(classifyAdmittedCodexProcessArguments(["--version"])).toBe("version_probe");
-		expect(classifyAdmittedCodexProcessArguments(buildCodexAppServerArguments())).toBe(
-			"app_server",
-		);
-		expect(isAdmittedCodexProcessArguments(["--version"])).toBe(true);
+		expect(classifyAdmittedCodexProcessArguments(["--version"], WORKSPACE)).toBe("version_probe");
+		expect(
+			classifyAdmittedCodexProcessArguments(buildCodexAppServerArguments(WORKSPACE), WORKSPACE),
+		).toBe("app_server");
+		expect(isAdmittedCodexProcessArguments(["--version"], WORKSPACE)).toBe(true);
 	});
 });
 
 function withChangedConfig(current: string, replacement: string): string[] {
-	return buildCodexAppServerArguments().map((value) => (value === current ? replacement : value));
+	return buildCodexAppServerArguments(WORKSPACE).map((value) =>
+		value === current ? replacement : value,
+	);
 }

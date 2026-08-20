@@ -48,6 +48,7 @@ const directDoctorProcessBoundary: CodexProcessBoundary = Object.freeze({
 		return {
 			executable: request.executable,
 			argv: [...request.argv],
+			workspaceCwd: request.workspaceCwd,
 			cwd: request.cwd,
 			env: { ...request.env },
 		};

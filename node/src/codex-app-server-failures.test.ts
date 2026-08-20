@@ -77,7 +77,7 @@ async function openClient(
 	const client = await CodexAppServerClient.start(
 		{
 			command: { executable: fixture.scriptPath },
-			cwd: fixture.directory,
+			workspaceCwd: fixture.directory,
 			capsuleDirectory: fixture.directory,
 			env: fixture.env,
 			boundary: directCodexProcessBoundaryForTests,

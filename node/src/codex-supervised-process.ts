@@ -8,7 +8,7 @@ import type {
 } from "./codex-provider-generation-state.js";
 import { observationForProviderStopCause } from "./codex-provider-generation-state.js";
 import {
-	type CodexPreparedProcess,
+	type CodexProviderPreparedProcess,
 	type CodexProviderSupervisorEvent,
 	parseCodexProviderSupervisorEvent,
 	sanitizePreparedEnvironment,
@@ -75,7 +75,8 @@ export class CodexSupervisedProcess {
 		void authorityTermination.catch(() => undefined);
 		this.process = {
 			child,
-			cwd: options.process.cwd,
+			workspaceCwd: options.process.workspaceCwd,
+			processCwd: options.process.processCwd,
 			exited: this.#exited,
 			closed: this.#closed,
 			inputError: writableError(child),
@@ -135,8 +136,8 @@ export class CodexSupervisedProcess {
 	}
 
 	private async initialize(commands: {
-		readonly versionProbe: CodexPreparedProcess;
-		readonly appServer: CodexPreparedProcess;
+		readonly versionProbe: CodexProviderPreparedProcess;
+		readonly appServer: CodexProviderPreparedProcess;
 	}): Promise<void> {
 		let resolveReady!: () => void;
 		let rejectReady!: (error: Error) => void;

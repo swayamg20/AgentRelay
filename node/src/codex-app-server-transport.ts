@@ -21,7 +21,8 @@ const NO_FAILURE = Symbol("no Codex transport failure");
 
 export interface CodexAppServerTransportOptions {
 	readonly command: CodexAppServerCommand;
-	readonly cwd: string;
+	readonly workspaceCwd: string;
+	readonly processCwd: string;
 	readonly env: NodeJS.ProcessEnv;
 	readonly boundary: CodexProcessBoundary;
 	readonly authoritySignal: AbortSignal;
@@ -137,8 +138,12 @@ export class CodexAppServerTransport {
 		);
 	}
 
-	get cwd(): string {
-		return this.#process.cwd;
+	get workspaceCwd(): string {
+		return this.#process.workspaceCwd;
+	}
+
+	get processCwd(): string {
+		return this.#process.processCwd;
 	}
 
 	request(method: string, params: unknown): Promise<unknown> {

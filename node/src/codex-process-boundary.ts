@@ -1,6 +1,7 @@
 export interface CodexProcessRequest {
 	readonly executable: string;
 	readonly argv: readonly string[];
+	readonly workspaceCwd: string;
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
 }
@@ -8,6 +9,7 @@ export interface CodexProcessRequest {
 export interface PreparedCodexProcess {
 	readonly executable: string;
 	readonly argv: readonly string[];
+	readonly workspaceCwd: string;
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
 }

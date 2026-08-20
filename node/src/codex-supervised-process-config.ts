@@ -2,8 +2,8 @@ import { buildCodexAppServerArguments } from "./codex-app-server-command.js";
 import type { CodexAppServerProcessOptions } from "./codex-app-server-process.js";
 import type { CodexProviderGenerationStore } from "./codex-provider-generation-state.js";
 import {
-	type CodexPreparedProcess,
-	codexPreparedProcessSchema,
+	type CodexProviderPreparedProcess,
+	codexProviderPreparedProcessSchema,
 	sanitizePreparedEnvironment,
 } from "./codex-provider-supervisor-protocol.js";
 import type { ProcessLock } from "./process-lock.js";
@@ -47,27 +47,30 @@ export type ResolvedCodexSupervisedProcessOptions = Omit<
 };
 
 export async function prepareProviderCommands(options: CodexAppServerProcessOptions): Promise<{
-	readonly versionProbe: CodexPreparedProcess;
-	readonly appServer: CodexPreparedProcess;
+	readonly versionProbe: CodexProviderPreparedProcess;
+	readonly appServer: CodexProviderPreparedProcess;
 }> {
 	options.authoritySignal.throwIfAborted();
 	const base = {
 		executable: options.command.executable,
-		cwd: options.cwd,
+		workspaceCwd: options.workspaceCwd,
+		cwd: options.processCwd,
 		env: options.env,
 	};
 	const versionProbe = await options.boundary.prepare(
 		{ ...base, argv: ["--version"] },
 		options.authoritySignal,
 	);
+	assertPreparedScope(versionProbe, options);
 	options.authoritySignal.throwIfAborted();
 	const appServer = await options.boundary.prepare(
 		{
 			...base,
-			argv: buildCodexAppServerArguments(),
+			argv: buildCodexAppServerArguments(options.workspaceCwd),
 		},
 		options.authoritySignal,
 	);
+	assertPreparedScope(appServer, options);
 	options.authoritySignal.throwIfAborted();
 	return { versionProbe: preparedProcess(versionProbe), appServer: preparedProcess(appServer) };
 }
@@ -127,15 +130,26 @@ export function supervisorEnvironment(extra: NodeJS.ProcessEnv | undefined): Nod
 function preparedProcess(value: {
 	readonly executable: string;
 	readonly argv: readonly string[];
+	readonly workspaceCwd: string;
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
-}): CodexPreparedProcess {
-	return codexPreparedProcessSchema.parse({
+}): CodexProviderPreparedProcess {
+	return codexProviderPreparedProcessSchema.parse({
 		executable: value.executable,
 		argv: [...value.argv],
+		workspace_cwd: value.workspaceCwd,
 		cwd: value.cwd,
 		env: sanitizePreparedEnvironment(value.env),
 	});
+}
+
+function assertPreparedScope(
+	value: { readonly workspaceCwd: string; readonly cwd: string },
+	options: CodexAppServerProcessOptions,
+): void {
+	if (value.workspaceCwd !== options.workspaceCwd || value.cwd !== options.processCwd) {
+		throw new Error("Codex containment changed its bound working directories");
+	}
 }
 
 function boundedMilliseconds(value: number, minimum: number, maximum: number): number {

@@ -127,7 +127,7 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 			const client = await CodexAppServerClient.start(
 				{
 					command: this.#options.command,
-					cwd: this.#options.cwd,
+					workspaceCwd: this.#options.workspaceCwd,
 					capsuleDirectory: this.#options.capsuleDirectory,
 					env: this.#options.env,
 					boundary: this.#options.boundary,

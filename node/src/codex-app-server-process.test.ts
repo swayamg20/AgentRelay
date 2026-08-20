@@ -67,7 +67,8 @@ describe.runIf(process.platform !== "win32")("Codex app-server authority teardow
 		try {
 			const processRef = await startCodexAppServerProcess({
 				command: { executable: fixture.scriptPath },
-				cwd: fixture.directory,
+				workspaceCwd: fixture.directory,
+				processCwd: fixture.directory,
 				env: fixture.env,
 				boundary: directCodexProcessBoundaryForTests,
 				authoritySignal: authority.signal,
@@ -108,7 +109,8 @@ describe.runIf(process.platform !== "win32")("Codex app-server authority teardow
 		try {
 			const processRef = await startCodexAppServerProcess({
 				command: { executable: wrapper },
-				cwd: fixture.directory,
+				workspaceCwd: fixture.directory,
+				processCwd: fixture.directory,
 				env: fixture.env,
 				boundary: directCodexProcessBoundaryForTests,
 				authoritySignal: authority.signal,

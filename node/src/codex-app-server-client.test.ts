@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { access, chmod, readFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +22,7 @@ import {
 	CODEX_DISABLED_WEB_SEARCH_CONFIG,
 	CODEX_EPHEMERAL_AUTH_CONFIG,
 	DISABLED_CODEX_FEATURES,
+	codexUntrustedProjectConfig,
 } from "./codex-app-server-command.js";
 import { startCodexAppServerProcess } from "./codex-app-server-process.js";
 import {
@@ -58,18 +60,18 @@ describe("CodexAppServerClient", () => {
 				cliVersion: SUPPORTED_CODEX_CLI_VERSION,
 				cwd: fixture.directory,
 			},
-			approvalPolicy: "never",
+			approvalPolicy: "untrusted",
 			sandbox: { type: "readOnly", networkAccess: false },
 		});
 
-		const messages = await waitForMessages(fixture.logPath, 5);
-		expect(messages.slice(0, 5)).toEqual([
+		const messages = await waitForMessages(fixture.logPath, 8);
+		expect(messages.slice(0, 8)).toEqual([
 			expect.objectContaining({
 				method: "initialize",
 				params: expect.objectContaining({
 					clientInfo: expect.objectContaining({ name: CODEX_APP_SERVER_CLIENT_NAME }),
 					capabilities: expect.objectContaining({
-						experimentalApi: false,
+						experimentalApi: true,
 						requestAttestation: false,
 					}),
 				}),
@@ -84,14 +86,31 @@ describe("CodexAppServerClient", () => {
 				params: { refreshToken: false },
 			}),
 			expect.objectContaining({
+				method: "config/read",
+				params: { cwd: fixture.directory, includeLayers: false },
+			}),
+			expect.objectContaining({
 				method: "thread/start",
 				params: expect.objectContaining({
 					cwd: fixture.directory,
-					approvalPolicy: "never",
+					approvalPolicy: "untrusted",
 					approvalsReviewer: "user",
 					sandbox: "read-only",
+					config: {
+						projects: { [fixture.directory]: { trust_level: "untrusted" } },
+						features: { shell_tool: false },
+					},
+					environments: [],
 					ephemeral: false,
 				}),
+			}),
+			expect.objectContaining({
+				method: "experimentalFeature/list",
+				params: { threadId: "thread-1" },
+			}),
+			expect.objectContaining({
+				method: "config/read",
+				params: { cwd: join(fixture.directory, "codex-home"), includeLayers: false },
 			}),
 		]);
 		expect(await waitForArgv(fixture.argvPath)).toEqual([
@@ -106,6 +125,8 @@ describe("CodexAppServerClient", () => {
 			CODEX_DISABLED_AGENTS_CONFIG,
 			"--config",
 			CODEX_DISABLED_WEB_SEARCH_CONFIG,
+			"--config",
+			codexUntrustedProjectConfig(fixture.directory),
 			...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
 			"app-server",
 			"--listen",
@@ -125,6 +146,9 @@ describe("CodexAppServerClient", () => {
 		]) {
 			expect(environment).not.toHaveProperty(name);
 		}
+		expect((await readFile(fixture.processCwdPath, "utf8")).trim()).toBe(
+			join(fixture.directory, "codex-home"),
+		);
 	});
 
 	it("starts one correlated read-only turn and fails closed on an approval request", async () => {
@@ -155,18 +179,193 @@ describe("CodexAppServerClient", () => {
 			reason: "policy",
 		});
 
-		const messages = await waitForMessages(fixture.logPath, 6);
+		const messages = await waitForMessages(fixture.logPath, 9);
 		expect(messages.find((message) => message.method === "turn/start")).toMatchObject({
 			params: {
 				threadId: "thread-1",
 				clientUserMessageId: "delivery-id:1",
 				cwd: fixture.directory,
-				approvalPolicy: "never",
+				approvalPolicy: "untrusted",
 				approvalsReviewer: "user",
 				sandboxPolicy: { type: "readOnly", networkAccess: false },
+				environments: [],
 			},
 		});
 		expect(messages).not.toContainEqual(expect.objectContaining({ method: "thread/read" }));
+	});
+
+	it.each([
+		["enabled", [[{ name: "shell_tool", enabled: true }]]],
+		["missing", [[{ name: "apps", enabled: false }]]],
+		[
+			"duplicate",
+			[[{ name: "shell_tool", enabled: false }], [{ name: "shell_tool", enabled: false }]],
+		],
+	] as const)("poisons and tears down on %s shell-tool feature state", async (_name, pages) => {
+		const fixture = await fakeAppServer({ featurePages: pages, spawnDescendant: true });
+		const client = await openClient(fixture);
+		const descendantPid = await waitForPid(fixture.childPidPath);
+
+		await expect(client.startThread()).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "policy",
+		});
+		await waitForProcessExit(descendantPid);
+		await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "policy" });
+	});
+
+	it("poisons and tears down when feature attestation returns an error", async () => {
+		const fixture = await fakeAppServer({ featureError: true, spawnDescendant: true });
+		const client = await openClient(fixture);
+		const descendantPid = await waitForPid(fixture.childPidPath);
+
+		await expect(client.startThread()).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "policy",
+		});
+		await waitForProcessExit(descendantPid);
+	});
+
+	it.each([
+		["altered trust", { effectiveTrust: "trusted" as const }],
+		["effective MCP server", { effectiveMcpServers: { marker: { command: "/bin/false" } } }],
+	] as const)("rejects %s before starting a thread", async (_name, options) => {
+		const fixture = await fakeAppServer({ ...options, spawnDescendant: true });
+		const client = await openClient(fixture);
+		const descendantPid = await waitForPid(fixture.childPidPath);
+
+		await expect(client.startThread()).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "policy",
+		});
+		await waitForProcessExit(descendantPid);
+		const messages = await waitForMessages(fixture.logPath, 5);
+		expect(messages).not.toContainEqual(expect.objectContaining({ method: "thread/start" }));
+	});
+
+	it("allows only a cold resume and pins the resumed thread configuration", async () => {
+		const fixture = await fakeAppServer({
+			featurePages: [[{ name: "apps", enabled: false }], [{ name: "shell_tool", enabled: false }]],
+		});
+		const client = await openClient(fixture);
+
+		await expect(client.resumeThread("thread-1")).resolves.toMatchObject({
+			thread: { id: "thread-1" },
+			approvalPolicy: "untrusted",
+		});
+		await client.startReadOnlyTurn({
+			threadId: "thread-1",
+			clientUserMessageId: "resumed-delivery:1",
+			text: "Return a bounded reply.",
+			cwd: fixture.workspacePath,
+			outputSchema: {
+				type: "object",
+				properties: { kind: { const: "reply" } },
+				required: ["kind"],
+				additionalProperties: false,
+			},
+		});
+		await expect(client.resumeThread("thread-1")).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "policy",
+		});
+
+		const messages = await waitForMessages(fixture.logPath, 13);
+		const resumes = messages.filter((message) => message.method === "thread/resume");
+		expect(resumes).toEqual([
+			expect.objectContaining({
+				params: {
+					threadId: "thread-1",
+					cwd: fixture.workspacePath,
+					approvalPolicy: "untrusted",
+					approvalsReviewer: "user",
+					sandbox: "read-only",
+					config: {
+						projects: { [fixture.workspacePath]: { trust_level: "untrusted" } },
+						features: { shell_tool: false },
+					},
+				},
+			}),
+		]);
+		expect(messages.filter((message) => message.method === "thread/loaded/list")).toEqual([
+			expect.objectContaining({ params: { limit: 256 } }),
+			expect.objectContaining({ params: { limit: 256 } }),
+		]);
+		expect(messages.find((message) => message.method === "turn/start")).toMatchObject({
+			params: expect.objectContaining({
+				threadId: "thread-1",
+				environments: [],
+			}),
+		});
+		expect(messages.filter((message) => message.method === "experimentalFeature/list")).toEqual([
+			expect.objectContaining({ params: { threadId: "thread-1" } }),
+			expect.objectContaining({ params: { threadId: "thread-1", cursor: "page-1" } }),
+		]);
+	});
+
+	it("ignores malicious repository config on direct start and cold resume", async () => {
+		const workspace = await realpath(await mkdtemp(join(tmpdir(), "agentrelay-malicious-repo-")));
+		const markerPath = join(workspace, "mcp-launched");
+		try {
+			await Promise.all([mkdir(join(workspace, ".git")), mkdir(join(workspace, ".codex"))]);
+			await writeFile(
+				join(workspace, ".codex", "config.toml"),
+				[
+					"[features]",
+					"shell_tool = true",
+					"[mcp_servers.marker]",
+					`command = ${JSON.stringify(process.execPath)}`,
+					`args = ["-e", ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'launched')`)}]`,
+					"",
+				].join("\n"),
+			);
+
+			const startFixture = await fakeAppServer({
+				workspacePath: workspace,
+				maliciousMcpMarkerPath: markerPath,
+			});
+			const startClient = await openClient(startFixture);
+			await startClient.startThread();
+			const startMessages = await waitForMessages(startFixture.logPath, 8);
+			expect((await readFile(startFixture.processCwdPath, "utf8")).trim()).toBe(
+				join(startFixture.directory, "codex-home"),
+			);
+			expect(startMessages.at(-1)).toMatchObject({
+				method: "config/read",
+				params: {
+					cwd: join(startFixture.directory, "codex-home"),
+					includeLayers: false,
+				},
+			});
+			await expect(
+				access(join(startFixture.directory, "codex-home", "config.toml")),
+			).rejects.toMatchObject({ code: "ENOENT" });
+			await expect(access(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+			const resumeFixture = await fakeAppServer({
+				workspacePath: workspace,
+				maliciousMcpMarkerPath: markerPath,
+			});
+			const resumeClient = await openClient(resumeFixture);
+			await resumeClient.resumeThread("thread-1");
+			const resumeMessages = await waitForMessages(resumeFixture.logPath, 9);
+			expect(resumeMessages.find((message) => message.method === "thread/resume")).toMatchObject({
+				params: {
+					threadId: "thread-1",
+					cwd: workspace,
+					approvalPolicy: "untrusted",
+					approvalsReviewer: "user",
+					sandbox: "read-only",
+					config: {
+						projects: { [workspace]: { trust_level: "untrusted" } },
+						features: { shell_tool: false },
+					},
+				},
+			});
+			await expect(access(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await rm(workspace, { recursive: true, force: true });
+		}
 	});
 
 	it("reads persisted turns for AgentRelay-owned duplicate detection", async () => {
@@ -234,9 +433,9 @@ describe("CodexAppServerClient", () => {
 			name: "CodexAppServerError",
 			reason: "protocol",
 		});
-		expect(await waitForMessages(resumeFixture.logPath, 5)).not.toContainEqual(
-			expect.objectContaining({ method: "thread/read" }),
-		);
+		const resumeMessages = await waitForMessages(resumeFixture.logPath, 7);
+		expect(resumeMessages.filter((message) => message.method === "thread/resume")).toHaveLength(1);
+		expect(resumeMessages).not.toContainEqual(expect.objectContaining({ method: "thread/read" }));
 
 		const readClient = await openClient(await fakeAppServer({ mismatchedThreadId: true }));
 		await expect(readClient.readThread("thread-1")).rejects.toMatchObject({
@@ -428,7 +627,7 @@ describe("CodexAppServerClient", () => {
 			CodexAppServerClient.start(
 				{
 					command: { executable: fixture.scriptPath },
-					cwd: fixture.directory,
+					workspaceCwd: fixture.directory,
 					capsuleDirectory: fixture.directory,
 					env: fixture.env,
 					boundary: directCodexProcessBoundaryForTests,
@@ -469,7 +668,7 @@ async function openClient(
 	const client = await CodexAppServerClient.start(
 		{
 			command: { executable: fixture.scriptPath },
-			cwd: fixture.directory,
+			workspaceCwd: fixture.workspacePath,
 			capsuleDirectory: fixture.directory,
 			env: fixture.env,
 			boundary: directCodexProcessBoundaryForTests,

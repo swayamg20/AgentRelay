@@ -117,7 +117,7 @@ export function assertReadOnlyThread(
 	assertThreadVersionAndScope(result.thread, cwd, expectedThreadId);
 	if (
 		result.cwd !== cwd ||
-		result.approvalPolicy !== "never" ||
+		result.approvalPolicy !== "untrusted" ||
 		result.approvalsReviewer !== "user"
 	) {
 		throw new CodexAppServerError("policy", "Codex did not preserve the requested local policy");

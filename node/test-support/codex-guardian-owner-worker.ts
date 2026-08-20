@@ -29,7 +29,7 @@ const boundary = {
 const guardian = new SupervisedCodexProviderGuardian({
 	capsuleId,
 	command: { executable },
-	cwd: directory,
+	workspaceCwd: directory,
 	capsuleDirectory: directory,
 	env: process.env,
 	boundary,
