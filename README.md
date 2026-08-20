@@ -39,9 +39,17 @@
 > command a managed CONNECT path to `api.openai.com`; version checks, containment probes,
 > and nested workspace sandboxes remain offline. That command also disables agents,
 > web search, the shell tool, hooks, plugins, apps, multi-agent, and code-mode surfaces,
-> so Codex cannot register `exec_command`, `write_stdin`, or the legacy shell. Native
-> `apply_patch` remains independently eligible when the selected model exposes it, but
-> any resulting file-change approval is declined and fatal; this is not patch mediation.
+> so Codex cannot register `exec_command`, `write_stdin`, or the legacy shell. The
+> provider process starts in its private runtime home rather than the logical
+> workspace. Exact launch and thread configuration pins that workspace as untrusted;
+> bounded configuration and feature reads require untrusted project state, a disabled
+> shell tool, and no effective MCP servers. New threads and every turn select an empty
+> Codex environment list, warm resumes are refused, and every app-server request for
+> authority remains denied and fatal. Environment-backed shell and native
+> `apply_patch` tools are therefore unavailable. The model-dependent native
+> `apply_patch` surface remains independently eligible when the selected model exposes
+> it, but any resulting file-change approval is declined and fatal; this is not patch
+> mediation.
 > There is still no owner-facing
 > credential source, polling `run-codex` command, guarded workspace-write model
 > activation, registered verification execution, durable local evidence, installed
@@ -151,7 +159,9 @@ work. No path has executed a real model turn.
   app-server clients. A strict v2 descriptor and passive Capsule controller select this
   runner only through internal composition; no polling CLI selects it. The Codex
   child receives an allowlisted environment and a locally derived, canonical,
-  current-user-owned mode-0700 home. A Codex-only launcher can transfer one fresh
+  current-user-owned mode-0700 home. The provider process uses that private home as
+  its operating-system working directory while app-server thread requests carry the
+  logical workspace separately. A Codex-only launcher can transfer one fresh
   opaque owner credential per Capsule generation over fixed inherited fd 3. A
   validated schema-v2 Capsule owns that channel under one non-resettable 30-second
   activation deadline, then consumes it once for API-key login and verifies the
@@ -159,7 +169,13 @@ work. No path has executed a real model turn.
   appears in neither argv, environment, durable state, nor `auth.json`. For an
   inherited uncertain interrupt, a fresh generation reads the exact intent once,
   persists an authoritative terminal outcome when present, or records a transient
-  failure; it never repeats the interrupt.
+  failure; it never repeats the interrupt. Exact startup and per-thread configuration
+  pins the logical workspace as untrusted. Before start or resume and again against
+  the private home afterward, the client reads effective configuration and requires
+  untrusted project state, `shell_tool=false`, and no MCP servers. Thread start and
+  every turn select no Codex environments, resume is limited to a thread not already
+  loaded in that provider process, and all provider-initiated requests remain denied
+  and fatal.
 - A Linux containment checkpoint for pinned Codex `0.146.0`. It binds one
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux

@@ -28,7 +28,11 @@ transfer one fresh opaque owner credential per Capsule generation over fixed inh
 fd 3, and the client forces API-key login to use an ephemeral credential store. The
 exact app-server command has fixed Codex-managed CONNECT access only to
 `api.openai.com`; version checks, probes, and nested workspace sandboxes remain offline.
-No polling command selects this composition, and there is no owner-facing credential
+The provider starts from its private runtime home rather than the logical workspace,
+pins that workspace untrusted, attests effective shell/MCP state, supplies no Codex
+environments on thread start or turns, accepts only cold resume, and denies every
+server request. No polling command selects this composition, and there is no
+owner-facing credential
 source, guarded workspace-write model activation, or real model-turn proof. The
 persistent fake-Capsule path also installs a private, fenced capability grant into
 independent Node and Capsule reference monitors. This is the partial issue #97
@@ -173,6 +177,14 @@ Linux. The dedicated Linux process job starts pinned Codex through the guardian 
 containment boundary, but no polling command selects this composition, no owner-facing
 credential source exists, and no test executes a model turn.
 
+The provider process cwd is now separate from the logical Mission workspace: it is the
+private runtime home, while exact app-server arguments and thread requests pin the
+workspace as untrusted. Bounded `config/read`, feature-list, and loaded-thread checks
+require untrusted effective state, one disabled shell-tool feature, no MCP servers,
+and a cold stored thread. Thread start and every turn select `environments: []`, and
+all server-initiated requests remain denied and fatal. This closes the repository-
+configuration bootstrap path without enabling a dynamic patch tool or model writes.
+
 Owner-local policy now has an optional `workspace_access` gate. Omitted or explicit
 `read` preserves the legacy read-only grant and hash; explicit accepted `write` adds
 workspace-write authority and provisions or strictly recovers the exact write-mode
@@ -201,6 +213,9 @@ containment and authority checkpoint, not a model-write or live-runtime proof.
   plugins, apps, multi-agent, and code-mode features disabled. Native `apply_patch`
   remains independently eligible when the selected model exposes it, but resulting
   file-change approvals are declined and fatal; exact patch mediation remains open.
+- [x] Separate the provider process cwd from the logical workspace, pin the local
+  project untrusted, attest effective shell/MCP state, select no Codex environments,
+  require cold resume, and keep every server request denied and fatal.
 - [x] Add owner-local opt-in workspace-write authority and exact write containment
   provision/recovery, with write activation intentionally fenced before credentials or
   provider startup.

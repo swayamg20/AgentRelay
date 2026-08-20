@@ -174,7 +174,17 @@ durable state, nor `auth.json`. The exact app-server command now selects a retai
 Linux profile with Codex-managed CONNECT access only to `api.openai.com`; version
 checks, containment probes, and nested workspace sandboxes remain offline. Its exact
 argv pins agents and web search off and disables shell, hooks, plugins, apps,
-multi-agent, and code-mode features, so no command tool is registered. Native
+multi-agent, and code-mode features, so no command tool is registered. The provider
+process uses its private runtime home as the operating-system working
+directory while thread RPCs carry the logical workspace separately. Launch arguments
+and per-thread configuration pin that workspace as untrusted. Before start or resume,
+bounded `config/read` requires untrusted project state, `shell_tool=false`, and no
+effective MCP servers. Afterward, the feature list must contain exactly one disabled
+shell tool, the private-home configuration is rechecked, and a private `config.toml`
+is rejected. Thread start and every turn select an
+empty Codex environments list. Resume is allowed only when the stored thread is not
+already loaded in that provider process. Every server request remains denied and
+fatal. Native
 `apply_patch` remains independently eligible when the selected model exposes it, but
 any resulting file-change approval is declined and made fatal; no exact patch mediation
 exists. There is still no owner-facing credential
@@ -397,7 +407,10 @@ standalone checkout and expose the workspace with exact locally selected read or
 access while keeping Git metadata read-only inside containment, with explicit read,
 write, and denied roots, private home/temp, fixed provider-only
 managed CONNECT egress, offline probes and nested workspace sandboxes, rejected ambient
-Codex configuration,
+Codex configuration, a provider process working directory inside the private runtime
+home rather than the logical workspace, locally pinned untrusted project state,
+effective shell/MCP attestation, empty thread/turn environment selection, cold-only
+resume, and fatal denial of every server-initiated request,
 disabled legacy Landlock, recursive read-tree alias inspection, and a mandatory
 runtime canary. No polling command activates a Mission under these protections yet.
 

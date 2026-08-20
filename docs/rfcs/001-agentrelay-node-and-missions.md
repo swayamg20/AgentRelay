@@ -4,7 +4,8 @@
   persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
   ownership, and a guarded internal Codex client, journal, runner, guardian, Linux
   containment, strict descriptor, provisioner, adapter, and one-shot authentication
-  checkpoint are implemented; the private capability reference monitor is selected by
+  and provider-bootstrap isolation checkpoints are implemented; the private capability
+  reference monitor is selected by
   the fake polling path and composed with Codex only behind internal APIs; polling
   activation and the two-machine proof remain
 - **Date:** 2026-08-01
@@ -42,7 +43,11 @@ journal, strict schema-v2 descriptor, provisioner, persistent adapter, provider
 guardian, one-shot owner API-key handoff, and fixed provider-only managed CONNECT
 egress behind internal APIs. The Capsule entry point can construct that guarded
 controller. Owner-local policy can also opt into workspace-write authority and exact
-write-mode containment, but activation deliberately fails before the credential is
+write-mode containment. The provider now starts from its private runtime home instead
+of the logical workspace, pins that workspace untrusted, attests effective shell/MCP
+state, selects no Codex environments for thread start or turns, permits only cold
+resume, and denies all server requests. Write activation still deliberately fails
+before the credential is
 claimed or the guardian, provider, or runner is opened. The polling Node CLI still
 cannot select this path. There is no owner-facing credential source, guarded
 workspace-write model activation, or real model-turn proof.
@@ -402,7 +407,12 @@ model/provider activation. A fresh opaque owner credential can cross
 only fixed inherited fd 3 under one non-resettable 30-second Capsule activation
 deadline, then is consumed once by an ephemeral API-key login. The exact app-server
 command has fixed provider-only egress to `api.openai.com`; version checks, containment
-probes, and nested workspace sandboxes remain offline. It also pins agents and web
+probes, and nested workspace sandboxes remain offline. Its process cwd is the private
+runtime home, separate from the logical workspace carried in app-server requests.
+Exact launch and thread configuration pins that workspace untrusted; effective config
+and feature reads require the shell disabled and MCP absent, start and every turn pass
+`environments: []`, warm resume is rejected, and all server requests remain fatal.
+It also pins agents and web
 search off and disables shell, hooks, plugins, apps, multi-agent, and code-mode
 features, removing command tools. Native `apply_patch` remains independently eligible
 when the selected model exposes it, but any resulting file-change approval is declined
@@ -492,7 +502,10 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    workspace-write authority and exact write containment provision/recovery, while
    write activation stops before credentials or provider startup. Retained
    same-Mission start intent or host-attempt history forces recovery-only provisioning.
-   Polling CLI activation, an owner-facing credential source, guarded workspace-write
+   The provider starts from the private runtime home, pins and attests the logical
+   workspace as untrusted with shell/MCP disabled, selects no Codex environments,
+   requires cold resume, and rejects every server request. Polling CLI activation, an
+   owner-facing credential source, guarded workspace-write
    model activation, registered verification, bounded
    artifact carriage, durable evidence, adversarial evaluation, and a real model turn
    remain.

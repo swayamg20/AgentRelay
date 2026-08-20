@@ -29,7 +29,10 @@ strict v2 descriptor, persistent adapter, and policy-selected read/write provisi
 Internal APIs compose them under the private authority boundary, but write activation
 deliberately stops before the credential is claimed or the guardian, provider, or
 runner is opened. No polling CLI selects either mode and no test executes a real model
-turn. The guardian owns generation spawn and live supervision; its prearmed detached
+turn. The provider process uses its private runtime home as its operating-system
+working directory while app-server requests retain the logical workspace separately;
+the workspace is pinned untrusted and effective shell/MCP state is attested. The
+guardian owns generation spawn and live supervision; its prearmed detached
 reaper owns teardown proof and post-absence quiescence. There is also no
 contract-acknowledgement or verification-delivery handler, so this still does not
 prove execution on two machines. A Linux-only Codex containment library now exists,
@@ -415,6 +418,9 @@ are mode 0600. The detached child receives a small environment allowlist that ex
 Node and Relay credentials, inherited `HOME`, provider-credential environment
 variables, proxy settings, and process-loader injection variables. For a schema-v2
 Capsule, the owner API key enters only through fixed fd 3, never argv or environment.
+The raw provider later runs with its locally derived private runtime home as process
+cwd, not with the logical workspace as process cwd. That workspace is a separately
+validated field carried into the exact app-server arguments and thread requests.
 Capability authentication happens before any runtime call.
 Unexpected internal runtime errors are returned as the fixed public message `Capsule
 runtime failed`; the server then removes its owned socket and closes that running
@@ -561,9 +567,11 @@ resolution.
 The guarded app-server client derives `codex-home` locally beneath the Capsule,
 requires the Capsule and home to be real canonical current-user-owned directories
 with exact mode 0700, and supplies that path as both `HOME` and `CODEX_HOME` inside an
-otherwise allowlisted child environment. That client boundary alone does not provide
-filesystem isolation; the separate containment library below must wrap its process
-boundary on Linux.
+otherwise allowlisted child environment. It also uses that private home as the
+provider process cwd while retaining the canonical Mission workspace as a distinct
+logical thread cwd. The process boundary must preserve both values exactly. That
+client boundary alone does not provide filesystem isolation; the separate containment
+library below must wrap its process boundary on Linux.
 
 After `initialize` and `initialized`, the client performs `account/login/start` with
 the one-shot API key, then `account/read` with refresh-token loading disabled. It
@@ -571,6 +579,25 @@ requires API-key-shaped responses and `requiresOpenaiAuth: true` before any thre
 operation. App-server starts with
 `cli_auth_credentials_store="ephemeral"`; the live handshake test proves no
 `auth.json` exists before or after client close.
+
+The exact app-server arguments and each start/resume request pin
+`projects.<logical-workspace>.trust_level="untrusted"` and
+`features.shell_tool=false`. Before `thread/start` or `thread/resume`, the client calls
+`config/read` with `includeLayers: false` for the logical workspace and requires that
+effective trust, the disabled shell tool, and absent or empty `mcp_servers`. After a
+successful start or resume it repeats the effective-config check against the private
+home and rejects any persisted private `config.toml`. It also pages
+`experimentalFeature/list` and requires exactly one disabled `shell_tool` entry.
+
+`thread/start` and every `turn/start` carry `environments: []`, so no
+environment-backed shell or native `apply_patch` tool definition is available. This
+does not remove the separately eligible model-dependent native `apply_patch` surface,
+whose file-change approval remains denied and fatal. `thread/resume` is allowed
+only after a bounded, cursor-checked `thread/loaded/list` scan proves that exact thread
+is not loaded in the current provider process. Every server-initiated request,
+including command, file-change, permission, user-input, MCP elicitation, dynamic-tool,
+and legacy approval requests, receives a denial or empty failure response and then
+poisons the client. No dynamic patch request is accepted at this checkpoint.
 
 The guardian uses the stable `provider.lock` inode as kernel authority and writes
 bounded private lifecycle evidence to `provider-generation.json`. Its phases are
@@ -622,7 +649,10 @@ trees are readable, and the owner home, containment control directory, and confi
 forbidden roots are denied.
 `HOME`, `CODEX_HOME`, and all
 temporary variables point to private exact-mode directories; the child environment
-is rebuilt and legacy Landlock is explicitly disabled. The exact app-server argv pins
+is rebuilt and legacy Landlock is explicitly disabled. The outer launcher changes to
+the private runtime home before starting the provider rather than changing to the
+logical workspace. The exact app-server argv pins the logical workspace as an
+untrusted project and pins
 `model_provider="openai"`, `openai_base_url="https://api.openai.com/v1"`,
 `agents.enabled=false`, and `web_search="disabled"`. It also disables `shell_tool`,
 hooks, plugins, apps, multi-agent, and code-mode features, removing `exec_command`,

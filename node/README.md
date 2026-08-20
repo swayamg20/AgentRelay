@@ -75,6 +75,18 @@ internal, non-production composition.
   `cli_auth_credentials_store="ephemeral"`, and the live handshake leaves no
   `auth.json`. No owner-facing credential source exists, and no polling command selects
   this path.
+- An internal Codex bootstrap and project-trust boundary. The provider process starts
+  in the private mode-0700 runtime home, not in the logical workspace supplied to
+  app-server thread requests. Exact launch arguments and per-thread configuration pin
+  that workspace as `untrusted`. Before start or resume and again against the private
+  home afterward, `config/read` must show the untrusted project, `shell_tool=false`,
+  and no effective MCP servers; a persisted private `config.toml` is rejected. Thread
+  start and every turn select `environments: []`, so no environment-backed shell or
+  native `apply_patch` tool is available. Resume first scans the bounded loaded-thread
+  list and accepts only a cold stored thread. Every server-initiated request is denied
+  and made fatal.
+  Native `apply_patch` remains a separate model-dependent surface, and its file-change
+  approval is still declined; dynamic exact patch mediation is not implemented.
 - An internal provider-only egress boundary. Only the exact pinned app-server command
   selects the retained runtime profile, whose Codex-managed CONNECT proxy allows
   `api.openai.com`; version checks and containment probes select an offline profile,
@@ -182,9 +194,12 @@ hash; explicit `write` changes the accepted policy grant, adds workspace-write
 authority, and selects exact write-mode containment. For read mode, the internal Codex
 path composes the guardian and containment boundary with this grant and now includes the
 one-shot owner API-key handoff, ephemeral-login boundary, and fixed provider-only
-managed CONNECT egress for the exact app-server command. Write-mode activation stops
-before the credential is claimed or those runtime components are opened. No polling
-command selects either path. An owner-facing credential source, guarded
+managed CONNECT egress for the exact app-server command. Its provider process runs
+from the private runtime home while the thread remains scoped to the logical workspace;
+effective trust, shell, and MCP state are attested around each thread start or resume,
+and the client supplies no Codex environments. Write-mode activation stops before the
+credential is claimed or those runtime components are opened. No polling command
+selects either path. An owner-facing credential source, guarded
 workspace-write model activation, patch mediation, durable write evidence, and real
 model-turn evidence remain absent.
 

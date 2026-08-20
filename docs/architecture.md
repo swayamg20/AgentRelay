@@ -109,7 +109,15 @@ durable coordination foundations:
   non-resettable 30-second activation deadline and consumes it once during
   authority-gated provider activation. The client performs API-key login and account
   verification with the credential store forced ephemeral; the live handshake leaves
-  no `auth.json`. The exact app-server command also pins agents and web search off and
+  no `auth.json`. The provider process runs from that private runtime home while the
+  logical workspace is carried separately in app-server thread requests. Exact launch
+  and per-thread configuration pins the workspace as untrusted. Bounded effective-
+  configuration reads require that trust, `shell_tool=false`, and no MCP servers before
+  starting or resuming. Afterward, a feature read requires exactly one disabled shell
+  tool, and the private home is rechecked and may not persist `config.toml`. Thread
+  start and every turn select no
+  Codex environments, and every provider-initiated request is denied and made fatal.
+  The exact app-server command also pins agents and web search off and
   disables shell, hooks, plugins, apps, multi-agent, and code-mode features, removing
   `exec_command`, `write_stdin`, and the legacy shell. Native `apply_patch` remains
   independently eligible when the selected model exposes it, but any resulting
@@ -222,7 +230,10 @@ part of the correctness boundary.
 The Codex adapter library now implements this interface behind the provider-neutral
 Capsule server. Its child environment is allowlisted, and its home is derived locally
 beneath the Capsule and revalidated as canonical, current-user-owned, and exactly mode
-0700. `CodexProviderGuardian.openGeneration()` atomically owns the kernel lock,
+0700. The provider uses that home as its process working directory rather than loading
+from the logical workspace. Thread RPCs remain explicitly scoped to the logical
+workspace, whose effective configuration must stay untrusted, shell-disabled, and
+MCP-free. `CodexProviderGuardian.openGeneration()` atomically owns the kernel lock,
 durable generation barrier, provider spawn, Capsule-owner heartbeat, deadline,
 revocation, and process-group teardown. A runner receives that owned generation only
 after the guardian has armed a detached teardown witness, written the barrier, and
@@ -392,7 +403,12 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   running server generation. Concurrent runtime close fences admitted work, and a
   detached driver failure requests retirement. These apply only to the internally
   composed Codex checkpoint. The owner API key enters the schema-v2 Capsule only through
-  the fixed fd 3 channel and is consumed by the ephemeral login handshake.
+  the fixed fd 3 channel and is consumed by the ephemeral login handshake. The provider
+  starts from the private home, not the logical workspace; exact launch and thread
+  configuration pins that workspace untrusted, effective configuration must show the
+  shell disabled and no MCP servers, no Codex environments are supplied on thread
+  start or turns, warm resume is rejected, and every server request is denied and
+  fatal.
 - Kernel-locked provider-generation ownership with a private redacted lifecycle
   record, owner heartbeat, absolute deadline, local revocation signal, provider exit
   and request-timeout observation, reboot-gated recovery, and an out-of-group witness
