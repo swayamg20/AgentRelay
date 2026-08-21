@@ -13,6 +13,7 @@ import {
 	CodexOwnerCredentialError,
 	MAX_CODEX_OWNER_CREDENTIAL_BYTES,
 	readCodexOwnerCredentialFromOwnedFd,
+	readCodexOwnerCredentialSourceFromOwnedFd,
 } from "./codex-owner-credential.js";
 
 const run = promisify(execFile);
@@ -20,6 +21,7 @@ const cleanupDirectories = new Set<string>();
 const cleanupFds = new Set<number>();
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	for (const fd of cleanupFds) await closeFd(fd).catch(() => undefined);
 	cleanupFds.clear();
 	for (const directory of cleanupDirectories) {
@@ -416,6 +418,119 @@ describe("Codex owner credential", () => {
 	});
 });
 
+describe("Codex owner credential source", () => {
+	it("returns independent one-shot credentials for repeated Capsule launches", async () => {
+		const secret = "reusable-process-local-owner-key";
+		const source = await credentialSourceFromBytes(Buffer.from(secret));
+
+		const first = await source.claim(new AbortController().signal);
+		const second = await source.claim(new AbortController().signal);
+		await first.use(async (apiKey) => expect(apiKey).toBe(secret));
+		await expect(first.use(async () => undefined)).rejects.toMatchObject({
+			reason: "unavailable",
+		});
+		await second.use(async (apiKey) => expect(apiKey).toBe(secret));
+		await expect(second.use(async () => undefined)).rejects.toMatchObject({
+			reason: "unavailable",
+		});
+
+		source.close();
+	});
+
+	it("linearizes an issued claim before close and abort, then rejects future claims", async () => {
+		const secret = "claim-close-race-owner-key";
+		const source = await credentialSourceFromBytes(Buffer.from(secret));
+		const controller = new AbortController();
+
+		const issued = source.claim(controller.signal);
+		controller.abort(new Error("late-abort-secret"));
+		source.close();
+		source.close();
+
+		const credential = await issued;
+		await credential.use(async (apiKey) => expect(apiKey).toBe(secret));
+		await expect(source.claim(new AbortController().signal)).rejects.toEqual(
+			new CodexOwnerCredentialError("unavailable"),
+		);
+	});
+
+	it("returns fixed redacted cancellation and unavailable failures", async () => {
+		const secret = "source-error-owner-key";
+		const source = await credentialSourceFromBytes(Buffer.from(secret));
+		const controller = new AbortController();
+		controller.abort(new Error(secret));
+
+		const cancelled = await captureFailure(source.claim(controller.signal));
+		expect(cancelled).toEqual(new CodexOwnerCredentialError("cancelled"));
+		expect("cause" in cancelled).toBe(false);
+		const credential = await source.claim(new AbortController().signal);
+		await credential.use(async (apiKey) => expect(apiKey).toBe(secret));
+
+		source.close();
+		const unavailable = await captureFailure(source.claim(new AbortController().signal));
+		expect(unavailable).toEqual(new CodexOwnerCredentialError("unavailable"));
+		for (const failure of [cancelled, unavailable]) {
+			for (const rendered of [String(failure), JSON.stringify(failure), inspect(failure)]) {
+				expect(rendered).not.toContain(secret);
+			}
+		}
+	});
+
+	it("redacts every source coercion without exposing a generic secret property", async () => {
+		const secret = "source-inspection-owner-key";
+		const source = await credentialSourceFromBytes(Buffer.from(secret));
+
+		expect(String(source)).toBe("[CodexOwnerCredentialSource redacted]");
+		expect(`${source}`).toBe("[CodexOwnerCredentialSource redacted]");
+		expect(JSON.stringify(source)).toBe('"[CodexOwnerCredentialSource redacted]"');
+		expect(inspect(source)).toBe("[CodexOwnerCredentialSource redacted]");
+		expect(Reflect.ownKeys(source)).toEqual([]);
+		for (const rendered of [String(source), JSON.stringify(source), inspect(source)]) {
+			expect(rendered).not.toContain(secret);
+		}
+
+		source.close();
+	});
+
+	it("accepts exactly the maximum bytes and rejects one byte more", async () => {
+		const maximum = Buffer.alloc(MAX_CODEX_OWNER_CREDENTIAL_BYTES + 1, 0x61);
+		maximum[maximum.length - 1] = 0x0a;
+		const source = await credentialSourceFromBytes(maximum);
+		const credential = await source.claim(new AbortController().signal);
+		await credential.use(async (apiKey) => {
+			expect(Buffer.byteLength(apiKey)).toBe(MAX_CODEX_OWNER_CREDENTIAL_BYTES);
+		});
+		source.close();
+
+		const oversized = Buffer.alloc(MAX_CODEX_OWNER_CREDENTIAL_BYTES + 1, 0x62);
+		await expect(credentialSourceFromBytes(oversized)).rejects.toEqual(
+			new CodexOwnerCredentialError("oversized"),
+		);
+	});
+
+	it("zeroes the consumed reader credential and the retained source Buffer", async () => {
+		const secret = "zeroized-source-owner-key";
+		const fillSpy = vi.spyOn(Buffer.prototype, "fill");
+		const source = await credentialSourceFromBytes(Buffer.from(`${secret}\n`));
+		const originalBytes = fillSpy.mock.instances.find(
+			(instance) => Buffer.isBuffer(instance) && instance.length === Buffer.byteLength(secret),
+		);
+		expect(originalBytes).toBeDefined();
+		expect(originalBytes?.every((byte) => byte === 0)).toBe(true);
+
+		fillSpy.mockClear();
+		source.close();
+		source.close();
+		const retainedBytes = fillSpy.mock.instances.find(
+			(instance) => Buffer.isBuffer(instance) && instance.length === Buffer.byteLength(secret),
+		);
+		expect(retainedBytes).toBeDefined();
+		expect(retainedBytes).not.toBe(originalBytes);
+		expect(retainedBytes?.every((byte) => byte === 0)).toBe(true);
+		expect(fillSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
 class CaptureWritable extends Writable {
 	readonly chunks: Buffer[] = [];
 	writes = 0;
@@ -457,6 +572,19 @@ async function credentialFromBytes(bytes: Buffer) {
 	const credential = await credentialPromise;
 	expectFdClosed(fixture.reader);
 	return credential;
+}
+
+async function credentialSourceFromBytes(bytes: Buffer) {
+	const fixture = await openFifo();
+	const sourcePromise = readCodexOwnerCredentialSourceFromOwnedFd(
+		fixture.reader,
+		new AbortController().signal,
+	);
+	await writeAll(fixture.writer, bytes);
+	await closeTrackedFd(fixture.writer);
+	const source = await sourcePromise;
+	expectFdClosed(fixture.reader);
+	return source;
 }
 
 async function openFifo(): Promise<{ reader: number; writer: number }> {

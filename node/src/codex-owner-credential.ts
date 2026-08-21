@@ -26,6 +26,7 @@ const FAILURE_MESSAGES: Readonly<Record<CodexOwnerCredentialFailure, string>> = 
 });
 
 const REDACTED_CREDENTIAL = "[CodexOwnerCredential redacted]";
+const REDACTED_CREDENTIAL_SOURCE = "[CodexOwnerCredentialSource redacted]";
 const FATAL_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const UNICODE_CONTROL = /\p{Cc}/u;
 
@@ -44,6 +45,13 @@ export interface CodexOwnerCredential {
 	dispose(): void;
 }
 
+export interface CodexOwnerCredentialSource {
+	/** Returns a fresh one-shot credential for one trusted Capsule launch. */
+	claim(signal: AbortSignal): Promise<CodexOwnerCredential>;
+	/** Destroys the retained process-local credential and prevents future claims. */
+	close(): void;
+}
+
 /**
  * Takes ownership of an already-open inherited pipe channel and closes it on every outcome.
  * Node may represent that channel as a FIFO or Unix socket; files, TTYs, and devices are rejected.
@@ -52,6 +60,29 @@ export async function readCodexOwnerCredentialFromOwnedFd(
 	fd: number,
 	signal: AbortSignal,
 ): Promise<CodexOwnerCredential> {
+	return readPrivateCodexOwnerCredentialFromOwnedFd(fd, signal);
+}
+
+/**
+ * Takes ownership of one bounded inherited credential channel and retains the
+ * validated credential only in this process for repeated Capsule launches.
+ */
+export async function readCodexOwnerCredentialSourceFromOwnedFd(
+	fd: number,
+	signal: AbortSignal,
+): Promise<CodexOwnerCredentialSource> {
+	const original = await readPrivateCodexOwnerCredentialFromOwnedFd(fd, signal);
+	try {
+		return PrivateCodexOwnerCredential.createSource(original);
+	} finally {
+		original.dispose();
+	}
+}
+
+async function readPrivateCodexOwnerCredentialFromOwnedFd(
+	fd: number,
+	signal: AbortSignal,
+): Promise<PrivateCodexOwnerCredential> {
 	const encoded = await readOwnedCredentialChannel(fd, signal);
 	try {
 		const credentialLength = encoded.at(-1) === 0x0a ? encoded.length - 1 : encoded.length;
@@ -82,6 +113,15 @@ class PrivateCodexOwnerCredential implements CodexOwnerCredential {
 
 	constructor(bytes: Buffer) {
 		this.#bytes = bytes;
+	}
+
+	static createSource(credential: PrivateCodexOwnerCredential): CodexOwnerCredentialSource {
+		const bytes = credential.takeBytes();
+		try {
+			return new PrivateCodexOwnerCredentialSource(Buffer.from(bytes));
+		} finally {
+			bytes.fill(0);
+		}
 	}
 
 	async use(operation: (apiKey: string) => Promise<void>): Promise<void> {
@@ -133,6 +173,47 @@ class PrivateCodexOwnerCredential implements CodexOwnerCredential {
 		const bytes = this.#bytes;
 		this.#bytes = null;
 		return bytes;
+	}
+}
+
+class PrivateCodexOwnerCredentialSource implements CodexOwnerCredentialSource {
+	#bytes: Buffer | null;
+
+	constructor(bytes: Buffer) {
+		this.#bytes = bytes;
+	}
+
+	async claim(signal: AbortSignal): Promise<CodexOwnerCredential> {
+		if (signal.aborted) throw new CodexOwnerCredentialError("cancelled");
+		if (this.#bytes === null) throw new CodexOwnerCredentialError("unavailable");
+
+		const bytes = Buffer.from(this.#bytes);
+		if (signal.aborted) {
+			bytes.fill(0);
+			throw new CodexOwnerCredentialError("cancelled");
+		}
+		return new PrivateCodexOwnerCredential(bytes);
+	}
+
+	close(): void {
+		this.#bytes?.fill(0);
+		this.#bytes = null;
+	}
+
+	toString(): string {
+		return REDACTED_CREDENTIAL_SOURCE;
+	}
+
+	toJSON(): string {
+		return REDACTED_CREDENTIAL_SOURCE;
+	}
+
+	[Symbol.toPrimitive](): string {
+		return REDACTED_CREDENTIAL_SOURCE;
+	}
+
+	[inspect.custom](): string {
+		return REDACTED_CREDENTIAL_SOURCE;
 	}
 }
 
