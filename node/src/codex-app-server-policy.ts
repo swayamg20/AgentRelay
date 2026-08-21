@@ -12,6 +12,12 @@ import type {
 	CodexServerRequest,
 	CodexServerRequestDecision,
 } from "./codex-app-server-transport.js";
+import {
+	type CodexDynamicPatchToolHandler,
+	codexDynamicPatchToolResponse,
+	parseCodexDynamicPatchToolCallParams,
+	parseCodexDynamicPatchToolOutcome,
+} from "./codex-dynamic-patch-tool-contract.js";
 
 export const CODEX_APP_SERVER_CLIENT_VERSION = "0.0.1";
 
@@ -177,5 +183,45 @@ export function denyCodexServerRequest(request: CodexServerRequest): CodexServer
 				message: "AgentRelay does not implement this server request",
 				fatal,
 			};
+	}
+}
+
+export function createCodexServerRequestHandler(
+	dynamicPatchTool: CodexDynamicPatchToolHandler | undefined,
+): (
+	request: CodexServerRequest,
+	signal: AbortSignal,
+) => CodexServerRequestDecision | Promise<CodexServerRequestDecision> {
+	return (request, signal) => {
+		if (request.method !== "item/tool/call" || dynamicPatchTool === undefined) {
+			return denyCodexServerRequest(request);
+		}
+		let call: ReturnType<typeof parseCodexDynamicPatchToolCallParams>;
+		try {
+			call = parseCodexDynamicPatchToolCallParams(request.params);
+		} catch {
+			return denyCodexServerRequest(request);
+		}
+		return handleDynamicPatchToolCall(dynamicPatchTool, call, signal);
+	};
+}
+
+async function handleDynamicPatchToolCall(
+	handler: CodexDynamicPatchToolHandler,
+	call: ReturnType<typeof parseCodexDynamicPatchToolCallParams>,
+	signal: AbortSignal,
+): Promise<CodexServerRequestDecision> {
+	signal.throwIfAborted();
+	try {
+		const outcome = parseCodexDynamicPatchToolOutcome(await handler.handle(call, signal));
+		signal.throwIfAborted();
+		return { kind: "result", value: codexDynamicPatchToolResponse(outcome) };
+	} catch {
+		signal.throwIfAborted();
+		return {
+			kind: "result",
+			value: codexDynamicPatchToolResponse("rejected"),
+			fatal: new CodexAppServerError("policy", "AgentRelay patch tool handler failed closed"),
+		};
 	}
 }

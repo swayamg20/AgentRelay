@@ -22,8 +22,16 @@ export interface FakeAppServerOptions {
 	readonly closeInputAfterRead?: boolean;
 	readonly unsafePolicy?: boolean;
 	readonly requestApproval?: boolean;
+	readonly turnServerRequest?: Readonly<{
+		readonly id?: string | number;
+		readonly method: string;
+		readonly params: unknown;
+		readonly beforeTurnResponse?: boolean;
+	}>;
+	readonly exitAfterTurnServerRequestMs?: number;
 	readonly spawnDescendant?: boolean;
 	readonly ignoreSigterm?: boolean;
+	readonly sigtermDrainMs?: number;
 	readonly continuousOutput?: boolean;
 	readonly gateContinuousOutput?: boolean;
 	readonly workspacePath?: string;
@@ -88,8 +96,11 @@ export async function createFakeAppServer(
 			closeInputAfterRead: options.closeInputAfterRead ?? false,
 			unsafePolicy: options.unsafePolicy ?? false,
 			requestApproval: options.requestApproval ?? false,
+			turnServerRequest: options.turnServerRequest ?? null,
+			exitAfterTurnServerRequestMs: options.exitAfterTurnServerRequestMs ?? 0,
 			spawnDescendant: options.spawnDescendant ?? false,
 			ignoreSigterm: options.ignoreSigterm ?? false,
+			sigtermDrainMs: options.sigtermDrainMs ?? 0,
 			continuousOutput: options.continuousOutput ?? false,
 			continuousOutputGatePath: options.gateContinuousOutput ? continuousOutputGatePath : null,
 			workspacePath,
@@ -243,6 +254,8 @@ const exitAfterRead = config.exitAfterRead;
 const closeInputAfterRead = config.closeInputAfterRead;
 const unsafePolicy = config.unsafePolicy;
 const requestApproval = config.requestApproval;
+const turnServerRequest = config.turnServerRequest;
+const exitAfterTurnServerRequestMs = config.exitAfterTurnServerRequestMs;
 const argv = process.argv.slice(2);
 const untrustedProjectOverride = "projects={" + JSON.stringify(cwd) + "={trust_level=\\\"untrusted\\\"}}";
 if (
@@ -252,7 +265,11 @@ if (
 ) {
   writeFileSync(config.maliciousMcpMarkerPath, "launched\\n", { mode: 0o600 });
 }
-if (config.ignoreSigterm) process.on("SIGTERM", () => undefined);
+if (config.ignoreSigterm) {
+  process.on("SIGTERM", () => undefined);
+} else if (config.sigtermDrainMs > 0) {
+  process.on("SIGTERM", () => setTimeout(() => process.exit(0), config.sigtermDrainMs));
+}
 let continuousOutputStarted = false;
 let threadLoaded = false;
 if (config.spawnDescendant) {
@@ -470,7 +487,25 @@ rl.on("line", (line) => {
       send(readResponse);
       return;
     case "turn/start":
+      if (turnServerRequest?.beforeTurnResponse === true) {
+        send({
+          id: turnServerRequest.id ?? "server-request-1",
+          method: turnServerRequest.method,
+          params: turnServerRequest.params,
+        });
+        if (exitAfterTurnServerRequestMs > 0) {
+          setTimeout(() => process.exit(0), exitAfterTurnServerRequestMs);
+          return;
+        }
+      }
       send({ id: message.id, result: { turn: turn("turn-1", "inProgress") } });
+      if (turnServerRequest !== null && turnServerRequest.beforeTurnResponse !== true) {
+        send({
+          id: turnServerRequest.id ?? "server-request-1",
+          method: turnServerRequest.method,
+          params: turnServerRequest.params,
+        });
+      }
       if (requestApproval) {
         send({
           id: "approval-1",

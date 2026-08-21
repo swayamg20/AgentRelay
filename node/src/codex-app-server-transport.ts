@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import { BoundedAsyncQueue } from "./bounded-async-queue.js";
 import {
@@ -27,7 +28,10 @@ export interface CodexAppServerTransportOptions {
 	readonly boundary: CodexProcessBoundary;
 	readonly authoritySignal: AbortSignal;
 	readonly requestTimeoutMs?: number;
-	readonly handleServerRequest: (request: CodexServerRequest) => CodexServerRequestDecision;
+	readonly handleServerRequest: (
+		request: CodexServerRequest,
+		signal: AbortSignal,
+	) => CodexServerRequestDecision | PromiseLike<CodexServerRequestDecision>;
 	readonly processFactory?: CodexAppServerProcessFactory;
 }
 
@@ -71,10 +75,19 @@ export class CodexAppServerResponseError extends CodexAppServerError {
 	}
 }
 
+export class CodexServerRequestReentryError extends CodexAppServerError {
+	constructor() {
+		super("policy", "Codex server request handler cannot call the same client");
+		this.name = "CodexServerRequestReentryError";
+	}
+}
+
 /** Correlated, bounded JSONL transport for one version-pinned app-server process. */
 export class CodexAppServerTransport {
 	readonly #process: CodexAppServerProcess;
 	readonly #authoritySignal: AbortSignal;
+	readonly #serverRequestAbort = new AbortController();
+	readonly #serverRequestSignal: AbortSignal;
 	readonly #requestTimeoutMs: number;
 	readonly #handleServerRequest: CodexAppServerTransportOptions["handleServerRequest"];
 	readonly #events = new BoundedAsyncQueue<CodexAppServerEvent>(
@@ -83,6 +96,7 @@ export class CodexAppServerTransport {
 		() => new CodexAppServerError("protocol", "Codex event queue exceeded its bound"),
 	);
 	readonly #pending = new Map<number, PendingRequest>();
+	readonly #serverRequestContext = new AsyncLocalStorage<boolean>();
 	#nextRequestId = 0;
 	#writeTail: Promise<void> = Promise.resolve();
 	#failure: unknown = NO_FAILURE;
@@ -99,6 +113,7 @@ export class CodexAppServerTransport {
 	) {
 		this.#process = processRef;
 		this.#authoritySignal = authoritySignal;
+		this.#serverRequestSignal = AbortSignal.any([authoritySignal, this.#serverRequestAbort.signal]);
 		this.#requestTimeoutMs = requestTimeoutMs;
 		this.#handleServerRequest = handleServerRequest;
 		void this.readLoop();
@@ -148,6 +163,11 @@ export class CodexAppServerTransport {
 
 	request(method: string, params: unknown): Promise<unknown> {
 		this.assertOpen();
+		if (this.#serverRequestContext.getStore() === true) {
+			const failure = new CodexServerRequestReentryError();
+			this.fail(failure);
+			throw failure;
+		}
 		const id = this.#nextRequestId;
 		this.#nextRequestId += 1;
 		const response = new Promise<unknown>((resolve, reject) => {
@@ -250,12 +270,20 @@ export class CodexAppServerTransport {
 	}
 
 	private async handleServerRequest(request: CodexServerRequest): Promise<void> {
-		const decision = this.#handleServerRequest(request);
+		await this.revalidateAuthority();
+		const decision = await settleBeforeAbort(
+			this.#serverRequestContext.run(true, () =>
+				this.#handleServerRequest(request, this.#serverRequestSignal),
+			),
+			this.#serverRequestSignal,
+		);
+		await this.revalidateAuthority();
 		await this.send(
 			decision.kind === "result"
 				? { id: request.id, result: decision.value }
 				: { id: request.id, error: { code: decision.code, message: decision.message } },
 		);
+		await this.revalidateAuthority();
 		if (decision.fatal !== undefined) throw decision.fatal;
 	}
 
@@ -286,6 +314,7 @@ export class CodexAppServerTransport {
 		if (this.#closing || this.#failure !== NO_FAILURE || this.#terminal !== null) {
 			return;
 		}
+		this.#serverRequestAbort.abort(error);
 		this.#terminalCause = error;
 		this.#terminal = this.settleTerminalFailure(error, stopReason);
 		void this.#terminal.catch(() => undefined);
@@ -344,11 +373,35 @@ export class CodexAppServerTransport {
 
 	private async performClose(): Promise<void> {
 		this.#closing = true;
+		this.#serverRequestAbort.abort(
+			new CodexAppServerError("closed", "Codex app-server transport closed"),
+		);
 		this.rejectPending(new CodexAppServerError("closed", "Codex app-server transport closed"));
 		this.#events.close();
 		await stopCodexAppServerProcess(this.#process);
 		await this.revalidateAuthority();
 	}
+}
+
+function settleBeforeAbort<T>(operation: T | PromiseLike<T>, signal: AbortSignal): Promise<T> {
+	signal.throwIfAborted();
+	return new Promise<T>((resolve, reject) => {
+		const abort = () => {
+			signal.removeEventListener("abort", abort);
+			reject(signal.reason);
+		};
+		signal.addEventListener("abort", abort, { once: true });
+		Promise.resolve(operation).then(
+			(value) => {
+				signal.removeEventListener("abort", abort);
+				resolve(value);
+			},
+			(error: unknown) => {
+				signal.removeEventListener("abort", abort);
+				reject(error);
+			},
+		);
+	});
 }
 
 function errorForEventQueue(error: unknown): Error {

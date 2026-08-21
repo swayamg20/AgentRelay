@@ -16,7 +16,10 @@ import {
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
 import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
-import { CodexAppServerClient } from "./codex-app-server-client.js";
+import {
+	CodexAppServerClient,
+	type CodexDynamicPatchToolHandler,
+} from "./codex-app-server-client.js";
 import {
 	CODEX_DISABLED_AGENTS_CONFIG,
 	CODEX_DISABLED_WEB_SEARCH_CONFIG,
@@ -113,6 +116,9 @@ describe("CodexAppServerClient", () => {
 				params: { cwd: join(fixture.directory, "codex-home"), includeLayers: false },
 			}),
 		]);
+		expect(
+			messages.find((message) => message.method === "thread/start")?.params,
+		).not.toHaveProperty("dynamicTools");
 		expect(await waitForArgv(fixture.argvPath)).toEqual([
 			"--strict-config",
 			"--config",
@@ -149,6 +155,360 @@ describe("CodexAppServerClient", () => {
 		expect((await readFile(fixture.processCwdPath, "utf8")).trim()).toBe(
 			join(fixture.directory, "codex-home"),
 		);
+	});
+
+	it("publishes and serves only the fixed patch tool for a locally configured write handler", async () => {
+		const calls: unknown[] = [];
+		const fixture = await fakeAppServer({ turnServerRequest: dynamicPatchRequest() });
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				async handle(call, signal) {
+					calls.push({ call, aborted: signal.aborted });
+					return "applied";
+				},
+			},
+		});
+
+		await client.startThread();
+		await client.startReadOnlyTurn(turnInput(fixture));
+
+		const messages = await waitForMessages(fixture.logPath, 10);
+		expect(messages.find((message) => message.method === "thread/start")?.params).toMatchObject({
+			environments: [],
+			dynamicTools: [
+				{
+					type: "namespace",
+					name: "agentrelay",
+					description: "AgentRelay-authorized workspace operations",
+					tools: [
+						{
+							type: "function",
+							name: "apply_patch",
+							description: "Apply one bounded patch through AgentRelay",
+							inputSchema: {
+								type: "object",
+								properties: { patch: { type: "string" } },
+								required: ["patch"],
+								additionalProperties: false,
+							},
+							deferLoading: false,
+						},
+					],
+				},
+			],
+		});
+		expect(calls).toEqual([
+			{
+				call: {
+					threadId: "thread-1",
+					turnId: "turn-1",
+					callId: "patch-call-1",
+					patch: "diff --git a/a.txt b/a.txt\n",
+				},
+				aborted: false,
+			},
+		]);
+		expect(messages.at(-1)).toEqual({
+			id: "patch-request-1",
+			result: {
+				contentItems: [{ type: "inputText", text: "AgentRelay applied the patch." }],
+				success: true,
+			},
+		});
+	});
+
+	it("resumes the persisted v3 tool contract without resending dynamic tool specs", async () => {
+		const fixture = await fakeAppServer({ turnServerRequest: dynamicPatchRequest() });
+		let calls = 0;
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				async handle() {
+					calls += 1;
+					return "rejected";
+				},
+			},
+		});
+
+		await client.resumeThread("thread-1");
+		await client.startReadOnlyTurn(turnInput(fixture));
+
+		const messages = await waitForMessages(fixture.logPath, 11);
+		const resume = messages.find((message) => message.method === "thread/resume");
+		expect(resume?.params).not.toHaveProperty("dynamicTools");
+		expect(resume?.params).not.toHaveProperty("environments");
+		expect(messages.find((message) => message.method === "turn/start")?.params).toMatchObject({
+			environments: [],
+		});
+		expect(calls).toBe(1);
+		expect(messages.at(-1)).toEqual({
+			id: "patch-request-1",
+			result: {
+				contentItems: [{ type: "inputText", text: "AgentRelay did not apply the patch." }],
+				success: false,
+			},
+		});
+	});
+
+	it("awaits the local handler and writes its exact response before reading later frames", async () => {
+		const outcome = deferred<"applied" | "rejected">();
+		const called = deferred<void>();
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				handle() {
+					called.resolve();
+					return outcome.promise;
+				},
+			},
+		});
+		await client.startThread();
+
+		const pending = client.startReadOnlyTurn(turnInput(fixture));
+		await called.promise;
+		expect(await waitForMessages(fixture.logPath, 9)).not.toContainEqual(
+			expect.objectContaining({ id: "patch-request-1", result: expect.anything() }),
+		);
+		outcome.resolve("applied");
+
+		await expect(pending).resolves.toMatchObject({ id: "turn-1", status: "inProgress" });
+		expect((await waitForMessages(fixture.logPath, 10)).at(-1)).toEqual({
+			id: "patch-request-1",
+			result: {
+				contentItems: [{ type: "inputText", text: "AgentRelay applied the patch." }],
+				success: true,
+			},
+		});
+	});
+
+	it("returns a fixed failure before poisoning the client on an async handler rejection", async () => {
+		const failureCanary = "must-not-enter-provider-response";
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+			spawnDescendant: true,
+			sigtermDrainMs: 25,
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				async handle() {
+					await delay(1);
+					throw new Error(failureCanary);
+				},
+			},
+		});
+		await client.startThread();
+		const descendantPid = await waitForPid(fixture.childPidPath);
+
+		await expect(client.startReadOnlyTurn(turnInput(fixture))).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "policy",
+		});
+		await waitForProcessExit(descendantPid);
+		const messages = await waitForMessages(fixture.logPath, 10);
+		expect(messages.at(-1)).toEqual({
+			id: "patch-request-1",
+			result: {
+				contentItems: [{ type: "inputText", text: "AgentRelay did not apply the patch." }],
+				success: false,
+			},
+		});
+		expect(await readFile(fixture.logPath, "utf8")).not.toContain(failureCanary);
+		await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "policy" });
+	});
+
+	it.each([
+		["wrong namespace", { namespace: "peer" }],
+		["wrong tool", { tool: "shell" }],
+		["extra argument", { arguments: { patch: "x", path: "a.txt" } }],
+	] as const)("responds before failing closed on a %s dynamic call", async (_name, override) => {
+		let calls = 0;
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({
+				beforeTurnResponse: true,
+				params: { ...dynamicPatchParams(), ...override },
+			}),
+			sigtermDrainMs: 25,
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				async handle() {
+					calls += 1;
+					return "applied";
+				},
+			},
+		});
+		await client.startThread();
+
+		await expect(client.startReadOnlyTurn(turnInput(fixture))).rejects.toMatchObject({
+			reason: "policy",
+		});
+		expect(calls).toBe(0);
+		expect((await waitForMessages(fixture.logPath, 10)).at(-1)).toEqual({
+			id: "patch-request-1",
+			result: { contentItems: [], success: false },
+		});
+	});
+
+	it("keeps native file-change approval declined and fatal when the patch handler exists", async () => {
+		let calls = 0;
+		const fixture = await fakeAppServer({
+			turnServerRequest: {
+				id: "native-file-change-1",
+				method: "item/fileChange/requestApproval",
+				params: { threadId: "thread-1", turnId: "turn-1", itemId: "item-1" },
+				beforeTurnResponse: true,
+			},
+			sigtermDrainMs: 25,
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				async handle() {
+					calls += 1;
+					return "applied";
+				},
+			},
+		});
+		await client.startThread();
+
+		await expect(client.startReadOnlyTurn(turnInput(fixture))).rejects.toMatchObject({
+			reason: "policy",
+		});
+		expect(calls).toBe(0);
+		expect((await waitForMessages(fixture.logPath, 10)).at(-1)).toEqual({
+			id: "native-file-change-1",
+			result: { decision: "decline" },
+		});
+	});
+
+	it.each([false, true])(
+		"fatally poisons a dynamic handler that re-enters and swallow=%s",
+		async (swallow) => {
+			const fixture = await fakeAppServer({
+				turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+			});
+			const clientRef: { value: CodexAppServerClient | null } = { value: null };
+			const client = await openClient(fixture, {
+				dynamicPatchTool: {
+					async handle() {
+						if (clientRef.value === null) throw new Error("Client was not assigned");
+						try {
+							await clientRef.value.readThread("thread-1");
+						} catch (error) {
+							if (!swallow) throw error;
+						}
+						return "applied";
+					},
+				},
+			});
+			clientRef.value = client;
+			await client.startThread();
+
+			await expect(client.startReadOnlyTurn(turnInput(fixture))).rejects.toMatchObject({
+				reason: "policy",
+			});
+			const messages = await waitForMessages(fixture.logPath, 9);
+			expect(messages).not.toContainEqual(expect.objectContaining({ method: "thread/read" }));
+			expect(messages).not.toContainEqual(
+				expect.objectContaining({
+					id: "patch-request-1",
+					result: expect.objectContaining({ success: true }),
+				}),
+			);
+			await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "policy" });
+		},
+	);
+
+	it("aborts a pending dynamic handler when the client closes", async () => {
+		const observed = deferred<AbortSignal>();
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: abortablePatchHandler(observed),
+		});
+		await client.startThread();
+		const pending = client.startReadOnlyTurn(turnInput(fixture)).catch((error: unknown) => error);
+		const signal = await observed.promise;
+
+		await client.close();
+		clients.splice(clients.indexOf(client), 1);
+		expect(signal.aborted).toBe(true);
+		expect(signal.reason).toMatchObject({ reason: "closed" });
+		expect(await pending).toMatchObject({ reason: "closed" });
+		expect(await waitForMessages(fixture.logPath, 9)).not.toContainEqual(
+			expect.objectContaining({ id: "patch-request-1", result: expect.anything() }),
+		);
+	});
+
+	it("does not let a cancellation-ignoring dynamic handler block client teardown", async () => {
+		const called = deferred<void>();
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				handle() {
+					called.resolve();
+					return new Promise(() => undefined);
+				},
+			},
+		});
+		await client.startThread();
+		const pending = client.startReadOnlyTurn(turnInput(fixture)).catch((error: unknown) => error);
+		await called.promise;
+
+		await expect(settleWithin(client.close(), 1_000)).resolves.toBeUndefined();
+		clients.splice(clients.indexOf(client), 1);
+		expect(await pending).toMatchObject({ reason: "closed" });
+	});
+
+	it("aborts a pending dynamic handler with the exact revoked authority", async () => {
+		const observed = deferred<AbortSignal>();
+		const authority = new AbortController();
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+			spawnDescendant: true,
+		});
+		const client = await openClient(fixture, {
+			authoritySignal: authority.signal,
+			dynamicPatchTool: abortablePatchHandler(observed),
+		});
+		await client.startThread();
+		const descendantPid = await waitForPid(fixture.childPidPath);
+		const pending = client.startReadOnlyTurn(turnInput(fixture));
+		const signal = await observed.promise;
+
+		authority.abort("revoked");
+
+		await expect(settleWithin(pending, 1_000)).rejects.toBe("revoked");
+		expect(signal.aborted).toBe(true);
+		expect(signal.reason).toBe("revoked");
+		await waitForProcessExit(descendantPid);
+		expect(await waitForMessages(fixture.logPath, 9)).not.toContainEqual(
+			expect.objectContaining({ id: "patch-request-1", result: expect.anything() }),
+		);
+	});
+
+	it("aborts a pending dynamic handler when the provider transport fails", async () => {
+		const observed = deferred<AbortSignal>();
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+			exitAfterTurnServerRequestMs: 100,
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: abortablePatchHandler(observed),
+		});
+		await client.startThread();
+		const providerPid = await waitForPid(fixture.appServerPidPath);
+		const pending = client.startReadOnlyTurn(turnInput(fixture));
+		const signal = await observed.promise;
+
+		await expect(settleWithin(pending, 1_000)).rejects.toMatchObject({ reason: "transport" });
+		expect(signal.aborted).toBe(true);
+		expect(signal.reason).toMatchObject({ reason: "transport" });
+		await waitForProcessExit(providerPid);
+		await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "transport" });
 	});
 
 	it("starts one correlated read-only turn and fails closed on an approval request", async () => {
@@ -663,6 +1023,7 @@ async function openClient(
 		readonly authoritySignal?: AbortSignal;
 		readonly requestTimeoutMs?: number;
 		readonly processFactory?: Parameters<typeof CodexAppServerClient.start>[0]["processFactory"];
+		readonly dynamicPatchTool?: CodexDynamicPatchToolHandler;
 	} = {},
 ): Promise<CodexAppServerClient> {
 	const client = await CodexAppServerClient.start(
@@ -675,11 +1036,77 @@ async function openClient(
 			authoritySignal: options.authoritySignal ?? new AbortController().signal,
 			requestTimeoutMs: options.requestTimeoutMs,
 			processFactory: options.processFactory,
+			dynamicPatchTool: options.dynamicPatchTool,
 		},
 		createFakeCodexOwnerCredential(TEST_OWNER_API_KEY),
 	);
 	clients.push(client);
 	return client;
+}
+
+function turnInput(fixture: FakeAppServerFixture) {
+	return {
+		threadId: "thread-1",
+		clientUserMessageId: "delivery-id:dynamic-patch",
+		text: "Apply the requested bounded patch.",
+		cwd: fixture.workspacePath,
+		outputSchema: {
+			type: "object",
+			properties: { kind: { const: "reply" } },
+			required: ["kind"],
+			additionalProperties: false,
+		},
+	};
+}
+
+function dynamicPatchParams(): Record<string, unknown> {
+	return {
+		threadId: "thread-1",
+		turnId: "turn-1",
+		callId: "patch-call-1",
+		namespace: "agentrelay",
+		tool: "apply_patch",
+		arguments: { patch: "diff --git a/a.txt b/a.txt\n" },
+	};
+}
+
+function dynamicPatchRequest(
+	overrides: { readonly beforeTurnResponse?: boolean; readonly params?: unknown } = {},
+) {
+	return {
+		id: "patch-request-1",
+		method: "item/tool/call",
+		params: overrides.params ?? dynamicPatchParams(),
+		beforeTurnResponse: overrides.beforeTurnResponse,
+	};
+}
+
+function abortablePatchHandler(observed: Deferred<AbortSignal>): CodexDynamicPatchToolHandler {
+	return {
+		handle(_call, signal) {
+			observed.resolve(signal);
+			return new Promise((_resolve, reject) => {
+				if (signal.aborted) {
+					reject(signal.reason);
+					return;
+				}
+				signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+			});
+		},
+	};
+}
+
+interface Deferred<T> {
+	readonly promise: Promise<T>;
+	readonly resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((settle) => {
+		resolve = settle;
+	});
+	return { promise, resolve };
 }
 
 function settleWithin<T>(promise: Promise<T>, milliseconds: number): Promise<T> {

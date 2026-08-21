@@ -9,7 +9,7 @@ import {
 	assertReadOnlyThread,
 	assertThreadVersionAndScope,
 	codexEmptyResultSchema,
-	denyCodexServerRequest,
+	createCodexServerRequestHandler,
 	parseCodexProviderResult,
 	parseCodexReference,
 	parseStartCodexTurnInput,
@@ -41,7 +41,12 @@ import {
 import {
 	CodexAppServerResponseError,
 	CodexAppServerTransport,
+	CodexServerRequestReentryError,
 } from "./codex-app-server-transport.js";
+import {
+	type CodexDynamicPatchToolHandler,
+	codexDynamicPatchTools,
+} from "./codex-dynamic-patch-tool-contract.js";
 import { type CodexOwnerCredential, CodexOwnerCredentialError } from "./codex-owner-credential.js";
 import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 
@@ -49,6 +54,11 @@ export { CodexAppServerError } from "./codex-app-server-process.js";
 export type { CodexAppServerCommand } from "./codex-app-server-process.js";
 export { CodexAppServerResponseError } from "./codex-app-server-transport.js";
 export type { StartCodexTurnInput } from "./codex-app-server-policy.js";
+export type {
+	CodexDynamicPatchToolCall,
+	CodexDynamicPatchToolHandler,
+	CodexDynamicPatchToolOutcome,
+} from "./codex-dynamic-patch-tool-contract.js";
 
 export interface CodexAppServerClientOptions {
 	readonly command: CodexAppServerCommand;
@@ -59,6 +69,7 @@ export interface CodexAppServerClientOptions {
 	readonly authoritySignal: AbortSignal;
 	readonly requestTimeoutMs?: number;
 	readonly processFactory?: CodexAppServerProcessFactory;
+	readonly dynamicPatchTool?: CodexDynamicPatchToolHandler;
 }
 
 export interface CodexAppServerClientEvent {
@@ -71,6 +82,7 @@ export class CodexAppServerClient {
 	readonly #transport: CodexAppServerTransport;
 	readonly #codexHome: string;
 	readonly #authoritySignal: AbortSignal;
+	readonly #dynamicPatchToolEnabled: boolean;
 	#identity: CodexInitializeResponse | null = null;
 	#failure: Error | null = null;
 	#closed = false;
@@ -80,10 +92,12 @@ export class CodexAppServerClient {
 		transport: CodexAppServerTransport,
 		codexHome: string,
 		authoritySignal: AbortSignal,
+		dynamicPatchToolEnabled: boolean,
 	) {
 		this.#transport = transport;
 		this.#codexHome = codexHome;
 		this.#authoritySignal = authoritySignal;
+		this.#dynamicPatchToolEnabled = dynamicPatchToolEnabled;
 	}
 
 	static async start(
@@ -112,9 +126,14 @@ export class CodexAppServerClient {
 				authoritySignal: options.authoritySignal,
 				requestTimeoutMs: options.requestTimeoutMs,
 				processFactory: options.processFactory,
-				handleServerRequest: denyCodexServerRequest,
+				handleServerRequest: createCodexServerRequestHandler(options.dynamicPatchTool),
 			});
-			client = new CodexAppServerClient(transport, codexHome, options.authoritySignal);
+			client = new CodexAppServerClient(
+				transport,
+				codexHome,
+				options.authoritySignal,
+				options.dynamicPatchTool !== undefined,
+			);
 			await client.initialize();
 			await client.authenticate(ownerCredential);
 			return client;
@@ -144,6 +163,7 @@ export class CodexAppServerClient {
 					sandbox: "read-only",
 					config: threadConfig(this.#transport.workspaceCwd),
 					environments: [],
+					...(this.#dynamicPatchToolEnabled ? { dynamicTools: codexDynamicPatchTools() } : {}),
 					serviceName: "agentrelay_node",
 					ephemeral: false,
 				}),
@@ -461,6 +481,7 @@ export class CodexAppServerClient {
 	}
 
 	private async resolveOperationFailure(error: unknown): Promise<unknown> {
+		if (error instanceof CodexServerRequestReentryError) return error;
 		if (this.#authoritySignal.aborted) {
 			try {
 				await this.#transport.revalidateAuthority();
