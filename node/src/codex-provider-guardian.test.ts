@@ -16,7 +16,10 @@ import {
 	waitForProcessExit,
 } from "../test-support/fake-codex-app-server.js";
 import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner-credential.js";
-import type { CodexProviderGeneration } from "./codex-capsule-runner-contract.js";
+import {
+	type CodexProviderGeneration,
+	CodexProviderTerminationUnprovenError,
+} from "./codex-capsule-runner-contract.js";
 import { CodexOwnerCredentialError } from "./codex-owner-credential.js";
 import {
 	CODEX_PROVIDER_GENERATION_FILE,
@@ -127,6 +130,33 @@ describe("SupervisedCodexProviderGuardian", () => {
 			await expect(readFile(dataPlaneAccessPath, "utf8")).rejects.toMatchObject({
 				code: "ENOENT",
 			});
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"passes the one local patch handler through to the guarded app-server client",
+		async () => {
+			const fixture = await fakeAppServer();
+			const dynamicPatchTool = { handle: vi.fn(async () => "applied" as const) };
+			const generation = await openGeneration(fixture, { dynamicPatchTool });
+
+			await generation.client.startThread();
+			const messages = await waitForMessages(fixture.logPath, 8);
+
+			expect(messages.find((message) => message.method === "thread/start")).toMatchObject({
+				params: {
+					dynamicTools: [
+						{
+							type: "namespace",
+							name: "agentrelay",
+							tools: [{ type: "function", name: "apply_patch" }],
+						},
+					],
+				},
+			});
+			expect(dynamicPatchTool.handle).not.toHaveBeenCalled();
+			await generation.terminate("capsule_shutdown");
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
 	);
@@ -742,6 +772,35 @@ describe("SupervisedCodexProviderGuardian", () => {
 		},
 		GUARDIAN_TEST_TIMEOUT_MS,
 	);
+
+	it(
+		"marks a startup failure whose provider quiescence cannot be proven",
+		async () => {
+			const fixture = await fakeAppServer({ version: "0.0.0-startup-failure" });
+			const teardownFailure = new Error("provider teardown proof failed");
+			const stop = CodexSupervisedProcess.prototype.stop;
+			vi.spyOn(CodexSupervisedProcess.prototype, "stop").mockImplementation(
+				async function (reason) {
+					await stop.call(this, reason);
+					throw teardownFailure;
+				},
+			);
+
+			const failure = await createGuardian(fixture)
+				.openGeneration()
+				.catch((error: unknown) => error);
+
+			expect(failure).toBeInstanceOf(CodexProviderTerminationUnprovenError);
+			expect(failure).toMatchObject({
+				message: "Codex provider startup teardown could not be proven",
+				errors: [teardownFailure, expect.anything()],
+			});
+			expect((failure as CodexProviderTerminationUnprovenError).owner).toBeInstanceOf(
+				CodexSupervisedProcess,
+			);
+		},
+		GUARDIAN_TEST_TIMEOUT_MS,
+	);
 });
 
 type GuardianOverrides = Partial<
@@ -751,6 +810,7 @@ type GuardianOverrides = Partial<
 		| "boundary"
 		| "claimOwnerCredential"
 		| "deadlineAtMs"
+		| "dynamicPatchTool"
 		| "reaper"
 		| "requestTimeoutMs"
 		| "supervisor"

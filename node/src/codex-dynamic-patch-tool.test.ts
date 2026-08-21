@@ -4,11 +4,16 @@ import { join } from "node:path";
 import type { HostSessionRef, StartTurnInput } from "@agentrelay/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CapsuleRuntimeActivation } from "./capsule-runtime.js";
+import type { CodexDynamicToolCallItem, CodexTurn } from "./codex-app-server-protocol.js";
 import { CODEX_CAPSULE_STATE_FILE, CodexCapsuleStore } from "./codex-capsule-store.js";
-import { CODEX_DYNAMIC_PATCH_TOOL_CONTRACT } from "./codex-dynamic-patch-tool-contract.js";
+import {
+	CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
+	codexDynamicPatchToolResponse,
+} from "./codex-dynamic-patch-tool-contract.js";
 import {
 	CodexDynamicPatchToolCoordinator,
 	CodexDynamicPatchToolCoordinatorError,
+	CodexTerminalPatchPolicyMismatchError,
 } from "./codex-dynamic-patch-tool.js";
 import {
 	type CodexPatchResult,
@@ -218,7 +223,7 @@ describe("CodexDynamicPatchToolCoordinator", () => {
 		await rejected.recover();
 		expect(await onlyPatchRecord(rejectedFixture.directory)).toMatchObject({
 			patch: null,
-			receipt: { outcome: "rejected" },
+			receipt: { outcome: "rejected", source: "mediator" },
 		});
 		await rejected.close();
 
@@ -367,7 +372,385 @@ describe("CodexDynamicPatchToolCoordinator", () => {
 		expect(mediator.apply).not.toHaveBeenCalled();
 		await coordinator.close();
 	});
+
+	it("attests one exact applied provider item against its durable receipt and committed core", async () => {
+		const fixture = await activeTurnFixture();
+		const call = dynamicCall("attested-applied");
+		let committed: CodexPatchToolCall | null = null;
+		const mediator = fakeMediator({
+			inspect: vi.fn(async (value) =>
+				committed === null
+					? ({ state: "absent" } as const)
+					: ({ state: "committed", result: appliedResult(value as CodexPatchToolCall) } as const),
+			),
+			apply: vi.fn(async (value) => {
+				committed = value as CodexPatchToolCall;
+				return appliedResult(committed);
+			}),
+		});
+		const coordinator = coordinatorFor(fixture.store, mediator);
+		expect(await coordinator.handle(call, new AbortController().signal)).toBe("applied");
+
+		const proof = await coordinator.attestTerminal(
+			fixture.turn,
+			call.threadId,
+			terminalPatchTurn([dynamicPatchItem(call, "applied")]),
+		);
+
+		expect(proof).toMatchObject({
+			providerTurnId: call.turnId,
+			fatalPatchFailure: false,
+			calls: [{ callId: call.callId, itemSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }],
+		});
+		expect(Object.isFrozen(proof)).toBe(true);
+		expect(Object.isFrozen(proof.calls)).toBe(true);
+		expect(Object.isFrozen(proof.calls[0])).toBe(true);
+		expect(mediator.inspect).toHaveBeenCalledTimes(2);
+		await coordinator.close();
+	});
+
+	it("attests capsule-policy and mediator rejections only against their exact no-effect state", async () => {
+		const policyFixture = await activeTurnFixture();
+		await policyFixture.store.requestCancellation(policyFixture.turn);
+		const policyCall = dynamicCall("policy-rejected");
+		const policyMediator = fakeMediator();
+		const policy = coordinatorFor(policyFixture.store, policyMediator);
+		expect(await policy.handle(policyCall, new AbortController().signal)).toBe("rejected");
+		await expect(
+			policy.attestTerminal(
+				policyFixture.turn,
+				policyCall.threadId,
+				terminalPatchTurn([dynamicPatchItem(policyCall, "rejected")], "interrupted"),
+			),
+		).resolves.toMatchObject({ calls: [{ callId: policyCall.callId }] });
+		await policy.close();
+
+		const mediatorFixture = await activeTurnFixture();
+		const mediatorCall = dynamicCall("mediator-rejected");
+		const claim = await mediatorFixture.store.claimPatchCall(
+			dynamicRequest(mediatorCall.callId, mediatorCall.patch),
+		);
+		if (claim.kind !== "pending") throw new Error("Expected a pending mediator call");
+		await mediatorFixture.store.recordPatchCallReceipt(
+			claim.call,
+			codexPatchAuthorityRecord(testAuthority()),
+			{ outcome: "rejected", source: "mediator" },
+		);
+		const mediator = fakeMediator({
+			inspect: vi.fn(async () => ({ state: "rejected" as const })),
+		});
+		const coordinator = coordinatorFor(mediatorFixture.store, mediator);
+		await expect(
+			coordinator.attestTerminal(
+				mediatorFixture.turn,
+				mediatorCall.threadId,
+				terminalPatchTurn([dynamicPatchItem(mediatorCall, "rejected")]),
+			),
+		).resolves.toMatchObject({ calls: [{ callId: mediatorCall.callId }] });
+		await coordinator.close();
+	});
+
+	it("fails closed when durable rejection provenance and mediator state cross", async () => {
+		for (const scenario of [
+			{ source: "capsule_policy" as const, core: "rejected" as const },
+			{ source: "mediator" as const, core: "absent" as const },
+		]) {
+			const fixture = await activeTurnFixture();
+			const call = dynamicCall(`cross-${scenario.source}`);
+			const claim = await fixture.store.claimPatchCall(dynamicRequest(call.callId, call.patch));
+			if (claim.kind !== "pending") throw new Error("Expected a pending rejection call");
+			await fixture.store.recordPatchCallReceipt(
+				claim.call,
+				codexPatchAuthorityRecord(testAuthority()),
+				{ outcome: "rejected", source: scenario.source },
+			);
+			const coordinator = coordinatorFor(
+				fixture.store,
+				fakeMediator({ inspect: vi.fn(async () => ({ state: scenario.core })) }),
+			);
+			await expect(
+				coordinator.attestTerminal(
+					fixture.turn,
+					call.threadId,
+					terminalPatchTurn([dynamicPatchItem(call, "rejected")]),
+				),
+			).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+			await coordinator.close();
+		}
+	});
+
+	it("classifies only provider response and forbidden-item mismatches after exact core proof", async () => {
+		const fixture = await appliedCoordinatorFixture("provider-mismatch");
+		const exact = dynamicPatchItem(fixture.call, "applied");
+		const fallback = {
+			...exact,
+			status: "failed" as const,
+			contentItems: [],
+			success: false,
+		};
+		await expect(
+			fixture.coordinator.attestTerminal(
+				fixture.turn,
+				fixture.call.threadId,
+				terminalPatchTurn([fallback]),
+			),
+		).rejects.toEqual(new CodexTerminalPatchPolicyMismatchError());
+		await expect(
+			fixture.coordinator.attestTerminal(
+				fixture.turn,
+				fixture.call.threadId,
+				terminalPatchTurn([exact, { type: "fileChange", id: "native-write" }]),
+			),
+		).rejects.toEqual(new CodexTerminalPatchPolicyMismatchError());
+		for (const status of ["failed", "interrupted"] as const) {
+			await expect(
+				fixture.coordinator.attestTerminal(
+					fixture.turn,
+					fixture.call.threadId,
+					terminalPatchTurn([fallback], status),
+				),
+			).resolves.toMatchObject({ calls: [{ callId: fixture.call.callId }] });
+		}
+		await expect(
+			fixture.coordinator.attestTerminal(
+				fixture.turn,
+				fixture.call.threadId,
+				terminalPatchTurn([{ ...exact, arguments: { patch: "altered duplicate" } }, exact]),
+			),
+		).rejects.toEqual(new CodexTerminalPatchPolicyMismatchError());
+
+		// With raw patch scrubbed at receipt, a missing/altered call cannot be re-inspected exactly.
+		await expect(
+			fixture.coordinator.attestTerminal(
+				fixture.turn,
+				fixture.call.threadId,
+				terminalPatchTurn([]),
+			),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		await fixture.coordinator.close();
+	});
+
+	it("keeps mediator inspection failure and indeterminate receipts unproven", async () => {
+		const inspectionFailure = await appliedCoordinatorFixture("inspection-failure");
+		vi.mocked(inspectionFailure.mediator.inspect).mockRejectedValueOnce(
+			new Error("core inspection unavailable"),
+		);
+		await expect(
+			inspectionFailure.coordinator.attestTerminal(
+				inspectionFailure.turn,
+				inspectionFailure.call.threadId,
+				terminalPatchTurn([dynamicPatchItem(inspectionFailure.call, "applied")]),
+			),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		await inspectionFailure.coordinator.close();
+
+		const fixture = await activeTurnFixture();
+		const call = dynamicCall("unattestable-indeterminate");
+		const claim = await fixture.store.claimPatchCall(dynamicRequest(call.callId, call.patch));
+		if (claim.kind !== "pending") throw new Error("Expected a pending receipt call");
+		await fixture.store.recordPatchCallReceipt(
+			claim.call,
+			codexPatchAuthorityRecord(testAuthority()),
+			{ outcome: "indeterminate" },
+		);
+		const mediator = fakeMediator();
+		const coordinator = coordinatorFor(fixture.store, mediator);
+		await expect(
+			coordinator.attestTerminal(
+				fixture.turn,
+				call.threadId,
+				terminalPatchTurn([dynamicPatchItem(call, "rejected")]),
+			),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		expect(mediator.inspect).not.toHaveBeenCalled();
+		await coordinator.close();
+	});
+
+	it("attests a fatal pre-effect receipt only against exact absent core state", async () => {
+		const fixture = await activeTurnFixture();
+		const call = dynamicCall("fatal-no-effect");
+		const claim = await fixture.store.claimPatchCall(dynamicRequest(call.callId, call.patch));
+		if (claim.kind !== "pending") throw new Error("Expected a pending fatal call");
+		await fixture.store.recordPatchCallReceipt(
+			claim.call,
+			codexPatchAuthorityRecord(testAuthority()),
+			{ outcome: "failed", classification: "fatal" },
+		);
+		const mediator = fakeMediator();
+		const coordinator = coordinatorFor(fixture.store, mediator);
+		await expect(
+			coordinator.attestTerminal(
+				fixture.turn,
+				call.threadId,
+				terminalPatchTurn([dynamicPatchItem(call, "rejected")], "interrupted"),
+			),
+		).resolves.toMatchObject({
+			fatalPatchFailure: true,
+			calls: [{ callId: call.callId }],
+		});
+		expect(mediator.inspect).toHaveBeenCalledTimes(1);
+		vi.mocked(mediator.inspect).mockResolvedValueOnce({ state: "rejected" });
+		await expect(
+			coordinator.attestTerminal(
+				fixture.turn,
+				call.threadId,
+				terminalPatchTurn([dynamicPatchItem(call, "rejected")], "interrupted"),
+			),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		await coordinator.close();
+	});
+
+	it("forces failure when a fatal call follows an earlier committed patch", async () => {
+		const fixture = await activeTurnFixture();
+		const applied = dynamicCall("mixed-applied", "first patch");
+		const fatal = dynamicCall("mixed-fatal", "second patch");
+		const appliedClaim = await fixture.store.claimPatchCall(
+			dynamicRequest(applied.callId, applied.patch),
+		);
+		if (appliedClaim.kind !== "pending") throw new Error("Expected an applied request");
+		await fixture.store.recordPatchCallReceipt(
+			appliedClaim.call,
+			codexPatchAuthorityRecord(testAuthority()),
+			{ outcome: "applied", result: appliedResult(appliedClaim.call) },
+		);
+		const fatalClaim = await fixture.store.claimPatchCall(
+			dynamicRequest(fatal.callId, fatal.patch),
+		);
+		if (fatalClaim.kind !== "pending") throw new Error("Expected a fatal request");
+		await fixture.store.recordPatchCallReceipt(
+			fatalClaim.call,
+			codexPatchAuthorityRecord(testAuthority()),
+			{ outcome: "failed", classification: "fatal" },
+		);
+		const mediator = fakeMediator({
+			inspect: vi.fn(async (value) => {
+				const call = value as CodexPatchToolCall;
+				return call.callId === applied.callId
+					? ({ state: "committed", result: appliedResult(call) } as const)
+					: ({ state: "absent" } as const);
+			}),
+		});
+		const coordinator = coordinatorFor(fixture.store, mediator);
+
+		const proof = await coordinator.attestTerminal(
+			fixture.turn,
+			applied.threadId,
+			terminalPatchTurn(
+				[dynamicPatchItem(applied, "applied"), dynamicPatchItem(fatal, "rejected")],
+				"interrupted",
+			),
+		);
+		expect(proof.fatalPatchFailure).toBe(true);
+		expect(proof.calls.map((call) => call.callId)).toEqual([applied.callId, fatal.callId]);
+		expect(mediator.inspect).toHaveBeenCalledTimes(2);
+		await coordinator.close();
+	});
+
+	it("proves cold abandonment only for an authority-bound turn with zero durable calls", async () => {
+		const empty = await activeTurnFixture();
+		await empty.store.acceptTurn(empty.input, "provider-turn-private-1");
+		const emptyCoordinator = coordinatorFor(empty.store, fakeMediator());
+		await expect(
+			emptyCoordinator.assertNoPatchCallsForAbandonment(
+				empty.turn,
+				"provider-thread-private-1",
+				"provider-turn-private-1",
+			),
+		).resolves.toBeUndefined();
+		await emptyCoordinator.close();
+
+		const receipted = await appliedCoordinatorFixture("cold-receipt");
+		await expect(
+			receipted.coordinator.assertNoPatchCallsForAbandonment(
+				receipted.turn,
+				receipted.call.threadId,
+				receipted.call.turnId,
+			),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		expect(receipted.mediator.apply).toHaveBeenCalledTimes(1);
+		await receipted.coordinator.close();
+	});
+
+	it("refuses terminal and cold-abandonment proof after runtime authority revocation", async () => {
+		const fixture = await activeTurnFixture();
+		await fixture.store.acceptTurn(fixture.input, "provider-turn-private-1");
+		const abort = new AbortController();
+		const authority = { ...testAuthority(), signal: abort.signal };
+		const mediator = fakeMediator();
+		const coordinator = coordinatorFor(fixture.store, mediator, authority);
+		abort.abort(new Error("authority revoked"));
+
+		await expect(
+			coordinator.assertNoPatchCallsForAbandonment(
+				fixture.turn,
+				"provider-thread-private-1",
+				"provider-turn-private-1",
+			),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		await expect(
+			coordinator.attestTerminal(fixture.turn, "provider-thread-private-1", terminalPatchTurn([])),
+		).rejects.toEqual(new CodexDynamicPatchToolCoordinatorError());
+		expect(mediator.recover).not.toHaveBeenCalled();
+		await coordinator.close();
+	});
 });
+
+async function appliedCoordinatorFixture(callId: string) {
+	const fixture = await activeTurnFixture();
+	const call = dynamicCall(callId);
+	let committed = false;
+	const mediator = fakeMediator({
+		inspect: vi.fn(async (value) =>
+			committed
+				? ({
+						state: "committed",
+						result: appliedResult(value as CodexPatchToolCall),
+					} as const)
+				: ({ state: "absent" } as const),
+		),
+		apply: vi.fn(async (value) => {
+			committed = true;
+			return appliedResult(value as CodexPatchToolCall);
+		}),
+	});
+	const coordinator = coordinatorFor(fixture.store, mediator);
+	expect(await coordinator.handle(call, new AbortController().signal)).toBe("applied");
+	return { ...fixture, call, mediator, coordinator };
+}
+
+function terminalPatchTurn(
+	items: CodexTurn["items"],
+	status: Exclude<CodexTurn["status"], "inProgress"> = "completed",
+): CodexTurn {
+	return {
+		id: "provider-turn-private-1",
+		items,
+		itemsView: "full",
+		status,
+		error: null,
+		startedAt: 1,
+		completedAt: 2,
+		durationMs: 1,
+	};
+}
+
+function dynamicPatchItem(
+	call: ReturnType<typeof dynamicCall>,
+	outcome: "applied" | "rejected",
+): CodexDynamicToolCallItem {
+	const response = codexDynamicPatchToolResponse(outcome);
+	return {
+		type: "dynamicToolCall",
+		id: call.callId,
+		namespace: "agentrelay",
+		tool: "apply_patch",
+		arguments: { patch: call.patch },
+		status: outcome === "applied" ? "completed" : "failed",
+		contentItems: [...response.contentItems],
+		success: response.success,
+		durationMs: 1,
+	};
+}
 
 function coordinatorFor(
 	store: CodexCapsuleStore,

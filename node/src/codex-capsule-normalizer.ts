@@ -5,24 +5,22 @@ import {
 	type CodexThread,
 	type CodexTurn,
 	codexAgentMessageItemSchema,
+	codexDynamicToolCallItemSchema,
 	codexUserMessageItemSchema,
 } from "./codex-app-server-protocol.js";
 import {
 	type CodexCapsuleTurnIntent,
 	parseCodexCapsuleDisposition,
 } from "./codex-capsule-prompt.js";
+import type { CodexTerminalPatchAttestation } from "./codex-capsule-runner-contract.js";
 import type { CodexNormalizedTerminal } from "./codex-capsule-types.js";
+import { dynamicToolItemSha256 } from "./codex-dynamic-patch-tool.js";
 
 const textContentSchema = z
 	.object({ type: z.literal("text"), text: z.string().max(1_048_576) })
 	.passthrough();
 
-const SAFE_READ_ONLY_ITEM_TYPES = new Set([
-	"userMessage",
-	"agentMessage",
-	"reasoning",
-	"commandExecution",
-]);
+const SAFE_READ_ONLY_ITEM_TYPES = new Set(["userMessage", "agentMessage", "reasoning"]);
 
 export type CodexTurnReconciliation =
 	| { readonly kind: "none" }
@@ -57,8 +55,15 @@ export function reconcileCodexTurn(
 export function normalizeCodexTerminal(
 	turn: CodexTurn,
 	cancellationRequested: boolean,
+	patchAttestation: CodexTerminalPatchAttestation | null = null,
 ): CodexNormalizedTerminal {
 	if (turn.status === "inProgress") throw new Error("Codex turn is not terminal");
+	if (turn.itemsView === "full" && !hasOnlyAttestedItems(turn, patchAttestation)) {
+		return safeFailure("policy_denied", "Codex turn attempted a disallowed capability");
+	}
+	if (patchAttestation?.fatalPatchFailure === true) {
+		return safeFailure("transient", "Codex patch tool failed before a publishable turn result");
+	}
 	if (turn.status === "interrupted") {
 		return cancellationRequested
 			? { kind: "cancelled" }
@@ -69,9 +74,6 @@ export function normalizeCodexTerminal(
 	}
 	if (turn.itemsView !== "full") {
 		return safeFailure("permanent", "Codex completed without full authoritative output");
-	}
-	if (turn.items.some((item) => !SAFE_READ_ONLY_ITEM_TYPES.has(item.type))) {
-		return safeFailure("policy_denied", "Codex turn attempted a disallowed capability");
 	}
 	const finalAnswers = turn.items.flatMap((item) => {
 		const parsed = codexAgentMessageItemSchema.safeParse(item);
@@ -85,6 +87,34 @@ export function normalizeCodexTerminal(
 	} catch {
 		return safeFailure("permanent", "Codex final answer violated the structured output contract");
 	}
+}
+
+function hasOnlyAttestedItems(
+	turn: CodexTurn,
+	patchAttestation: CodexTerminalPatchAttestation | null,
+): boolean {
+	const expected = new Map<string, string>();
+	if (patchAttestation !== null) {
+		if (patchAttestation.providerTurnId !== turn.id) return false;
+		for (const call of patchAttestation.calls) {
+			if (expected.has(call.callId)) return false;
+			expected.set(call.callId, call.itemSha256);
+		}
+	}
+	let observed = 0;
+	for (const item of turn.items) {
+		if (SAFE_READ_ONLY_ITEM_TYPES.has(item.type)) continue;
+		if (patchAttestation === null || item.type !== "dynamicToolCall") return false;
+		const parsed = codexDynamicToolCallItemSchema.safeParse(item);
+		if (!parsed.success || expected.get(parsed.data.id) !== dynamicToolItemSha256(parsed.data)) {
+			return false;
+		}
+		expected.delete(parsed.data.id);
+		observed += 1;
+	}
+	return patchAttestation === null
+		? true
+		: observed === patchAttestation.calls.length && expected.size === 0;
 }
 
 export function normalizeCodexTurnUsage(

@@ -61,7 +61,7 @@ describe("CodexCapsuleStore", () => {
 		const { directory, store } = await openStore();
 		expect(
 			JSON.parse(await readFile(join(directory, CODEX_CAPSULE_STATE_FILE), "utf8")),
-		).toMatchObject({ schema_version: 3 });
+		).toMatchObject({ schema_version: 4 });
 		expect(await store.claimSessionStart()).toEqual({ kind: "send" });
 		await store.close();
 
@@ -190,6 +190,25 @@ describe("CodexCapsuleStore", () => {
 			receipt,
 			replayed: true,
 		});
+		const attestation = await reopened.patchCallsForTurn(turn, PATCH_AUTHORITY);
+		expect(attestation).toEqual({
+			threadId: request.providerThreadId,
+			providerTurnId: request.providerTurnId,
+			toolContract: CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
+			calls: [
+				{
+					providerThreadId: request.providerThreadId,
+					providerTurnId: request.providerTurnId,
+					callId: request.callId,
+					transactionId: codexPatchTransactionId(codexPatchKey(first.call)),
+					patchSha256: codexPatchSha256(request.patch),
+					patchBytes: Buffer.byteLength(request.patch, "utf8"),
+					receipt,
+				},
+			],
+		});
+		expect(JSON.stringify(attestation)).not.toContain(request.patch);
+		expect(Object.isFrozen(attestation.calls)).toBe(true);
 		const persisted = JSON.parse(
 			await readFile(join(directory, CODEX_CAPSULE_STATE_FILE), "utf8"),
 		) as { turns: Record<string, { patch_calls: Record<string, unknown> }> };
@@ -210,7 +229,7 @@ describe("CodexCapsuleStore", () => {
 
 		expect(await store.claimPatchCall(patchRequest("cancelled-call", "never apply"))).toEqual({
 			kind: "terminal",
-			receipt: { outcome: "rejected" },
+			receipt: { outcome: "rejected", source: "capsule_policy" },
 			replayed: false,
 		});
 		expect(await store.inspectTurn(turn, input)).toMatchObject({
@@ -227,7 +246,7 @@ describe("CodexCapsuleStore", () => {
 	it("rejects successor authority on every patch request and receipt path", async () => {
 		const { store, session } = await readyStore();
 		const input = turnInput(session);
-		await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+		const turn = await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
 		await store.claimTurnStart(input);
 		const request = patchRequest("authority-bound", "patch");
 		const claim = await store.claimPatchCall(request);
@@ -251,6 +270,9 @@ describe("CodexCapsuleStore", () => {
 			store.pendingPatchCalls(successorAuthority),
 		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
 		await expect(
+			store.patchCallsForTurn(turn, successorAuthority),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "scope_mismatch" });
+		await expect(
 			store.recordPatchCallReceipt(claim.call, successorAuthority, {
 				outcome: "applied",
 				result: appliedResult(claim.call),
@@ -268,7 +290,10 @@ describe("CodexCapsuleStore", () => {
 		for (let index = 0; index < CODEX_PATCH_MAX_CALLS_PER_TURN; index += 1) {
 			expect(
 				await first.store.claimPatchCall(patchRequest(`bounded-${index}`, `patch-${index}`)),
-			).toMatchObject({ kind: "terminal", receipt: { outcome: "rejected" } });
+			).toMatchObject({
+				kind: "terminal",
+				receipt: { outcome: "rejected", source: "capsule_policy" },
+			});
 		}
 		await expect(
 			first.store.claimPatchCall(patchRequest("bounded-overflow", "overflow")),
@@ -285,7 +310,7 @@ describe("CodexCapsuleStore", () => {
 		expect(await second.store.claimPatchCall(patchRequest("aggregate-overflow", overflow))).toEqual(
 			{
 				kind: "terminal",
-				receipt: { outcome: "rejected" },
+				receipt: { outcome: "rejected", source: "capsule_policy" },
 				replayed: false,
 			},
 		);
@@ -471,7 +496,7 @@ describe("CodexCapsuleStore", () => {
 		await store.close();
 		const path = join(directory, CODEX_CAPSULE_STATE_FILE);
 		const state = JSON.parse(await readFile(path, "utf8")) as { schema_version: number };
-		state.schema_version = 2;
+		state.schema_version = 3;
 		await writeFile(path, JSON.stringify(state), { mode: 0o600 });
 
 		await expect(reopenStore(directory)).rejects.toThrow();

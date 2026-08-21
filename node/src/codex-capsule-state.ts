@@ -32,7 +32,7 @@ import {
 } from "./codex-workspace-patch-contract.js";
 import { MAX_PRIVATE_STATE_FILE_BYTES } from "./private-state-file.js";
 
-export const CODEX_CAPSULE_STATE_SCHEMA_VERSION = 3;
+export const CODEX_CAPSULE_STATE_SCHEMA_VERSION = 4;
 export const CODEX_PATCH_MAX_CALLS_PER_TURN = 32;
 export const CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN = 1_048_576;
 export const CODEX_CAPSULE_STATE_TERMINAL_RECEIPT_RESERVE_BYTES = 4_096;
@@ -71,7 +71,12 @@ const storedProviderIntentSchema = z
 
 export const storedCodexPatchReceiptSchema = z.discriminatedUnion("outcome", [
 	z.object({ outcome: z.literal("applied"), result: codexPatchResultSchema }).strict(),
-	z.object({ outcome: z.literal("rejected") }).strict(),
+	z
+		.object({
+			outcome: z.literal("rejected"),
+			source: z.enum(["capsule_policy", "mediator"]),
+		})
+		.strict(),
 	z.object({ outcome: z.literal("failed"), classification: z.literal("fatal") }).strict(),
 	z.object({ outcome: z.literal("indeterminate") }).strict(),
 ]);

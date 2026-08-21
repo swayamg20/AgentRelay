@@ -49,15 +49,18 @@ internal, non-production composition.
   the deterministic fake path, not completion of the issue or real-runtime activation.
   See
   [`Local runtime authority`](../docs/research/008-local-runtime-authority.md).
-- A guarded Codex client, injected Capsule runner, provider guardian, strict v2 launch
-  descriptor, persistent adapter, and Linux-only Codex `0.146.0` containment boundary.
+- A guarded Codex client, injected Capsule runner, provider guardian, strict v3 launch
+  descriptor, Capsule state schema 4, adapter identity 0.4.0, and Linux-only Codex
+  `0.146.0` containment boundary.
   The Node provisioner durably binds an exact policy-selected read or write
   containment recovery handle before remote authority installation. The Capsule
   remains provider-passive through session establishment; starting, recovering, or
-  cancelling an existing durable read-only turn may activate the guardian after the
-  exact start input is journaled. Write-mode activation instead validates the retained
-  containment and fails before the credential is claimed or the guardian, provider, or
-  runner is opened. The guardian owns one kernel-locked provider generation, absolute
+  cancelling an existing durable turn may activate the guardian after the exact start
+  input is journaled. Write-mode activation first validates the retained containment,
+  owner-selected Git artifact, workspace-global patch state, and exact active write
+  grant. It recovers the durable mediator before opening the guardian, then registers
+  only `agentrelay.apply_patch/v1` while the provider workspace remains physically
+  read-only. The guardian owns one kernel-locked provider generation, absolute
   deadline, local revocation signal,
   and liveness classification. It prearms a detached out-of-group witness before the
   start barrier; that witness retains the lock, removes the guardian/provider process
@@ -68,7 +71,8 @@ internal, non-production composition.
 - An internal one-shot Codex authentication boundary. The Codex-only detached launcher
   claims a fresh opaque owner credential for each actual Capsule start and transfers it
   only through fixed inherited fd 3, never argv, environment, or durable state. A
-  validated schema-v2 Capsule owns that channel under one non-resettable 30-second
+  Capsule launched from a validated descriptor schema 3 owns that channel under one
+  non-resettable 30-second
   activation deadline; schema v1 leaves it untouched. Authority-gated provider
   activation consumes the credential once in `account/login/start`, then verifies
   `account/read` with refresh-token loading disabled. Codex is forced to
@@ -81,22 +85,27 @@ internal, non-production composition.
   that workspace as `untrusted`. Before start or resume and again against the private
   home afterward, `config/read` must show the untrusted project, `shell_tool=false`,
   and no effective MCP servers; a persisted private `config.toml` is rejected. Thread
-  start and every turn select `environments: []`, so no environment-backed shell or
-  native `apply_patch` tool is available. Resume first scans the bounded loaded-thread
-  list and accepts only a cold stored thread. Every server-initiated request is denied
-  and made fatal.
-  Native `apply_patch` remains a separate model-dependent surface, and its file-change
-  approval is still declined; dynamic exact patch mediation is not implemented.
+  start and every turn select `environments: []`, so pinned Codex `0.146.0` registers
+  neither an environment-backed shell nor native `apply_patch` tool. Resume first scans
+  the bounded loaded-thread list and accepts only a
+  cold stored thread. Under local write authority, the exact
+  `agentrelay.apply_patch/v1` dynamic request is handled by the durable Capsule
+  coordinator and trusted mediator. The command flags alone would leave native patch
+  eligibility model-dependent, but the effective path exposes no native file-change
+  tool; an unexpected file-change approval is still declined and fatal. Command,
+  permission, user-input, MCP, and every other dynamic-tool request is denied and made fatal.
 - An internal provider-only egress boundary. Only the exact pinned app-server command
   selects the retained runtime profile, whose Codex-managed CONNECT proxy allows
   `api.openai.com`; version checks and containment probes select an offline profile,
   and nested read-only workspace sandboxes use `networkAccess: false`. Its exact argv
   pins `agents.enabled=false` and `web_search="disabled"` and disables the shell tool,
   hooks, plugins, apps, multi-agent, and code-mode features. This removes
-  `exec_command`, `write_stdin`, and the legacy shell. Native `apply_patch` remains
-  independently eligible when the selected model exposes it, but any resulting
-  `item/fileChange/requestApproval` is declined and made fatal; exact patch mediation
-  is not implemented. This path is not selected by a polling
+  `exec_command`, `write_stdin`, and the legacy shell. At this command-hardening layer
+  alone, native `apply_patch` remains model-dependent; the actual `environments: []`
+  thread/turn path suppresses its registration in pinned Codex `0.146.0`. Any unexpected
+  `item/fileChange/requestApproval` is declined and made fatal. The separately
+  registered `agentrelay.apply_patch/v1` tool is the only write path and never gives
+  the provider a writable mount. This path is not selected by a polling
   command and has not executed a real model turn.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
@@ -122,6 +131,11 @@ Bubblewrap artifacts plus `codex --version`; it opens no Node/Capsule state and 
 no Relay work. No `run-codex` command exists. None of these commands executes a Codex
 model turn or exposes an official A2A gateway.
 
+Codex launch descriptors use schema 3, durable Codex Capsule state uses schema 4, and
+the compatible adapter identity is `capsule-codex` 0.4.0. Prior descriptor/state
+schemas and adapter 0.3.0 are rejected rather than resumed across the mediated-write
+contract change.
+
 Git submodules are intentionally unsupported at this checkpoint. Supporting them
 requires a separate, explicit preflight for every nested repository and its local Git
 configuration.
@@ -130,8 +144,8 @@ The Capsule checkpoint is experimental and Unix-only because its transport is a 
 domain socket. It is not a general local daemon manager: there is no installer, OS
 service supervisor, automatic process respawn, or production Codex/Claude activation.
 The guarded Codex client, injected runner, guardian, descriptor, provisioner, adapter,
-and Linux containment boundary form an internal read-only activation path plus a
-fail-closed write-authority/containment checkpoint; see
+Linux containment boundary, and durable patch mediator form an internal activation
+path whose provider remains physically read-only; see
 [`Codex provider guardian`](../docs/research/007-codex-provider-guardian.md) and
 [`Mission workspace containment`](../docs/research/006-mission-workspace-containment.md).
 `agentrelay-codex-guardian` is the guardian's internal child-process entry point, not
@@ -197,11 +211,14 @@ one-shot owner API-key handoff, ephemeral-login boundary, and fixed provider-onl
 managed CONNECT egress for the exact app-server command. Its provider process runs
 from the private runtime home while the thread remains scoped to the logical workspace;
 effective trust, shell, and MCP state are attested around each thread start or resume,
-and the client supplies no Codex environments. Write-mode activation stops before the
-credential is claimed or those runtime components are opened. No polling command
-selects either path. An owner-facing credential source, guarded
-workspace-write model activation, patch mediation, durable write evidence, and real
-model-turn evidence remain absent.
+and the client supplies no Codex environments. Write mode additionally recovers one
+workspace-global mediator before provider startup. That mediator durably binds each
+exact provider/Host-turn call and active grant, applies only bounded patches through a
+pinned owner-selected Git compiler, and requires an exact receipt plus terminal-history
+attestation before publication. No polling command selects either path. An owner-facing
+credential source, registered verification-command authority, general Relay-visible
+authority/execution evidence (#99), and real model-turn/live OpenAI evidence remain
+absent.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this
@@ -234,9 +251,8 @@ node node/dist/bin/agentrelay-node.js doctor-codex
 
 It verifies the exact pinned package artifacts and bounded version probe before any
 Node/Capsule runtime state is opened. Passing it does not enable Codex execution, select
-the internal provider-egress profile, or load an owner credential: an owner-facing
-credential source, guarded workspace-write model activation, and a polling `run-codex`
-command are still absent.
+the internal provider-egress or mediated-write profile, or load an owner credential:
+an owner-facing credential source and polling `run-codex` command are still absent.
 
 Use `--capsule-root <absolute-path>` to override the default
 `state/capsules` directory beside the Node config, and

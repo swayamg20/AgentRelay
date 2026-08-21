@@ -5,6 +5,7 @@ import type {
 	TurnDisposition,
 } from "@agentrelay/protocol";
 import type { CodexCapsuleTurnIntent } from "./codex-capsule-prompt.js";
+import type { CodexDynamicPatchToolContract } from "./codex-dynamic-patch-tool-contract.js";
 import type {
 	CodexPatchAuthorityRecord,
 	CodexPatchResult,
@@ -52,7 +53,7 @@ export interface CodexPatchCallRequest {
 
 export type CodexPatchCallReceipt =
 	| { readonly outcome: "applied"; readonly result: CodexPatchResult }
-	| { readonly outcome: "rejected" }
+	| { readonly outcome: "rejected"; readonly source: "capsule_policy" | "mediator" }
 	| { readonly outcome: "failed"; readonly classification: "fatal" }
 	| { readonly outcome: "indeterminate" };
 
@@ -67,3 +68,20 @@ export type CodexPatchCallClaim =
 			readonly receipt: CodexPatchCallReceipt;
 			readonly replayed: boolean;
 	  };
+
+export interface CodexPatchCallAttestationRecord {
+	readonly providerThreadId: string;
+	readonly providerTurnId: string;
+	readonly callId: string;
+	readonly transactionId: string;
+	readonly patchSha256: string;
+	readonly patchBytes: number;
+	readonly receipt: CodexPatchCallReceipt | null;
+}
+
+export interface CodexTurnPatchCalls {
+	readonly threadId: string;
+	readonly providerTurnId: string | null;
+	readonly toolContract: CodexDynamicPatchToolContract | null;
+	readonly calls: readonly CodexPatchCallAttestationRecord[];
+}

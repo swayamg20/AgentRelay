@@ -47,10 +47,12 @@ import {
 import type {
 	CodexInterruptClaim,
 	CodexNormalizedTerminal,
+	CodexPatchCallAttestationRecord,
 	CodexPatchCallClaim,
 	CodexPatchCallReceipt,
 	CodexPatchCallRequest,
 	CodexSessionStartClaim,
+	CodexTurnPatchCalls,
 	CodexTurnRuntimeState,
 	CodexTurnStartClaim,
 } from "./codex-capsule-types.js";
@@ -216,6 +218,48 @@ export class CodexCapsuleStore {
 		return listPendingPatchCalls(this.#state, authority);
 	}
 
+	/** Exact redacted patch-call set for terminal provider-history attestation. */
+	async patchCallsForTurn(
+		refValue: HostTurnRef,
+		authorityValue: CodexPatchAuthorityRecord,
+	): Promise<CodexTurnPatchCalls> {
+		const ref = hostTurnRefSchema.parse(refValue);
+		const authority = codexPatchAuthoritySchema.parse(authorityValue);
+		await this.#pendingWrite;
+		const turn = requireTurnByRef(this.#state, ref);
+		const calls = Object.values(turn.patch_calls)
+			.map((call): CodexPatchCallAttestationRecord => {
+				if (!isDeepStrictEqual(call.authority, authority)) {
+					throw new CapsuleOperationError(
+						"scope_mismatch",
+						"Codex patch call belongs to another runtime authority",
+					);
+				}
+				return {
+					providerThreadId: call.provider_thread_id,
+					providerTurnId: call.provider_turn_id,
+					callId: call.call_id,
+					transactionId: call.transaction_id,
+					patchSha256: call.patch_sha256,
+					patchBytes: call.patch_bytes,
+					receipt: call.receipt === null ? null : structuredClone(call.receipt),
+				};
+			})
+			.sort((left, right) =>
+				left.transactionId < right.transactionId
+					? -1
+					: left.transactionId > right.transactionId
+						? 1
+						: 0,
+			);
+		return {
+			threadId: this.#state.session.codex_thread_id!,
+			providerTurnId: turn.codex_turn_id,
+			toolContract: turn.provider_intent.tool_contract,
+			calls: Object.freeze(calls),
+		};
+	}
+
 	async recordPatchCallReceipt(
 		callValue: CodexPatchToolCall,
 		authorityValue: CodexPatchAuthorityRecord,
@@ -310,10 +354,14 @@ export class CodexCapsuleStore {
 		refValue: HostTurnRef,
 		usageValue: HostUsage,
 		outcome: CodexNormalizedTerminal,
+		cancelIfDurablyRequestedValue = false,
 	): Promise<readonly HostEvent[]> {
 		const ref = hostTurnRefSchema.parse(refValue);
 		const usage = hostUsageSchema.parse(usageValue);
-		return this.mutate((state) => recordTerminal(state, ref, usage, outcome));
+		const cancelIfDurablyRequested = z.boolean().parse(cancelIfDurablyRequestedValue);
+		return this.mutate((state) =>
+			recordTerminal(state, ref, usage, outcome, cancelIfDurablyRequested),
+		);
 	}
 
 	async close(): Promise<void> {

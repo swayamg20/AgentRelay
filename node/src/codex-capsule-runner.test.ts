@@ -1,5 +1,6 @@
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import type {
 	HostEvent,
 	HostSessionRef,
@@ -7,7 +8,7 @@ import type {
 	SessionInput,
 	StartTurnInput,
 } from "@agentrelay/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	buildCapsuleRequest,
 	capsuleResultValue,
@@ -34,6 +35,8 @@ import {
 	type CodexProviderGuardian,
 	type CodexProviderTermination,
 	type CodexProviderTerminationReason,
+	CodexProviderTerminationUnprovenError,
+	type CodexRunnerPatchCoordinator,
 } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
@@ -139,8 +142,8 @@ describe("CodexCapsuleRunner", () => {
 		expect(fixture.guardian.openCalls).toBe(2);
 	});
 
-	it("fails a bounded zero-match only after provider quiescence and never resends", async () => {
-		const fixture = await openFixture({ readySession: true, zeroMatchReads: 2 });
+	it("fails a zero-match after one cold read and never resends", async () => {
+		const fixture = await openFixture({ readySession: true });
 		const session = fixture.session!;
 		const input = turnInput(session);
 		const turn = await fixture.store.prepareTurn(input);
@@ -152,7 +155,7 @@ describe("CodexCapsuleRunner", () => {
 		});
 		expect(eventKinds(frames)).toEqual(["accepted", "usage", "failed"]);
 		expect(fixture.client.turnStarts).toHaveLength(0);
-		expect(fixture.client.readCalls).toBe(3);
+		expect(fixture.client.readCalls).toBe(1);
 		expect(fixture.guardian.openCalls).toBe(1);
 
 		const next = turnInput(session, IDS.delivery2);
@@ -160,7 +163,7 @@ describe("CodexCapsuleRunner", () => {
 		expect((await fixture.store.claimTurnStart(next)).kind).toBe("send");
 	});
 
-	it("applies pre-binding cancellation after reconciliation with one interrupt", async () => {
+	it("fails an inherited in-progress unbound turn without binding or resending it", async () => {
 		const fixture = await openFixture({ readySession: true });
 		fixture.client.startBehavior = "in_progress";
 		const input = turnInput(fixture.session!);
@@ -169,19 +172,16 @@ describe("CodexCapsuleRunner", () => {
 		if (claim.kind !== "send") throw new Error("Expected a new Codex turn claim");
 		fixture.client.seedTurn(claim.intent, "inProgress");
 
-		const recovery = sendCapsuleRequest(fixture.identity, "recover_turn", { turn, input });
-		await expect.poll(() => fixture.client.readCalls).toBeGreaterThan(0);
-		await expect
-			.poll(async () => (await fixture.store.inspectTurn(turn, input)).codexTurnId)
-			.toBe("seeded-1");
-		await capsuleResultValue(fixture.identity, "cancel_turn", { turn });
-		const frames = await recovery;
+		const frames = await sendCapsuleRequest(fixture.identity, "recover_turn", { turn, input });
 
-		expect(eventKinds(frames)).toEqual(["accepted", "usage", "cancelled"]);
-		expect(fixture.client.interrupts).toEqual([{ threadId: "thread-1", turnId: "seeded-1" }]);
+		expect(eventKinds(frames)).toEqual(["accepted", "usage", "failed"]);
+		expect((await fixture.store.inspectTurn(turn, input)).codexTurnId).toBeNull();
+		expect(fixture.client.readCalls).toBe(1);
+		expect(fixture.client.turnStarts).toEqual([]);
+		expect(fixture.client.interrupts).toEqual([]);
 	});
 
-	it("resumes the durable session before cancelling an unresolved turn after restart", async () => {
+	it("closes a locally cancelled unresolved turn without resending provider work", async () => {
 		const fixture = await openFixture({ readySession: true });
 		const input = turnInput(fixture.session!);
 		const turn = await fixture.store.prepareTurn(input);
@@ -195,7 +195,9 @@ describe("CodexCapsuleRunner", () => {
 			.toEqual(["accepted", "usage", "cancelled"]);
 
 		expect(fixture.client.calls).toContain("resumeThread");
-		expect(fixture.client.interrupts).toEqual([{ threadId: "thread-1", turnId: "seeded-1" }]);
+		expect(fixture.client.readCalls).toBe(1);
+		expect(fixture.client.turnStarts).toEqual([]);
+		expect(fixture.client.interrupts).toEqual([]);
 	});
 
 	it("retires after an uncertain interrupt and fails it in a proven fresh provider generation", async () => {
@@ -405,13 +407,16 @@ describe("CodexCapsuleRunner", () => {
 			retireGeneration: () => undefined,
 		}).catch((error: unknown) => error);
 
-		expect(failure).toBeInstanceOf(AggregateError);
+		expect(failure).toBeInstanceOf(CodexProviderTerminationUnprovenError);
 		expect((failure as AggregateError).errors).toEqual([
 			teardownFailure,
 			expect.objectContaining({
 				message: "Codex Capsule working directory must be absolute and normalized",
 			}),
 		]);
+		expect((failure as CodexProviderTerminationUnprovenError).owner).toBe(guardian.generations[0]);
+		expect(JSON.stringify(failure)).not.toContain(guardian.generations[0]!.generationId);
+		expect(inspect(failure)).not.toContain(guardian.generations[0]!.generationId);
 		expect(guardian.generations[0]?.terminationReasons).toEqual(["startup_failure"]);
 		expect(client.closeCalls).toBe(1);
 		await store.close();
@@ -445,6 +450,184 @@ describe("CodexCapsuleRunner", () => {
 		expect(retireCalls).toBe(0);
 	});
 
+	it("closes the patch coordinator after provider quiescence and before the durable store", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-close-order-"));
+		directories.push(directory);
+		const order: string[] = [];
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const client = new FakeCodexCapsuleClient(directory);
+		const originalClientClose = client.close.bind(client);
+		vi.spyOn(client, "close").mockImplementation(async () => {
+			order.push("provider");
+			await originalClientClose();
+		});
+		const originalStoreClose = store.close.bind(store);
+		vi.spyOn(store, "close").mockImplementation(async () => {
+			order.push("store");
+			await originalStoreClose();
+		});
+		const patchCoordinator = fakePatchCoordinator({
+			close: vi.fn(async () => {
+				order.push("coordinator");
+			}),
+		});
+		const runner = await CodexCapsuleRunner.open({
+			store,
+			cwd: directory,
+			guardian: new RecordingProviderGuardian(() => client),
+			patchCoordinator,
+			retireGeneration: () => undefined,
+		});
+
+		await runner.close();
+
+		expect(order).toEqual(["provider", "coordinator", "store"]);
+	});
+
+	it("leaves the durable store open when patch-coordinator shutdown is unproven", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-close-gate-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const closeStore = vi.spyOn(store, "close");
+		const client = new FakeCodexCapsuleClient(directory);
+		const failure = new Error("mediator quiescence was not proven");
+		const patchCoordinator = fakePatchCoordinator({
+			close: vi.fn(async () => {
+				throw failure;
+			}),
+		});
+		const runner = await CodexCapsuleRunner.open({
+			store,
+			cwd: directory,
+			guardian: new RecordingProviderGuardian(() => client),
+			patchCoordinator,
+			retireGeneration: () => undefined,
+		});
+
+		await expect(runner.close()).rejects.toBe(failure);
+		expect(client.closeCalls).toBe(1);
+		expect(patchCoordinator.close).toHaveBeenCalledTimes(1);
+		expect(closeStore).not.toHaveBeenCalled();
+		closeStore.mockRestore();
+		await store.close();
+	});
+
+	it("leaves coordinator and store authority open when provider shutdown is unproven", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-provider-gate-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const closeStore = vi.spyOn(store, "close");
+		const client = new FakeCodexCapsuleClient(directory);
+		const guardian = new RecordingProviderGuardian(() => client);
+		guardian.terminationFailure = new Error("provider quiescence was not proven");
+		const patchCoordinator = fakePatchCoordinator();
+		const runner = await CodexCapsuleRunner.open({
+			store,
+			cwd: directory,
+			guardian,
+			patchCoordinator,
+			retireGeneration: () => undefined,
+		});
+
+		await expect(runner.close()).rejects.toBeInstanceOf(CodexProviderTerminationUnprovenError);
+		expect(patchCoordinator.close).not.toHaveBeenCalled();
+		expect(closeStore).not.toHaveBeenCalled();
+		closeStore.mockRestore();
+		await store.close();
+	});
+
+	it("drains an admitted cancellation before coordinator and store teardown", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-cancel-close-race-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		await store.claimSessionStart();
+		const session = await store.acceptSession("thread-1");
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input);
+		const inputReadStarted = deferred<void>();
+		const releaseInputRead = deferred<void>();
+		const originalInputForTurn = store.inputForTurn.bind(store);
+		vi.spyOn(store, "inputForTurn").mockImplementation(async (ref) => {
+			inputReadStarted.resolve(undefined);
+			await releaseInputRead.promise;
+			return originalInputForTurn(ref);
+		});
+		const requestCancellation = vi.spyOn(store, "requestCancellation");
+		const client = new FakeCodexCapsuleClient(directory);
+		const patchCoordinator = fakePatchCoordinator();
+		const runner = await CodexCapsuleRunner.open({
+			store,
+			cwd: directory,
+			guardian: new RecordingProviderGuardian(() => client),
+			patchCoordinator,
+			retireGeneration: () => undefined,
+		});
+
+		const cancelling = runner.cancelTurn(turn);
+		await inputReadStarted.promise;
+		const closing = runner.close();
+		await expect.poll(() => client.closeCalls).toBe(1);
+		expect(patchCoordinator.close).not.toHaveBeenCalled();
+		releaseInputRead.resolve(undefined);
+
+		await expect(cancelling).rejects.toBeDefined();
+		await closing;
+		expect(requestCancellation).not.toHaveBeenCalled();
+		expect(client.interrupts).toEqual([]);
+		expect(patchCoordinator.close).toHaveBeenCalledTimes(1);
+	});
+
+	it("drains an admitted session operation without starting provider work after close", async () => {
+		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-session-close-race-"));
+		directories.push(directory);
+		const store = await CodexCapsuleStore.open(join(directory, "state"), {
+			capsuleId: IDS.capsule,
+			session: sessionInput(),
+		});
+		const scopeReadStarted = deferred<void>();
+		const releaseScopeRead = deferred<void>();
+		const originalSessionScope = store.sessionScope.bind(store);
+		vi.spyOn(store, "sessionScope").mockImplementation(async () => {
+			scopeReadStarted.resolve(undefined);
+			await releaseScopeRead.promise;
+			return originalSessionScope();
+		});
+		const client = new FakeCodexCapsuleClient(directory);
+		const patchCoordinator = fakePatchCoordinator();
+		const runner = await CodexCapsuleRunner.open({
+			store,
+			cwd: directory,
+			guardian: new RecordingProviderGuardian(() => client),
+			patchCoordinator,
+			retireGeneration: () => undefined,
+		});
+
+		const ensuring = runner.ensureSession(sessionInput());
+		await scopeReadStarted.promise;
+		const closing = runner.close();
+		await expect.poll(() => client.closeCalls).toBe(1);
+		expect(patchCoordinator.close).not.toHaveBeenCalled();
+		releaseScopeRead.resolve(undefined);
+
+		await expect(ensuring).rejects.toBeDefined();
+		await closing;
+		expect(client.calls).not.toContain("startThread");
+		expect(client.calls).not.toContain("resumeThread");
+		expect(patchCoordinator.close).toHaveBeenCalledTimes(1);
+	});
+
 	it("fences same-generation admission synchronously after a provider failure", async () => {
 		const directory = await realpath(await mkdtemp("/tmp/agentrelay-codex-retirement-"));
 		directories.push(directory);
@@ -465,7 +648,6 @@ describe("CodexCapsuleRunner", () => {
 			},
 			eventPollMs: 1,
 			providerPollMs: 1,
-			zeroMatchReads: 2,
 		});
 
 		await expect(runner.ensureSession(sessionInput())).rejects.toThrow(
@@ -525,7 +707,6 @@ describe("CodexCapsuleRunner", () => {
 
 interface FixtureOptions {
 	readonly readySession?: boolean;
-	readonly zeroMatchReads?: number;
 }
 
 async function openFixture(options: FixtureOptions = {}) {
@@ -566,7 +747,6 @@ async function createFixture(options: FixtureOptions = {}) {
 						retireGeneration: retire,
 						eventPollMs: 1,
 						providerPollMs: 1,
-						zeroMatchReads: options.zeroMatchReads ?? 2,
 					}),
 				),
 		});
@@ -701,6 +881,23 @@ class RecordingProviderGeneration implements CodexProviderGeneration {
 		if (this.terminationFailure !== null) throw this.terminationFailure;
 		this.finish("stopped");
 	}
+}
+
+function fakePatchCoordinator(
+	overrides: Partial<CodexRunnerPatchCoordinator> = {},
+): CodexRunnerPatchCoordinator {
+	return {
+		recover: vi.fn(async () => undefined),
+		handle: vi.fn(async () => "fatal_rejected" as const),
+		assertNoPatchCallsForAbandonment: vi.fn(async () => undefined),
+		attestTerminal: vi.fn(async (_ref, _threadId, turn) => ({
+			providerTurnId: turn.id,
+			fatalPatchFailure: false,
+			calls: [],
+		})),
+		close: vi.fn(async () => undefined),
+		...overrides,
+	};
 }
 
 function sessionInput(): SessionInput {

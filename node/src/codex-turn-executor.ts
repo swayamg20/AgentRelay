@@ -7,11 +7,15 @@ import {
 	reconcileCodexTurn,
 } from "./codex-capsule-normalizer.js";
 import type { CodexCapsuleTurnIntent } from "./codex-capsule-prompt.js";
-import type { CodexCapsuleClient } from "./codex-capsule-runner-contract.js";
+import type {
+	CodexCapsuleClient,
+	CodexRunnerPatchCoordinator,
+	CodexTerminalPatchAttestation,
+} from "./codex-capsule-runner-contract.js";
 import { matchesProviderTurn } from "./codex-capsule-runner-contract.js";
 import type { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { CodexTerminalPatchPolicyMismatchError } from "./codex-dynamic-patch-tool.js";
 import type { CodexProviderEventSource } from "./codex-provider-event-source.js";
-import { waitUnref } from "./unref-timer.js";
 
 export interface CodexTurnExecutorOptions {
 	readonly store: CodexCapsuleStore;
@@ -19,7 +23,7 @@ export interface CodexTurnExecutorOptions {
 	readonly providerEvents: CodexProviderEventSource;
 	readonly cwd: string;
 	readonly providerPollMs: number;
-	readonly zeroMatchReads: number;
+	readonly patchCoordinator?: CodexRunnerPatchCoordinator;
 	readonly shutdownSignal: AbortSignal;
 }
 
@@ -30,7 +34,7 @@ export class CodexTurnExecutor {
 	readonly #providerEvents: CodexProviderEventSource;
 	readonly #cwd: string;
 	readonly #providerPollMs: number;
-	readonly #zeroMatchReads: number;
+	readonly #patchCoordinator: CodexRunnerPatchCoordinator | undefined;
 	readonly #shutdownSignal: AbortSignal;
 	// Membership is generation-local, so a durable barrier absent here predates this client.
 	readonly #interruptsIssued = new Set<string>();
@@ -42,7 +46,7 @@ export class CodexTurnExecutor {
 		this.#providerEvents = options.providerEvents;
 		this.#cwd = options.cwd;
 		this.#providerPollMs = options.providerPollMs;
-		this.#zeroMatchReads = options.zeroMatchReads;
+		this.#patchCoordinator = options.patchCoordinator;
 		this.#shutdownSignal = options.shutdownSignal;
 	}
 
@@ -60,6 +64,27 @@ export class CodexTurnExecutor {
 			await this.#store.acceptTurn(input, turn.id);
 		} else if (claim.kind === "reconcile") {
 			await this.reconcileUnbound(input, ref, claim.intent, threadId);
+			return;
+		} else {
+			const inherited = await this.#store.inspectTurn(ref, input);
+			if (inherited.cancellationRequested) {
+				await this.interrupt(ref);
+				if (!(await this.#store.inspectTurn(ref, input)).terminal) {
+					await this.waitForTerminal(input, ref, threadId);
+				}
+				return;
+			}
+			if (inherited.codexTurnId === null) {
+				throw new Error("Codex accepted turn lost its durable provider binding");
+			}
+			await this.reconcileBoundAfterQuiescence(
+				input,
+				ref,
+				inherited.intent,
+				threadId,
+				inherited.codexTurnId,
+			);
+			return;
 		}
 		const state = await this.#store.inspectTurn(ref, input);
 		if (state.terminal) return;
@@ -95,13 +120,20 @@ export class CodexTurnExecutor {
 			const input = await this.#store.inputForTurn(ref);
 			const state = await this.#store.inspectTurn(ref, input);
 			const match = await this.readMatchedTurn(state.intent, state.threadId);
-			if (match !== null) {
+			if (match !== null && match.status !== "inProgress") {
 				await this.#store.acceptTurn(input, match.id);
-				if (match.status !== "inProgress") {
-					await this.finalize(input, ref, match);
-					return;
-				}
+				await this.finalize(input, ref, match);
+				return;
 			}
+			if (state.codexTurnId === null) {
+				throw new Error("Codex interrupt lost its durable provider binding");
+			}
+			this.assertMatchingInProgressTurn(match, state.codexTurnId);
+			await this.#patchCoordinator?.assertNoPatchCallsForAbandonment(
+				ref,
+				state.threadId,
+				state.codexTurnId,
+			);
 			await this.#store.recordUncertainInterruptAfterQuiescence(ref, input);
 		}
 	}
@@ -112,25 +144,47 @@ export class CodexTurnExecutor {
 		intent: CodexCapsuleTurnIntent,
 		threadId: string,
 	): Promise<void> {
-		const first = await this.readMatchedTurn(intent, threadId);
-		if (first !== null) return this.bindReconciled(input, ref, first);
-		for (let attempt = 0; attempt < this.#zeroMatchReads; attempt += 1) {
-			const match = await this.readMatchedTurn(intent, threadId);
-			if (match !== null) return this.bindReconciled(input, ref, match);
-			if (attempt + 1 < this.#zeroMatchReads) {
-				await waitUnref(this.#providerPollMs, this.#shutdownSignal);
-			}
+		const match = await this.readMatchedTurn(intent, threadId);
+		if (match !== null && match.status !== "inProgress") {
+			await this.#store.acceptTurn(input, match.id);
+			await this.finalize(input, ref, match);
+			return;
 		}
 		await this.#store.recordUnmatchedStartAfterQuiescence(ref, input);
 	}
 
-	private async bindReconciled(
+	private async reconcileBoundAfterQuiescence(
 		input: StartTurnInput,
 		ref: HostTurnRef,
-		turn: CodexTurn,
+		intent: CodexCapsuleTurnIntent,
+		threadId: string,
+		providerTurnId: string,
 	): Promise<void> {
-		await this.#store.acceptTurn(input, turn.id);
-		if (turn.status !== "inProgress") await this.finalize(input, ref, turn);
+		const match = await this.readMatchedTurn(intent, threadId);
+		if (match !== null && match.status !== "inProgress") {
+			await this.#store.acceptTurn(input, match.id);
+			await this.finalize(input, ref, match);
+			return;
+		}
+		this.assertMatchingInProgressTurn(match, providerTurnId);
+		await this.#patchCoordinator?.assertNoPatchCallsForAbandonment(ref, threadId, providerTurnId);
+		await this.#store.recordTerminal(
+			ref,
+			{ available: false, reason: "not_reported" },
+			{
+				kind: "failed",
+				failure: {
+					class: "transient",
+					message: "Codex turn outcome could not be recovered after provider shutdown",
+				},
+			},
+		);
+	}
+
+	private assertMatchingInProgressTurn(match: CodexTurn | null, providerTurnId: string): void {
+		if (match !== null && match.id !== providerTurnId) {
+			throw new Error("Codex reconciliation matched a different provider turn");
+		}
 	}
 
 	private async readMatchedTurn(
@@ -200,10 +254,31 @@ export class CodexTurnExecutor {
 		usage: HostUsage = { available: false, reason: "not_reported" },
 	): Promise<void> {
 		const state = await this.#store.inspectTurn(ref, input);
+		let patchAttestation: CodexTerminalPatchAttestation | null = null;
+		if (this.#patchCoordinator !== undefined) {
+			try {
+				patchAttestation = await this.#patchCoordinator.attestTerminal(ref, state.threadId, turn);
+			} catch (error) {
+				if (!(error instanceof CodexTerminalPatchPolicyMismatchError)) throw error;
+				await this.#store.recordTerminal(ref, usage, {
+					kind: "failed",
+					failure: {
+						class: "policy_denied",
+						message: "Codex patch outcome could not be attested",
+					},
+				});
+				return;
+			}
+		}
+		const outcome = normalizeCodexTerminal(turn, false, patchAttestation);
 		await this.#store.recordTerminal(
 			ref,
 			usage,
-			normalizeCodexTerminal(turn, state.cancellationRequested),
+			outcome,
+			turn.status === "interrupted" &&
+				patchAttestation?.fatalPatchFailure !== true &&
+				outcome.kind === "failed" &&
+				outcome.failure.class === "transient",
 		);
 	}
 }

@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "@agentrelay/protocol";
 import { z } from "zod";
 
 /** The first Codex transport intentionally supports one CLI protocol version. */
@@ -59,6 +60,29 @@ export const codexAgentMessageItemSchema = z
 		phase: z.enum(["commentary", "final_answer"]).nullable(),
 	})
 	.passthrough();
+
+const codexDynamicToolOutputContentItemSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("inputText"), text: boundedString(1_048_576) }).strict(),
+	z.object({ type: z.literal("inputImage"), imageUrl: boundedString(16 * 1_048_576) }).strict(),
+	z.object({ type: z.literal("inputAudio"), audioUrl: boundedString(16 * 1_048_576) }).strict(),
+]);
+
+/** Exact dynamic-tool history item emitted by the pinned 0.146.0 app-server protocol. */
+export const codexDynamicToolCallItemSchema = z
+	.object({
+		type: z.literal("dynamicToolCall"),
+		id: codexOpaqueIdSchema,
+		namespace: boundedString(64).min(1).nullable(),
+		tool: boundedString(128).min(1),
+		arguments: jsonValueSchema,
+		status: z.enum(["inProgress", "completed", "failed"]),
+		contentItems: z.array(codexDynamicToolOutputContentItemSchema).max(256).nullable(),
+		success: z.boolean().nullable(),
+		durationMs: z.number().finite().nonnegative().nullable(),
+	})
+	.strict();
+
+export type CodexDynamicToolCallItem = z.infer<typeof codexDynamicToolCallItemSchema>;
 
 export const codexTurnSchema = z
 	.object({

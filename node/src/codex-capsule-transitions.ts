@@ -241,7 +241,7 @@ export function claimPatchCall(
 		patch_sha256: codexPatchSha256(call.patch),
 		patch_bytes: patchBytes,
 		patch: rejected ? null : call.patch,
-		receipt: rejected ? { outcome: "rejected" } : null,
+		receipt: rejected ? { outcome: "rejected", source: "capsule_policy" } : null,
 		created_at: timestamp,
 		updated_at: timestamp,
 	};
@@ -251,7 +251,7 @@ export function claimPatchCall(
 			assertCodexCapsuleStateStorageBound(state);
 		} catch {
 			stored.patch = null;
-			stored.receipt = { outcome: "rejected" };
+			stored.receipt = { outcome: "rejected", source: "capsule_policy" };
 		}
 	}
 	assertCodexCapsuleStateStorageBound(state);
@@ -446,9 +446,14 @@ export function recordTerminal(
 	ref: HostTurnRef,
 	usage: HostUsage,
 	outcomeValue: CodexNormalizedTerminal,
+	cancelIfDurablyRequested = false,
 ): readonly HostEvent[] {
-	const outcome = parseTerminal(outcomeValue);
+	const requestedOutcome = parseTerminal(outcomeValue);
 	const turn = requireTurnByRef(state, ref);
+	const outcome: CodexNormalizedTerminal =
+		cancelIfDurablyRequested && turn.cancellation !== "none"
+			? { kind: "cancelled" }
+			: requestedOutcome;
 	if (turn.phase === "terminal") return replayTerminalEvents(turn, usage, outcome);
 	if (outcome.kind === "cancelled" && turn.phase !== "cancelling") {
 		throw conflict("Codex cancellation lacks a durable local cancellation intent");

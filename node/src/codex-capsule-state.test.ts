@@ -18,7 +18,7 @@ const IDENTITY = {
 };
 const TIMESTAMP = "2026-08-21T00:00:00.000Z";
 
-describe("Codex Capsule state v3", () => {
+describe("Codex Capsule state v4", () => {
 	it("validates prompt v2 against the exact persisted dynamic tool contract", () => {
 		const state = activeState();
 		prepareTurn(
@@ -40,7 +40,7 @@ describe("Codex Capsule state v3", () => {
 
 	it("fails closed on a prior schema version", () => {
 		const state = activeState();
-		expect(() => validateCodexCapsuleState(IDENTITY, { ...state, schema_version: 2 })).toThrow();
+		expect(() => validateCodexCapsuleState(IDENTITY, { ...state, schema_version: 3 })).toThrow();
 	});
 });
 

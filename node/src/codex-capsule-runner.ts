@@ -10,7 +10,6 @@ import {
 	sessionInputSchema,
 	startTurnInputSchema,
 } from "@agentrelay/protocol";
-import { z } from "zod";
 import { executionKey } from "./capsule-correlation.js";
 import { CapsuleOperationError } from "./capsule-operation-error.js";
 import type { CapsuleRuntime } from "./capsule-runtime.js";
@@ -19,12 +18,14 @@ import {
 	type CodexCapsuleClient,
 	type CodexCapsuleRunnerOptions,
 	type CodexProviderGeneration,
+	CodexProviderTerminationUnprovenError,
 	boundedRunnerMilliseconds,
 	isTerminalHostEvent,
 	sessionInputFromRef,
 	validateCodexRunnerCwd,
 } from "./codex-capsule-runner-contract.js";
 import type { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { CODEX_DYNAMIC_PATCH_TOOL_CONTRACT } from "./codex-dynamic-patch-tool-contract.js";
 import { CodexProviderEventSource } from "./codex-provider-event-source.js";
 import { CodexTurnExecutor } from "./codex-turn-executor.js";
 import { raceWithUnrefTimeout } from "./unref-timer.js";
@@ -37,6 +38,9 @@ export {
 	type CodexProviderGuardian,
 	type CodexProviderTermination,
 	type CodexProviderTerminationReason,
+	CodexProviderTerminationUnprovenError,
+	type CodexRunnerPatchCoordinator,
+	type CodexTerminalPatchAttestation,
 } from "./codex-capsule-runner-contract.js";
 
 /** Codex orchestration inside one authority-activated Mission Capsule. */
@@ -47,15 +51,17 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 	readonly #cwd: string;
 	readonly #eventPollMs: number;
 	readonly #providerPollMs: number;
-	readonly #zeroMatchReads: number;
+	readonly #patchCoordinator: CodexCapsuleRunnerOptions["patchCoordinator"];
 	readonly #providerEvents: CodexProviderEventSource;
 	readonly #turnExecutor: CodexTurnExecutor;
 	readonly #retireGeneration: () => void;
+	readonly #activeOperations = new Set<Promise<void>>();
 	readonly #turnDrivers = new Map<string, Promise<void>>();
 	readonly #shutdown = new AbortController();
 	#sessionReadiness: Promise<HostSessionRef> | null = null;
 	#threadId: string | null = null;
 	#retirementRequested = false;
+	#admissionClosed = false;
 	#closing: Promise<void> | null = null;
 
 	private constructor(options: CodexCapsuleRunnerOptions, generation: CodexProviderGeneration) {
@@ -65,12 +71,7 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 		this.#cwd = validateCodexRunnerCwd(options.cwd);
 		this.#eventPollMs = boundedRunnerMilliseconds(options.eventPollMs ?? 20);
 		this.#providerPollMs = boundedRunnerMilliseconds(options.providerPollMs ?? 500);
-		this.#zeroMatchReads = z
-			.number()
-			.int()
-			.min(1)
-			.max(20)
-			.parse(options.zeroMatchReads ?? 3);
+		this.#patchCoordinator = options.patchCoordinator;
 		this.#retireGeneration = options.retireGeneration;
 		this.#providerEvents = new CodexProviderEventSource(this.#client);
 		this.#turnExecutor = new CodexTurnExecutor({
@@ -79,7 +80,7 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 			providerEvents: this.#providerEvents,
 			cwd: this.#cwd,
 			providerPollMs: this.#providerPollMs,
-			zeroMatchReads: this.#zeroMatchReads,
+			patchCoordinator: this.#patchCoordinator,
 			shutdownSignal: this.#shutdown.signal,
 		});
 		this.observeProviderTermination();
@@ -93,9 +94,10 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 			try {
 				await generation.terminate("startup_failure");
 			} catch (teardownError) {
-				throw new AggregateError(
+				throw new CodexProviderTerminationUnprovenError(
 					[teardownError, error],
 					"Codex Capsule runner startup teardown could not be proven",
+					generation,
 				);
 			}
 			throw error;
@@ -106,12 +108,18 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 		return structuredClone(CODEX_CAPSULE_ADAPTER_INFO);
 	}
 
-	async ensureSession(inputValue: SessionInput): Promise<HostSessionRef> {
-		this.assertOpen();
-		const input = sessionInputSchema.parse(inputValue);
+	ensureSession(inputValue: SessionInput): Promise<HostSessionRef> {
+		return this.runAdmittedOperation(() =>
+			this.ensureSessionInternal(sessionInputSchema.parse(inputValue)),
+		);
+	}
+
+	private async ensureSessionInternal(input: SessionInput): Promise<HostSessionRef> {
+		this.assertProviderAvailable();
 		if (!isDeepStrictEqual(input, await this.#store.sessionScope())) {
 			throw new CapsuleOperationError("scope_mismatch", "Codex Capsule session scope changed");
 		}
+		this.assertProviderAvailable();
 		this.#sessionReadiness ??= this.openSession();
 		try {
 			return await this.#sessionReadiness;
@@ -122,14 +130,15 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 		}
 	}
 
-	async lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
-		this.assertOpen();
-		try {
-			return await this.#store.lookupTurn(deliveryId, executionAttempt);
-		} catch (error) {
-			this.retireAfterFatalFailure(error);
-			throw error;
-		}
+	lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
+		return this.runAdmittedOperation(async () => {
+			try {
+				return await this.#store.lookupTurn(deliveryId, executionAttempt);
+			} catch (error) {
+				this.retireAfterFatalFailure(error);
+				throw error;
+			}
+		});
 	}
 
 	startTurn(inputValue: StartTurnInput): AsyncIterable<HostEvent> {
@@ -145,35 +154,62 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 		);
 	}
 
-	async cancelTurn(refValue: HostTurnRef): Promise<void> {
-		this.assertOpen();
-		const ref = hostTurnRefSchema.parse(refValue);
-		try {
-			const input = await this.#store.inputForTurn(ref);
-			await this.#store.requestCancellation(ref);
-			const driver = this.ensureTurnDriver(input, ref);
+	cancelTurn(refValue: HostTurnRef): Promise<void> {
+		return this.runAdmittedOperation(async () => {
 			try {
-				await this.#turnExecutor.interrupt(ref);
-			} finally {
-				void driver.catch(() => undefined);
+				const ref = hostTurnRefSchema.parse(refValue);
+				this.assertProviderAvailable();
+				const input = await this.#store.inputForTurn(ref);
+				this.assertProviderAvailable();
+				await this.#store.requestCancellation(ref);
+				this.assertProviderAvailable();
+				const driver = this.ensureTurnDriver(input, ref);
+				try {
+					await this.#turnExecutor.interrupt(ref);
+				} finally {
+					void driver.catch(() => undefined);
+				}
+			} catch (error) {
+				this.retireAfterFatalFailure(error);
+				throw error;
 			}
-		} catch (error) {
-			this.retireAfterFatalFailure(error);
-			throw error;
-		}
+		});
 	}
 
 	close(): Promise<void> {
-		this.#closing ??= this.performClose();
+		if (this.#closing === null) {
+			this.#admissionClosed = true;
+			this.#closing = this.performClose();
+		}
 		return this.#closing;
 	}
 
 	private async performClose(): Promise<void> {
-		const failures: unknown[] = [];
 		this.#shutdown.abort();
-		await captureFailure(this.#generation.terminate("capsule_shutdown"), failures);
+		try {
+			await this.#generation.terminate("capsule_shutdown");
+		} catch (error) {
+			throw new CodexProviderTerminationUnprovenError(
+				[error],
+				"Codex provider shutdown could not be proven",
+				this.#generation,
+			);
+		}
+		const failures: unknown[] = [];
+		await Promise.allSettled(this.#activeOperations);
 		await Promise.allSettled(this.#turnDrivers.values());
 		await captureFailure(this.#providerEvents.close(), failures);
+		if (this.#patchCoordinator !== undefined) {
+			try {
+				await this.#patchCoordinator.close();
+			} catch (error) {
+				if (failures.length === 0) throw error;
+				throw new AggregateError(
+					[error, ...failures],
+					"Codex patch coordinator shutdown could not be proven",
+				);
+			}
+		}
 		await captureFailure(this.#store.close(), failures);
 		if (failures.length > 0) {
 			throw new AggregateError(failures, "Codex Capsule runner shutdown failed");
@@ -189,28 +225,43 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 	}
 
 	private async openSession(): Promise<HostSessionRef> {
+		this.assertProviderAvailable();
 		let claim = await this.#store.claimSessionStart();
+		this.assertProviderAvailable();
 		if (claim.kind === "reconcile") {
 			await this.#store.resetUnboundSessionAfterQuiescence();
+			this.assertProviderAvailable();
 			claim = await this.#store.claimSessionStart();
+			this.assertProviderAvailable();
 		}
 		if (claim.kind === "ready") {
 			await this.#client.resumeThread(claim.threadId);
+			this.assertProviderAvailable();
 			this.#threadId = claim.threadId;
 			return claim.session;
 		}
 		if (claim.kind !== "send") throw new Error("Codex session start did not become sendable");
 		const started = await this.#client.startThread();
+		this.assertProviderAvailable();
 		const session = await this.#store.acceptSession(started.thread.id);
+		this.assertProviderAvailable();
 		this.#threadId = started.thread.id;
 		return session;
 	}
 
 	private async *streamStart(input: StartTurnInput): AsyncIterable<HostEvent> {
 		try {
-			await this.ensureTurnSession(input);
-			const ref = await this.#store.prepareTurn(input);
-			yield* this.streamDurableTurn(input, ref, this.ensureTurnDriver(input, ref));
+			const registered = await this.runAdmittedOperation(async () => {
+				await this.ensureTurnSession(input);
+				this.assertProviderAvailable();
+				const ref = await this.#store.prepareTurn(
+					input,
+					this.#patchCoordinator === undefined ? null : CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
+				);
+				this.assertProviderAvailable();
+				return { ref, driver: this.ensureTurnDriver(input, ref) };
+			});
+			yield* this.streamDurableTurn(input, registered.ref, registered.driver);
 		} catch (error) {
 			this.retireAfterFatalFailure(error);
 			throw error;
@@ -219,9 +270,14 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 
 	private async *streamRecovery(ref: HostTurnRef, input: StartTurnInput): AsyncIterable<HostEvent> {
 		try {
-			await this.ensureTurnSession(input);
-			await this.#store.eventsForTurn(ref, input);
-			yield* this.streamDurableTurn(input, ref, this.ensureTurnDriver(input, ref));
+			const registered = await this.runAdmittedOperation(async () => {
+				await this.ensureTurnSession(input);
+				this.assertProviderAvailable();
+				await this.#store.eventsForTurn(ref, input);
+				this.assertProviderAvailable();
+				return { driver: this.ensureTurnDriver(input, ref) };
+			});
+			yield* this.streamDurableTurn(input, ref, registered.driver);
 		} catch (error) {
 			this.retireAfterFatalFailure(error);
 			throw error;
@@ -229,7 +285,7 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 	}
 
 	private async ensureTurnSession(input: StartTurnInput): Promise<void> {
-		const session = await this.ensureSession(sessionInputFromRef(input.session));
+		const session = await this.ensureSessionInternal(sessionInputFromRef(input.session));
 		if (!isDeepStrictEqual(session, input.session)) {
 			throw new CapsuleOperationError("scope_mismatch", "Codex turn session changed");
 		}
@@ -293,8 +349,28 @@ export class CodexCapsuleRunner implements CapsuleRuntime {
 		}
 	}
 
+	private runAdmittedOperation<T>(operation: () => Promise<T>): Promise<T> {
+		try {
+			this.assertOpen();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		const result = Promise.resolve().then(operation);
+		const completion = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.#activeOperations.add(completion);
+		void completion.then(() => this.#activeOperations.delete(completion));
+		return result;
+	}
+
+	private assertProviderAvailable(): void {
+		this.#shutdown.signal.throwIfAborted();
+	}
+
 	private assertOpen(): void {
-		if (this.#retirementRequested || this.#closing !== null) {
+		if (this.#retirementRequested || this.#admissionClosed || this.#closing !== null) {
 			throw new Error("Codex Capsule runner is closed");
 		}
 	}

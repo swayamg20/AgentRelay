@@ -267,7 +267,7 @@ const PersistentCapsuleServerForTest = {
 			},
 			openController: async (): Promise<CapsuleRuntimeController> => ({
 				async probe() {
-					return { ...structuredClone(CODEX_CAPSULE_ADAPTER_INFO), version: "0.2.0" };
+					return { ...structuredClone(CODEX_CAPSULE_ADAPTER_INFO), version: "0.3.0" };
 				},
 				async ensureSession() {
 					throw new Error("runtime session was not expected");

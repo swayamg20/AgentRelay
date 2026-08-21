@@ -12,9 +12,11 @@ import {
 	CODEX_CAPSULE_ADAPTER_INFO,
 	type CodexCapsuleRunnerOptions,
 	type CodexProviderGuardian,
+	CodexProviderTerminationUnprovenError,
 } from "./codex-capsule-runner-contract.js";
 import { CodexCapsuleRunner } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { CodexDynamicPatchToolCoordinator } from "./codex-dynamic-patch-tool.js";
 import { assertPinnedOwnerGitExecutable } from "./codex-git-artifact.js";
 import {
 	CodexOwnerCredentialChannel,
@@ -34,6 +36,10 @@ import {
 	type CodexWorkspaceAccess,
 } from "./codex-sandbox-contract.js";
 import {
+	type CodexWorkspacePatchMediator,
+	openCodexWorkspacePatchMediator,
+} from "./codex-workspace-patch-transaction.js";
+import {
 	RuntimeAuthorityDeniedError,
 	type RuntimeAuthorityGrant,
 	parseRuntimeAuthorityGrant,
@@ -47,12 +53,14 @@ type RecoverContainment = (
 ) => Promise<CodexSandboxContainment>;
 type CreateGuardian = (options: CodexProviderGuardianOptions) => CodexProviderGuardian;
 type OpenRunner = (options: CodexCapsuleRunnerOptions) => Promise<CapsuleRuntime>;
+type OpenWorkspacePatchMediator = typeof openCodexWorkspacePatchMediator;
 type ClaimOwnerCredential = (signal: AbortSignal) => Promise<CodexOwnerCredential>;
 
 export interface CodexCapsuleRuntimeDependencies {
 	readonly recoverContainment?: RecoverContainment;
 	readonly createGuardian?: CreateGuardian;
 	readonly openRunner?: OpenRunner;
+	readonly openWorkspacePatchMediator?: OpenWorkspacePatchMediator;
 	readonly claimOwnerCredential?: ClaimOwnerCredential;
 	readonly ownerCredentialChannel?: InheritedCodexOwnerCredentialChannel;
 	readonly environment?: NodeJS.ProcessEnv;
@@ -65,16 +73,7 @@ export interface CodexCapsuleRuntimeControllerOptions {
 	readonly dependencies?: CodexCapsuleRuntimeDependencies;
 }
 
-export class CodexWorkspaceWriteActivationNotEnabledError extends Error {
-	readonly code = "workspace_write_activation_not_enabled";
-
-	constructor() {
-		super("Codex workspace-write provider activation is not enabled");
-		this.name = "CodexWorkspaceWriteActivationNotEnabledError";
-	}
-}
-
-/** Passive Codex state owner that activates containment and the provider only under authority. */
+/** Codex state owner that activates containment and the provider only under local authority. */
 export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 	readonly #directory: string;
 	readonly #descriptor: CodexCapsuleLaunchDescriptor;
@@ -83,11 +82,17 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 	readonly #recoverContainment: RecoverContainment;
 	readonly #createGuardian: CreateGuardian;
 	readonly #openRunner: OpenRunner;
+	readonly #openWorkspacePatchMediator: OpenWorkspacePatchMediator;
 	readonly #claimOwnerCredential: ClaimOwnerCredential;
 	readonly #ownerCredentialChannel: CodexOwnerCredentialChannel | null;
 	readonly #environment: NodeJS.ProcessEnv;
 	#activation: Promise<CapsuleRuntime> | null = null;
 	#activationTeardownFailure: AggregateError | null = null;
+	/**
+	 * Keeps both sides of an unproven activation reachable, including provider and workspace
+	 * lock handles. These owners are a fail-closed marker and must never be closed again.
+	 */
+	#retainedUnprovenActivationOwners: readonly object[] | null = null;
 	#closing: Promise<void> | null = null;
 	#closed = false;
 
@@ -102,6 +107,8 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 			dependencies.createGuardian ??
 			((guardianOptions) => new SupervisedCodexProviderGuardian(guardianOptions));
 		this.#openRunner = dependencies.openRunner ?? CodexCapsuleRunner.open;
+		this.#openWorkspacePatchMediator =
+			dependencies.openWorkspacePatchMediator ?? openCodexWorkspacePatchMediator;
 		this.#ownerCredentialChannel =
 			dependencies.ownerCredentialChannel === undefined
 				? null
@@ -170,8 +177,10 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 		const workspaceAccess = workspaceAccessForGrant(grant);
 
 		let runtime: CapsuleRuntime | null = null;
+		let patchMediator: CodexWorkspacePatchMediator | null = null;
+		let patchCoordinator: CodexDynamicPatchToolCoordinator | null = null;
 		try {
-			const guardedRuntime = await performWorkspaceAccess(authority, workspaceAccess, async () => {
+			const guardedRuntime = await authority.performWorkspaceRead(async () => {
 				this.assertAvailable(authority.signal);
 				let containment: CodexSandboxContainment;
 				try {
@@ -199,7 +208,27 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					}
 					await assertPinnedOwnerGitExecutable(mediator.git);
 					this.assertAvailable(authority.signal);
-					throw new CodexWorkspaceWriteActivationNotEnabledError();
+					await authority.performWorkspaceWrite(() => {
+						authority.signal.throwIfAborted();
+					});
+					this.assertAvailable(authority.signal);
+					patchMediator = await this.#openWorkspacePatchMediator({
+						capsuleId: this.#descriptor.capsule_id,
+						workspaceRoot: containment.authorization.workspace.root,
+						workspaceResourceSha256: grant.workspace_resource_sha256,
+						workspaceGlobalControlRoot: mediator.globalControlRoot.path,
+						gitExecutable: mediator.git.executable.path,
+					});
+					this.assertAvailable(authority.signal);
+					patchCoordinator = new CodexDynamicPatchToolCoordinator({
+						capsuleId: this.#descriptor.capsule_id,
+						store: this.#store,
+						mediator: patchMediator,
+						authority,
+					});
+					patchMediator = null;
+					await patchCoordinator.recover();
+					this.assertAvailable(authority.signal);
 				}
 
 				const guardian = this.#createGuardian({
@@ -212,6 +241,7 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					capsuleDirectory: containment.authorization.runtimeDirectory,
 					env: this.#environment,
 					boundary: containment.boundary,
+					...(patchCoordinator === null ? {} : { dynamicPatchTool: patchCoordinator }),
 				});
 				this.assertAvailable(authority.signal);
 				runtime = await this.#openRunner({
@@ -219,7 +249,9 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					cwd: containment.authorization.workspace.root,
 					guardian,
 					retireGeneration: this.#lifecycle.retire,
+					...(patchCoordinator === null ? {} : { patchCoordinator }),
 				});
+				patchCoordinator = null;
 				this.assertAvailable(authority.signal);
 				return runtime;
 			});
@@ -227,12 +259,22 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 			this.assertAvailable(authority.signal);
 			return runtime;
 		} catch (error) {
-			if (runtime !== null) {
+			const teardownTarget = runtime ?? patchCoordinator ?? patchMediator;
+			if (error instanceof CodexProviderTerminationUnprovenError) {
+				this.#retainedUnprovenActivationOwners =
+					teardownTarget === null || teardownTarget === error.owner
+						? Object.freeze([error.owner])
+						: Object.freeze([error.owner, teardownTarget]);
+				this.#activationTeardownFailure = error;
+				throw error;
+			}
+			if (teardownTarget !== null) {
 				try {
-					await runtime.close();
+					await teardownTarget.close();
 				} catch (closeError) {
+					this.#retainedUnprovenActivationOwners = Object.freeze([teardownTarget]);
 					this.#activationTeardownFailure = new AggregateError(
-						[error, closeError],
+						[closeError, error],
 						"Codex runtime activation teardown could not be proven",
 					);
 					throw this.#activationTeardownFailure;
@@ -250,14 +292,23 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 			failures.push(error);
 		}
 		const runtime = await this.#activation?.catch(() => null);
+		const unsafeActivationOwnersRetained = this.#retainedUnprovenActivationOwners !== null;
 		try {
-			if (runtime === null || runtime === undefined) {
+			if (
+				(runtime === null || runtime === undefined) &&
+				this.#activationTeardownFailure === null &&
+				!unsafeActivationOwnersRetained
+			) {
 				await this.#store.close();
-			} else {
+			} else if (runtime !== null && runtime !== undefined) {
 				await runtime.close();
 			}
 		} catch (error) {
-			failures.push(error);
+			if (error instanceof CodexProviderTerminationUnprovenError) {
+				failures.unshift(error);
+			} else {
+				failures.push(error);
+			}
 		}
 		if (this.#activationTeardownFailure !== null) {
 			failures.unshift(this.#activationTeardownFailure);
@@ -371,13 +422,4 @@ function hasWorkspaceCapability(
 	return grant.capabilities.some(
 		(capability) => capability.action === action && capability.resource === "workspace",
 	);
-}
-
-function performWorkspaceAccess<T>(
-	authority: CapsuleRuntimeActivation,
-	workspaceAccess: CodexWorkspaceAccess,
-	effect: () => T | Promise<T>,
-): Promise<T> {
-	if (workspaceAccess === "read") return authority.performWorkspaceRead(effect);
-	return authority.performWorkspaceRead(() => authority.performWorkspaceWrite(effect));
 }

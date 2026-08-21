@@ -15,6 +15,8 @@ import {
 	buildCodexCapsuleTurnIntent,
 	parseCodexCapsuleDisposition,
 } from "./codex-capsule-prompt.js";
+import type { CodexTerminalPatchAttestation } from "./codex-capsule-runner-contract.js";
+import { dynamicToolItemSha256 } from "./codex-dynamic-patch-tool.js";
 
 const IDS = {
 	mission: "80000000-0000-4000-8000-000000000001",
@@ -102,6 +104,49 @@ describe("Codex Capsule normalization", () => {
 		expect(normalized).toMatchObject({ kind: "failed", failure: { class: "transient" } });
 	});
 
+	it("accepts only the exact immutable dynamic-tool item set attested by the coordinator", () => {
+		const item = dynamicPatchItem("patch-1", "diff --git a/a b/a\n");
+		const turn = codexTurn("turn-1", "completed", [
+			item,
+			agentMessage('{"kind":"reply","message_type":"progress","message":"done"}'),
+		]);
+		const proof: CodexTerminalPatchAttestation = Object.freeze({
+			providerTurnId: turn.id,
+			fatalPatchFailure: false,
+			calls: Object.freeze([
+				Object.freeze({ callId: item.id, itemSha256: dynamicToolItemSha256(item) }),
+			]),
+		});
+
+		expect(normalizeCodexTerminal(turn, false, proof)).toMatchObject({ kind: "completed" });
+		expect(
+			normalizeCodexTerminal(turn, false, {
+				...proof,
+				calls: [{ callId: item.id, itemSha256: "0".repeat(64) }],
+			}),
+		).toMatchObject({ kind: "failed", failure: { class: "policy_denied" } });
+		expect(
+			normalizeCodexTerminal(
+				codexTurn("turn-1", "completed", [
+					item,
+					{ ...item },
+					agentMessage('{"kind":"reply","message_type":"progress","message":"done"}'),
+				]),
+				false,
+				proof,
+			),
+		).toMatchObject({ kind: "failed", failure: { class: "policy_denied" } });
+		expect(
+			normalizeCodexTerminal(
+				codexTurn("turn-1", "completed", [
+					{ type: "commandExecution", id: "native-command" },
+					agentMessage('{"kind":"reply","message_type":"progress","message":"done"}'),
+				]),
+				false,
+			),
+		).toMatchObject({ kind: "failed", failure: { class: "policy_denied" } });
+	});
+
 	it("reports cancellation only for a durable local cancellation intent", () => {
 		const interrupted = codexTurn("turn-1", "interrupted", []);
 		expect(normalizeCodexTerminal(interrupted, true)).toEqual({ kind: "cancelled" });
@@ -109,6 +154,51 @@ describe("Codex Capsule normalization", () => {
 			kind: "failed",
 			failure: { class: "transient" },
 		});
+	});
+
+	it("lets a full-history capability violation dominate failure and cancellation", () => {
+		for (const [status, cancellationRequested] of [
+			["failed", false],
+			["interrupted", true],
+		] as const) {
+			expect(
+				normalizeCodexTerminal(
+					codexTurn("turn-1", status, [{ type: "mcpToolCall", id: "unexpected-tool" }]),
+					cancellationRequested,
+				),
+			).toMatchObject({ kind: "failed", failure: { class: "policy_denied" } });
+		}
+	});
+
+	it("forces a proven fatal patch failure before completion or cancellation", () => {
+		const item = dynamicPatchItem("fatal-patch", "diff --git a/a b/a\n");
+		const proof: CodexTerminalPatchAttestation = {
+			providerTurnId: "turn-1",
+			fatalPatchFailure: true,
+			calls: [{ callId: item.id, itemSha256: dynamicToolItemSha256(item) }],
+		};
+		for (const [status, cancellationRequested, extraItems] of [
+			[
+				"completed",
+				false,
+				[agentMessage('{"kind":"reply","message_type":"progress","message":"done"}')],
+			],
+			["interrupted", true, []],
+		] as const) {
+			expect(
+				normalizeCodexTerminal(
+					codexTurn("turn-1", status, [item, ...extraItems]),
+					cancellationRequested,
+					proof,
+				),
+			).toEqual({
+				kind: "failed",
+				failure: {
+					class: "transient",
+					message: "Codex patch tool failed before a publishable turn result",
+				},
+			});
+		}
 	});
 
 	it("uses per-turn last usage rather than thread-wide totals", () => {
@@ -204,6 +294,20 @@ function userMessage(clientId: string, text: string) {
 
 function agentMessage(text: string) {
 	return { type: "agentMessage", id: "agent-1", text, phase: "final_answer" };
+}
+
+function dynamicPatchItem(id: string, patch: string) {
+	return {
+		type: "dynamicToolCall" as const,
+		id,
+		namespace: "agentrelay",
+		tool: "apply_patch",
+		arguments: { patch },
+		status: "completed" as const,
+		contentItems: [{ type: "inputText" as const, text: "AgentRelay applied the patch." }],
+		success: true,
+		durationMs: 1,
+	};
 }
 
 function usageNotification(totalInput: number, totalOutput: number, input: number, output: number) {

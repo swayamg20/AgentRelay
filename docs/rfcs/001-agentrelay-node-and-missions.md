@@ -3,9 +3,9 @@
 - **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
   persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
   ownership, and a guarded internal Codex client, journal, runner, guardian, Linux
-  containment, strict descriptor, provisioner, adapter, and one-shot authentication
-  and provider-bootstrap isolation checkpoints are implemented; the private capability
-  reference monitor is selected by
+  containment, strict descriptor v3, Codex state schema 4, adapter 0.4.0, one-shot
+  authentication, provider-bootstrap isolation, and exact mediated-patch checkpoints
+  are implemented; the private capability reference monitor is selected by
   the fake polling path and composed with Codex only behind internal APIs; polling
   activation and the two-machine proof remain
 - **Date:** 2026-08-01
@@ -39,18 +39,21 @@ fenced grant and enforces its lifecycle, output, usage, artifact, expiry, and fi
 publication boundary outside the model. It cannot yet activate a real coding-agent
 runtime or mediate command/network/path effects whose handlers do not exist. The
 repository also has a version-pinned read-only app-server client, durable Codex Capsule
-journal, strict schema-v2 descriptor, provisioner, persistent adapter, provider
+journal, strict schema-v3 descriptor, provisioner, persistent adapter, provider
 guardian, one-shot owner API-key handoff, and fixed provider-only managed CONNECT
 egress behind internal APIs. The Capsule entry point can construct that guarded
 controller. Owner-local policy can also opt into workspace-write authority and exact
 write-mode containment. The provider now starts from its private runtime home instead
 of the logical workspace, pins that workspace untrusted, attests effective shell/MCP
 state, selects no Codex environments for thread start or turns, permits only cold
-resume, and denies all server requests. Write activation still deliberately fails
-before the credential is
-claimed or the guardian, provider, or runner is opened. The polling Node CLI still
-cannot select this path. There is no owner-facing credential source, guarded
-workspace-write model activation, or real model-turn proof.
+resume, and denies all server requests except the exact `agentrelay.apply_patch/v1`
+request under locally granted write authority. Write activation revalidates the
+owner-selected Git artifact, recovers the durable workspace-global mediator before
+provider startup, and keeps the provider mount physically read-only. Provider calls,
+Host turns, active authority, transaction state, receipts, recovery, terminal history,
+and teardown are fail-closed. The polling Node CLI still cannot select this path. There
+is no owner-facing credential source, registered verification-command authority, or
+real model-turn/live OpenAI proof.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -402,8 +405,9 @@ access, and privilege expansion; authority loss stops streamed output and final 
 completion. Internal APIs now compose that authority with the guarded Codex descriptor
 and exact policy-selected Linux containment boundary. Omitted or explicit read policy
 preserves the legacy read-only grant and hash; explicit accepted write policy adds
-workspace-write authority and exact write containment, then fails before any
-model/provider activation. A fresh opaque owner credential can cross
+logical workspace-write authority and exact write containment while keeping the
+provider mount physically read-only. It recovers the durable patch mediator before
+provider activation. A fresh opaque owner credential can cross
 only fixed inherited fd 3 under one non-resettable 30-second Capsule activation
 deadline, then is consumed once by an ephemeral API-key login. The exact app-server
 command has fixed provider-only egress to `api.openai.com`; version checks, containment
@@ -411,17 +415,23 @@ probes, and nested workspace sandboxes remain offline. Its process cwd is the pr
 runtime home, separate from the logical workspace carried in app-server requests.
 Exact launch and thread configuration pins that workspace untrusted; effective config
 and feature reads require the shell disabled and MCP absent, start and every turn pass
-`environments: []`, warm resume is rejected, and all server requests remain fatal.
+`environments: []`, suppressing environment-backed shell and native `apply_patch`
+registration in pinned Codex `0.146.0`, and warm resume is rejected. Only the exact
+`agentrelay.apply_patch/v1` request may be handled under write authority; every other
+server request remains fatal.
 It also pins agents and web
 search off and disables shell, hooks, plugins, apps, multi-agent, and code-mode
-features, removing command tools. Native `apply_patch` remains independently eligible
-when the selected model exposes it, but any resulting file-change approval is declined
-and fatal. This is not selected by the polling Node CLI and does not provide an
-owner-facing credential source, guarded workspace-write
-model activation, verification authority, patch mediation, or durable write/decision
-evidence.
-Autonomous writes are not safe to claim until the Node activates the boundary and
-mediates every concrete command, network, path, and side effect outside the model.
+features, removing command tools. Those flags alone leave native patch eligibility
+model-dependent, but the effective thread/turn path exposes no native file-change tool;
+any unexpected file-change approval is declined and fatal. The exact dynamic patch
+call is durably bound to provider, Host-turn, active authority, transaction, receipt,
+recovery, terminal-history, and teardown state before
+publication. This is not selected by the polling Node CLI and does not provide an
+owner-facing credential source, verification authority, command execution, or durable
+Relay-visible write/decision evidence.
+Autonomous writes are not safe to claim until an owner-facing polling Node selects this
+boundary, every supported effect remains mediated outside the model, and a real turn
+produces general Relay-visible authority/execution evidence.
 
 ## Relay-visible versus local data
 
@@ -491,24 +501,26 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    contender. Pre-claim/after-claim process cuts, busy-session, and full adversarial
    coverage remain.
 6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned. The
-   guarded provider-neutral Capsule server, schema-v2 journal, injected runner, strict
-   descriptor, provisioner, persistent adapter, provider guardian, and Linux
+   guarded provider-neutral Capsule server, state schema 4, injected runner, strict v3
+   descriptor, persistent adapter identity 0.4.0, provisioner, provider guardian, Linux
    containment boundary prove local at-most-once barriers, ambiguous-start recovery
    without resend, exact-input replay, redacted terminal normalization, cancellation
    intent, and provider teardown. Internal composition carries the private authority
    grant and a one-shot fixed-fd3 owner credential into the guarded Codex controller,
    whose client forces ephemeral API-key login and whose exact app-server command uses
    fixed provider-only managed CONNECT egress. Owner-local policy now adds opt-in
-   workspace-write authority and exact write containment provision/recovery, while
-   write activation stops before credentials or provider startup. Retained
+   workspace-write authority and exact write containment provision/recovery. Write
+   activation revalidates and recovers the workspace-global patch mediator before
+   provider startup while keeping the provider workspace physically read-only. Retained
    same-Mission start intent or host-attempt history forces recovery-only provisioning.
    The provider starts from the private runtime home, pins and attests the logical
    workspace as untrusted with shell/MCP disabled, selects no Codex environments,
-   requires cold resume, and rejects every server request. Polling CLI activation, an
-   owner-facing credential source, guarded workspace-write
-   model activation, registered verification, bounded
-   artifact carriage, durable evidence, adversarial evaluation, and a real model turn
-   remain.
+   requires cold resume, and accepts only `agentrelay.apply_patch/v1` under exact write
+   authority. The mediated call has durable request-before-effect,
+   receipt-before-response, recovery, and terminal-attestation barriers. Polling CLI
+   activation, an owner-facing credential source, registered verification, bounded
+   artifact carriage, general Relay-visible authority/execution evidence (#99),
+   adversarial evaluation, and a real model turn remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or

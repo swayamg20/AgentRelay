@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import { uuidSchema } from "@agentrelay/protocol";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import type { CodexAppServerClientOptions } from "./codex-app-server-client.js";
-import type {
-	CodexCapsuleClient,
-	CodexProviderGeneration,
-	CodexProviderGuardian,
-	CodexProviderTerminationReason,
+import {
+	type CodexCapsuleClient,
+	type CodexProviderGeneration,
+	type CodexProviderGuardian,
+	type CodexProviderTerminationReason,
+	CodexProviderTerminationUnprovenError,
 } from "./codex-capsule-runner-contract.js";
 import type { CodexOwnerCredential } from "./codex-owner-credential.js";
 import { CodexProviderGenerationStore } from "./codex-provider-generation-state.js";
@@ -133,6 +134,9 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 					boundary: this.#options.boundary,
 					authoritySignal: this.#options.authoritySignal,
 					requestTimeoutMs: this.#options.requestTimeoutMs,
+					...(this.#options.dynamicPatchTool === undefined
+						? {}
+						: { dynamicPatchTool: this.#options.dynamicPatchTool }),
 					processFactory: async (processOptions) => {
 						if (supervisedRef.value !== null) {
 							throw new Error("Codex provider process was requested twice");
@@ -189,9 +193,10 @@ export class SupervisedCodexProviderGuardian implements CodexProviderGuardian {
 				}
 			} catch (teardownError) {
 				this.#failedClosed = true;
-				throw new AggregateError(
+				throw new CodexProviderTerminationUnprovenError(
 					[teardownError, error],
 					"Codex provider startup teardown could not be proven",
+					supervised ?? lock,
 				);
 			}
 			if (this.#options.authoritySignal.aborted) {

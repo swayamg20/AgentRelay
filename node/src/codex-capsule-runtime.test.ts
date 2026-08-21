@@ -29,11 +29,13 @@ import {
 	startConfiguredCapsuleServer,
 } from "./capsule-runtime-factory.js";
 import type { CapsuleRuntime } from "./capsule-runtime.js";
-import type { CodexCapsuleRunnerOptions } from "./codex-capsule-runner-contract.js";
 import {
-	CodexCapsuleRuntimeController,
-	CodexWorkspaceWriteActivationNotEnabledError,
-} from "./codex-capsule-runtime.js";
+	type CodexCapsuleRunnerOptions,
+	CodexProviderTerminationUnprovenError,
+} from "./codex-capsule-runner-contract.js";
+import { CodexCapsuleRuntimeController } from "./codex-capsule-runtime.js";
+import { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { CodexDynamicPatchToolCoordinatorError } from "./codex-dynamic-patch-tool.js";
 import { pinOwnerGitExecutable } from "./codex-git-artifact.js";
 import type { InheritedCodexOwnerCredentialChannel } from "./codex-owner-credential-channel.js";
 import type { CodexProviderGuardianOptions } from "./codex-provider-guardian.js";
@@ -42,6 +44,12 @@ import {
 	type CodexSandboxContainment,
 	type CodexWorkspaceAccess,
 } from "./codex-sandbox-contract.js";
+import { CodexWorkspacePatchError } from "./codex-workspace-patch-contract.js";
+import type {
+	CodexPatchInspection,
+	CodexWorkspacePatchMediator,
+	OpenCodexWorkspacePatchMediatorOptions,
+} from "./codex-workspace-patch-transaction.js";
 import { writeDurableJson } from "./durable-file.js";
 import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
@@ -63,6 +71,7 @@ const cleanupFds = new Set<number>();
 const run = promisify(execFile);
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 	for (const fd of cleanupFds) await closeFd(fd).catch(() => undefined);
 	cleanupFds.clear();
@@ -75,7 +84,7 @@ describe("CodexCapsuleRuntimeController", () => {
 
 		expect(await fixture.controller.probe()).toMatchObject({
 			name: "capsule-codex",
-			version: "0.3.0",
+			version: "0.4.0",
 		});
 		expect(await fixture.controller.ensureSession(fixture.descriptor.session)).toMatchObject({
 			...fixture.descriptor.session,
@@ -163,7 +172,7 @@ describe("CodexCapsuleRuntimeController", () => {
 		}
 	});
 
-	it("retires a schema-v3 write Capsule before credential or provider activation", async () => {
+	it("redacts a schema-v3 write activation failure after durable patch recovery", async () => {
 		const channel = await openFifo();
 		const directory = await temporaryDirectory();
 		const descriptor = codexDescriptor(directory, randomUUID());
@@ -189,6 +198,7 @@ describe("CodexCapsuleRuntimeController", () => {
 		let recoveryCalls = 0;
 		let guardianCalls = 0;
 		let runnerCalls = 0;
+		const patchMediator = new RecordingPatchMediator();
 		const server = await startConfiguredCapsuleServer(directory, {
 			codex: {
 				ownerCredentialChannel: {
@@ -200,9 +210,10 @@ describe("CodexCapsuleRuntimeController", () => {
 					expect(expectation).toEqual(descriptor.runtime.containment);
 					return containment;
 				},
+				openWorkspacePatchMediator: async () => patchMediator,
 				createGuardian: () => {
 					guardianCalls += 1;
-					throw new Error("guardian activation must not start");
+					throw new Error("injected guardian construction failed");
 				},
 				openRunner: async () => {
 					runnerCalls += 1;
@@ -242,7 +253,9 @@ describe("CodexCapsuleRuntimeController", () => {
 			]);
 			await server.waitUntilClosed();
 			expect(recoveryCalls).toBe(1);
-			expect(guardianCalls).toBe(0);
+			expect(patchMediator.recoverCalls).toBe(1);
+			expect(patchMediator.closeCalls).toBe(1);
+			expect(guardianCalls).toBe(1);
 			expect(runnerCalls).toBe(0);
 			expectFdClosed(channel.reader);
 		} finally {
@@ -343,6 +356,7 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(fixture.runnerOptions).toHaveLength(1);
 		const guardian = fixture.guardianOptions[0]!;
 		expect(guardian.authoritySignal).toBe(activationSignals[0]);
+		expect(guardian.dynamicPatchTool).toBeUndefined();
 		expect(guardian.claimOwnerCredential).toBe(fixture.claimOwnerCredential);
 		expect(guardian.deadlineAtMs).toBe(Date.parse(grant.hard_expires_at));
 		expect(guardian.command.executable).toBe(fixture.containment.authorization.providerExecutable);
@@ -360,23 +374,35 @@ describe("CodexCapsuleRuntimeController", () => {
 		expect(fixture.runtime.closeCalls).toBe(1);
 	});
 
-	it("attests granted write containment but stops before every provider activation side effect", async () => {
+	it("recovers the durable write mediator before exposing one handler to guardian and runner", async () => {
 		const evidence: RuntimeAuthorityEvidence[] = [];
 		const fixture = await createFixture({ workspaceAccess: "write" });
 		const authority = installedAuthority(fixture.grant, evidence);
 
-		await expect(
-			authority.performSession(fixture.descriptor.session, (activation) =>
-				fixture.controller.activate(activation),
-			),
-		).rejects.toMatchObject({
-			name: CodexWorkspaceWriteActivationNotEnabledError.name,
-			code: "workspace_write_activation_not_enabled",
-		});
+		const runtime = await authority.performSession(fixture.descriptor.session, (activation) =>
+			fixture.controller.activate(activation),
+		);
 
 		expect(fixture.recoveryCalls).toBe(1);
-		expect(fixture.guardianOptions).toHaveLength(0);
-		expect(fixture.runnerOptions).toHaveLength(0);
+		expect(fixture.patchMediatorOptions).toEqual([
+			{
+				capsuleId: fixture.descriptor.capsule_id,
+				workspaceRoot: fixture.containment.authorization.workspace.root,
+				workspaceResourceSha256: fixture.grant.workspace_resource_sha256,
+				workspaceGlobalControlRoot:
+					fixture.containment.authorization.workspaceMediator?.globalControlRoot.path,
+				gitExecutable: fixture.containment.authorization.workspaceMediator?.git.executable.path,
+			},
+		]);
+		expect(fixture.patchMediator.recoverCalls).toBe(1);
+		expect(fixture.guardianOptions).toHaveLength(1);
+		expect(fixture.runnerOptions).toHaveLength(1);
+		const guardian = fixture.guardianOptions[0]!;
+		const runner = fixture.runnerOptions[0]!;
+		expect(guardian.dynamicPatchTool).toBeDefined();
+		expect(runner.patchCoordinator).toBe(guardian.dynamicPatchTool);
+		expect(guardian.boundary).toBe(fixture.containment.boundary);
+		expect(fixture.containment.authorization.providerWorkspaceAccess).toBe("read");
 		expect(fixture.ownerCredentialClaimCalls).toBe(0);
 		expect(fixture.guardianOpenCalls).toBe(0);
 		expect(fixture.providerLaunchCalls).toBe(0);
@@ -387,11 +413,165 @@ describe("CodexCapsuleRuntimeController", () => {
 			]),
 		);
 
+		expect(runtime).toBe(fixture.runtime);
+		await fixture.controller.close();
+		expect(fixture.patchMediator.closeCalls).toBe(1);
+		authority.dispose();
+	});
+
+	it("uses a bounded zero-effect write admission instead of holding it across activation", async () => {
+		let writeAdmissionOpen = false;
+		let writeAdmissions = 0;
+		const fixture = await createFixture({
+			workspaceAccess: "write",
+			beforePatchMediatorOpen: () => expect(writeAdmissionOpen).toBe(false),
+		});
+		const signal = new AbortController().signal;
+
+		await fixture.controller.activate({
+			grant: fixture.grant,
+			signal,
+			performWorkspaceRead: async <T>(effect: () => T | Promise<T>): Promise<T> => effect(),
+			performWorkspaceWrite: async <T>(effect: () => T | Promise<T>): Promise<T> => {
+				writeAdmissions += 1;
+				writeAdmissionOpen = true;
+				try {
+					const result = effect();
+					expect(result).not.toBeInstanceOf(Promise);
+					return await result;
+				} finally {
+					writeAdmissionOpen = false;
+				}
+			},
+		});
+
+		expect(writeAdmissions).toBe(1);
+		expect(fixture.patchMediator.recoverCalls).toBe(1);
+		await fixture.controller.close();
+	});
+
+	it("blocks an indeterminate patch recovery before guardian or credential activation", async () => {
+		const fixture = await createFixture({
+			workspaceAccess: "write",
+			patchRecoveryFailure: new CodexWorkspacePatchError(
+				"indeterminate",
+				true,
+				"owner inspection required",
+				"f".repeat(64),
+			),
+		});
+		const authority = installedAuthority(fixture.grant);
+
+		await expect(
+			authority.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			),
+		).rejects.toBeInstanceOf(CodexDynamicPatchToolCoordinatorError);
+
+		expect(fixture.patchMediator.recoverCalls).toBe(1);
+		expect(fixture.patchMediator.closeCalls).toBe(1);
+		expect(fixture.guardianOptions).toHaveLength(0);
+		expect(fixture.runnerOptions).toHaveLength(0);
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
+		expect(fixture.guardianOpenCalls).toBe(0);
+		expect(fixture.providerLaunchCalls).toBe(0);
+
 		await fixture.controller.close();
 		authority.dispose();
 	});
 
-	it("revalidates the exact mediator Git artifact before the write activation stop", async () => {
+	it("fences authority loss during patch recovery before guardian construction", async () => {
+		const patchRecoveryGate = deferred<void>();
+		const fixture = await createFixture({ workspaceAccess: "write", patchRecoveryGate });
+		const authority = installedAuthority(fixture.grant);
+		const activation = authority.performSession(fixture.descriptor.session, (runtimeAuthority) =>
+			fixture.controller.activate(runtimeAuthority),
+		);
+		await vi.waitFor(() => expect(fixture.patchMediator.recoverCalls).toBe(1));
+
+		authority.dispose();
+		patchRecoveryGate.resolve();
+
+		await expect(activation).rejects.toMatchObject({ code: "revoked" });
+		expect(fixture.patchMediator.closeCalls).toBe(1);
+		expect(fixture.guardianOptions).toHaveLength(0);
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
+		expect(fixture.providerLaunchCalls).toBe(0);
+
+		await fixture.controller.close();
+	});
+
+	it("preserves an unproven patch rollback over the activation failure", async () => {
+		const closeStore = vi.spyOn(CodexCapsuleStore.prototype, "close");
+		const activationFailure = new Error("runner activation failed");
+		const fixture = await createFixture({
+			workspaceAccess: "write",
+			patchCloseFailure: new Error("patch mediator close failed"),
+			runnerFailure: activationFailure,
+		});
+		const authority = installedAuthority(fixture.grant);
+
+		const failure = await authority
+			.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			)
+			.catch((error: unknown) => error);
+		expect(failure).toMatchObject({
+			message: "Codex runtime activation teardown could not be proven",
+			errors: [
+				expect.objectContaining({ name: "CodexDynamicPatchToolCoordinatorError" }),
+				activationFailure,
+			],
+		});
+		await expect(fixture.controller.close()).rejects.toThrow(
+			"Codex runtime activation teardown could not be proven",
+		);
+
+		expect(fixture.patchMediator.recoverCalls).toBe(1);
+		expect(fixture.patchMediator.closeCalls).toBe(1);
+		expect(closeStore).not.toHaveBeenCalled();
+		expect(fixture.guardianOptions).toHaveLength(1);
+		expect(fixture.runnerOptions).toHaveLength(1);
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
+		authority.dispose();
+	});
+
+	it("keeps patch authority and state open when provider quiescence is unproven", async () => {
+		const closeStore = vi.spyOn(CodexCapsuleStore.prototype, "close");
+		const unprovenOwner = { close: vi.fn(async () => undefined) };
+		const unproven = new CodexProviderTerminationUnprovenError(
+			[new Error("provider group may still be live"), new Error("runner startup failed")],
+			"Codex Capsule runner startup teardown could not be proven",
+			unprovenOwner,
+		);
+		const fixture = await createFixture({
+			workspaceAccess: "write",
+			runnerFailure: unproven,
+		});
+		const authority = installedAuthority(fixture.grant);
+
+		const activation = authority.performSession(fixture.descriptor.session, (runtimeAuthority) =>
+			fixture.controller.activate(runtimeAuthority),
+		);
+		await expect(activation).rejects.toBe(unproven);
+
+		expect(fixture.patchMediator.recoverCalls).toBe(1);
+		expect(fixture.patchMediator.closeCalls).toBe(0);
+		expect(unprovenOwner.close).not.toHaveBeenCalled();
+		expect(closeStore).not.toHaveBeenCalled();
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
+		const firstClose = fixture.controller.close();
+		const repeatedClose = fixture.controller.close();
+		expect(repeatedClose).toBe(firstClose);
+		await expect(firstClose).rejects.toBe(unproven);
+		await expect(repeatedClose).rejects.toBe(unproven);
+		expect(fixture.patchMediator.closeCalls).toBe(0);
+		expect(unprovenOwner.close).not.toHaveBeenCalled();
+		expect(closeStore).not.toHaveBeenCalled();
+		authority.dispose();
+	});
+
+	it("revalidates the exact mediator Git artifact before opening durable patch state", async () => {
 		const fixture = await createFixture({ workspaceAccess: "write" });
 		const git = fixture.containment.authorization.workspaceMediator?.git;
 		if (git === undefined) throw new Error("write fixture is missing mediator Git");
@@ -407,6 +587,7 @@ describe("CodexCapsuleRuntimeController", () => {
 		).rejects.toThrow("changed after it was pinned");
 		expect(fixture.guardianOptions).toHaveLength(0);
 		expect(fixture.runnerOptions).toHaveLength(0);
+		expect(fixture.patchMediatorOptions).toHaveLength(0);
 		expect(fixture.ownerCredentialClaimCalls).toBe(0);
 
 		await fixture.controller.close();
@@ -437,6 +618,7 @@ describe("CodexCapsuleRuntimeController", () => {
 
 	it("fails closed with the unavailable default credential before provider launch", async () => {
 		const fixture = await createFixture({
+			workspaceAccess: "write",
 			exerciseGuardianClaim: true,
 			useDefaultOwnerCredential: true,
 		});
@@ -452,6 +634,8 @@ describe("CodexCapsuleRuntimeController", () => {
 		});
 		expect(fixture.guardianOpenCalls).toBe(1);
 		expect(fixture.providerLaunchCalls).toBe(0);
+		expect(fixture.patchMediator.recoverCalls).toBe(1);
+		expect(fixture.patchMediator.closeCalls).toBe(1);
 		expect(fixture.runtime.closeCalls).toBe(0);
 
 		await fixture.controller.close();
@@ -693,6 +877,11 @@ interface FixtureOptions {
 	readonly beforeRecoveryFailure?: () => void;
 	readonly recoveryFailure?: Error;
 	readonly recoveryGate?: Deferred<void>;
+	readonly patchRecoveryFailure?: Error;
+	readonly patchRecoveryGate?: Deferred<void>;
+	readonly patchCloseFailure?: Error;
+	readonly beforePatchMediatorOpen?: () => void;
+	readonly runnerFailure?: Error;
 	readonly runnerGate?: Deferred<void>;
 	readonly exerciseGuardianClaim?: boolean;
 	readonly useDefaultOwnerCredential?: boolean;
@@ -734,6 +923,12 @@ async function createFixture(options: FixtureOptions = {}) {
 	});
 	const guardianOptions: CodexProviderGuardianOptions[] = [];
 	const runnerOptions: CodexCapsuleRunnerOptions[] = [];
+	const patchMediatorOptions: OpenCodexWorkspacePatchMediatorOptions[] = [];
+	const patchMediator = new RecordingPatchMediator({
+		recoveryFailure: options.patchRecoveryFailure,
+		recoveryGate: options.patchRecoveryGate,
+		closeFailure: options.patchCloseFailure,
+	});
 	const runtime = new RecordingRuntime();
 	const recoveryStarted = deferred<void>();
 	const runnerStarted = deferred<void>();
@@ -776,6 +971,11 @@ async function createFixture(options: FixtureOptions = {}) {
 				if (options.recoveryFailure !== undefined) throw options.recoveryFailure;
 				return containment;
 			},
+			openWorkspacePatchMediator: async (mediatorOptions) => {
+				options.beforePatchMediatorOpen?.();
+				patchMediatorOptions.push(mediatorOptions);
+				return patchMediator;
+			},
 			createGuardian: (guardian) => {
 				guardianOptions.push(guardian);
 				return {
@@ -791,8 +991,10 @@ async function createFixture(options: FixtureOptions = {}) {
 			openRunner: async (runner) => {
 				runnerOptions.push(runner);
 				runnerStarted.resolve();
+				if (options.runnerFailure !== undefined) throw options.runnerFailure;
 				if (options.exerciseGuardianClaim) await runner.guardian.openGeneration();
 				await options.runnerGate?.promise;
+				runtime.patchCoordinator = runner.patchCoordinator ?? null;
 				return runtime;
 			},
 		},
@@ -804,6 +1006,8 @@ async function createFixture(options: FixtureOptions = {}) {
 		grant,
 		guardianOptions,
 		runnerOptions,
+		patchMediator,
+		patchMediatorOptions,
 		claimOwnerCredential,
 		runtime,
 		recoveryStarted,
@@ -1027,6 +1231,7 @@ function fixtureCapabilities(workspaceAccess: CodexWorkspaceAccess = "read") {
 class RecordingRuntime implements CapsuleRuntime {
 	closeCalls = 0;
 	closeFailure: Error | null = null;
+	patchCoordinator: { close(): Promise<void> } | null = null;
 
 	async probe(): Promise<AdapterInfo> {
 		return { name: "recording", version: "1", capabilities: {} } as AdapterInfo;
@@ -1048,7 +1253,48 @@ class RecordingRuntime implements CapsuleRuntime {
 
 	async close(): Promise<void> {
 		this.closeCalls += 1;
+		await this.patchCoordinator?.close();
 		if (this.closeFailure !== null) throw this.closeFailure;
+	}
+}
+
+class RecordingPatchMediator implements CodexWorkspacePatchMediator {
+	readonly #recoveryFailure: Error | undefined;
+	readonly #recoveryGate: Deferred<void> | undefined;
+	readonly #closeFailure: Error | undefined;
+	recoverCalls = 0;
+	closeCalls = 0;
+
+	constructor(
+		options: {
+			readonly recoveryFailure?: Error;
+			readonly recoveryGate?: Deferred<void>;
+			readonly closeFailure?: Error;
+		} = {},
+	) {
+		this.#recoveryFailure = options.recoveryFailure;
+		this.#recoveryGate = options.recoveryGate;
+		this.#closeFailure = options.closeFailure;
+	}
+
+	async recover(): Promise<readonly never[]> {
+		this.recoverCalls += 1;
+		await this.#recoveryGate?.promise;
+		if (this.#recoveryFailure !== undefined) throw this.#recoveryFailure;
+		return [];
+	}
+
+	async apply(): Promise<never> {
+		throw new Error("recording patch mediator does not apply patches");
+	}
+
+	async inspect(): Promise<CodexPatchInspection> {
+		return { state: "absent" };
+	}
+
+	async close(): Promise<void> {
+		this.closeCalls += 1;
+		if (this.#closeFailure !== undefined) throw this.#closeFailure;
 	}
 }
 

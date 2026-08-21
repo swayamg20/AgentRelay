@@ -1,6 +1,6 @@
 # Low-level design: current relay contracts
 
-> **Scope:** Current repository implementation as of 2026-08-20.
+> **Scope:** Current repository implementation as of 2026-08-21.
 > This is a compact source-oriented reference, not a promise that planned fields or
 > routes exist. Unimplemented local Node runtime behavior remains in
 > [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
@@ -25,13 +25,15 @@ consumer for fake-adapter turn deliveries. It validates local workspace/policy s
 journals discovery and operation intent, and can recover exact host events from an
 independently persistent fake Mission Capsule after the Node process is killed. There
 is now a provider-neutral Capsule server, injected Codex runner, provider guardian,
-strict v2 descriptor, persistent adapter, and policy-selected read/write provisioner.
-Internal APIs compose them under the private authority boundary, but write activation
-deliberately stops before the credential is claimed or the guardian, provider, or
-runner is opened. No polling CLI selects either mode and no test executes a real model
-turn. The provider process uses its private runtime home as its operating-system
-working directory while app-server requests retain the logical workspace separately;
-the workspace is pinned untrusted and effective shell/MCP state is attested. The
+strict v3 descriptor, Capsule state schema 4, persistent adapter identity 0.4.0, and
+policy-selected read/write provisioner. Internal APIs compose them under the private
+authority boundary. Write activation recovers the workspace-global patch mediator
+before provider startup and registers only `agentrelay.apply_patch/v1`; the provider
+workspace remains physically read-only. No polling CLI selects either mode and no test
+executes a real model turn. The provider process uses its private runtime home as its
+operating-system working directory while app-server requests retain the logical
+workspace separately; the workspace is pinned untrusted and effective shell/MCP state
+is attested. The
 guardian owns generation spawn and live supervision; its prearmed detached
 reaper owns teardown proof and post-absence quiescence. There is also no
 contract-acknowledgement or verification-delivery handler, so this still does not
@@ -394,18 +396,19 @@ There is no `run-codex` command.
 
 `agentrelay-capsule serve --directory <path>` is the internal child-process entry
 point. It reads the strict descriptor union: schema v1 opens the fake controller, while
-schema v2 pins the Codex runtime contract, CLI version, session scope, socket, and exact
+schema v3 pins the Codex runtime contract, CLI version, session scope, socket, and exact
 containment recovery handle. Both delegate to `PersistentCapsuleServer` and preserve
 the versioned newline-delimited JSON wire. The Codex controller opens only passive
 state until an authority-gated start, recovery, or cancellation of a durable turn
 activates containment and the provider.
 
-`agentrelay-capsule` reserves inherited fd 3 only for a validated schema-v2 Codex
-controller. The Codex-only detached launcher claims one fresh opaque owner credential
-for each actual Capsule start and writes it once to that fd; schema v1 leaves the
+`agentrelay-capsule` reserves inherited fd 3 only for a Codex controller launched from
+a validated descriptor schema 3. The Codex-only detached launcher claims one fresh
+opaque owner credential for each actual Capsule start and writes it once to that fd;
+schema v1 leaves the
 channel untouched. The Capsule arms one refed, non-resettable 30-second deadline when
-the schema-v2 controller is constructed. The credential is read lazily only during
-authority-gated activation. Expiry closes or aborts the unclaimed channel and requests
+the descriptor-schema-3 controller is constructed. The credential is read lazily only
+during authority-gated activation. Expiry closes or aborts the unclaimed channel and requests
 generation retirement. Controller shutdown instead closes or aborts any still-unclaimed
 channel and awaits an in-progress read before resolving.
 
@@ -416,8 +419,9 @@ local capability, and a request ID; responses repeat Capsule and request identit
 Capsule directories are mode 0700, and descriptor/state files plus the Unix socket
 are mode 0600. The detached child receives a small environment allowlist that excludes
 Node and Relay credentials, inherited `HOME`, provider-credential environment
-variables, proxy settings, and process-loader injection variables. For a schema-v2
-Capsule, the owner API key enters only through fixed fd 3, never argv or environment.
+variables, proxy settings, and process-loader injection variables. For a Capsule
+launched from descriptor schema 3, the owner API key enters only through fixed fd 3,
+never argv or environment.
 The raw provider later runs with its locally derived private runtime home as process
 cwd, not with the logical workspace as process cwd. That workspace is a separately
 validated field carried into the exact app-server arguments and thread requests.
@@ -521,10 +525,11 @@ Authority decisions contain only bounded identifiers, hashes, workspace alias,
 action/resource, decision, and denial code. They exclude local paths, prompts, command
 arguments, environment values, output, provider IDs, and secrets. Both monitors write
 through an injected `RuntimeAuthorityEvidenceSink`; the selected Node/Capsule path uses
-a no-op sink today, so this checkpoint does not claim durable evidence. It also does
-not provide the registered verification handler (#93), artifact flow (#94), complete
-Codex activation (#98), durable evidence store (#99), or adversarial activated-runtime
-proof (#104). Detailed evidence and nonclaims are in
+a no-op sink today, so that authority-monitor path does not durably persist its
+decisions. It also does not provide the registered verification handler (#93), artifact
+flow (#94), complete Codex activation (#98), general Relay-visible authority/execution
+evidence (#99), or adversarial activated-runtime proof (#104). Detailed evidence and
+nonclaims are in
 [`research/008-local-runtime-authority.md`](research/008-local-runtime-authority.md).
 
 ### Guarded Codex Capsule, provider guardian, and teardown-reaper checkpoint
@@ -540,26 +545,28 @@ after the non-claiming doctor passes. No polling `agentrelay-node` command opens
 factory. `agentrelay-codex-guardian` remains only its internal child-process entry
 point, including its private `--reaper` mode.
 
-`CodexCapsuleStore` schema v2 records a stable AgentRelay turn reference and its first
-`accepted` event during `prepareTurn`, before `turn/start` or a provider turn ID. The
-exact validated `StartTurnInput`, derived prompt/schema, hashes, and deterministic
+`CodexCapsuleStore` state schema 4 records a stable AgentRelay turn reference and its
+first `accepted` event during `prepareTurn`, before `turn/start` or a provider turn ID.
+The exact validated `StartTurnInput`, derived prompt/schema, hashes, and deterministic
 `clientUserMessageId` remain bound to `(deliveryId, executionAttempt)`. A duplicate
-start coalesces on that logical turn; a changed duplicate conflicts. Schema-v1
-development state has no migration and is rejected.
+start coalesces on that logical turn; a changed duplicate conflicts. Prior Codex
+Capsule state schemas have no migration and are rejected. The compatible adapter is
+`capsule-codex` 0.4.0; a running 0.3.0 generation is not reused.
 
 `CodexCapsuleRunner.open` obtains one generation from the guardian boundary. Therefore
 an unresolved start is inspected only after the guardian has excluded or reconciled
 its predecessor, armed the detached reaper, and started the new generation.
 Reconciliation reads the bound thread and
-accepts exactly one turn whose client ID and text match the persisted intent. A
-bounded zero match is durably terminalized as `failed`, or `cancelled` when
-cancellation was already requested; it never resends. Cancellation before provider
-binding survives reconciliation and produces one interrupt after the provider turn
-is found. If a later fresh generation inherits
-`interrupt_maybe_sent`, it does not repeat the interrupt. It reads the exact intent
-once: an exact terminal turn is normalized and persisted authoritatively, while an
-absent or still-`inProgress` turn becomes a redacted transient failure because the
-prior provider generation is already proven quiescent. Public events contain no
+accepts exactly one turn whose client ID and text match the persisted intent. It makes
+one authoritative fresh-generation read rather than polling or resending. An unresolved
+unbound start is durably terminalized as `failed`, or `cancelled` when cancellation was
+already requested. Cancellation before provider binding survives reconciliation and
+produces one interrupt after the provider turn is found. If a later fresh generation
+inherits `interrupt_maybe_sent`, it does not repeat the interrupt. It reads the exact
+intent once: an exact terminal turn is normalized and persisted authoritatively, while
+an absent or still-`inProgress` turn becomes a redacted transient failure only after
+the coordinator proves zero durable patch calls for the exact Host/provider turn.
+Otherwise the outcome remains unproved and nonterminal. Public events contain no
 provider IDs. If the first interrupt RPC rejects, the driver calls
 `lifecycle.retire()`; only the replacement generation performs this one-read
 resolution.
@@ -589,15 +596,60 @@ successful start or resume it repeats the effective-config check against the pri
 home and rejects any persisted private `config.toml`. It also pages
 `experimentalFeature/list` and requires exactly one disabled `shell_tool` entry.
 
-`thread/start` and every `turn/start` carry `environments: []`, so no
-environment-backed shell or native `apply_patch` tool definition is available. This
-does not remove the separately eligible model-dependent native `apply_patch` surface,
-whose file-change approval remains denied and fatal. `thread/resume` is allowed
+`thread/start` and every `turn/start` carry `environments: []`, so pinned Codex
+`0.146.0` registers neither an environment-backed shell nor native `apply_patch` tool.
+The command flags alone leave native patch eligibility model-dependent, but the
+effective path exposes no native file-change tool; any unexpected file-change approval
+remains denied and fatal. `thread/resume` is allowed
 only after a bounded, cursor-checked `thread/loaded/list` scan proves that exact thread
-is not loaded in the current provider process. Every server-initiated request,
-including command, file-change, permission, user-input, MCP elicitation, dynamic-tool,
-and legacy approval requests, receives a denial or empty failure response and then
-poisons the client. No dynamic patch request is accepted at this checkpoint.
+is not loaded in the current provider process. Without exact local write activation,
+every server-initiated request receives a denial or empty failure response and poisons
+the client. With write activation, only a strictly parsed `item/tool/call` for
+`agentrelay.apply_patch/v1` is handled. Command, native file-change, permission, user-
+input, MCP elicitation, other dynamic-tool, and legacy approval requests remain denied
+and fatal.
+
+The exact dynamic tool accepts one strict `{ patch: string }` argument. One call is
+bounded to 1 MiB of UTF-8 patch text; one turn admits at most 32 calls and retains at
+most 1 MiB of unresolved raw patch text. `CodexCapsuleStore.claimPatchCall()` durably
+binds Capsule ID, provider thread/turn/call IDs, exact `HostTurnRef`, raw patch digest
+and length, and the exact active authority record before the mediator can act. The
+raw patch is removed exactly when one durable `applied`, provenance-bearing `rejected`,
+fatal `failed`, or `indeterminate` receipt replaces it.
+
+`CodexDynamicPatchToolCoordinator` serializes calls and recovers the
+workspace-global mediator before accepting new work. It treats
+`(capsule, provider thread, provider turn, call)` as the transaction key, rejects
+changed replay, and passes the exact Host turn and authority grant to
+`CodexWorkspacePatchMediator`. Missing receipts, receipt-persistence failure,
+indeterminate effects, changed authority, and unproved mediator inspection never
+produce a successful provider response.
+
+The mediator holds one stable kernel lock for the canonical workspace identity and
+uses a pinned owner-selected Git executable outside both workspace and control state
+as a private synthetic patch compiler. It rejects absolute, non-canonical, `.git`,
+reserved staging, symlink, special-file, hard-link, replaced-root, changed-`HEAD`, and
+divergent before-image cases. The durable journal records exact authority, workspace
+device/inode, base commit, patch and plan hashes, before/after blobs, staging names,
+created directories, and `commit_intent`, `committed`, `rejected`, or `indeterminate`
+state. Every filesystem mutation crosses `performWorkspaceWrite`; recovery classifies
+the exact before/after/staging state and never blindly reapplies an unproved effect.
+
+Before terminal publication, `attestTerminal()` requires the complete provider turn,
+the exact durable tool contract and authority-bound call set, matching mediator core
+state, and exactly one matching provider-history item per call. A completed turn also
+requires the exact fixed response. A failed or interrupted provider turn may have lost
+that response after the durable effect; with exact call and core proof it can normalize
+only to transient failure or cancellation, never completion. Native file changes,
+commands, unexpected or duplicate tools, changed arguments, extra or missing calls, or
+an unresolved receipt fail closed. Cold abandonment additionally requires proof that
+the exact authority-bound Host/provider turn has zero durable patch calls. Any durable
+patch call, including a request without a receipt, blocks abandonment and retires the
+generation rather than resending or reapplying it. Provider teardown must be proven
+before coordinator and store closure;
+coordinator/mediator closure must be proven before Capsule state is closed. This is
+durable local control state, not the still-unimplemented Relay-visible execution-
+evidence stream.
 
 The guardian uses the stable `provider.lock` inode as kernel authority and writes
 bounded private lifecycle evidence to `provider-generation.json`. Its phases are
@@ -622,10 +674,10 @@ absence, waits for that durable matching state, and only then releases its own l
 settles termination. A same-boot non-quiescent predecessor fails closed, while a
 changed kernel boot-session ID safely reconciles state left by a host reboot.
 
-This still has no polling CLI wiring, owner-facing credential source, guarded
-workspace-write model activation, installed service supervisor, or real model-turn
-evidence. The internal
-provider generation has only the fixed egress boundary described below.
+This still has no polling CLI wiring, owner-facing credential source, installed service
+supervisor, registered verification-command authority, or real model-turn/live OpenAI
+evidence. The internal provider generation has only the fixed egress and exact patch
+boundaries described here.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
 service restart/upgrade/rollback, cgroup containment, and descendants that escape the
@@ -642,11 +694,12 @@ fail closed. Recovery revalidates the same identity while allowing expected dirt
 Mission edits.
 
 `prepareCodexSandboxContainment` builds a Linux-only Codex `0.146.0` boundary with an
-explicit read or write workspace mode. The Codex provisioner selects the exact mode
-from the accepted owner-local policy and requires matching workspace authority;
-`.git` remains read-only, the pinned minimal system view plus explicit approved
-trees are readable, and the owner home, containment control directory, and configured
-forbidden roots are denied.
+explicit logical read or write workspace mode. The Codex provisioner selects the exact
+mode from the accepted owner-local policy and requires matching workspace authority.
+The provider mount is read-only in both modes; logical write additionally binds the
+separate trusted patch mediator. `.git` remains read-only, the pinned minimal system
+view plus explicit approved trees are readable, and the owner home, containment control
+directory, and configured forbidden roots are denied.
 `HOME`, `CODEX_HOME`, and all
 temporary variables point to private exact-mode directories; the child environment
 is rebuilt and legacy Landlock is explicitly disabled. The outer launcher changes to
@@ -656,15 +709,16 @@ untrusted project and pins
 `model_provider="openai"`, `openai_base_url="https://api.openai.com/v1"`,
 `agents.enabled=false`, and `web_search="disabled"`. It also disables `shell_tool`,
 hooks, plugins, apps, multi-agent, and code-mode features, removing `exec_command`,
-`write_stdin`, and the legacy shell while leaving native `apply_patch` independently
-eligible when the selected model exposes it. Any resulting
-`item/fileChange/requestApproval` is still declined and made fatal, so this is
-command-surface reduction rather than exact patch mediation. The command selects the
-outer `agentrelay-runtime` profile whose full Codex-managed CONNECT proxy permits only
-host `api.openai.com`. Exact version checks and the mandatory containment probe select
-`agentrelay-offline`, and each nested read-only workspace sandbox uses
-`networkAccess: false`. The
-launcher rejects `/etc/codex/config.toml`, `managed_config.toml`, and
+`write_stdin`, and the legacy shell. Those command-hardening flags alone leave native
+`apply_patch` eligibility model-dependent; the actual `environments: []` thread/turn
+path suppresses its registration in pinned Codex `0.146.0`. Any unexpected
+`item/fileChange/requestApproval` is still declined and made fatal. Exact patch
+mediation is instead the separately registered `agentrelay.apply_patch/v1` path. The
+command selects the outer `agentrelay-runtime` profile whose full Codex-managed CONNECT
+proxy permits only host `api.openai.com`. Exact version checks and the mandatory
+containment probe select `agentrelay-offline`, and each nested read-only workspace
+sandbox uses `networkAccess: false`. The launcher rejects `/etc/codex/config.toml`,
+`managed_config.toml`, and
 `requirements.toml` rather than merging ambient system policy.
 
 Before the boundary is returned, executable and bundled Bubblewrap hashes and object
@@ -672,7 +726,7 @@ identities are checked, approved read trees are recursively inspected for nested
 mounts, hard links, special or group/world-writable entries, ownership, and symlink
 aliases into denied roots. Read, write, and deny roots are compared by Linux storage
 provenance, and writable roots reject nested mounts. An actual child canary must prove
-the selected workspace access, read-only Git metadata, private temp, denied
+the provider's read-only workspace access, read-only Git metadata, private temp, denied
 control/home/shared-temp access, environment filtering, a separate network namespace,
 and failed network access through a private token-bound result file.
 
@@ -685,14 +739,15 @@ local-policy-grant digest. The returned recovery handle is exactly
 identity and canary checks, and never resets or deletes the dirty checkout. Legacy
 egress-less or altered provider policies are rejected during parse and recovery even
 when their binding digest was recomputed. The Codex
-provisioner durably stores this exact handle in the v2 descriptor before Capsule launch
+provisioner durably stores this exact handle in the v3 descriptor before Capsule launch
 and strictly revalidates it during dirty recovery. Once any retained delivery for the
 same Mission contains a start intent or host-attempt history, later provisioning is
 recovery-only and cannot create a fresh containment instance over the dirty checkout.
-Write-mode Capsule activation validates that recovered mode, then fails closed before
-claiming the credential or opening the guardian, provider, or runner. The local
-controller identifies this as `workspace_write_activation_not_enabled`; the private
-wire redacts it to `internal` and retires the Capsule. No polling CLI selects that path.
+Write-mode Capsule activation validates the recovered mode, mediator control root, and
+pinned owner-selected Git artifact, proves live workspace-write authority with a
+zero-effect check, opens and recovers the durable mediator, then may claim the
+credential and open the guardian and runner. The provider remains read-only and only
+the exact dynamic patch handler receives the mediator. No polling CLI selects that path.
 macOS and other platforms fail closed, no real model turn uses this boundary, and the
 Linux process coverage verifies command/profile selection, proxy-environment injection,
 and failed direct sockets without making a live OpenAI request; it is library-level
@@ -841,14 +896,15 @@ Do not extend `accepted_by_session` or the four-state handoff table into a distr
 runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
 deliveries have a separate model and public control plane. The local Node now proves
 both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
-after Node-process death. The provider-neutral server, injected Codex runner, and
-provider guardian/reaper, strict descriptor, provisioner, and persistent adapter add a
-guarded read-only activation path plus a fail-closed write-authority/containment
-checkpoint with exact retained recovery identity and a passing Linux process proof.
+after Node-process death. The provider-neutral server, injected Codex runner,
+provider guardian/reaper, strict descriptor, provisioner, persistent adapter, and
+durable patch mediator add an internal activation path whose provider remains
+physically read-only, with exact retained recovery identity and a passing Linux process
+proof.
 Internal Codex composition uses the bound reference monitor, but no polling CLI selects
 it. The next gates are an owner-facing credential source and polling composition that
-selects the fixed provider-only egress boundary, guarded workspace-write model
-activation, registered verification and artifact carriage, durable
+selects the fixed provider-only egress and mediated-write boundaries, registered
+verification and artifact carriage, durable
 structured execution evidence, adversarial evaluation, Guarded Real Mission 0, and
 finally the two-machine proof. Installed
 service/cgroup containment,
