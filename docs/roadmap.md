@@ -17,8 +17,8 @@ an independently persistent fake Mission Capsule. The detached Capsule and Node-
 process restart proof are implemented. The first pinned Codex client, Capsule state
 schema 4, provider-neutral Capsule server, injected runner, strict v3 descriptor,
 persistent adapter identity 0.4.0, provisioner, provider guardian, and durable patch
-mediator now form an internal activation path whose provider remains physically
-read-only. The guardian
+mediator now form an experimentally selected activation path whose provider remains
+physically read-only. The guardian
 owns provider-generation spawn, liveness, and local authority
 inputs; its prearmed persistent out-of-group witness owns process-group removal and
 post-absence quiescence proof. A Linux-only Codex `0.146.0` containment boundary adds
@@ -36,13 +36,17 @@ write authority, the sole handled server request is `agentrelay.apply_patch/v1`;
 file changes, commands, permissions, user input, MCP, and all other dynamic tools remain
 denied and fatal. The Capsule and workspace-global mediator durably bind authority,
 transaction, receipt, recovery, terminal attestation, and teardown around that patch
-path. No polling command selects this composition, and there is no owner-facing
-credential source or real model-turn/live OpenAI proof. The
+path. The explicit experimental `run-codex` polling command now selects this
+composition. It admits one operator-selected inherited FIFO or Unix-socket credential
+fd numbered 3 or higher, completes the doctor and any owner-pinned Git preflight before
+reading it, retains the source for fresh per-Capsule claims, and zeroizes it during
+shutdown. The fixed child transfer remains fd 3. There is still no real
+model-turn/live OpenAI proof. The
 persistent fake-Capsule path also installs a private, fenced capability grant into
 independent Node and Capsule reference monitors. This is the partial issue #97
 reference-monitor checkpoint, not completion of the still-open issue or real-runtime
-activation. The next runtime milestone is guarded Codex activation through the public
-polling path (#98), not another protocol abstraction.
+activation. The next runtime milestone is Guarded Real Mission 0 through that polling
+path (#98), not another protocol abstraction.
 
 We progress through evidence gates, not calendar promises or version hype.
 
@@ -129,11 +133,12 @@ migration because PID-only evidence cannot rule out another namespace. The Capsu
 server is now provider-neutral while the existing descriptor, CLI, and wire remain
 fake-compatible. An injected Codex runner is tested through that real Unix wire.
 Runtime shutdown concurrently fences admitted work, and background runtime failures
-can retire their server generation, but no production path selects Codex. OS
+can retire their server generation. Experimental `run-codex` selects Codex, but no
+production-validated or real-model path has passed. OS
 service/cgroup containment, automatic process respawn, witness/all-owner loss,
 escaped-descendant cleanup, and restart/upgrade/rollback behavior remain #120.
-Contract acknowledgement, verification execution, guarded real-runtime polling
-activation, and the two-machine exit gate also remain open. On the persistent fake
+Contract acknowledgement, verification execution, Guarded Real Mission 0, and the
+two-machine exit gate also remain open. On the persistent fake
 path, journal schema 4 stores an exact authority grant before activation or a
 predecessor awaiting proven Capsule retirement. The Node and Capsule enforce its lease,
 fence, expiry, scope, capabilities, and aggregate output/usage/artifact limits
@@ -179,8 +184,13 @@ credential once for API-key login, then verifies the resulting API-key account s
 credential store forced ephemeral. Tests exercise the real Capsule Unix wire with fake
 app-server clients and real OS process trees, including joint Capsule/guardian loss on
 Linux. The dedicated Linux process job starts pinned Codex through the guardian and
-containment boundary, but no polling command selects this composition, no owner-facing
-credential source exists, and no test executes a model turn.
+containment boundary. Experimental `run-codex` now selects this composition, admits the
+owner credential from a required inherited FIFO or Unix-socket fd only after doctor and
+optional owner-pinned Git preflight, and forwards the `runtimeProvisioner` into the
+foreground Node. The credential source stays process-local, yields a fresh one-shot
+claim for each actual Capsule start, and is zeroized before `run.lock` is released. No
+test executes a model turn. Git is required only when a configured workspace references
+a write profile; a Git executable explicitly supplied for read mode is still pinned.
 
 The provider process cwd is now separate from the logical Mission workspace: it is the
 private runtime home, while exact app-server arguments and thread requests pin the
@@ -200,9 +210,8 @@ write authority, and recovers the workspace-global mediator before provider star
 Each exact dynamic patch call is request-before-effect and receipt-before-response;
 indeterminate or unproved state blocks publication and recovery. Retained same-Mission
 start intent or host-attempt history forces recovery-only provisioning, including for
-an expected dirty checkout. This remains an internal fake-client/fault-harness
-checkpoint, not a real model-write or live-runtime
-proof.
+an expected dirty checkout. The command path is covered by deterministic CLI and
+fault-harness tests, not a real model-write or live-runtime proof.
 
 - [ ] Add registered verification delivery and execution handling (#93), with a
   canonical absolute executable identity bound into local authority instead of a
@@ -233,8 +242,12 @@ proof.
   transaction mediator, exact authority and Host-turn receipts, crash recovery,
   terminal-history attestation, and fail-closed teardown. This does not add shell,
   verification-command, native file-change, or arbitrary dynamic-tool authority.
-- [ ] Expose the guarded Codex composition through an explicit polling command with an
-  approved owner-facing credential source and run Guarded Real Mission 0 (#98).
+- [x] Expose the guarded Codex composition through explicit experimental `run-codex`
+  polling with an inherited FIFO/Unix-socket owner credential source. The command
+  retains `run` and `run-capsule` as explicit fake-only paths, performs passive doctor
+  and optional owner-pinned Git preflight before secret consumption, and closes in
+  abort/source/fd/lock order.
+- [ ] Run Guarded Real Mission 0 through the public pipeline (#98).
 - [ ] Persist the general durable local authority and execution evidence stream (#99).
 - [ ] Run the adversarial capability and recovery matrix against the activated runtime
   (#104).

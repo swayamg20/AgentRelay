@@ -29,8 +29,9 @@ strict v3 descriptor, Capsule state schema 4, persistent adapter identity 0.4.0,
 policy-selected read/write provisioner. Internal APIs compose them under the private
 authority boundary. Write activation recovers the workspace-global patch mediator
 before provider startup and registers only `agentrelay.apply_patch/v1`; the provider
-workspace remains physically read-only. No polling CLI selects either mode and no test
-executes a real model turn. The provider process uses its private runtime home as its
+workspace remains physically read-only. The explicit experimental `run-codex` polling
+command now selects either mode, but no test executes a real model turn. The provider
+process uses its private runtime home as its
 operating-system working directory while app-server requests retain the logical
 workspace separately; the workspace is pinned untrusted and effective shell/MCP state
 is attested. The
@@ -382,7 +383,7 @@ currently exercised only by tests and exports.
 
 ## Node and Capsule process surface
 
-The private `agentrelay-node` binary has two fake-runtime commands:
+The private `agentrelay-node` binary has two explicit fake-runtime commands:
 
 - `run` keeps `FakeAgentHostAdapter` inside the foreground Node process.
 - `run-capsule` launches or reconnects to one detached fake Capsule per Mission. Its
@@ -392,7 +393,20 @@ The private `agentrelay-node` binary has two fake-runtime commands:
 It also exposes `doctor-codex`, a non-polling Linux/x64 preflight that verifies the
 exact pinned Codex and Bubblewrap artifacts plus a bounded `codex --version` process.
 It opens no config, journal, Relay client, workspace, descriptor, Capsule, or provider.
-There is no `run-codex` command.
+
+The separate experimental `run-codex` command selects the guarded persistent Codex
+adapter. It requires exactly one operator-selected inherited FIFO or Unix-socket fd
+numbered 3 or higher. FD admission occurs before config loading, without
+reading the secret. After config load, `run-codex` acquires `run.lock`, opens the
+journal and passive control plane, completes the pinned runtime doctor and any
+owner-pinned Git preflight, and then consumes the credential source before constructing
+the Relay client. `--git-executable` is required only when a configured workspace
+references a `workspace_access: "write"` policy profile; if explicitly supplied for a
+read-only configuration, it is still resolved as the exact identity- and hash-pinned
+Git artifact. The command forwards the adapter, authority port, and runtime provisioner
+to the foreground Node through its `runtimeProvisioner` option. The fake commands
+retain their test-credential gate and never
+parse the owner fd or select this provisioner.
 
 `agentrelay-capsule serve --directory <path>` is the internal child-process entry
 point. It reads the strict descriptor union: schema v1 opens the fake controller, while
@@ -403,8 +417,10 @@ state until an authority-gated start, recovery, or cancellation of a durable tur
 activates containment and the provider.
 
 `agentrelay-capsule` reserves inherited fd 3 only for a Codex controller launched from
-a validated descriptor schema 3. The Codex-only detached launcher claims one fresh
-opaque owner credential for each actual Capsule start and writes it once to that fd;
+a validated descriptor schema 3. This fixed child descriptor is independent of the
+operator-selected `run-codex` source fd. The Node retains the validated credential in
+process, and the Codex-only detached launcher claims one fresh opaque copy for each
+actual Capsule start and writes it once to child fd 3;
 schema v1 leaves the
 channel untouched. The Capsule arms one refed, non-resettable 30-second deadline when
 the descriptor-schema-3 controller is constructed. The credential is read lazily only
@@ -442,8 +458,9 @@ stream, and completion deadline. `recoverTurn(ref, expectedInput)` must match th
 durable intent and the Mission/session scope. The Capsule permits one active turn per
 Mission.
 
-This process path is experimental and Unix-only. A normal Node exit leaves detached
-Capsules running. Before opening the journal or Capsule registry, the Node opens a
+This process path is experimental and Unix-only. The guarded `run-codex` composition
+is Linux/x64-only and macOS fails closed. A normal Node exit leaves detached Capsules
+running. Before opening the journal or Capsule registry, the Node opens a
 stable private mode-0600 `run.lock` and acquires a nonblocking kernel advisory lock
 through exact-pinned `fs-native-extensions@1.5.0`. The file and its inode remain
 stable; PID, timestamps, and owner metadata live in a separate mode-0600
@@ -453,6 +470,12 @@ Relay/Postgres E2E restart directly without deleting `run.lock`. A second live,
 stopped, or event-loop-stalled Node retains ownership, because there is no heartbeat
 or timeout-based stealing. A missing or malformed `run.owner.json` cannot change the
 kernel decision.
+
+Foreground-command teardown aborts the shared lifetime signal before closing the
+runtime. For `run-codex`, that prevents new credential claims; runtime close then
+zeroizes the retained source, or the lifecycle closes a still-unread inherited fd.
+`run.lock` is released only after those steps. Teardown does not call `terminateAll`;
+detached Capsules survive normal Node exit for later recovery.
 
 A new schema-2 lock is fully written and synced in a private same-directory temporary
 file, published without overwrite, and followed by a directory sync. Every existing
@@ -527,8 +550,9 @@ arguments, environment values, output, provider IDs, and secrets. Both monitors 
 through an injected `RuntimeAuthorityEvidenceSink`; the selected Node/Capsule path uses
 a no-op sink today, so that authority-monitor path does not durably persist its
 decisions. It also does not provide the registered verification handler (#93), artifact
-flow (#94), complete Codex activation (#98), general Relay-visible authority/execution
-evidence (#99), or adversarial activated-runtime proof (#104). Detailed evidence and
+flow (#94), real-provider Codex activation proof (#98), general Relay-visible
+authority/execution evidence (#99), or adversarial activated-runtime proof (#104).
+Detailed evidence and
 nonclaims are in
 [`research/008-local-runtime-authority.md`](research/008-local-runtime-authority.md).
 
@@ -541,8 +565,9 @@ start/resume, turn start/recovery, one provider-notification consumer, cancellat
 and durable event streaming. Tests open it through the real private Unix wire using
 fake app-server clients. The descriptor-driven `agentrelay-capsule` can construct this
 controller, and `openCodexNodeRuntime` pairs its provisioner and persistent adapter
-after the non-claiming doctor passes. No polling `agentrelay-node` command opens that
-factory. `agentrelay-codex-guardian` remains only its internal child-process entry
+after the non-claiming doctor passes. Experimental `run-codex` opens that factory and
+passes the resulting `runtimeProvisioner` into the foreground Node.
+`agentrelay-codex-guardian` remains only its internal child-process entry
 point, including its private `--reaper` mode.
 
 `CodexCapsuleStore` state schema 4 records a stable AgentRelay turn reference and its
@@ -674,10 +699,10 @@ absence, waits for that durable matching state, and only then releases its own l
 settles termination. A same-boot non-quiescent predecessor fails closed, while a
 changed kernel boot-session ID safely reconciles state left by a host reboot.
 
-This still has no polling CLI wiring, owner-facing credential source, installed service
-supervisor, registered verification-command authority, or real model-turn/live OpenAI
-evidence. The internal provider generation has only the fixed egress and exact patch
-boundaries described here.
+This still has no installed service supervisor, registered verification-command
+authority, or real model-turn/live OpenAI evidence. The experimentally selected
+provider generation has only the fixed egress and exact patch boundaries described
+here.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
 service restart/upgrade/rollback, cgroup containment, and descendants that escape the
@@ -747,7 +772,7 @@ Write-mode Capsule activation validates the recovered mode, mediator control roo
 pinned owner-selected Git artifact, proves live workspace-write authority with a
 zero-effect check, opens and recovers the durable mediator, then may claim the
 credential and open the guardian and runner. The provider remains read-only and only
-the exact dynamic patch handler receives the mediator. No polling CLI selects that path.
+the exact dynamic patch handler receives the mediator. `run-codex` selects that path.
 macOS and other platforms fail closed, no real model turn uses this boundary, and the
 Linux process coverage verifies command/profile selection, proxy-environment injection,
 and failed direct sockets without making a live OpenAI request; it is library-level
@@ -898,15 +923,13 @@ deliveries have a separate model and public control plane. The local Node now pr
 both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
 after Node-process death. The provider-neutral server, injected Codex runner,
 provider guardian/reaper, strict descriptor, provisioner, persistent adapter, and
-durable patch mediator add an internal activation path whose provider remains
-physically read-only, with exact retained recovery identity and a passing Linux process
-proof.
-Internal Codex composition uses the bound reference monitor, but no polling CLI selects
-it. The next gates are an owner-facing credential source and polling composition that
-selects the fixed provider-only egress and mediated-write boundaries, registered
-verification and artifact carriage, durable
-structured execution evidence, adversarial evaluation, Guarded Real Mission 0, and
-finally the two-machine proof. Installed
+durable patch mediator add an experimentally selected activation path whose provider
+remains physically read-only, with exact retained recovery identity and a passing Linux
+process proof. Experimental `run-codex` selects that composition, the bound reference
+monitor, and its inherited owner credential source. The next gates are registered
+verification and artifact carriage, durable structured execution evidence,
+adversarial evaluation, Guarded Real Mission 0, and finally the two-machine proof.
+Installed
 service/cgroup containment,
 witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120. The
 mailbox API remains a compatibility and inspection surface.

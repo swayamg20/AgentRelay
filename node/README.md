@@ -2,9 +2,10 @@
 
 `agentrelay-node` is the owner-controlled local execution boundary for AgentRelay
 Missions. This package is private and experimental. Its current purpose is to prove
-durable delivery, local authority checks, and runtime recovery. The public polling
-commands remain deterministic fake paths; guarded Codex activation exists only behind
-internal, non-production composition.
+durable delivery, local authority checks, and runtime recovery. The foreground polling
+`run` and `run-capsule` commands remain deterministic fake paths. A separate explicit
+`run-codex` command now selects the guarded composition for experimental polling; it
+is not production-validated and has not executed a real model turn.
 
 ## What works
 
@@ -66,19 +67,24 @@ internal, non-production composition.
   start barrier; that witness retains the lock, removes the guardian/provider process
   group, and alone records same-boot teardown quiescence after proving the group absent.
   The dedicated Linux process job starts pinned Codex through both boundaries. An
-  internal factory pairs the provisioner and adapter after a pinned-runtime doctor,
-  but no polling CLI selects it and no test executes a real model turn.
-- An internal one-shot Codex authentication boundary. The Codex-only detached launcher
-  claims a fresh opaque owner credential for each actual Capsule start and transfers it
-  only through fixed inherited fd 3, never argv, environment, or durable state. A
+  internal factory pairs the provisioner and adapter after a pinned-runtime doctor, and
+  the explicit experimental `run-codex` command selects it. No test executes a real
+  model turn.
+- A one-shot Codex authentication boundary. `run-codex` requires one
+  operator-selected inherited FIFO or Unix-socket fd numbered 3 or higher. It admits
+  that channel before loading config, then consumes it only after the Node holds its
+  singleton lock and the passive runtime doctor plus any owner-pinned Git preflight
+  have passed. The retained process-local credential source is zeroized on shutdown.
+  The Codex-only detached launcher claims a fresh opaque owner credential for each
+  actual Capsule start and transfers it only through fixed inherited fd 3, never argv,
+  environment, or durable state. A
   Capsule launched from a validated descriptor schema 3 owns that channel under one
   non-resettable 30-second
   activation deadline; schema v1 leaves it untouched. Authority-gated provider
   activation consumes the credential once in `account/login/start`, then verifies
   `account/read` with refresh-token loading disabled. Codex is forced to
   `cli_auth_credentials_store="ephemeral"`, and the live handshake leaves no
-  `auth.json`. No owner-facing credential source exists, and no polling command selects
-  this path.
+  `auth.json`.
 - An internal Codex bootstrap and project-trust boundary. The provider process starts
   in the private mode-0700 runtime home, not in the logical workspace supplied to
   app-server thread requests. Exact launch arguments and per-thread configuration pin
@@ -105,8 +111,8 @@ internal, non-production composition.
   thread/turn path suppresses its registration in pinned Codex `0.146.0`. Any unexpected
   `item/fileChange/requestApproval` is declined and made fatal. The separately
   registered `agentrelay.apply_patch/v1` tool is the only write path and never gives
-  the provider a writable mount. This path is not selected by a polling
-  command and has not executed a real model turn.
+  the provider a writable mount. `run-codex` selects this path, but it has not executed
+  a real model turn.
 
 The real Relay/Postgres E2E coverage includes both in-process runner reconstruction
 and an OS-process boundary: it kills the Node after Capsule acceptance, probes the
@@ -116,20 +122,23 @@ completion audit.
 
 ## Current boundary
 
-Both foreground commands remain fake-runtime paths. `run` uses
+The original two foreground commands remain fake-runtime paths. `run` uses
 `FakeAgentHostAdapter` in the Node process; `run-capsule` uses an independently
 persistent fake Capsule. The delivery processor can publish `reply`,
-`propose_contract`, or `ready` turn results, while the current CLIs only generate
+`propose_contract`, or `ready` turn results, while the fake CLIs only generate
 deterministic `ready` or `reply` outcomes. They deliberately fail closed for contract
 acknowledgement and verification deliveries because the required artifact-payload and
 command-result paths are not complete.
 
-Only `run-capsule` installs the private runtime-authority grant. The in-process `run`
-command keeps the older fake-adapter boundary without an independent Capsule monitor.
-The separate `doctor-codex` command verifies only the pinned Linux/x64 Codex and
-Bubblewrap artifacts plus `codex --version`; it opens no Node/Capsule state and claims
-no Relay work. No `run-codex` command exists. None of these commands executes a Codex
-model turn or exposes an official A2A gateway.
+`run-capsule` and `run-codex` install the private runtime-authority grant. The
+in-process `run` command keeps the older fake-adapter boundary without an independent
+Capsule monitor. `run-codex` forwards the matched `runtimeProvisioner`, adapter, and
+authority port into the foreground Node; the fake commands do not parse its
+credential-fd option or select that provisioner. The separate `doctor-codex` command
+verifies only the pinned Linux/x64 Codex and Bubblewrap artifacts plus
+`codex --version`; it opens no Node/Capsule state, reads no owner credential, and
+claims no Relay work. Neither Codex
+command has executed a model turn or exposes an official A2A gateway.
 
 Codex launch descriptors use schema 3, durable Codex Capsule state uses schema 4, and
 the compatible adapter identity is `capsule-codex` 0.4.0. Prior descriptor/state
@@ -141,11 +150,13 @@ requires a separate, explicit preflight for every nested repository and its loca
 configuration.
 
 The Capsule checkpoint is experimental and Unix-only because its transport is a Unix
-domain socket. It is not a general local daemon manager: there is no installer, OS
-service supervisor, automatic process respawn, or production Codex/Claude activation.
-The guarded Codex client, injected runner, guardian, descriptor, provisioner, adapter,
-Linux containment boundary, and durable patch mediator form an internal activation
-path whose provider remains physically read-only; see
+domain socket. `run-codex` is further restricted to the pinned Linux/x64 doctor and
+containment boundary; macOS fails closed. This is not a general local daemon manager:
+there is no installer, OS service supervisor, automatic process respawn, or production
+Codex/Claude activation. The guarded Codex client, injected runner, guardian,
+descriptor, provisioner, adapter, Linux containment boundary, and durable patch
+mediator form the experimentally selected path whose provider remains physically
+read-only; see
 [`Codex provider guardian`](../docs/research/007-codex-provider-guardian.md) and
 [`Mission workspace containment`](../docs/research/006-mission-workspace-containment.md).
 `agentrelay-codex-guardian` is the guardian's internal child-process entry point, not
@@ -215,16 +226,17 @@ and the client supplies no Codex environments. Write mode additionally recovers 
 workspace-global mediator before provider startup. That mediator durably binds each
 exact provider/Host-turn call and active grant, applies only bounded patches through a
 pinned owner-selected Git compiler, and requires an exact receipt plus terminal-history
-attestation before publication. No polling command selects either path. An owner-facing
-credential source, registered verification-command authority, general Relay-visible
-authority/execution evidence (#99), and real model-turn/live OpenAI evidence remain
-absent.
+attestation before publication. `run-codex` selects either path from the configured
+workspaces and the policy profiles they reference. Registered verification-command
+authority, general Relay-visible authority/execution evidence (#99), and real
+model-turn/live OpenAI evidence remain absent.
 
 Enrollment currently uses the agent-authenticated Relay route
 `POST /agents/me/nodes`; its one-time returned Node credential is copied into this
 separate config. The Node CLI does not yet own enrollment or credential rotation.
-The polling commands always launch fake adapters and therefore refuse
+The `run` and `run-capsule` commands always launch fake adapters and therefore refuse
 `ar_node_live_*` credentials; they run only with an `ar_node_test_*` credential.
+`run-codex` uses the configured Node credential rather than the fake-only gate.
 `doctor-codex` does not load a Node credential.
 
 ## Run
@@ -250,19 +262,40 @@ node node/dist/bin/agentrelay-node.js doctor-codex
 ```
 
 It verifies the exact pinned package artifacts and bounded version probe before any
-Node/Capsule runtime state is opened. Passing it does not enable Codex execution, select
-the internal provider-egress or mediated-write profile, or load an owner credential:
-an owner-facing credential source and polling `run-codex` command are still absent.
+Node/Capsule runtime state is opened. Passing it does not enable Codex execution,
+select a provider-egress or mediated-write profile, load an owner credential, or poll
+Relay work. It only points operators to the separate experimental command.
+
+The experimental guarded polling path is:
+
+```bash
+node node/dist/bin/agentrelay-node.js run-codex \
+  --config ~/.agentrelay/node/config.json \
+  --owner-credential-fd 7 \
+  --git-executable /absolute/normalized/path/to/git
+```
+
+The chosen FD must already be inherited by the Node process and must refer to
+a FIFO or Unix socket; regular files, terminals, devices, missing values, duplicate
+options, and fd numbers below 3 are rejected. The operator-facing fd number is not the
+Capsule fd: every actual schema-v3 Capsule launch receives a fresh credential claim on
+fixed child fd 3. The command runs the pinned doctor before reading the source. It
+requires `--git-executable` only when at least one configured workspace selects a
+referenced `workspace_access: "write"` profile. An explicitly supplied Git executable
+is still identity- and hash-pinned in read-only configurations. The owner credential is
+fully read before Relay client construction, retained only in process for future
+Capsule starts, and zeroized when the foreground command closes.
 
 Use `--capsule-root <absolute-path>` to override the default
 `state/capsules` directory beside the Node config, and
 `--completion-delay-ms <milliseconds>` to delay the deterministic fake result.
 
 Use `--once` for one recovery/poll/processing cycle. `SIGINT` and `SIGTERM` stop new
-work, request cancellation of an in-flight fake-host turn, and release the singleton
-process lock after the cycle returns. A normal Node exit does not terminate detached
-Capsule processes. Adapter cancellation is bounded to five seconds; an already-running
-Relay request still has its own bounded client timeout.
+work and request cancellation of an in-flight turn. On `run-codex`, shutdown aborts
+new launcher admission, closes and zeroizes the retained source (or closes an unread
+inherited fd), then releases the singleton process lock. A normal Node exit does not
+terminate detached Capsule processes. Adapter cancellation is bounded to five seconds;
+an already-running Relay request still has its own bounded client timeout.
 
 The Node journal is stored beside the config under `state/journal.json`; Capsule state
 defaults to `state/capsules/<mission-id>/`. Do not run two Node processes against the

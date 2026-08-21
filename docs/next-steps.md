@@ -104,7 +104,8 @@ WebSocket, or the process-local notification queue. Its exact failure matrix is:
 | Old or terminal work publishes late output | Postgres has either a newer active fence or a terminal Mission and acknowledged source delivery. | The old fence is rejected with `state_changed`; a fresh completion after the terminal max-turn transition is rejected with `invalid_transition`. Neither creates a second Mission turn. |
 
 Deterministic terminal reconciliation now closes the remaining delivery-control-plane
-gap. The next runtime gate is guarded Codex descriptor/CLI activation; the later
+gap. The next runtime gate is Guarded Real Mission 0 through the experimental
+`run-codex` path; the later
 cross-device product proof remains a real two-machine, two-repository run through the
 public control plane.
 
@@ -157,16 +158,21 @@ service.
 - [x] Pin Codex app-server `0.146.0` and fail closed on a different runtime identity.
 - [x] Validate the bounded request/response/notification subset consumed from the
   matching generated protocol and reject malformed or oversized frames.
-- [x] Add a guarded read-only client with one event consumer, correlated responses,
-  denied server-initiated authority, and process-group cleanup.
-- [x] Add an unactivated schema-v2 Capsule journal and deterministic normalizer with
+- [x] Add a guarded client whose provider workspace remains physically read-only, with
+  one event consumer, correlated responses, fail-closed server-initiated authority,
+  and process-group cleanup. Under exact local write authority, only the separate
+  `agentrelay.apply_patch/v1` mediator may mutate the workspace.
+- [x] Add Capsule state schema 4 and a deterministic normalizer with
   exact input/provider-intent persistence, at-most-once start barriers, a stable
   logical turn and acceptance event before provider binding, one active turn, private
-  bounded storage, terminal replay, and provider-payload redaction.
+  bounded storage, terminal replay, provider-payload redaction, and fail-closed
+  rejection of prior schemas rather than migration.
 - [x] Extract a provider-neutral persistent Capsule server while preserving the fake
-  descriptor, CLI, and versioned Unix wire. Authenticate before runtime calls, keep
-  one socket owner, close the runtime concurrently while admitted handlers drain, and
-  let unexpected request or detached background failures retire the generation.
+  schema-v1 descriptor, CLI, and versioned Unix wire. Strict descriptor v3 selects the
+  passive Codex controller and persistent adapter identity `capsule-codex` 0.4.0.
+  Authenticate before runtime calls, keep one socket owner, close the runtime
+  concurrently while admitted handlers drain, and let unexpected request or detached
+  background failures retire the generation.
 - [x] Implement an injected Codex runner for probe, session start/resume, turn start,
   one event consumer, cancellation, and recovery. Exercise it through the real
   Capsule Unix wire using fake app-server clients; this is not production activation.
@@ -179,9 +185,9 @@ service.
   outcome when present, otherwise record a transient failure, and never reissue it.
 - [x] Allowlist the Codex child environment and derive its home locally beneath the
   Capsule as a canonical, current-user-owned exact-mode-0700 directory.
-- [x] Implement a Linux-only Codex `0.146.0` containment library with a writable
-  workspace, read-only `.git`, explicit read/deny roots, private home/temp, rejected
-  ambient system Codex configuration, disabled legacy Landlock and network,
+- [x] Implement a Linux-only Codex `0.146.0` containment library with a physically
+  read-only provider workspace and `.git`, explicit read/deny roots, private home/temp,
+  rejected ambient system Codex configuration, disabled legacy Landlock and network,
   recursive read-tree alias checks, a mandatory runtime canary, exact pinned
   executable/helper identity, and a private `retain_for_review` manifest.
 - [x] Pass the dedicated Linux containment process job, including the policy canaries
@@ -195,16 +201,35 @@ service.
   heartbeat and provider liveness, absolute deadline, local revocation, a prearmed
   out-of-group teardown witness, and durable quiescence only after process-group
   absence (#96).
+- [x] Add the owner-facing one-shot authentication source. `run-codex` owns one
+  inherited FIFO or Unix-socket fd numbered 3 or higher, reads it only after the
+  passive doctor and any owner-pinned Git preflight, retains the credential in process
+  for fresh per-Capsule claims, and zeroizes it on close. Each actual Capsule transfer
+  remains fixed at child fd 3 and never uses argv, environment, or durable state.
+- [x] Pin the provider process to its private runtime home, keep the logical workspace
+  untrusted and physically read-only, supply no Codex environments, reject warm resume,
+  and allow fixed managed CONNECT egress only for the exact app-server command. Shell,
+  native file change, MCP, hooks, plugins, apps, multi-agent, and code-mode surfaces
+  remain disabled or fatal.
+- [x] Add the exact `agentrelay.apply_patch/v1` dynamic tool and workspace-global
+  durable mediator. Bind provider call, Host turn, active authority, transaction,
+  receipt, recovery, terminal-history attestation, and teardown while keeping the
+  provider mount read-only.
 - [x] Derive, journal, install, renew, and revoke one fenced capability grant outside
   the model on the persistent fake-Capsule path as the partial issue #97 checkpoint.
   The Capsule gates session, start, recovery, cancellation, streamed output, usage,
   and artifacts; the Node independently gates final Relay completion with a continuous
   abort signal. Redacted decisions use injected sinks and are not durably persisted by
-  default. This does not close issue #97 or activate a real runtime.
-- [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI
-  (#98).
-  Before provider start, durably store `{manifestPath, instanceId, bindingSha256}` and
-  recover only that exact containment instance.
+  default. This fake-path checkpoint alone does not close issue #97 or activate a real
+  runtime.
+- [x] Wire the explicit experimental `run-codex` descriptor/runtime factory into the
+  Capsule and polling Node CLI (#98 CLI slice). It forwards the `runtimeProvisioner`,
+  adapter, and authority port; `run` and `run-capsule` remain explicit fake-only paths. Git is
+  required only when a configured workspace references a write profile, while an
+  explicitly supplied Git path is still identity- and hash-pinned in read mode. Before
+  provider start, durably store `{manifestPath, instanceId, bindingSha256}` and recover
+  only that exact containment instance. Shutdown aborts launcher admission, closes the
+  source or unread fd, releases `run.lock` last, and leaves detached Capsules alive.
 - [ ] Require the RFC's structured turn dispositions and bounded local execution
   evidence (#99).
 - [ ] Run the adversarial capability and recovery matrix against the activated runtime
@@ -212,12 +237,14 @@ service.
 - [ ] Pass Guarded Real Mission 0 through the public pipeline.
 - [ ] Run the two-machine backend-and-Android Mission only after that integration gate.
 
-The Codex Capsule journal remains schema v2 and has no migration from its earlier
-unactivated schema-v1 development checkpoint. Separately, Node journal schema 4 now
-stores the exact runtime-authority grant plus the bounded predecessor-retirement state,
-and migrates schema 2 or 3 entries without inventing authority.
-No production Codex path writes either Codex format, so its compatibility must be
-decided before descriptor or CLI activation.
+The active Codex contract is strict descriptor schema 3, Capsule state schema 4, and
+adapter identity `capsule-codex` 0.4.0. Prior Codex descriptor/state contracts and
+adapter 0.3.0 are rejected rather than migrated. Experimental `run-codex` writes the
+current formats when it provisions a Capsule; no production-validated path or real
+model-turn evidence exists.
+Separately, Node journal schema 4 stores the exact runtime-authority grant plus the
+bounded predecessor-retirement state and migrates schema 2 or 3 entries without
+inventing authority.
 
 Do not use Codex remote control, generic MCP notifications, or preview host channels
 as the activation foundation.

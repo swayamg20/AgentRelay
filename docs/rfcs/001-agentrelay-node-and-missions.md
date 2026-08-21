@@ -6,8 +6,8 @@
   containment, strict descriptor v3, Codex state schema 4, adapter 0.4.0, one-shot
   authentication, provider-bootstrap isolation, and exact mediated-patch checkpoints
   are implemented; the private capability reference monitor is selected by
-  the fake polling path and composed with Codex only behind internal APIs; polling
-  activation and the two-machine proof remain
+  the fake polling path and by the explicit experimental `run-codex` composition;
+  Guarded Real Mission 0 and the two-machine proof remain
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
 
@@ -37,11 +37,13 @@ profile, and starts or resumes a deterministic fake-host turn. Its Capsule retai
 host state across Node-process death. That fake-Capsule path now receives one private,
 fenced grant and enforces its lifecycle, output, usage, artifact, expiry, and final
 publication boundary outside the model. It cannot yet activate a real coding-agent
-runtime or mediate command/network/path effects whose handlers do not exist. The
+runtime through those fake commands or mediate command/network/path effects whose
+handlers do not exist. The
 repository also has a version-pinned read-only app-server client, durable Codex Capsule
 journal, strict schema-v3 descriptor, provisioner, persistent adapter, provider
 guardian, one-shot owner API-key handoff, and fixed provider-only managed CONNECT
-egress behind internal APIs. The Capsule entry point can construct that guarded
+egress selected by the explicit experimental `run-codex` command. The Capsule entry
+point can construct that guarded
 controller. Owner-local policy can also opt into workspace-write authority and exact
 write-mode containment. The provider now starts from its private runtime home instead
 of the logical workspace, pins that workspace untrusted, attests effective shell/MCP
@@ -51,9 +53,15 @@ request under locally granted write authority. Write activation revalidates the
 owner-selected Git artifact, recovers the durable workspace-global mediator before
 provider startup, and keeps the provider mount physically read-only. Provider calls,
 Host turns, active authority, transaction state, receipts, recovery, terminal history,
-and teardown are fail-closed. The polling Node CLI still cannot select this path. There
-is no owner-facing credential source, registered verification-command authority, or
-real model-turn/live OpenAI proof.
+and teardown are fail-closed. `run-codex` admits one operator-selected inherited FIFO
+or Unix-socket credential fd numbered 3 or higher, completes the doctor and any
+owner-pinned Git preflight before reading it, retains and later zeroizes the source,
+and supplies a fresh claim to each actual Capsule start on fixed child fd 3. There is
+no registered verification-command authority or real model-turn/live OpenAI proof.
+Git is required only when a configured workspace references a write profile; an
+explicit Git path remains identity- and hash-pinned in read mode. Command shutdown
+aborts launcher admission, closes the retained source or unread fd, then releases the
+Node `run.lock`. It deliberately leaves detached Capsules alive for recovery.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
@@ -426,12 +434,12 @@ model-dependent, but the effective thread/turn path exposes no native file-chang
 any unexpected file-change approval is declined and fatal. The exact dynamic patch
 call is durably bound to provider, Host-turn, active authority, transaction, receipt,
 recovery, terminal-history, and teardown state before
-publication. This is not selected by the polling Node CLI and does not provide an
-owner-facing credential source, verification authority, command execution, or durable
-Relay-visible write/decision evidence.
-Autonomous writes are not safe to claim until an owner-facing polling Node selects this
-boundary, every supported effect remains mediated outside the model, and a real turn
-produces general Relay-visible authority/execution evidence.
+publication. Experimental `run-codex` selects this boundary and its inherited owner
+credential source, but does not provide verification authority, command execution, or
+durable Relay-visible write/decision evidence.
+Autonomous writes are not safe to claim until every supported effect remains mediated
+outside the model and a real turn produces general Relay-visible authority/execution
+evidence.
 
 ## Relay-visible versus local data
 
@@ -517,10 +525,13 @@ The evaluation harness then runs one hidden end-to-end check that agents did not
    workspace as untrusted with shell/MCP disabled, selects no Codex environments,
    requires cold resume, and accepts only `agentrelay.apply_patch/v1` under exact write
    authority. The mediated call has durable request-before-effect,
-   receipt-before-response, recovery, and terminal-attestation barriers. Polling CLI
-   activation, an owner-facing credential source, registered verification, bounded
-   artifact carriage, general Relay-visible authority/execution evidence (#99),
-   adversarial evaluation, and a real model turn remain.
+   receipt-before-response, recovery, and terminal-attestation barriers. Experimental
+   `run-codex` now selects this composition, forwards its `runtimeProvisioner`, and
+   reads an inherited FIFO/Unix-socket owner credential only after the doctor and
+   optional owner-pinned Git preflight. Registered verification, bounded artifact
+   carriage,
+   general Relay-visible authority/execution evidence (#99), adversarial evaluation,
+   Guarded Real Mission 0, and a real model turn remain.
 7. Run the two-machine backend-and-client pilot and compare it with one strong
    baseline using the same starting commits and budget.
 8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or

@@ -79,12 +79,13 @@ durable coordination foundations:
   and aborts the in-flight request when authority is lost. Product policy hard-denies
   push, merge, package publish, deploy, arbitrary network access, secrets, and
   privilege expansion. Redacted decisions can be emitted to injected evidence sinks,
-  but are not durably persisted by default. The selected polling command uses this
-  boundary only with the fake Capsule; internal Codex composition uses the same
-  authority surface during provisioning and activation.
+  but are not durably persisted by default. `run-capsule` uses this boundary with the
+  fake Capsule, while experimental `run-codex` uses it during guarded Codex
+  provisioning and activation.
 - A provider-neutral persistent Capsule server behind that same versioned wire. The
   existing fake descriptor remains schema v1, while a strict schema-v3 descriptor can
-  select the passive Codex controller. No polling command selects that descriptor. An
+  select the passive Codex controller. The explicit experimental `run-codex` polling
+  command selects that descriptor through the matched provisioner and adapter. An
   unexpected internal runtime failure is redacted and
   retires the running server generation. Runtime shutdown starts while admitted
   handlers drain, and detached background work can request retirement.
@@ -130,15 +131,23 @@ durable coordination foundations:
   durably binds the provider call, Host turn, active authority, transaction, receipt,
   recovery, and terminal history before publication. Native file changes, commands,
   permissions, user input, MCP, and other dynamic tools remain denied and fatal. Prior
-  Codex state schemas and adapter 0.3.0 fail closed. No owner-facing credential source
-  exists, no polling command selects this path, and no test executes a model turn.
+  Codex state schemas and adapter 0.3.0 fail closed. `run-codex` requires one
+  operator-selected inherited FIFO or Unix-socket fd numbered 3 or higher. After
+  config load and singleton-lock acquisition, it opens the passive control plane,
+  completes the pinned doctor and any supplied owner-pinned Git preflight, then reads
+  and retains the source before constructing a Relay client. Git is required only when
+  a configured workspace references a write profile; an explicitly supplied Git path
+  is still identity- and hash-pinned for read-only configurations. Each actual Capsule
+  start claims a fresh copy for the fixed child fd 3. Shutdown aborts launcher
+  admission, zeroizes the source or closes an unread fd, and releases `run.lock` last.
+  No test executes a model turn.
 - A Linux containment checkpoint for Codex `0.146.0`. It binds an
   owner-controlled standalone checkout to an explicit Bubblewrap filesystem policy,
   mandatory runtime canary, and exact retained recovery manifest. Its dedicated Linux
-  process proof passes. Internal Codex provisioning binds its exact recovery handle in
-  the v3 descriptor under matching local workspace-read or workspace-write authority;
-  no polling CLI selects it;
-  the [original containment checkpoint](research/006-mission-workspace-containment.md)
+  process proof passes. The `run-codex` provisioner binds its exact recovery handle in
+  the v3 descriptor under matching local workspace-read or workspace-write authority.
+  `run-codex` selects that provisioner. The
+  [original containment checkpoint](research/006-mission-workspace-containment.md)
   records the earlier offline policy, while the current provider-egress contract is in
   the [low-level design](lld.md#guarded-linux-containment-checkpoint).
 - Typed engineering artifacts plus provenance wrapping or structural markers on all
@@ -149,14 +158,11 @@ durable coordination foundations:
 This is useful groundwork, but it is not yet an autonomous agent network. The current
 system does not contain:
 
-- A production-activated coding-agent path. The persistent CLI still hosts only the
-  deterministic fake runtime; the guarded Codex composition has no polling command,
-  owner-facing credential source, service supervisor, or real-turn proof.
+- A production-validated coding-agent path. `run-codex` now exposes the guarded
+  composition experimentally, but it has no service supervisor, Guarded Real Mission
+  0 result, or real-turn/live OpenAI proof.
 - Automatic worktree isolation, complete command/network mediation, or local
   verification and contract-acknowledgement handlers.
-- Production command wiring that opens the guarded Codex composition, connects an
-  approved owner-facing credential source, and selects its fixed provider-only egress
-  and mediated-write boundaries.
 - A supported containment boundary outside Linux. macOS explicitly fails closed in
   this checkpoint.
 - A real two-machine execution proof through the public control plane.
@@ -251,7 +257,9 @@ The Node-owned containment library can wrap both the pinned Codex version probe 
 app-server spawn on Linux. Its returned recovery handle is local authority, not Relay
 evidence: the internal Codex provisioner durably stores the manifest path, instance ID,
 and binding digest in the strict v3 descriptor before Capsule launch, then reopens only
-that retained instance during recovery. No polling CLI constructs this composition.
+that retained instance during recovery. The explicit experimental `run-codex` command
+constructs this composition and forwards its `runtimeProvisioner` to the foreground
+Node.
 
 ## Why MCP, A2A, and SSE are not the Node
 
@@ -277,7 +285,7 @@ The current mailbox stores a two-party handoff with `pending`, `accepted`,
 MCP tools to advance it. This API remains a compatibility and inspection surface
 while the Node slice is built.
 
-### Missions and fake execution today
+### Missions and local execution today
 
 A Mission is a bounded collaborative objective with:
 
@@ -292,29 +300,32 @@ A Mission is a bounded collaborative objective with:
 
 The relay stores this contract, applies the deterministic state machine, routes typed
 work, and tracks accepted revisions and verification rounds. The foreground Node can
-drive either its in-process fake or a detached persistent fake Capsule. It checks
-repository identity and local policy and bounds reported host events. On the detached
-fake path it now also installs a crash-safe, fenced grant into independent Node and
-Capsule monitors. Those monitors enforce lifetime and cumulative output, usage, and
-artifact limits and stop final publication on authority loss. The selected fake paths
-expose no filesystem, command, or network handler and do not execute registered
-verification commands. The internal Codex write path now mediates only the exact
-bounded patch tool; it does not grant command or verification authority. Those hard
+drive its in-process fake, a detached persistent fake Capsule, or the explicit guarded
+`run-codex` composition. It checks repository identity and local policy and bounds
+reported host events. On the detached fake path it now also installs a crash-safe,
+fenced grant into independent Node and Capsule monitors. Those monitors enforce
+lifetime and cumulative output, usage, and artifact limits and stop final publication
+on authority loss. The selected fake paths expose no filesystem, command, or network
+handler and do not execute registered verification commands. The guarded Codex write
+path now mediates only the exact bounded patch tool; it does not grant command or
+verification authority. Those hard
 limits must remain outside the model
 because the relay cannot trust usage or effects it has not observed. The system does
 not add a manager LLM with global access to every repository.
 
-The guarded Codex library strengthens the available local boundary: an optional
-Mission runtime provisioner prepares or strictly recovers the Linux containment
-instance under the matching local workspace-read or workspace-write authority, then
+The guarded Codex library strengthens the available local boundary: the Mission
+`runtimeProvisioner` selected by experimental `run-codex` prepares or strictly
+recovers the Linux containment instance under the matching local workspace-read or
+workspace-write authority, then
 durably stores its exact handle in a v3 descriptor. Omitted or explicit read policy
 retains the legacy read-only grant and policy hash; only an explicit accepted write
 profile adds workspace-write authority. The Node installs Capsule authority only after
 provisioning and before activation. Once retained same-Mission start intent or attempt
 history exists, later provisioning is recovery-only and must reopen that exact
 containment over the expected dirty checkout. Write mode recovers the exact durable
-patch mediator before provider activation and keeps the provider mount read-only. No
-polling command opens this composition, so this is not a production runtime path.
+patch mediator before provider activation and keeps the provider mount read-only. The
+command opens this composition for polling, but it is not a production-validated
+runtime path.
 
 ### Guarded Codex execution checkpoint
 
@@ -465,22 +476,22 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
-- The private reference monitor is composed with the guarded Codex descriptor only
-  behind internal APIs. Its redacted evidence goes only to injected sinks and is not
-  durably persisted by default. Local verification commands and peer- or workspace-
-  chosen network effects are not enabled. Owner-local policy can grant logical
-  workspace write and provision the exact matching containment, but the provider
+- The private reference monitor is composed with the guarded Codex descriptor selected
+  by experimental `run-codex`. Its redacted evidence goes only to injected sinks and
+  is not durably persisted by default. Local verification commands and peer- or
+  workspace-chosen network effects are not enabled. Owner-local policy can grant
+  logical workspace write and provision the exact matching containment, but the provider
   receives only a read-only mount and the one exact mediated patch tool. The retained
-  runtime
-  authority grants no network capability; the outer Codex sandbox separately configures
-  a fixed provider transport whose hostname allowlist contains only `api.openai.com`.
+  runtime authority grants no network capability; the outer Codex sandbox separately
+  configures a fixed provider transport whose hostname allowlist contains only
+  `api.openai.com`.
 - The Linux containment boundary and its exact durable recovery handle are selected by
-  internal Codex provisioning, not by a polling Node command. Its dedicated Linux
-  process proof verifies exact command/profile selection, managed-proxy environment
-  injection for the app-server case, and failed direct socket access. It does not prove
-  live OpenAI reachability. Owner-facing credential sourcing, general Relay-visible
-  authority/execution evidence (#99), registered verification authority, and real-turn
-  evidence are absent; macOS remains unsupported.
+  the `run-codex` provisioner. Its dedicated Linux process proof verifies exact
+  command/profile selection, managed-proxy environment injection for the app-server
+  case, and failed direct socket access. It does not prove live OpenAI reachability.
+  General Relay-visible authority/execution evidence (#99),
+  registered verification authority, and real-turn evidence are absent; macOS remains
+  unsupported.
 
 ### Target invariant
 
@@ -519,8 +530,8 @@ Loss of the witness or every local lifecycle owner fails closed; an installed
 service/cgroup boundary is still needed for restart, upgrade, rollback, and descendants
 that escape the supervised process group (#120). The provider-neutral server,
 guardian, injected Codex runner, provisioner, Linux containment library, and durable
-patch mediator form an internal activation path whose provider remains read-only, but
-do not change which runtime the current polling CLI launches.
+patch mediator form the `run-codex` activation path whose provider remains read-only.
+That operator-selected path is experimental and has no live-provider acceptance proof.
 
 A sleeping or powered-off machine remains offline. The relay queues work and the Node
 processes it after reconnecting.
@@ -561,9 +572,9 @@ they disagree, document the gap; do not present the target as already shipped.
 
 - **Agent:** a logical network identity owned by a person or organization.
 - **Node:** a separately authenticated relay device identity plus an experimental
-  foreground daemon that launches detached fake Mission Capsules. Its library also
-  contains a guarded provider-neutral Capsule/Codex path, provider guardian, and Linux
-  containment boundary; in the target, it is a supervised persistent per-device
+  foreground daemon that launches detached fake Mission Capsules or, through explicit
+  `run-codex` selection, guarded Codex Capsules. It contains a provider guardian and
+  Linux containment boundary; in the target, it is a supervised persistent per-device
   execution boundary.
 - **Workspace binding:** a relay-visible logical alias and repository/base-ref
   constraint that the current Node maps locally to an approved checkout.

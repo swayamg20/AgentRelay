@@ -30,8 +30,10 @@
 > messages through a team-operated Relay.
 >
 > **Not usable today:** autonomous Missions. Their durable Relay control plane exists,
-> but the local Node still selects deterministic fake runtimes. The guarded Codex path
-> has not been activated for a real model turn. A strict Codex descriptor v3, Codex
+> and the default `run` and `run-capsule` commands still select deterministic fake
+> runtimes. An explicit experimental `run-codex` polling command now selects the
+> guarded Codex composition, but it has not been activated for a real model turn. A
+> strict Codex descriptor v3, Codex
 > Capsule state schema 4, adapter identity 0.4.0, durable containment recovery handle,
 > authority-gated Node/Capsule composition, and a non-claiming `doctor-codex` preflight
 > now exist as internal checkpoints. The internal
@@ -59,9 +61,17 @@
 > user input, MCP, and every other dynamic tool remain denied and fatal. Recovery,
 > terminal attestation, and teardown fail closed on missing, conflicting,
 > indeterminate, or unproved state.
-> There is still no owner-facing credential source, polling `run-codex` command,
-> registered verification execution, general durable authority/execution evidence
-> (#99), installed service supervision, real model-turn/live OpenAI acceptance, or
+>
+> `run-codex` accepts one required operator-selected inherited FIFO or Unix-socket fd
+> (numbered 3 or higher) as its owner credential source. It completes the pinned
+> runtime doctor and any required owner-pinned Git preflight before reading that
+> channel, retains the credential only in process for fresh per-Capsule claims, and
+> zeroizes it during shutdown. Git is required only when a configured workspace
+> references a write profile; an explicitly supplied Git path is still pinned for a
+> read-only configuration. The Capsule transfer remains fixed at inherited fd 3.
+> There is still no registered verification execution, general durable
+> authority/execution evidence (#99), installed service supervision, real
+> model-turn/live OpenAI acceptance, or
 > two-machine proof. macOS also fails closed.
 
 AgentRelay gives independently owned AI agents a durable collaboration line across
@@ -84,21 +94,22 @@ repositories is the first proof, not the final product boundary.
 | --- | --- | --- |
 | **Shipped** | Authenticated MCP mailbox | `agentrelay-mcp` 0.2.1: identities, invites, typed handoffs, messages, blocks, trust, and audit |
 | **Shipped** | Durable Mission control plane | Relay + Postgres: Mission state, delivery leases, fencing, retries, recovery, and revocation |
-| **Experimental** | Node, persistent Capsule, authority monitor, guardian, containment, and patch mediator | The internal Codex composition keeps the provider physically read-only and can expose one durable exact patch tool under local write authority; polling commands still select deterministic fake runtimes |
-| **Next gate** | Guarded real Codex activation | Guarded Real Mission 0 through the public pipeline, then the two-machine backend ↔ Android proof |
+| **Experimental** | Node, persistent Capsule, authority monitor, guardian, containment, and patch mediator | Explicit `run-codex` polling selects the guarded composition, keeps the provider physically read-only, and can expose one durable exact patch tool under local write authority; no real provider turn has passed |
+| **Next gate** | Guarded real Codex proof | Guarded Real Mission 0 through the public pipeline, then the two-machine backend ↔ Android proof |
 
 The repository does not yet ship the full autonomous runtime described above. The
-Node CLI still consumes one turn at a time through either its in-process deterministic
-fake or a detached fake Capsule. The provider-neutral Capsule server and injected
-Codex runner now have a strict v3 descriptor, state schema 4, adapter identity 0.4.0,
+Node CLI can consume one turn at a time through its in-process deterministic fake, a
+detached fake Capsule, or the explicit experimental `run-codex` composition. The
+provider-neutral Capsule server and injected Codex runner now have a strict v3
+descriptor, state schema 4, adapter identity 0.4.0,
 passive persistent adapter, durable policy-selected containment recovery, and private-
-authority composition, but no polling
-CLI selects them. Read mode can reach the guarded internal runner. Explicit write mode
+authority composition. Read mode can reach the guarded runner. Explicit write mode
 also recovers the workspace-global mediator before claiming a credential or opening
 the guardian, then gives the provider only the exact `agentrelay.apply_patch/v1`
-dynamic tool while preserving its read-only workspace mount. `doctor-codex` verifies
-only the pinned Linux/x64 artifact and version; it does not open runtime state or claim Relay
-work. No path has executed a real model turn.
+dynamic tool while preserving its read-only workspace mount. `run-codex` opens that
+`runtimeProvisioner` and adapter before Relay polling; `doctor-codex` remains a
+non-secret, non-polling preflight that verifies only the pinned Linux/x64 artifact and
+version. No path has executed a real model turn.
 
 ### Implemented today
 
@@ -164,12 +175,15 @@ work. No path has executed a real model turn.
   the request. Bounded, redacted decisions can be emitted to injected evidence sinks,
   but no general durable authority-evidence sink is wired for those monitor decisions
   by default.
-- A guarded Codex runtime checkpoint: the pinned client, Capsule state schema 4,
+- A guarded Codex runtime checkpoint selected by the explicit experimental
+  `run-codex` polling command: the pinned client, Capsule state schema 4,
   adapter identity 0.4.0, and injected runner implement session start/resume, stable
   logical turn publication before provider binding, exact fresh-generation start
   reconciliation, event replay, and cancellation. Wire-level tests use fake
-  app-server clients. A strict v3 descriptor and passive Capsule controller select this
-  runner only through internal composition; no polling CLI selects it. The Codex
+  app-server clients. A strict v3 descriptor, passive Capsule controller, provisioner,
+  and persistent adapter form the selected runtime. Before any Relay client is created,
+  the command completes the runtime doctor, optionally preflights owner-pinned Git,
+  and consumes one required inherited FIFO or Unix-socket credential channel. The Codex
   child receives an allowlisted environment and a locally derived, canonical,
   current-user-owned mode-0700 home. The provider process uses that private home as
   its operating-system working directory while app-server thread requests carry the
@@ -203,7 +217,8 @@ work. No path has executed a real model turn.
   intent or host-attempt history exists, later provisioning strictly reopens it.
   Write mode leaves the provider workspace physically read-only and routes the one
   exact dynamic patch tool through a separately locked, owner-Git-backed local
-  mediator; current polling commands still do not select either mode. See
+  mediator; `run-codex` selects either mode from the configured workspaces and their
+  referenced policy profiles. See
   [research 006](docs/research/006-mission-workspace-containment.md).
 - A guarded provider guardian that atomically owns one Codex generation behind a
   stable kernel lock. Before the durable start barrier or provider spawn, its detached
@@ -221,17 +236,14 @@ work. No path has executed a real model turn.
 
 ### Next architecture, not shipped yet
 
-- Production CLI activation for persistent real-runtime sessions. The strict
-  descriptor, passive Capsule server, provisioner, and adapter are composed internally,
-  but the current persistent command still selects only the deterministic fake runtime.
-- An owner-facing credential source and polling-command composition that selects the
-  internal fixed provider-only egress and mediated-write boundaries, plus Guarded Real
-  Mission 0 through the public pipeline.
+- Production validation and hardening of the experimental `run-codex` path, including
+  Guarded Real Mission 0 through the public pipeline. The current command and tests do
+  not prove a real model turn or live OpenAI reachability.
 - Registered verification execution (#93), bounded Mission artifact carriage (#94),
   general Relay-visible authority/execution evidence (#99), and adversarial evaluation
   (#104). The current grant deliberately does not authorize verification execution.
-- Completion of the owner-facing guarded Codex path (#98), command and verification
-  effect mediation beyond the exact patch tool, an installed OS service boundary, and
+- Completion of guarded Codex acceptance (#98), command and verification effect
+  mediation beyond the exact patch tool, an installed OS service boundary, and
   a supported containment boundary beyond Linux; then a Claude runtime adapter.
 - A real two-machine, two-repository proof using the public control plane.
 
@@ -455,9 +467,10 @@ managed CONNECT egress. An explicit owner-local write profile grants the logical
 write boundary while the provider stays physically read-only; the only enabled write
 request is `agentrelay.apply_patch/v1`, mediated through exact durable authority,
 transaction, receipt, recovery, and terminal-attestation state. Version checks,
-containment probes, and nested workspace sandboxes remain offline. No polling CLI
-selects it, and an owner-facing credential source, polling activation, the registered
-verification executor, general Relay-visible authority/execution evidence (#99),
+containment probes, and nested workspace sandboxes remain offline. The explicit
+experimental `run-codex` command selects this boundary from an inherited owner
+credential channel, but the registered verification executor, general Relay-visible
+authority/execution evidence (#99),
 command authority, and adversarial real-turn proof remain open. The mediated patch
 checkpoint is not evidence that a real provider turn or autonomous Mission has written
 a workspace. See
