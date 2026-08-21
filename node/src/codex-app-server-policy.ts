@@ -215,13 +215,16 @@ async function handleDynamicPatchToolCall(
 	try {
 		const outcome = parseCodexDynamicPatchToolOutcome(await handler.handle(call, signal));
 		signal.throwIfAborted();
+		if (outcome === "fatal_rejected") {
+			return {
+				kind: "result",
+				value: codexDynamicPatchToolResponse("rejected"),
+				fatal: new CodexAppServerError("policy", "AgentRelay patch tool request failed closed"),
+			};
+		}
 		return { kind: "result", value: codexDynamicPatchToolResponse(outcome) };
 	} catch {
 		signal.throwIfAborted();
-		return {
-			kind: "result",
-			value: codexDynamicPatchToolResponse("rejected"),
-			fatal: new CodexAppServerError("policy", "AgentRelay patch tool handler failed closed"),
-		};
+		throw new CodexAppServerError("policy", "AgentRelay patch tool handler failed closed");
 	}
 }

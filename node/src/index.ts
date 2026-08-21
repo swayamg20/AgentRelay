@@ -11,6 +11,7 @@ export * from "./codex-capsule-prompt.js";
 export * from "./codex-capsule-runner.js";
 export * from "./codex-capsule-store.js";
 export * from "./codex-capsule-types.js";
+export * from "./codex-dynamic-patch-tool.js";
 export * from "./codex-node-runtime.js";
 export * from "./codex-runtime-doctor.js";
 export * from "./codex-provider-generation-state.js";

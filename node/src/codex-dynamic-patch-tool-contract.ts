@@ -3,6 +3,8 @@ import { CODEX_PATCH_MAX_BYTES } from "./codex-workspace-patch-contract.js";
 
 export const CODEX_DYNAMIC_TOOL_NAMESPACE = "agentrelay";
 export const CODEX_DYNAMIC_PATCH_TOOL_NAME = "apply_patch";
+export const CODEX_DYNAMIC_PATCH_TOOL_CONTRACT = "agentrelay.apply_patch/v1";
+export type CodexDynamicPatchToolContract = typeof CODEX_DYNAMIC_PATCH_TOOL_CONTRACT;
 
 const providerReferenceSchema = z
 	.string()
@@ -48,7 +50,12 @@ export interface CodexDynamicPatchToolCall {
 	readonly patch: string;
 }
 
-export type CodexDynamicPatchToolOutcome = "applied" | "rejected";
+/**
+ * Every outcome proves a durable Capsule receipt. `fatal_rejected` is reserved for a durable,
+ * proven-no-effect failed receipt and instructs the transport to respond once before teardown.
+ * Uncertain effects or receipt persistence failures must reject the handler instead.
+ */
+export type CodexDynamicPatchToolOutcome = "applied" | "rejected" | "fatal_rejected";
 
 /**
  * Local write-authority coordinator for the one AgentRelay dynamic tool.
@@ -148,7 +155,7 @@ export function parseCodexDynamicPatchToolCallParams(value: unknown): CodexDynam
 }
 
 export function parseCodexDynamicPatchToolOutcome(value: unknown): CodexDynamicPatchToolOutcome {
-	return z.enum(["applied", "rejected"]).parse(value);
+	return z.enum(["applied", "rejected", "fatal_rejected"]).parse(value);
 }
 
 export function codexDynamicPatchToolResponse(

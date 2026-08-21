@@ -256,7 +256,7 @@ class DurableCodexWorkspacePatchMediator implements CodexWorkspacePatchMediator 
 				host_turn: call.hostTurn,
 				patch_sha256: patchSha256,
 				patch_bytes: patchBytes,
-				authority: authorityRecord(authority),
+				authority: codexPatchAuthorityRecord(authority),
 				workspace: workspaceRecord(this.#binding, compiled.headCommit),
 				plan_sha256: planSha256,
 				created_directories: compiled.createdDirectories,
@@ -424,7 +424,7 @@ class DurableCodexWorkspacePatchMediator implements CodexWorkspacePatchMediator 
 			host_turn: call.hostTurn,
 			patch_sha256: patchSha256,
 			patch_bytes: patchBytes,
-			authority: authorityRecord(authority),
+			authority: codexPatchAuthorityRecord(authority),
 			workspace: workspaceRecord(this.#binding, headCommit),
 			plan_sha256: codexPatchPlanSha256({
 				head_commit: headCommit,
@@ -1228,7 +1228,7 @@ class DurableCodexWorkspacePatchMediator implements CodexWorkspacePatchMediator 
 	): void {
 		const grant = authority.grant;
 		if (
-			!isDeepStrictEqual(journal.authority, authorityRecord(authority)) ||
+			!isDeepStrictEqual(journal.authority, codexPatchAuthorityRecord(authority)) ||
 			journal.key.capsule_id !== this.#capsuleId ||
 			journal.host_turn.missionId !== grant.mission_id ||
 			journal.host_turn.deliveryId !== grant.delivery_id ||
@@ -1330,7 +1330,9 @@ async function inspectWorkspaceBinding(
 	});
 }
 
-function authorityRecord(authority: CapsuleRuntimeActivation): CodexPatchAuthorityRecord {
+export function codexPatchAuthorityRecord(
+	authority: CapsuleRuntimeActivation,
+): CodexPatchAuthorityRecord {
 	const grant = authority.grant;
 	return Object.freeze({
 		grant_sha256: runtimeAuthorityGrantSha256(grant),

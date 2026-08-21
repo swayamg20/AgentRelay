@@ -282,7 +282,7 @@ describe("CodexAppServerClient", () => {
 		});
 	});
 
-	it("returns a fixed failure before poisoning the client on an async handler rejection", async () => {
+	it("closes without a tool response on an async handler failure", async () => {
 		const failureCanary = "must-not-enter-provider-response";
 		const fixture = await fakeAppServer({
 			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
@@ -305,16 +305,39 @@ describe("CodexAppServerClient", () => {
 			reason: "policy",
 		});
 		await waitForProcessExit(descendantPid);
-		const messages = await waitForMessages(fixture.logPath, 10);
-		expect(messages.at(-1)).toEqual({
+		const messages = await waitForMessages(fixture.logPath, 9);
+		expect(messages).not.toContainEqual(
+			expect.objectContaining({ id: "patch-request-1", result: expect.anything() }),
+		);
+		expect(await readFile(fixture.logPath, "utf8")).not.toContain(failureCanary);
+		await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "policy" });
+	});
+
+	it("returns the fixed rejection only for a durable fatal receipt outcome", async () => {
+		const fixture = await fakeAppServer({
+			turnServerRequest: dynamicPatchRequest({ beforeTurnResponse: true }),
+			sigtermDrainMs: 25,
+		});
+		const client = await openClient(fixture, {
+			dynamicPatchTool: {
+				async handle() {
+					return "fatal_rejected";
+				},
+			},
+		});
+		await client.startThread();
+
+		await expect(client.startReadOnlyTurn(turnInput(fixture))).rejects.toMatchObject({
+			name: "CodexAppServerError",
+			reason: "policy",
+		});
+		expect((await waitForMessages(fixture.logPath, 10)).at(-1)).toEqual({
 			id: "patch-request-1",
 			result: {
 				contentItems: [{ type: "inputText", text: "AgentRelay did not apply the patch." }],
 				success: false,
 			},
 		});
-		expect(await readFile(fixture.logPath, "utf8")).not.toContain(failureCanary);
-		await expect(client.readThread("thread-1")).rejects.toMatchObject({ reason: "policy" });
 	});
 
 	it.each([

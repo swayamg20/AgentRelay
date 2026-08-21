@@ -98,7 +98,7 @@ describe("Codex app-server local policy", () => {
 		expect(calls).toHaveLength(1);
 	});
 
-	it("turns an async local handler rejection into a fixed response and fatal decision", async () => {
+	it("propagates an async local handler failure without inventing a tool response", async () => {
 		const canary = "local-handler-secret";
 		const handler = createCodexServerRequestHandler({
 			async handle() {
@@ -106,15 +106,45 @@ describe("Codex app-server local policy", () => {
 			},
 		});
 
-		const decision = await handler(
-			{
-				id: "tool-1",
-				method: "item/tool/call",
-				params: exactPatchParams(),
-			},
-			new AbortController().signal,
+		await expect(
+			handler(
+				{
+					id: "tool-1",
+					method: "item/tool/call",
+					params: exactPatchParams(),
+				},
+				new AbortController().signal,
+			),
+		).rejects.toEqual(
+			expect.objectContaining({
+				name: "CodexAppServerError",
+				reason: "policy",
+				message: "AgentRelay patch tool handler failed closed",
+			}),
 		);
-		expect(decision).toEqual({
+		try {
+			await handler(
+				{ id: "tool-2", method: "item/tool/call", params: exactPatchParams() },
+				new AbortController().signal,
+			);
+		} catch (error) {
+			expect(JSON.stringify(error)).not.toContain(canary);
+		}
+	});
+
+	it("responds with a fixed rejection only for a durable fatal receipt outcome", async () => {
+		const handler = createCodexServerRequestHandler({
+			async handle() {
+				return "fatal_rejected";
+			},
+		});
+
+		expect(
+			await handler(
+				{ id: "tool-1", method: "item/tool/call", params: exactPatchParams() },
+				new AbortController().signal,
+			),
+		).toEqual({
 			kind: "result",
 			value: {
 				contentItems: [{ type: "inputText", text: "AgentRelay did not apply the patch." }],
@@ -122,7 +152,6 @@ describe("Codex app-server local policy", () => {
 			},
 			fatal: expect.objectContaining({ reason: "policy" }),
 		});
-		expect(JSON.stringify(decision)).not.toContain(canary);
 	});
 });
 

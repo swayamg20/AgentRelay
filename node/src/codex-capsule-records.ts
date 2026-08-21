@@ -16,15 +16,23 @@ import {
 } from "./codex-capsule-prompt.js";
 import {
 	type CodexCapsuleState,
+	type StoredCodexPatchCall,
 	type StoredCodexTurn,
 	hostSessionFromState,
 	hostTurnFromStored,
+	storedCodexPatchReceiptSchema,
 } from "./codex-capsule-state.js";
-import type { CodexNormalizedTerminal } from "./codex-capsule-types.js";
+import type {
+	CodexNormalizedTerminal,
+	CodexPatchCallReceipt,
+	CodexPatchCallRequest,
+} from "./codex-capsule-types.js";
+import { type CodexPatchToolCall, codexPatchSha256 } from "./codex-workspace-patch-contract.js";
 
 export function storedIntent(intent: CodexCapsuleTurnIntent): StoredCodexTurn["provider_intent"] {
 	return {
-		prompt_version: 1,
+		prompt_version: intent.promptVersion,
+		tool_contract: intent.toolContract,
 		client_user_message_id: intent.clientUserMessageId,
 		text: intent.text,
 		text_sha256: intent.textSha256,
@@ -35,6 +43,8 @@ export function storedIntent(intent: CodexCapsuleTurnIntent): StoredCodexTurn["p
 
 export function publicIntent(turn: StoredCodexTurn): CodexCapsuleTurnIntent {
 	return {
+		promptVersion: turn.provider_intent.prompt_version,
+		toolContract: turn.provider_intent.tool_contract,
 		clientUserMessageId: turn.provider_intent.client_user_message_id,
 		text: turn.provider_intent.text,
 		textSha256: turn.provider_intent.text_sha256,
@@ -106,6 +116,55 @@ export function replayTerminalEvents(
 		throw conflict("Codex terminal replay conflicts with durable output");
 	}
 	return structuredClone(turn.events);
+}
+
+export function assertSamePatchCallRequest(
+	stored: StoredCodexPatchCall,
+	request: CodexPatchCallRequest,
+): void {
+	let patchSha256: string;
+	try {
+		patchSha256 = codexPatchSha256(request.patch);
+	} catch {
+		throw conflict("Codex patch call contains invalid raw input");
+	}
+	if (
+		stored.provider_thread_id !== request.providerThreadId ||
+		stored.provider_turn_id !== request.providerTurnId ||
+		stored.call_id !== request.callId ||
+		!isDeepStrictEqual(stored.authority, request.authority) ||
+		stored.patch_bytes !== Buffer.byteLength(request.patch, "utf8") ||
+		stored.patch_sha256 !== patchSha256 ||
+		(stored.patch !== null && stored.patch !== request.patch)
+	) {
+		throw conflict("Codex patch call identity was reused with different exact input");
+	}
+}
+
+export function publicPatchCall(
+	capsuleId: string,
+	stored: StoredCodexPatchCall,
+): CodexPatchToolCall {
+	if (stored.patch === null) {
+		throw conflict("Codex terminal patch request no longer retains raw input");
+	}
+	return Object.freeze({
+		capsuleId,
+		providerThreadId: stored.provider_thread_id,
+		providerTurnId: stored.provider_turn_id,
+		callId: stored.call_id,
+		hostTurn: Object.freeze({ ...stored.host_turn }),
+		patch: stored.patch,
+	});
+}
+
+export function publicPatchReceipt(stored: StoredCodexPatchCall): CodexPatchCallReceipt {
+	if (stored.receipt === null) throw conflict("Codex patch call has no durable receipt");
+	return structuredClone(stored.receipt);
+}
+
+export function parsePatchReceipt(value: CodexPatchCallReceipt): CodexPatchCallReceipt {
+	return storedCodexPatchReceiptSchema.parse(value);
 }
 
 export function conflict(message: string): CapsuleOperationError {

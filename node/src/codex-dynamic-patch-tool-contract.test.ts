@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
 	CODEX_DYNAMIC_PATCH_TOOL_NAME,
 	CODEX_DYNAMIC_TOOL_NAMESPACE,
 	codexDynamicPatchToolResponse,
@@ -11,6 +12,7 @@ import { CODEX_PATCH_MAX_BYTES } from "./codex-workspace-patch-contract.js";
 
 describe("Codex dynamic patch tool contract", () => {
 	it("publishes one fixed, eagerly loaded AgentRelay namespace tool", () => {
+		expect(CODEX_DYNAMIC_PATCH_TOOL_CONTRACT).toBe("agentrelay.apply_patch/v1");
 		expect(codexDynamicPatchTools()).toEqual([
 			{
 				type: "namespace",
@@ -86,6 +88,12 @@ describe("Codex dynamic patch tool contract", () => {
 			success: true,
 		});
 		expect(codexDynamicPatchToolResponse(parseCodexDynamicPatchToolOutcome("rejected"))).toEqual({
+			contentItems: [{ type: "inputText", text: "AgentRelay did not apply the patch." }],
+			success: false,
+		});
+		expect(
+			codexDynamicPatchToolResponse(parseCodexDynamicPatchToolOutcome("fatal_rejected")),
+		).toEqual({
 			contentItems: [{ type: "inputText", text: "AgentRelay did not apply the patch." }],
 			success: false,
 		});

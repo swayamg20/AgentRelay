@@ -4,8 +4,22 @@ import { join } from "node:path";
 import type { HostSessionRef, StartTurnInput } from "@agentrelay/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CapsuleOperationError } from "./capsule-operation-error.js";
+import type { CapsuleRuntimeActivation } from "./capsule-runtime.js";
+import {
+	CODEX_PATCH_MAX_CALLS_PER_TURN,
+	CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN,
+} from "./codex-capsule-state.js";
 import { CODEX_CAPSULE_STATE_FILE, CodexCapsuleStore } from "./codex-capsule-store.js";
+import { CODEX_DYNAMIC_PATCH_TOOL_CONTRACT } from "./codex-dynamic-patch-tool-contract.js";
+import {
+	type CodexPatchToolCall,
+	codexPatchKey,
+	codexPatchSha256,
+	codexPatchTransactionId,
+} from "./codex-workspace-patch-contract.js";
+import { codexPatchAuthorityRecord } from "./codex-workspace-patch-transaction.js";
 import { MAX_PRIVATE_STATE_FILE_BYTES } from "./private-state-file.js";
+import { authorityGrant } from "./runtime-authority.test-support.js";
 
 const IDS = {
 	capsule: "70000000-0000-4000-8000-000000000001",
@@ -17,6 +31,8 @@ const IDS = {
 };
 
 const directories: string[] = [];
+
+const PATCH_AUTHORITY = codexPatchAuthorityRecord(testAuthority());
 
 afterEach(async () => {
 	await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
@@ -45,7 +61,7 @@ describe("CodexCapsuleStore", () => {
 		const { directory, store } = await openStore();
 		expect(
 			JSON.parse(await readFile(join(directory, CODEX_CAPSULE_STATE_FILE), "utf8")),
-		).toMatchObject({ schema_version: 2 });
+		).toMatchObject({ schema_version: 3 });
 		expect(await store.claimSessionStart()).toEqual({ kind: "send" });
 		await store.close();
 
@@ -96,6 +112,184 @@ describe("CodexCapsuleStore", () => {
 		expect(await reopened.eventsForTurn(turn, input)).toEqual([
 			{ kind: "accepted", turn, sequence: 1 },
 		]);
+	});
+
+	it("binds prompt v2 to the exact nullable dynamic patch contract", async () => {
+		const { directory, store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+		const claim = await store.claimTurnStart(input);
+		expect(claim).toMatchObject({
+			kind: "send",
+			intent: {
+				promptVersion: 2,
+				toolContract: CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
+			},
+		});
+		expect(await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT)).toEqual(turn);
+		await expect(store.prepareTurn(input)).rejects.toMatchObject<CapsuleOperationError>({
+			code: "correlation_conflict",
+		});
+		const persisted = JSON.parse(
+			await readFile(join(directory, CODEX_CAPSULE_STATE_FILE), "utf8"),
+		) as { turns: Record<string, { provider_intent: Record<string, unknown> }> };
+		expect(persisted.turns[`${IDS.delivery}:1`]!.provider_intent).toMatchObject({
+			prompt_version: 2,
+			tool_contract: CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
+		});
+	});
+
+	it("does not admit a patch for a read-only provider intent", async () => {
+		const { store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input);
+		await store.claimTurnStart(input);
+
+		await expect(
+			store.claimPatchCall(patchRequest("not-enabled", "patch")),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+		expect(await store.inspectTurn(turn, input)).toMatchObject({
+			phase: "start_maybe_sent",
+			codexTurnId: null,
+		});
+	});
+
+	it("persists the exact patch request before work and scrubs raw input only after its receipt", async () => {
+		const { directory, store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+		await store.claimTurnStart(input);
+		const request = patchRequest("call-1", "first patch");
+
+		const first = await store.claimPatchCall(request);
+		expect(first).toMatchObject({ kind: "pending", replayed: false });
+		if (first.kind !== "pending") throw new Error("Expected a pending patch call");
+		expect(first.call.hostTurn).toEqual(turn);
+		expect(await store.inspectTurn(turn, input)).toMatchObject({
+			phase: "accepted",
+			codexTurnId: request.providerTurnId,
+		});
+		await store.close();
+
+		const reopened = await reopenStore(directory);
+		expect(await reopened.claimPatchCall(request)).toEqual({
+			kind: "pending",
+			call: first.call,
+			replayed: true,
+		});
+		await expect(
+			reopened.claimPatchCall({ ...request, patch: "changed patch" }),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+
+		const receipt = { outcome: "applied" as const, result: appliedResult(first.call) };
+		expect(await reopened.recordPatchCallReceipt(first.call, PATCH_AUTHORITY, receipt)).toEqual(
+			receipt,
+		);
+		expect(await reopened.claimPatchCall(request)).toEqual({
+			kind: "terminal",
+			receipt,
+			replayed: true,
+		});
+		const persisted = JSON.parse(
+			await readFile(join(directory, CODEX_CAPSULE_STATE_FILE), "utf8"),
+		) as { turns: Record<string, { patch_calls: Record<string, unknown> }> };
+		const record = Object.values(persisted.turns[`${IDS.delivery}:1`]!.patch_calls)[0] as {
+			patch: string | null;
+			receipt: unknown;
+		};
+		expect(record).toMatchObject({ patch: null, receipt });
+		expect(JSON.stringify(record)).not.toContain("first patch");
+	});
+
+	it("durably orders cancellation against patch admission", async () => {
+		const { store, session } = await readyStore();
+		const input = turnInput(session);
+		const turn = await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+		await store.claimTurnStart(input);
+		await store.requestCancellation(turn);
+
+		expect(await store.claimPatchCall(patchRequest("cancelled-call", "never apply"))).toEqual({
+			kind: "terminal",
+			receipt: { outcome: "rejected" },
+			replayed: false,
+		});
+		expect(await store.inspectTurn(turn, input)).toMatchObject({
+			phase: "cancelling",
+			codexTurnId: "provider-turn-private-1",
+			cancellationRequested: true,
+		});
+		expect(await store.claimInterrupt(turn)).toMatchObject({
+			kind: "send",
+			codexTurnId: "provider-turn-private-1",
+		});
+	});
+
+	it("rejects successor authority on every patch request and receipt path", async () => {
+		const { store, session } = await readyStore();
+		const input = turnInput(session);
+		await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+		await store.claimTurnStart(input);
+		const request = patchRequest("authority-bound", "patch");
+		const claim = await store.claimPatchCall(request);
+		if (claim.kind !== "pending") throw new Error("Expected pending request");
+		const successorAuthority = codexPatchAuthorityRecord(
+			testAuthority({
+				grant_id: "70000000-0000-4000-8000-000000000007",
+				lease_id: "70000000-0000-4000-8000-000000000008",
+				fencing_token: "9007199254740994",
+			}),
+		);
+		const successorRequest = { ...request, authority: successorAuthority };
+
+		await expect(
+			store.inspectPatchCall(successorRequest),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+		await expect(
+			store.claimPatchCall(successorRequest),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+		await expect(
+			store.pendingPatchCalls(successorAuthority),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+		await expect(
+			store.recordPatchCallReceipt(claim.call, successorAuthority, {
+				outcome: "applied",
+				result: appliedResult(claim.call),
+			}),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+		expect(await store.pendingPatchCalls(PATCH_AUTHORITY)).toEqual([claim.call]);
+	});
+
+	it("bounds patch call records and aggregate retained raw bytes per Host turn", async () => {
+		const first = await readyStore();
+		const firstInput = turnInput(first.session);
+		const firstTurn = await first.store.prepareTurn(firstInput, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+		await first.store.claimTurnStart(firstInput);
+		await first.store.requestCancellation(firstTurn);
+		for (let index = 0; index < CODEX_PATCH_MAX_CALLS_PER_TURN; index += 1) {
+			expect(
+				await first.store.claimPatchCall(patchRequest(`bounded-${index}`, `patch-${index}`)),
+			).toMatchObject({ kind: "terminal", receipt: { outcome: "rejected" } });
+		}
+		await expect(
+			first.store.claimPatchCall(patchRequest("bounded-overflow", "overflow")),
+		).rejects.toMatchObject<CapsuleOperationError>({ code: "correlation_conflict" });
+
+		const second = await readyStore();
+		const secondInput = turnInput(second.session);
+		await acceptPreparedPatchTurn(second.store, secondInput);
+		const retained = "a".repeat(Math.floor(CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN * 0.6));
+		const overflow = "b".repeat(Math.floor(CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN * 0.6));
+		expect(await second.store.claimPatchCall(patchRequest("retained", retained))).toMatchObject({
+			kind: "pending",
+		});
+		expect(await second.store.claimPatchCall(patchRequest("aggregate-overflow", overflow))).toEqual(
+			{
+				kind: "terminal",
+				receipt: { outcome: "rejected" },
+				replayed: false,
+			},
+		);
+		expect(await second.store.pendingPatchCalls(PATCH_AUTHORITY)).toHaveLength(1);
 	});
 
 	it("publishes a stable logical turn before provider binding and cancels before send", async () => {
@@ -272,6 +466,17 @@ describe("CodexCapsuleStore", () => {
 		await expect(reopenStore(directory)).rejects.toThrow(/mode 0600/);
 	});
 
+	it("fails closed on the prior Capsule state version instead of reinterpreting it", async () => {
+		const { directory, store } = await openStore();
+		await store.close();
+		const path = join(directory, CODEX_CAPSULE_STATE_FILE);
+		const state = JSON.parse(await readFile(path, "utf8")) as { schema_version: number };
+		state.schema_version = 2;
+		await writeFile(path, JSON.stringify(state), { mode: 0o600 });
+
+		await expect(reopenStore(directory)).rejects.toThrow();
+	});
+
 	it("does not advance memory when a durable barrier write fails", async () => {
 		const { directory, store } = await openStore();
 		await chmod(directory, 0o500);
@@ -346,6 +551,12 @@ async function acceptPreparedTurn(store: CodexCapsuleStore, input: StartTurnInpu
 	return store.acceptTurn(input, "provider-turn-private-1");
 }
 
+async function acceptPreparedPatchTurn(store: CodexCapsuleStore, input: StartTurnInput) {
+	await store.prepareTurn(input, CODEX_DYNAMIC_PATCH_TOOL_CONTRACT);
+	await store.claimTurnStart(input);
+	return store.acceptTurn(input, "provider-turn-private-1");
+}
+
 function turnInput(session: HostSessionRef, deliveryId = IDS.delivery): StartTurnInput {
 	return {
 		session,
@@ -373,5 +584,42 @@ function turnInput(session: HostSessionRef, deliveryId = IDS.delivery): StartTur
 		],
 		peerMessages: [],
 		artifacts: [],
+	};
+}
+
+function patchRequest(callId: string, patch: string) {
+	return {
+		providerThreadId: "provider-thread-private-1",
+		providerTurnId: "provider-turn-private-1",
+		callId,
+		patch,
+		authority: PATCH_AUTHORITY,
+	};
+}
+
+function testAuthority(
+	overrides: Partial<Parameters<typeof authorityGrant>[0]> = {},
+): CapsuleRuntimeActivation {
+	const base = authorityGrant();
+	return {
+		grant: authorityGrant({
+			mission_id: IDS.mission,
+			delivery_id: IDS.delivery,
+			workspace_alias: "backend-primary",
+			capabilities: [...base.capabilities, { action: "workspace_write", resource: "workspace" }],
+			...overrides,
+		}),
+		signal: new AbortController().signal,
+		performWorkspaceRead: async (effect) => effect(),
+		performWorkspaceWrite: async (effect) => effect(),
+	};
+}
+
+function appliedResult(call: CodexPatchToolCall) {
+	return {
+		transactionId: codexPatchTransactionId(codexPatchKey(call)),
+		patchSha256: codexPatchSha256(call.patch),
+		planSha256: "a".repeat(64),
+		filesChanged: 1,
 	};
 }

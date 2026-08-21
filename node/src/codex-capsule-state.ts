@@ -9,6 +9,7 @@ import {
 	acceptHostEvent,
 	createHostEventStreamState,
 	hostEventSchema,
+	hostTurnRefSchema,
 	jsonValueSchema,
 	sessionInputSchema,
 	startTurnInputSchema,
@@ -17,11 +18,34 @@ import {
 import { z } from "zod";
 import { digestCanonicalJson, digestStartTurnInput, executionKey } from "./capsule-correlation.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
-import { buildCodexCapsuleTurnIntent } from "./codex-capsule-prompt.js";
+import {
+	CODEX_CAPSULE_PROMPT_VERSION,
+	buildCodexCapsuleTurnIntent,
+} from "./codex-capsule-prompt.js";
+import { CODEX_DYNAMIC_PATCH_TOOL_CONTRACT } from "./codex-dynamic-patch-tool-contract.js";
+import {
+	CODEX_PATCH_MAX_BYTES,
+	codexPatchAuthoritySchema,
+	codexPatchResultSchema,
+	codexPatchSha256,
+	codexPatchTransactionId,
+} from "./codex-workspace-patch-contract.js";
+import { MAX_PRIVATE_STATE_FILE_BYTES } from "./private-state-file.js";
+
+export const CODEX_CAPSULE_STATE_SCHEMA_VERSION = 3;
+export const CODEX_PATCH_MAX_CALLS_PER_TURN = 32;
+export const CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN = 1_048_576;
+export const CODEX_CAPSULE_STATE_TERMINAL_RECEIPT_RESERVE_BYTES = 4_096;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const localReferenceSchema = z.string().min(1).max(256);
-const providerReferenceSchema = z.string().min(1).max(1_024);
+const providerReferenceSchema = z
+	.string()
+	.min(1)
+	.max(512)
+	.refine((value) => isPrintableUnicode(value), {
+		message: "Provider references must be valid, printable Unicode",
+	});
 
 const storedSessionSchema = z
 	.object({
@@ -35,7 +59,8 @@ const storedSessionSchema = z
 
 const storedProviderIntentSchema = z
 	.object({
-		prompt_version: z.literal(1),
+		prompt_version: z.literal(CODEX_CAPSULE_PROMPT_VERSION),
+		tool_contract: z.literal(CODEX_DYNAMIC_PATCH_TOOL_CONTRACT).nullable(),
 		client_user_message_id: providerReferenceSchema,
 		text: z.string().min(1).max(1_048_576),
 		text_sha256: sha256Schema,
@@ -43,6 +68,96 @@ const storedProviderIntentSchema = z
 		output_schema_sha256: sha256Schema,
 	})
 	.strict();
+
+export const storedCodexPatchReceiptSchema = z.discriminatedUnion("outcome", [
+	z.object({ outcome: z.literal("applied"), result: codexPatchResultSchema }).strict(),
+	z.object({ outcome: z.literal("rejected") }).strict(),
+	z.object({ outcome: z.literal("failed"), classification: z.literal("fatal") }).strict(),
+	z.object({ outcome: z.literal("indeterminate") }).strict(),
+]);
+
+const storedCodexPatchCallSchema = z
+	.object({
+		transaction_id: sha256Schema,
+		provider_thread_id: providerReferenceSchema,
+		provider_turn_id: providerReferenceSchema,
+		call_id: providerReferenceSchema,
+		host_turn: hostTurnRefSchema,
+		authority: codexPatchAuthoritySchema,
+		patch_sha256: sha256Schema,
+		patch_bytes: z.number().int().nonnegative().max(CODEX_PATCH_MAX_BYTES),
+		patch: z.string().nullable(),
+		receipt: storedCodexPatchReceiptSchema.nullable(),
+		created_at: z.string().datetime({ offset: true }),
+		updated_at: z.string().datetime({ offset: true }),
+	})
+	.strict()
+	.superRefine((call, context) => {
+		if ((call.patch === null) !== (call.receipt !== null)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Raw patch retention must end exactly when a receipt is durable",
+				path: ["patch"],
+			});
+		}
+		if (call.patch !== null) {
+			try {
+				if (
+					call.patch_bytes !== Buffer.byteLength(call.patch, "utf8") ||
+					call.patch_sha256 !== codexPatchSha256(call.patch)
+				) {
+					context.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: "Retained patch does not match its durable digest",
+						path: ["patch"],
+					});
+				}
+			} catch {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "Retained patch is invalid",
+					path: ["patch"],
+				});
+			}
+		}
+		if (
+			call.receipt?.outcome === "applied" &&
+			(call.receipt.result.transactionId !== call.transaction_id ||
+				call.receipt.result.patchSha256 !== call.patch_sha256)
+		) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Applied patch receipt does not match its durable request",
+				path: ["receipt"],
+			});
+		}
+	});
+
+const storedCodexPatchCallsSchema = z
+	.record(sha256Schema, storedCodexPatchCallSchema)
+	.superRefine((calls, context) => {
+		const values = Object.values(calls);
+		if (values.length > CODEX_PATCH_MAX_CALLS_PER_TURN) {
+			context.addIssue({
+				code: z.ZodIssueCode.too_big,
+				maximum: CODEX_PATCH_MAX_CALLS_PER_TURN,
+				type: "array",
+				inclusive: true,
+				message: "Codex patch call limit exceeded",
+			});
+		}
+		const pending = values.filter((call) => call.receipt === null);
+		const retainedBytes = pending.reduce((total, call) => total + call.patch_bytes, 0);
+		if (retainedBytes > CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN) {
+			context.addIssue({
+				code: z.ZodIssueCode.too_big,
+				maximum: CODEX_PATCH_MAX_RETAINED_RAW_BYTES_PER_TURN,
+				type: "array",
+				inclusive: true,
+				message: "Codex retained patch bytes exceed the aggregate limit",
+			});
+		}
+	});
 
 const storedCodexTurnSchema = z
 	.object({
@@ -53,6 +168,7 @@ const storedCodexTurnSchema = z
 		codex_turn_id: providerReferenceSchema.nullable(),
 		provider_intent: storedProviderIntentSchema,
 		cancellation: z.enum(["none", "requested", "interrupt_maybe_sent"]),
+		patch_calls: storedCodexPatchCallsSchema,
 		events: z.array(hostEventSchema).min(1),
 		created_at: z.string().datetime({ offset: true }),
 		updated_at: z.string().datetime({ offset: true }),
@@ -61,7 +177,7 @@ const storedCodexTurnSchema = z
 
 export const codexCapsuleStateSchema = z
 	.object({
-		schema_version: z.literal(2),
+		schema_version: z.literal(CODEX_CAPSULE_STATE_SCHEMA_VERSION),
 		capsule_id: uuidSchema,
 		created_at: z.string().datetime({ offset: true }),
 		updated_at: z.string().datetime({ offset: true }),
@@ -80,6 +196,8 @@ export const codexCapsuleStateSchema = z
 
 export type CodexCapsuleState = z.infer<typeof codexCapsuleStateSchema>;
 export type StoredCodexTurn = z.infer<typeof storedCodexTurnSchema>;
+export type StoredCodexPatchCall = z.infer<typeof storedCodexPatchCallSchema>;
+export type StoredCodexPatchReceipt = z.infer<typeof storedCodexPatchReceiptSchema>;
 
 export interface CodexCapsuleIdentity {
 	readonly capsuleId: string;
@@ -93,7 +211,7 @@ export function createCodexCapsuleState(
 	const identity = parseIdentity(identityValue);
 	const timestamp = now.toISOString();
 	return codexCapsuleStateSchema.parse({
-		schema_version: 2,
+		schema_version: CODEX_CAPSULE_STATE_SCHEMA_VERSION,
 		capsule_id: identity.capsuleId,
 		created_at: timestamp,
 		updated_at: timestamp,
@@ -131,7 +249,25 @@ export function validateCodexCapsuleState(
 	if (state.session.phase !== "ready" && Object.keys(state.turns).length > 0) {
 		throw new Error("Codex Capsule contains turns before its runtime session is ready");
 	}
+	assertCodexCapsuleStateStorageBound(state);
 	return state;
+}
+
+/** Leaves per-request space for the largest fixed terminal receipt before publishing raw input. */
+export function assertCodexCapsuleStateStorageBound(state: CodexCapsuleState): void {
+	const pendingPatchCalls = Object.values(state.turns).reduce(
+		(total, turn) =>
+			total + Object.values(turn.patch_calls).filter((call) => call.receipt === null).length,
+		0,
+	);
+	const reserve = pendingPatchCalls * CODEX_CAPSULE_STATE_TERMINAL_RECEIPT_RESERVE_BYTES;
+	const serialized = JSON.stringify(state, null, 2);
+	if (
+		serialized === undefined ||
+		Buffer.byteLength(`${serialized}\n`, "utf8") > MAX_PRIVATE_STATE_FILE_BYTES - reserve
+	) {
+		throw new Error("Codex Capsule state exceeds its durable write budget");
+	}
 }
 
 export function hostSessionFromState(state: CodexCapsuleState): HostSessionRef {
@@ -183,8 +319,13 @@ function validateTurn(state: CodexCapsuleState, key: string, turn: StoredCodexTu
 	if (!isDeepStrictEqual(turn.input.session, hostSessionFromState(state))) {
 		throw new Error("Codex Capsule turn does not belong to its runtime session");
 	}
-	const expectedIntent = buildCodexCapsuleTurnIntent(turn.input);
+	const expectedIntent = buildCodexCapsuleTurnIntent(
+		turn.input,
+		turn.provider_intent.tool_contract,
+	);
 	if (
+		turn.provider_intent.prompt_version !== expectedIntent.promptVersion ||
+		turn.provider_intent.tool_contract !== expectedIntent.toolContract ||
 		turn.provider_intent.client_user_message_id !== expectedIntent.clientUserMessageId ||
 		turn.provider_intent.text !== expectedIntent.text ||
 		turn.provider_intent.text_sha256 !== expectedIntent.textSha256 ||
@@ -197,6 +338,7 @@ function validateTurn(state: CodexCapsuleState, key: string, turn: StoredCodexTu
 		throw new Error("Codex Capsule provider intent does not match its exact turn input");
 	}
 	validateTurnPhase(turn);
+	validatePatchCalls(state, turn);
 	validateTurnEvents(turn);
 }
 
@@ -222,6 +364,51 @@ function validateTurnPhase(turn: StoredCodexTurn): void {
 	}
 }
 
+function validatePatchCalls(state: CodexCapsuleState, turn: StoredCodexTurn): void {
+	const hostTurn = hostTurnFromStored(turn);
+	if (
+		Object.keys(turn.patch_calls).length > 0 &&
+		turn.provider_intent.tool_contract !== CODEX_DYNAMIC_PATCH_TOOL_CONTRACT
+	) {
+		throw new Error("Codex patch calls require the exact durable provider tool contract");
+	}
+	for (const [transactionId, call] of Object.entries(turn.patch_calls)) {
+		if (transactionId !== call.transaction_id) {
+			throw new Error("Codex patch call is stored under the wrong transaction ID");
+		}
+		if (
+			state.session.codex_thread_id === null ||
+			call.provider_thread_id !== state.session.codex_thread_id ||
+			turn.codex_turn_id === null ||
+			call.provider_turn_id !== turn.codex_turn_id ||
+			!isDeepStrictEqual(call.host_turn, hostTurn)
+		) {
+			throw new Error("Codex patch call does not match its durable turn binding");
+		}
+		if (
+			call.authority.delivery_id !== call.host_turn.deliveryId ||
+			call.authority.execution_attempt !== call.host_turn.executionAttempt
+		) {
+			throw new Error("Codex patch authority does not match its durable Host turn");
+		}
+		const expectedTransactionId = codexPatchTransactionId({
+			capsule_id: state.capsule_id,
+			provider_thread_id: call.provider_thread_id,
+			provider_turn_id: call.provider_turn_id,
+			call_id: call.call_id,
+		});
+		if (call.transaction_id !== expectedTransactionId) {
+			throw new Error("Codex patch transaction ID does not match its exact provider key");
+		}
+	}
+	if (
+		turn.phase === "terminal" &&
+		Object.values(turn.patch_calls).some((call) => call.receipt === null)
+	) {
+		throw new Error("Terminal Codex turn retains an unresolved patch request");
+	}
+}
+
 function validateTurnEvents(turn: StoredCodexTurn): void {
 	let stream = createHostEventStreamState({ ...hostTurnFromStored(turn), turnId: undefined });
 	for (const event of turn.events) {
@@ -234,6 +421,21 @@ function validateTurnEvents(turn: StoredCodexTurn): void {
 
 function sha256(value: string): string {
 	return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function isPrintableUnicode(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			const next = value.charCodeAt(index + 1);
+			if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+			index += 1;
+			continue;
+		}
+		if (code >= 0xdc00 && code <= 0xdfff) return false;
+		if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
+	}
+	return true;
 }
 
 export function cloneStoredEvents(turn: StoredCodexTurn): readonly HostEvent[] {

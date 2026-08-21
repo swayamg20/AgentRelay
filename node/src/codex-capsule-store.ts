@@ -30,9 +30,13 @@ import {
 import {
 	acceptSession,
 	acceptTurn,
+	claimPatchCall as claimDurablePatchCall,
 	claimInterrupt,
 	claimSessionStart,
 	claimTurnStart,
+	inspectPatchCall as inspectDurablePatchCall,
+	pendingPatchCalls as listPendingPatchCalls,
+	recordPatchCallReceipt as persistPatchCallReceipt,
 	prepareTurn,
 	recordTerminal,
 	recordUncertainInterruptAfterQuiescence,
@@ -43,10 +47,25 @@ import {
 import type {
 	CodexInterruptClaim,
 	CodexNormalizedTerminal,
+	CodexPatchCallClaim,
+	CodexPatchCallReceipt,
+	CodexPatchCallRequest,
 	CodexSessionStartClaim,
 	CodexTurnRuntimeState,
 	CodexTurnStartClaim,
 } from "./codex-capsule-types.js";
+import {
+	CODEX_DYNAMIC_PATCH_TOOL_CONTRACT,
+	type CodexDynamicPatchToolContract,
+} from "./codex-dynamic-patch-tool-contract.js";
+import {
+	CODEX_PATCH_MAX_BYTES,
+	type CodexPatchAuthorityRecord,
+	type CodexPatchToolCall,
+	codexPatchAuthoritySchema,
+	codexPatchSha256,
+	parseCodexPatchToolCall,
+} from "./codex-workspace-patch-contract.js";
 import {
 	ensurePrivateStateDirectory,
 	readPrivateJsonIfPresent,
@@ -54,7 +73,40 @@ import {
 } from "./private-state-file.js";
 
 export const CODEX_CAPSULE_STATE_FILE = "state.json";
-const providerReferenceSchema = z.string().min(1).max(1_024);
+const providerReferenceSchema = z
+	.string()
+	.min(1)
+	.max(512)
+	.refine((value) => isPrintableUnicode(value), {
+		message: "Provider references must be valid, printable Unicode",
+	});
+const patchCallRequestSchema = z
+	.object({
+		providerThreadId: providerReferenceSchema,
+		providerTurnId: providerReferenceSchema,
+		callId: providerReferenceSchema,
+		patch: z.string(),
+		authority: codexPatchAuthoritySchema,
+	})
+	.strict()
+	.superRefine((request, context) => {
+		try {
+			codexPatchSha256(request.patch);
+		} catch {
+			context.addIssue({ code: z.ZodIssueCode.custom, message: "Patch input is invalid" });
+			return;
+		}
+		if (Buffer.byteLength(request.patch, "utf8") > CODEX_PATCH_MAX_BYTES) {
+			context.addIssue({
+				code: z.ZodIssueCode.too_big,
+				maximum: CODEX_PATCH_MAX_BYTES,
+				type: "string",
+				inclusive: true,
+				message: "Patch exceeds the byte limit",
+				path: ["patch"],
+			});
+		}
+	});
 
 /** Durable at-most-once barriers and normalized replay for one Codex Mission Capsule. */
 export class CodexCapsuleStore {
@@ -120,9 +172,18 @@ export class CodexCapsuleStore {
 		return this.mutate(resetUnboundSessionAfterQuiescence);
 	}
 
-	async prepareTurn(inputValue: StartTurnInput): Promise<HostTurnRef> {
+	async prepareTurn(
+		inputValue: StartTurnInput,
+		toolContractValue: CodexDynamicPatchToolContract | null = null,
+	): Promise<HostTurnRef> {
 		const input = startTurnInputSchema.parse(inputValue);
-		return this.mutate((state) => prepareTurn(state, input, this.#now().toISOString()));
+		const toolContract = z
+			.literal(CODEX_DYNAMIC_PATCH_TOOL_CONTRACT)
+			.nullable()
+			.parse(toolContractValue);
+		return this.mutate((state) =>
+			prepareTurn(state, input, this.#now().toISOString(), toolContract),
+		);
 	}
 
 	async claimTurnStart(inputValue: StartTurnInput): Promise<CodexTurnStartClaim> {
@@ -134,6 +195,37 @@ export class CodexCapsuleStore {
 		const input = startTurnInputSchema.parse(inputValue);
 		const codexTurnId = providerReferenceSchema.parse(codexTurnIdValue);
 		return this.mutate((state) => acceptTurn(state, input, codexTurnId));
+	}
+
+	async claimPatchCall(requestValue: CodexPatchCallRequest): Promise<CodexPatchCallClaim> {
+		const request = patchCallRequestSchema.parse(requestValue);
+		return this.mutate((state) => claimDurablePatchCall(state, request, this.#now().toISOString()));
+	}
+
+	async inspectPatchCall(requestValue: CodexPatchCallRequest): Promise<CodexPatchCallClaim | null> {
+		const request = patchCallRequestSchema.parse(requestValue);
+		await this.#pendingWrite;
+		return inspectDurablePatchCall(this.#state, request);
+	}
+
+	async pendingPatchCalls(
+		authorityValue: CodexPatchAuthorityRecord,
+	): Promise<readonly CodexPatchToolCall[]> {
+		const authority = codexPatchAuthoritySchema.parse(authorityValue);
+		await this.#pendingWrite;
+		return listPendingPatchCalls(this.#state, authority);
+	}
+
+	async recordPatchCallReceipt(
+		callValue: CodexPatchToolCall,
+		authorityValue: CodexPatchAuthorityRecord,
+		receipt: CodexPatchCallReceipt,
+	): Promise<CodexPatchCallReceipt> {
+		const call = parseCodexPatchToolCall(callValue);
+		const authority = codexPatchAuthoritySchema.parse(authorityValue);
+		return this.mutate((state) =>
+			persistPatchCallReceipt(state, call, authority, receipt, this.#now().toISOString()),
+		);
 	}
 
 	async lookupTurn(deliveryId: string, executionAttempt: number): Promise<HostTurnRef | null> {
@@ -244,4 +336,19 @@ export class CodexCapsuleStore {
 		await write;
 		return result;
 	}
+}
+
+function isPrintableUnicode(value: string): boolean {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			const next = value.charCodeAt(index + 1);
+			if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+			index += 1;
+			continue;
+		}
+		if (code >= 0xdc00 && code <= 0xdfff) return false;
+		if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
+	}
+	return true;
 }

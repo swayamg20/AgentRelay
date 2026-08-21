@@ -134,7 +134,7 @@ const patchKeySchema = z
 	})
 	.strict();
 
-const patchAuthoritySchema = z
+export const codexPatchAuthoritySchema = z
 	.object({
 		grant_sha256: sha256Schema,
 		grant_id: z.string().uuid(),
@@ -178,7 +178,7 @@ export const codexPatchJournalSchema = z
 		host_turn: hostTurnRefSchema,
 		patch_sha256: sha256Schema,
 		patch_bytes: z.number().int().nonnegative().max(CODEX_PATCH_MAX_BYTES),
-		authority: patchAuthoritySchema,
+		authority: codexPatchAuthoritySchema,
 		workspace: patchWorkspaceSchema,
 		plan_sha256: sha256Schema,
 		created_directories: z.array(codexPatchPathSchema).max(CODEX_PATCH_MAX_CREATED_DIRECTORIES),
@@ -360,7 +360,7 @@ export const codexPatchJournalSchema = z
 
 export type CodexPatchJournal = z.infer<typeof codexPatchJournalSchema>;
 export type CodexPatchKey = z.infer<typeof patchKeySchema>;
-export type CodexPatchAuthorityRecord = z.infer<typeof patchAuthoritySchema>;
+export type CodexPatchAuthorityRecord = z.infer<typeof codexPatchAuthoritySchema>;
 export type CodexPatchWorkspaceRecord = z.infer<typeof patchWorkspaceSchema>;
 
 export type CodexWorkspacePatchErrorCode =

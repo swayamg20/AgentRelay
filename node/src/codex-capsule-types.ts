@@ -5,6 +5,11 @@ import type {
 	TurnDisposition,
 } from "@agentrelay/protocol";
 import type { CodexCapsuleTurnIntent } from "./codex-capsule-prompt.js";
+import type {
+	CodexPatchAuthorityRecord,
+	CodexPatchResult,
+	CodexPatchToolCall,
+} from "./codex-workspace-patch-contract.js";
 
 export type CodexSessionStartClaim =
 	| { readonly kind: "send" }
@@ -36,3 +41,29 @@ export type CodexNormalizedTerminal =
 	| { readonly kind: "completed"; readonly disposition: TurnDisposition }
 	| { readonly kind: "failed"; readonly failure: HostFailure }
 	| { readonly kind: "cancelled" };
+
+export interface CodexPatchCallRequest {
+	readonly providerThreadId: string;
+	readonly providerTurnId: string;
+	readonly callId: string;
+	readonly patch: string;
+	readonly authority: CodexPatchAuthorityRecord;
+}
+
+export type CodexPatchCallReceipt =
+	| { readonly outcome: "applied"; readonly result: CodexPatchResult }
+	| { readonly outcome: "rejected" }
+	| { readonly outcome: "failed"; readonly classification: "fatal" }
+	| { readonly outcome: "indeterminate" };
+
+export type CodexPatchCallClaim =
+	| {
+			readonly kind: "pending";
+			readonly call: CodexPatchToolCall;
+			readonly replayed: boolean;
+	  }
+	| {
+			readonly kind: "terminal";
+			readonly receipt: CodexPatchCallReceipt;
+			readonly replayed: boolean;
+	  };
