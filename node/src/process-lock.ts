@@ -6,6 +6,7 @@ import {
 	type OwnerMetadata,
 	ProcessLockError,
 	type ProcessLockKind,
+	WORKSPACE_PATCH_LOCK_KIND,
 	assertStableProcessLock,
 	openStableProcessLock,
 	ownerMetadataSchema,
@@ -16,6 +17,7 @@ import {
 export {
 	NODE_PROCESS_LOCK_KIND,
 	PROVIDER_GENERATION_LOCK_KIND,
+	WORKSPACE_PATCH_LOCK_KIND,
 	ProcessLockError,
 } from "./process-lock-state.js";
 export type { ProcessLockKind } from "./process-lock-state.js";
@@ -120,7 +122,10 @@ function processLock(
 }
 
 function ownerLabel(kind: ProcessLockKind): string {
-	return kind === NODE_PROCESS_LOCK_KIND ? "AgentRelay Node" : "AgentRelay provider generation";
+	if (kind === NODE_PROCESS_LOCK_KIND) return "AgentRelay Node";
+	return kind === WORKSPACE_PATCH_LOCK_KIND
+		? "AgentRelay workspace patch mediator"
+		: "AgentRelay provider generation";
 }
 
 async function releaseKernelLock(handle: FileHandle, lock: KernelFileLock): Promise<void> {

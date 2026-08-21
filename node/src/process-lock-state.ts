@@ -25,6 +25,7 @@ const legacyLockMetadataSchema = z
 export const PROCESS_LOCK_KINDS = [
 	"agentrelay_node_kernel_lock",
 	"agentrelay_provider_generation_lock",
+	"agentrelay_workspace_patch_lock",
 ] as const;
 
 export type ProcessLockKind = (typeof PROCESS_LOCK_KINDS)[number];
@@ -50,6 +51,7 @@ export type OwnerMetadata = z.infer<typeof ownerMetadataSchema>;
 
 export const NODE_PROCESS_LOCK_KIND: ProcessLockKind = "agentrelay_node_kernel_lock";
 export const PROVIDER_GENERATION_LOCK_KIND: ProcessLockKind = "agentrelay_provider_generation_lock";
+export const WORKSPACE_PATCH_LOCK_KIND: ProcessLockKind = "agentrelay_workspace_patch_lock";
 
 interface OpenLockFile {
 	readonly handle: FileHandle;
