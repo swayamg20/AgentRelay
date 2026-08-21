@@ -30,6 +30,11 @@ import {
 	performCodexProvisioningAuthorized,
 } from "./codex-capsule-provisioning-validation.js";
 import {
+	type PinnedOwnerGitExecutable,
+	assertPinnedOwnerGitExecutable,
+	pinOwnerGitExecutable,
+} from "./codex-git-artifact.js";
+import {
 	prepareCodexSandboxContainment,
 	recoverCodexSandboxContainment,
 } from "./codex-sandbox-containment.js";
@@ -53,6 +58,8 @@ export type {
 export interface CodexCapsuleProvisionerOptions {
 	readonly controlRootDirectory: string;
 	readonly runtimeRootDirectory: string;
+	readonly workspaceGlobalControlRoot?: string;
+	readonly gitExecutable?: string;
 }
 
 export interface CodexContainmentProvisioningPort {
@@ -69,8 +76,14 @@ export interface CodexContainmentProvisioningPort {
 
 export interface CodexCapsuleProvisionerDependencies {
 	readonly resolveLauncher?: () => Promise<PinnedCodexLauncher>;
+	readonly resolveGit?: (executable: string) => Promise<PinnedOwnerGitExecutable>;
 	readonly containment?: CodexContainmentProvisioningPort;
 }
+
+type ConfiguredCodexWorkspaceMediator = Readonly<{
+	globalControlRoot: string;
+	git: PinnedOwnerGitExecutable;
+}>;
 
 const productionContainment: CodexContainmentProvisioningPort = {
 	prepare: prepareCodexSandboxContainment,
@@ -82,6 +95,7 @@ const productionContainment: CodexContainmentProvisioningPort = {
 export class CodexCapsuleProvisioner {
 	readonly #controlRootDirectory: string;
 	readonly #runtimeRootDirectory: string;
+	readonly #workspaceMediator: ConfiguredCodexWorkspaceMediator | null;
 	readonly #ownerHome: string;
 	readonly #launcher: PinnedCodexLauncher;
 	readonly #containment: CodexContainmentProvisioningPort;
@@ -92,10 +106,12 @@ export class CodexCapsuleProvisioner {
 		options: CodexCapsuleProvisionerOptions,
 		ownerHome: string,
 		launcher: PinnedCodexLauncher,
+		workspaceMediator: ConfiguredCodexWorkspaceMediator | null,
 		dependencies: CodexCapsuleProvisionerDependencies,
 	) {
 		this.#controlRootDirectory = options.controlRootDirectory;
 		this.#runtimeRootDirectory = options.runtimeRootDirectory;
+		this.#workspaceMediator = workspaceMediator;
 		this.#ownerHome = ownerHome;
 		this.#launcher = launcher;
 		this.#containment = dependencies.containment ?? productionContainment;
@@ -106,27 +122,58 @@ export class CodexCapsuleProvisioner {
 		dependencies: CodexCapsuleProvisionerDependencies = {},
 	): Promise<CodexCapsuleProvisioner> {
 		const launcher = await (dependencies.resolveLauncher ?? resolvePinnedCodexLauncher)();
-		await assertPinnedCodexArtifact(launcher);
+		if (
+			(options.workspaceGlobalControlRoot === undefined) !==
+			(options.gitExecutable === undefined)
+		) {
+			throw new Error(
+				"Codex workspace mediator root and Git executable must be configured together",
+			);
+		}
+		const git =
+			options.gitExecutable === undefined
+				? null
+				: await (dependencies.resolveGit ?? pinOwnerGitExecutable)(options.gitExecutable);
+		await Promise.all([
+			assertPinnedCodexArtifact(launcher),
+			...(git === null ? [] : [assertPinnedOwnerGitExecutable(git)]),
+		]);
+		if (git !== null && git.executable.path !== options.gitExecutable) {
+			throw new Error("Codex patch Git verification changed the owner-selected executable path");
+		}
 		await Promise.all([
 			ensurePrivateStateDirectory(options.controlRootDirectory),
 			ensurePrivateStateDirectory(options.runtimeRootDirectory),
+			...(options.workspaceGlobalControlRoot === undefined
+				? []
+				: [ensurePrivateStateDirectory(options.workspaceGlobalControlRoot)]),
 		]);
-		if (
-			isPathWithin(options.controlRootDirectory, options.runtimeRootDirectory) ||
-			isPathWithin(options.runtimeRootDirectory, options.controlRootDirectory)
-		) {
-			throw new Error("Codex Capsule control and runtime roots must be disjoint");
-		}
+		assertPairwiseDisjointPrivateRoots(options);
+		if (git !== null) assertGitOutsideWritableState(options, git.executable.path);
 		const pinnedLauncher = Object.freeze({
 			executable: launcher.executable,
 			readRoot: launcher.readRoot,
 			sha256: launcher.sha256,
 			sandboxHelper: Object.freeze({ ...launcher.sandboxHelper }),
 		});
+		const workspaceMediator =
+			git === null || options.workspaceGlobalControlRoot === undefined
+				? null
+				: Object.freeze({
+						globalControlRoot: options.workspaceGlobalControlRoot,
+						git: Object.freeze({
+							executable: Object.freeze({
+								path: git.executable.path,
+								identity: Object.freeze({ ...git.executable.identity }),
+							}),
+							sha256: git.sha256,
+						}),
+					});
 		return new CodexCapsuleProvisioner(
 			options,
 			await realpath(homedir()),
 			pinnedLauncher,
+			workspaceMediator,
 			dependencies,
 		);
 	}
@@ -232,7 +279,7 @@ export class CodexCapsuleProvisioner {
 		);
 		const capsuleId = randomUUID();
 		const publishable = codexCapsuleLaunchDescriptorSchema.parse({
-			schema_version: 2,
+			schema_version: 3,
 			capsule_id: capsuleId,
 			capability_token: `ar_capsule_${randomBytes(32).toString("hex")}`,
 			socket_path: capsuleSocketPath(capsuleId),
@@ -267,7 +314,7 @@ export class CodexCapsuleProvisioner {
 		);
 		await assertCurrentCodexContainmentManifest(
 			manifest,
-			input,
+			containmentExpectation(input, this.#workspaceMediator),
 			controlDirectory,
 			runtimeDirectory,
 			this.#launcher,
@@ -293,7 +340,7 @@ export class CodexCapsuleProvisioner {
 		if (existingManifest !== null) {
 			await assertCurrentCodexContainmentManifest(
 				existingManifest,
-				input,
+				containmentExpectation(input, this.#workspaceMediator),
 				controlDirectory,
 				runtimeDirectory,
 				launcher,
@@ -306,7 +353,13 @@ export class CodexCapsuleProvisioner {
 			containment =
 				existingManifest === null
 					? await this.#containment.prepare(
-							containmentInput(input, controlDirectory, runtimeDirectory, launcher),
+							containmentInput(
+								input,
+								controlDirectory,
+								runtimeDirectory,
+								this.#workspaceMediator,
+								launcher,
+							),
 							signal,
 						)
 					: await this.#containment.recover(
@@ -322,7 +375,7 @@ export class CodexCapsuleProvisioner {
 		const durableManifest = await this.requireManifest(manifestPath);
 		await assertCurrentCodexContainmentManifest(
 			durableManifest,
-			input,
+			containmentExpectation(input, this.#workspaceMediator),
 			controlDirectory,
 			runtimeDirectory,
 			launcher,
@@ -331,7 +384,7 @@ export class CodexCapsuleProvisioner {
 		assertRecoveredCodexContainment(
 			containment,
 			durableManifest,
-			input,
+			containmentExpectation(input, this.#workspaceMediator),
 			controlDirectory,
 			runtimeDirectory,
 		);
@@ -356,7 +409,7 @@ export class CodexCapsuleProvisioner {
 		const manifest = await this.requireManifest(manifestPath);
 		await assertCurrentCodexContainmentManifest(
 			manifest,
-			input,
+			containmentExpectation(input, this.#workspaceMediator),
 			controlDirectory,
 			runtimeDirectory,
 			launcher,
@@ -376,7 +429,7 @@ export class CodexCapsuleProvisioner {
 		assertRecoveredCodexContainment(
 			containment,
 			manifest,
-			input,
+			containmentExpectation(input, this.#workspaceMediator),
 			controlDirectory,
 			runtimeDirectory,
 		);
@@ -399,17 +452,56 @@ function containmentInput(
 	input: ParsedCodexCapsuleProvisionInput,
 	controlDirectory: string,
 	runtimeDirectory: string,
+	workspaceMediator: ConfiguredCodexWorkspaceMediator | null,
 	launcher: PinnedCodexLauncher,
 ): CodexSandboxContainmentInput {
+	const selectedMediator = selectedWorkspaceMediator(input, workspaceMediator);
 	return Object.freeze({
 		controlDirectory,
 		runtimeDirectory,
 		workspace: input.workspace,
 		launcher,
 		provider: launcher,
+		...(selectedMediator === null ? {} : { workspaceMediator: selectedMediator }),
 		policyGrantSha256: input.policyGrantSha256,
 		workspaceAccess: input.workspaceAccess,
 	});
+}
+
+function containmentExpectation(
+	input: ParsedCodexCapsuleProvisionInput,
+	workspaceMediator: ConfiguredCodexWorkspaceMediator | null,
+) {
+	return Object.freeze({
+		workspace: input.workspace,
+		policyGrantSha256: input.policyGrantSha256,
+		workspaceAccess: input.workspaceAccess,
+		workspaceMediator: selectedWorkspaceMediator(input, workspaceMediator),
+	});
+}
+
+function selectedWorkspaceMediator(
+	input: ParsedCodexCapsuleProvisionInput,
+	workspaceMediator: ConfiguredCodexWorkspaceMediator | null,
+): ConfiguredCodexWorkspaceMediator | null {
+	if (workspaceMediator !== null) {
+		for (const mediatorPath of [
+			workspaceMediator.globalControlRoot,
+			workspaceMediator.git.executable.path,
+		]) {
+			if (
+				isPathWithin(mediatorPath, input.workspace.root) ||
+				isPathWithin(input.workspace.root, mediatorPath)
+			) {
+				throw new Error("Codex workspace mediator paths must be disjoint from the workspace");
+			}
+		}
+	}
+	if (input.workspaceAccess === "read") return null;
+	if (workspaceMediator === null) {
+		throw new Error("Codex workspace-write provisioning requires a configured patch mediator");
+	}
+	return workspaceMediator;
 }
 
 async function readDescriptorIfPresent(
@@ -424,8 +516,44 @@ async function requireCodexDescriptor(
 	controlDirectory: string,
 ): Promise<CodexCapsuleLaunchDescriptor> {
 	const descriptor = await readCapsuleLaunchDescriptor(controlDirectory);
-	if (descriptor.schema_version !== 2) {
+	if (descriptor.schema_version !== 3) {
 		throw new Error("Existing Mission Capsule descriptor does not select Codex");
 	}
 	return descriptor;
+}
+
+function assertPairwiseDisjointPrivateRoots(options: CodexCapsuleProvisionerOptions): void {
+	const roots = [
+		options.controlRootDirectory,
+		options.runtimeRootDirectory,
+		...(options.workspaceGlobalControlRoot === undefined
+			? []
+			: [options.workspaceGlobalControlRoot]),
+	];
+	for (let left = 0; left < roots.length; left += 1) {
+		for (let right = left + 1; right < roots.length; right += 1) {
+			const leftRoot = roots[left]!;
+			const rightRoot = roots[right]!;
+			if (isPathWithin(leftRoot, rightRoot) || isPathWithin(rightRoot, leftRoot)) {
+				throw new Error("Codex Capsule private state roots must be pairwise disjoint");
+			}
+		}
+	}
+}
+
+function assertGitOutsideWritableState(
+	options: CodexCapsuleProvisionerOptions,
+	gitExecutable: string,
+): void {
+	for (const root of [
+		options.controlRootDirectory,
+		options.runtimeRootDirectory,
+		...(options.workspaceGlobalControlRoot === undefined
+			? []
+			: [options.workspaceGlobalControlRoot]),
+	]) {
+		if (isPathWithin(gitExecutable, root) || isPathWithin(root, gitExecutable)) {
+			throw new Error("Owner-selected Git executable must be outside Codex writable state");
+		}
+	}
 }

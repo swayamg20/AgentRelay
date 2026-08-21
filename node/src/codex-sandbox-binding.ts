@@ -4,6 +4,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import { assertPinnedOwnerGitExecutable } from "./codex-git-artifact.js";
 import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import type {
 	CodexSandboxContainmentInput,
@@ -24,6 +25,7 @@ import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./missio
 import { revalidateMissionWorkspaceIsolation } from "./mission-workspace.js";
 import {
 	RUNTIME_CONTAINMENT_BACKEND,
+	RUNTIME_CONTAINMENT_CONTRACT,
 	type RuntimeContainmentBinding,
 	boundPath,
 	workspaceBinding,
@@ -37,20 +39,30 @@ export async function buildRuntimeContainmentBinding(
 	signal: AbortSignal,
 ): Promise<RuntimeContainmentBinding> {
 	signal.throwIfAborted();
-	const [workspace, launcher, provider, inspectedProbe, privatePaths, readOnlyRoots, deniedRoots] =
-		await Promise.all([
-			inspectWorkspace(input.workspace, signal),
-			inspectLauncher(input.launcher),
-			inspectExecutable(input.provider),
-			inspectExecutable(probe),
-			inspectPrivatePaths(layout),
-			inspectRoots(input.readOnlyRoots ?? []),
-			inspectRoots([
-				await realpath(homedir()),
-				layout.controlRoot,
-				...(input.forbiddenRoots ?? []),
-			]),
-		]);
+	const [
+		workspace,
+		launcher,
+		provider,
+		inspectedProbe,
+		privatePaths,
+		workspaceMediator,
+		readOnlyRoots,
+		deniedRoots,
+	] = await Promise.all([
+		inspectWorkspace(input.workspace, signal),
+		inspectLauncher(input.launcher),
+		inspectExecutable(input.provider),
+		inspectExecutable(probe),
+		inspectPrivatePaths(layout),
+		inspectWorkspaceMediator(input),
+		inspectRoots(input.readOnlyRoots ?? []),
+		inspectRoots([
+			await realpath(homedir()),
+			layout.controlRoot,
+			...(input.workspaceMediator === undefined ? [] : [input.workspaceMediator.globalControlRoot]),
+			...(input.forbiddenRoots ?? []),
+		]),
+	]);
 	signal.throwIfAborted();
 	const trustedReadRoots = [
 		launcher.readRoot.path,
@@ -58,16 +70,8 @@ export async function buildRuntimeContainmentBinding(
 		inspectedProbe.readRoot.path,
 		...readOnlyRoots.map((root) => root.path),
 	];
-	const workspaceAccess = input.workspaceAccess ?? "write";
-	const writableRoots = [
-		...(workspaceAccess === "write" ? [workspace.root.path] : []),
-		privatePaths.runtime_home.path,
-		privatePaths.runtime_tmp.path,
-	];
-	const classifiedReadRoots = [
-		...trustedReadRoots,
-		...(workspaceAccess === "read" ? [workspace.root.path] : []),
-	];
+	const writableRoots = [privatePaths.runtime_home.path, privatePaths.runtime_tmp.path];
+	const classifiedReadRoots = [...trustedReadRoots, workspace.root.path];
 	const deniedRootPaths = deniedRoots.map((root) => root.path);
 	const linuxMounts = await readLinuxMounts();
 	assertNoNestedLinuxMounts(writableRoots, linuxMounts);
@@ -84,9 +88,11 @@ export async function buildRuntimeContainmentBinding(
 		linuxMounts,
 	);
 	return {
+		containment_contract: RUNTIME_CONTAINMENT_CONTRACT,
 		backend: RUNTIME_CONTAINMENT_BACKEND,
 		runtime_version: SUPPORTED_CODEX_CLI_VERSION,
-		...(input.workspaceAccess === undefined ? {} : { workspace_access: input.workspaceAccess }),
+		logical_workspace_access: input.workspaceAccess,
+		provider_workspace_access: "read",
 		workspace,
 		launcher: {
 			executable: launcher.executable,
@@ -111,9 +117,24 @@ export async function buildRuntimeContainmentBinding(
 			read_root: inspectedProbe.readRoot,
 		},
 		private_paths: privatePaths,
+		...(workspaceMediator === undefined ? {} : { workspace_mediator: workspaceMediator }),
 		read_only_roots: readOnlyRoots,
 		denied_roots: deniedRoots,
 		policy_grant_sha256: input.policyGrantSha256,
+	};
+}
+
+async function inspectWorkspaceMediator(input: CodexSandboxContainmentInput) {
+	if (input.workspaceMediator === undefined) return undefined;
+	const globalControlRoot = await inspectPath(
+		input.workspaceMediator.globalControlRoot,
+		"workspace-global control root",
+		"directory",
+	);
+	await assertPinnedOwnerGitExecutable(input.workspaceMediator.git);
+	return {
+		global_control_root: globalControlRoot,
+		git: input.workspaceMediator.git,
 	};
 }
 

@@ -26,6 +26,7 @@ import { createFakeCodexOwnerCredential } from "../test-support/fake-codex-owner
 import { resolvePinnedCodex, sha256File } from "../test-support/pinned-codex.js";
 import { buildCodexAppServerArguments } from "./codex-app-server-command.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import { pinOwnerGitExecutable } from "./codex-git-artifact.js";
 import { SupervisedCodexProviderGuardian } from "./codex-provider-guardian.js";
 import {
 	prepareCodexSandboxContainment,
@@ -43,10 +44,7 @@ import {
 	compileRuntimeAuthorityGrant,
 	runtimeAuthorityRequest,
 } from "./runtime-authority.js";
-import {
-	createRuntimeContainmentManifest,
-	readRuntimeContainmentManifest,
-} from "./runtime-containment-manifest.js";
+import { readRuntimeContainmentManifest } from "./runtime-containment-manifest.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryRoots: string[] = [];
@@ -66,12 +64,9 @@ afterAll(async () => {
 describe.runIf(
 	process.platform === "linux" && process.env.AGENTRELAY_RUN_CONTAINMENT_TESTS === "1",
 )("Codex Bubblewrap containment", () => {
-	it.each([
-		["write", true],
-		["read", false],
-	] as const)(
-		"allows only the %s-bound workspace, read roots, and private runtime directories",
-		async (workspaceAccess, workspaceWrite) => {
+	it.each(["write", "read"] as const)(
+		"keeps the provider workspace read-only under logical %s authority",
+		async (workspaceAccess) => {
 			const fixture = await createFixture();
 			const launcher = await resolvePinnedCodex();
 			const provider = {
@@ -89,6 +84,14 @@ describe.runIf(
 				forbiddenRoots: [fixture.sibling, fixture.ownerHome],
 				policyGrantSha256: "a".repeat(64),
 				workspaceAccess,
+				...(workspaceAccess === "read"
+					? {}
+					: {
+							workspaceMediator: {
+								globalControlRoot: fixture.workspaceGlobalControlRoot,
+								git: fixture.git,
+							},
+						}),
 			};
 			const resultPath = join(fixture.runtime, "tmp", `.agentrelay-${randomUUID()}.result`);
 			const resultToken = randomUUID();
@@ -115,7 +118,11 @@ describe.runIf(
 			};
 			await writeProviderRequest(fixture.providerRequest, { kind: "probe", paths });
 			const containment = await prepareCodexSandboxContainment(input, liveOwnerControlledSignal());
-			expect(containment.authorization.workspaceAccess).toBe(workspaceAccess);
+			expect(containment.authorization.logicalWorkspaceAccess).toBe(workspaceAccess);
+			expect(containment.authorization.providerWorkspaceAccess).toBe("read");
+			expect(containment.authorization.workspaceMediator !== null).toBe(
+				workspaceAccess === "write",
+			);
 			await expect(
 				containment.boundary.prepare(
 					{
@@ -201,7 +208,7 @@ describe.runIf(
 
 			expect(result).toMatchObject({
 				workspaceRead: true,
-				workspaceWrite,
+				workspaceWrite: false,
 				gitMetadataWrite: false,
 				readRootRead: true,
 				readRootWrite: false,
@@ -235,7 +242,8 @@ describe.runIf(
 				liveOwnerControlledSignal(),
 			);
 			expect(recovered.evidence).toEqual(containment.evidence);
-			expect(recovered.authorization.workspaceAccess).toBe(workspaceAccess);
+			expect(recovered.authorization.logicalWorkspaceAccess).toBe(workspaceAccess);
+			expect(recovered.authorization.providerWorkspaceAccess).toBe("read");
 			const freshRecovery = await execFileAsync(
 				process.execPath,
 				["--import", "tsx/esm", fixture.recoveryHelper, JSON.stringify(recoveryExpectation)],
@@ -288,7 +296,8 @@ describe.runIf(
 			},
 			liveOwnerControlledSignal(),
 		);
-		expect(containment.authorization.workspaceAccess).toBe("read");
+		expect(containment.authorization.logicalWorkspaceAccess).toBe("read");
+		expect(containment.authorization.providerWorkspaceAccess).toBe("read");
 
 		const generation = await new SupervisedCodexProviderGuardian({
 			capsuleId: randomUUID(),
@@ -362,7 +371,7 @@ describe.runIf(
 		}
 	}, 60_000);
 
-	it("recovers the exact legacy write-mode binding without adding workspace_access", async () => {
+	it("rejects an old write manifest instead of upgrading provider access", async () => {
 		const fixture = await createFixture();
 		const launcher = await resolvePinnedCodex();
 		const provider = {
@@ -377,6 +386,10 @@ describe.runIf(
 				workspace: fixture.workspace,
 				launcher,
 				provider,
+				workspaceMediator: {
+					globalControlRoot: fixture.workspaceGlobalControlRoot,
+					git: fixture.git,
+				},
 				forbiddenRoots: [fixture.sibling, fixture.ownerHome],
 				policyGrantSha256: "c".repeat(64),
 				workspaceAccess: "write",
@@ -384,45 +397,17 @@ describe.runIf(
 			liveOwnerControlledSignal(),
 		);
 		const currentManifest = await readRuntimeContainmentManifest(current.recovery.manifestPath);
-		const legacyBinding = { ...currentManifest.binding };
-		delete legacyBinding.workspace_access;
-		await unlink(current.recovery.manifestPath);
-		const legacyManifest = await createRuntimeContainmentManifest(
+		await writeFile(
 			current.recovery.manifestPath,
-			legacyBinding,
+			`${JSON.stringify({ ...currentManifest, schema_version: 1 })}\n`,
+			{ mode: 0o600 },
 		);
 		const retainedManifest = await readFile(current.recovery.manifestPath, "utf8");
-		const recovery = {
-			manifestPath: current.recovery.manifestPath,
-			instanceId: legacyManifest.instance_id,
-			bindingSha256: legacyManifest.binding_sha256,
-		};
 
-		expect("workspace_access" in legacyManifest.binding).toBe(false);
-		expect(retainedManifest).not.toContain("workspace_access");
-		expect(legacyManifest.binding_sha256).not.toBe(currentManifest.binding_sha256);
-		const recovered = await recoverCodexSandboxContainment(recovery, liveOwnerControlledSignal());
-		expect(recovered.authorization.workspaceAccess).toBe("write");
-		expect(recovered.recovery).toEqual(recovery);
-		expect(recovered.evidence.bindingSha256).toBe(legacyManifest.binding_sha256);
-
-		const workspaceWrite = join(fixture.workspace.root, "legacy-recovery-write.txt");
-		await writeProviderRequest(fixture.providerRequest, {
-			kind: "write",
-			path: workspaceWrite,
-		});
-		const prepared = await recovered.boundary.prepare(
-			{
-				executable: provider.executable,
-				argv: buildCodexAppServerArguments(fixture.workspace.root),
-				workspaceCwd: fixture.workspace.root,
-				cwd: recovered.runtimeHome,
-				env: { HOME: recovered.runtimeHome, CODEX_HOME: recovered.runtimeHome },
-			},
-			liveOwnerControlledSignal(),
-		);
-		expect(await run(prepared)).toEqual({ stdout: "", stderr: "" });
-		expect(await readFile(workspaceWrite, "utf8")).toBe("legacy-write\n");
+		await expect(
+			recoverCodexSandboxContainment(current.recovery, liveOwnerControlledSignal()),
+		).rejects.toThrow();
+		expect(JSON.parse(retainedManifest)).toMatchObject({ schema_version: 1 });
 		expect(await readFile(current.recovery.manifestPath, "utf8")).toBe(retainedManifest);
 	}, 60_000);
 });
@@ -483,6 +468,7 @@ async function createFixture() {
 	const ownerHome = join(root, "owner-home");
 	const control = join(root, "control");
 	const runtime = join(root, "runtime");
+	const workspaceGlobalControlRoot = join(root, "workspace-patches");
 	const providerRoot = join(root, "provider-runtime");
 	const providerNodeExecutable = join(providerRoot, "node");
 	const providerExecutable = join(providerRoot, "codex-provider.mjs");
@@ -500,6 +486,7 @@ async function createFixture() {
 		mkdir(join(ownerHome, ".aws"), { recursive: true }),
 		mkdir(join(ownerHome, ".azure"), { recursive: true }),
 		mkdir(control, { mode: 0o700 }),
+		mkdir(workspaceGlobalControlRoot, { mode: 0o700 }),
 		mkdir(providerRoot, { mode: 0o700 }),
 	]);
 	await copyFile(await realpath(process.execPath), providerNodeExecutable);
@@ -509,6 +496,7 @@ async function createFixture() {
 		{ mode: 0o500 },
 	);
 	await Promise.all([chmod(providerNodeExecutable, 0o500), chmod(providerExecutable, 0o500)]);
+	const pinnedGit = await pinOwnerGitExecutable(providerExecutable);
 	await Promise.all([
 		writeFile(join(readOnly, "allowed.txt"), "approved\n"),
 		writeFile(join(sibling, "secret.txt"), "sibling-canary\n"),
@@ -550,6 +538,8 @@ async function createFixture() {
 		ownerHome,
 		control,
 		runtime,
+		workspaceGlobalControlRoot,
+		git: pinnedGit,
 		providerRoot,
 		providerExecutable,
 		providerRequest,

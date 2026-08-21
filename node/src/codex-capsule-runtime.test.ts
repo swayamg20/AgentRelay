@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, type PathLike, close, fstatSync, open } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type {
@@ -34,6 +34,7 @@ import {
 	CodexCapsuleRuntimeController,
 	CodexWorkspaceWriteActivationNotEnabledError,
 } from "./codex-capsule-runtime.js";
+import { pinOwnerGitExecutable } from "./codex-git-artifact.js";
 import type { InheritedCodexOwnerCredentialChannel } from "./codex-owner-credential-channel.js";
 import type { CodexProviderGuardianOptions } from "./codex-provider-guardian.js";
 import {
@@ -44,7 +45,10 @@ import {
 import { writeDurableJson } from "./durable-file.js";
 import type { RuntimeAuthorityEvidence, RuntimeAuthorityGrant } from "./runtime-authority.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
-import { RUNTIME_CONTAINMENT_BACKEND } from "./runtime-containment-manifest.js";
+import {
+	RUNTIME_CONTAINMENT_BACKEND,
+	RUNTIME_CONTAINMENT_CONTRACT,
+} from "./runtime-containment-manifest.js";
 import { workspaceResourceSha256 } from "./workspace-resource.js";
 
 const IDS = {
@@ -69,7 +73,10 @@ describe("CodexCapsuleRuntimeController", () => {
 	it("opens only passive state before authority activation", async () => {
 		const fixture = await createFixture();
 
-		expect(await fixture.controller.probe()).toMatchObject({ name: "capsule-codex" });
+		expect(await fixture.controller.probe()).toMatchObject({
+			name: "capsule-codex",
+			version: "0.3.0",
+		});
 		expect(await fixture.controller.ensureSession(fixture.descriptor.session)).toMatchObject({
 			...fixture.descriptor.session,
 			sessionId: expect.stringMatching(/^capsule-session-/),
@@ -156,12 +163,12 @@ describe("CodexCapsuleRuntimeController", () => {
 		}
 	});
 
-	it("retires a schema-v2 write Capsule before credential or provider activation", async () => {
+	it("retires a schema-v3 write Capsule before credential or provider activation", async () => {
 		const channel = await openFifo();
 		const directory = await temporaryDirectory();
 		const descriptor = codexDescriptor(directory, randomUUID());
 		await writeDurableJson(join(directory, CAPSULE_DESCRIPTOR_FILE), descriptor);
-		const containment = recoveredContainment(directory, descriptor, "b".repeat(64), "write");
+		const containment = await recoveredContainment(directory, descriptor, "b".repeat(64), "write");
 		const workspaceResource = workspaceResourceSha256({
 			workspaceBindingId: "97000000-0000-4000-8000-000000000004",
 			workspaceAlias: descriptor.session.workspaceAlias,
@@ -379,6 +386,28 @@ describe("CodexCapsuleRuntimeController", () => {
 				expect.objectContaining({ action: "workspace_write" }),
 			]),
 		);
+
+		await fixture.controller.close();
+		authority.dispose();
+	});
+
+	it("revalidates the exact mediator Git artifact before the write activation stop", async () => {
+		const fixture = await createFixture({ workspaceAccess: "write" });
+		const git = fixture.containment.authorization.workspaceMediator?.git;
+		if (git === undefined) throw new Error("write fixture is missing mediator Git");
+		await chmod(git.executable.path, 0o700);
+		await writeFile(git.executable.path, "changed-git", { mode: 0o500 });
+		await chmod(git.executable.path, 0o500);
+		const authority = installedAuthority(fixture.grant);
+
+		await expect(
+			authority.performSession(fixture.descriptor.session, (activation) =>
+				fixture.controller.activate(activation),
+			),
+		).rejects.toThrow("changed after it was pinned");
+		expect(fixture.guardianOptions).toHaveLength(0);
+		expect(fixture.runnerOptions).toHaveLength(0);
+		expect(fixture.ownerCredentialClaimCalls).toBe(0);
 
 		await fixture.controller.close();
 		authority.dispose();
@@ -674,7 +703,7 @@ async function createFixture(options: FixtureOptions = {}) {
 	const directory = await temporaryDirectory();
 	const descriptor = codexDescriptor(directory);
 	const workspaceAccess = options.workspaceAccess ?? "read";
-	const baseContainment = recoveredContainment(
+	const baseContainment = await recoveredContainment(
 		directory,
 		descriptor,
 		options.containmentPolicySha256 ?? "b".repeat(64),
@@ -847,7 +876,7 @@ function serverTurnInput(session: HostSessionRef, grant: RuntimeAuthorityGrant):
 
 function codexDescriptor(directory: string, capsuleId = IDS.capsule): CodexCapsuleLaunchDescriptor {
 	return codexCapsuleLaunchDescriptorSchema.parse({
-		schema_version: 2,
+		schema_version: 3,
 		capsule_id: capsuleId,
 		capability_token: `ar_capsule_${"a".repeat(64)}`,
 		socket_path: capsuleSocketPath(capsuleId),
@@ -884,21 +913,25 @@ function fakeDescriptor(): CapsuleLaunchDescriptor {
 	};
 }
 
-function recoveredContainment(
+async function recoveredContainment(
 	directory: string,
 	descriptor: CodexCapsuleLaunchDescriptor,
 	policyGrantSha256: string,
 	workspaceAccess: CodexWorkspaceAccess = "read",
-): CodexSandboxContainment {
+): Promise<CodexSandboxContainment> {
 	const runtimeDirectory = join(dirname(directory), `${basename(directory)}-runtime`);
+	const workspaceMediator =
+		workspaceAccess === "read" ? null : await createWorkspaceMediator(directory);
 	return {
 		boundary: {
 			prepare: async () => Promise.reject(new Error("provider must remain injected")),
 		},
 		evidence: {
 			instanceId: descriptor.runtime.containment.instanceId,
+			containmentContract: RUNTIME_CONTAINMENT_CONTRACT,
 			backend: RUNTIME_CONTAINMENT_BACKEND,
 			runtimeVersion: "0.146.0",
+			providerWorkspaceAccess: "read",
 			baseCommit: "1".repeat(40),
 			bindingSha256: descriptor.runtime.containment.bindingSha256,
 			retention: "retain_for_review",
@@ -909,7 +942,9 @@ function recoveredContainment(
 			providerExecutable: "/opt/agentrelay/codex",
 			runtimeVersion: "0.146.0",
 			policyGrantSha256,
-			workspaceAccess,
+			logicalWorkspaceAccess: workspaceAccess,
+			providerWorkspaceAccess: "read",
+			workspaceMediator,
 			workspace: {
 				root: "/work/backend",
 				repositoryUrl: "https://example.com/backend.git",
@@ -943,7 +978,8 @@ function containmentWithMismatch(
 			...containment,
 			authorization: {
 				...containment.authorization,
-				workspaceAccess: containment.authorization.workspaceAccess === "read" ? "write" : "read",
+				logicalWorkspaceAccess:
+					containment.authorization.logicalWorkspaceAccess === "read" ? "write" : "read",
 			},
 		};
 	}
@@ -954,6 +990,23 @@ function containmentWithMismatch(
 			runtimeVersion: "0.147.0",
 		},
 	} as unknown as CodexSandboxContainment;
+}
+
+async function createWorkspaceMediator(directory: string) {
+	const parent = dirname(directory);
+	const globalControlRoot = join(parent, `${basename(directory)}-workspace-patches`);
+	const gitRoot = join(parent, `${basename(directory)}-owner-tools`);
+	const gitExecutable = join(gitRoot, "git");
+	await Promise.all([mkdir(globalControlRoot, { mode: 0o700 }), mkdir(gitRoot, { mode: 0o700 })]);
+	await writeFile(gitExecutable, "test-git", { mode: 0o500 });
+	const stats = await lstat(globalControlRoot, { bigint: true });
+	return {
+		globalControlRoot: {
+			path: globalControlRoot,
+			identity: { device: stats.dev.toString(), inode: stats.ino.toString() },
+		},
+		git: await pinOwnerGitExecutable(gitExecutable),
+	};
 }
 
 function fixtureCapabilities(workspaceAccess: CodexWorkspaceAccess = "read") {

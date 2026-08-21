@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { digestCanonicalJson } from "./capsule-correlation.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import { pinnedOwnerGitExecutableSchema } from "./codex-git-artifact.js";
 import { CODEX_PROVIDER_EGRESS_POLICY } from "./codex-provider-egress-policy.js";
 import type { LocalFilesystemIdentity, PreparedMissionWorkspace } from "./mission-workspace.js";
 import { publishPrivateJsonExclusive, readPrivateJsonIfPresent } from "./private-state-file.js";
@@ -34,13 +35,15 @@ const providerEgressSchema = z
 	.strict();
 
 export const RUNTIME_CONTAINMENT_BACKEND = "codex_bubblewrap_0_146";
+export const RUNTIME_CONTAINMENT_CONTRACT = "agentrelay/codex-containment/v2";
 
 export const runtimeContainmentBindingSchema = z
 	.object({
+		containment_contract: z.literal(RUNTIME_CONTAINMENT_CONTRACT),
 		backend: z.literal(RUNTIME_CONTAINMENT_BACKEND),
 		runtime_version: z.literal(SUPPORTED_CODEX_CLI_VERSION),
-		// Missing is the legacy write-mode encoding and must remain absent when rehashed.
-		workspace_access: z.enum(["read", "write"]).optional(),
+		logical_workspace_access: z.enum(["read", "write"]),
+		provider_workspace_access: z.literal("read"),
 		workspace: z
 			.object({
 				repository_url: z.string().min(1).max(2_048),
@@ -89,15 +92,33 @@ export const runtimeContainmentBindingSchema = z
 				runtime_tmp: boundPathSchema,
 			})
 			.strict(),
+		workspace_mediator: z
+			.object({
+				global_control_root: boundPathSchema,
+				git: pinnedOwnerGitExecutableSchema,
+			})
+			.strict()
+			.nullable()
+			.optional(),
 		read_only_roots: z.array(boundPathSchema).max(64),
 		denied_roots: z.array(boundPathSchema).min(1).max(64),
 		policy_grant_sha256: sha256Schema,
 	})
-	.strict();
+	.strict()
+	.superRefine((binding, context) => {
+		const mediatorPresent = binding.workspace_mediator != null;
+		if ((binding.logical_workspace_access === "write") !== mediatorPresent) {
+			context.addIssue({
+				code: "custom",
+				path: ["workspace_mediator"],
+				message: "Workspace mediator authority is required exactly for logical write access",
+			});
+		}
+	});
 
 export const runtimeContainmentManifestSchema = z
 	.object({
-		schema_version: z.literal(1),
+		schema_version: z.literal(2),
 		instance_id: z.string().uuid(),
 		created_at: z.string().datetime({ offset: true }),
 		retention: z.literal("retain_for_review"),
@@ -111,8 +132,10 @@ export type RuntimeContainmentManifest = z.infer<typeof runtimeContainmentManife
 
 export interface RuntimeContainmentEvidence {
 	readonly instanceId: string;
+	readonly containmentContract: typeof RUNTIME_CONTAINMENT_CONTRACT;
 	readonly backend: typeof RUNTIME_CONTAINMENT_BACKEND;
 	readonly runtimeVersion: typeof SUPPORTED_CODEX_CLI_VERSION;
+	readonly providerWorkspaceAccess: "read";
 	readonly baseCommit: string;
 	readonly bindingSha256: string;
 	readonly retention: "retain_for_review";
@@ -126,7 +149,7 @@ export async function createRuntimeContainmentManifest(
 	const binding = runtimeContainmentBindingSchema.parse(bindingValue);
 	const bindingSha256 = digestCanonicalJson(binding);
 	const manifest = runtimeContainmentManifestSchema.parse({
-		schema_version: 1,
+		schema_version: 2,
 		instance_id: randomUUID(),
 		created_at: now().toISOString(),
 		retention: "retain_for_review",
@@ -170,8 +193,10 @@ export function containmentEvidence(
 ): RuntimeContainmentEvidence {
 	return Object.freeze({
 		instanceId: manifest.instance_id,
+		containmentContract: manifest.binding.containment_contract,
 		backend: manifest.binding.backend,
 		runtimeVersion: manifest.binding.runtime_version,
+		providerWorkspaceAccess: manifest.binding.provider_workspace_access,
 		baseCommit: manifest.binding.workspace.base_commit,
 		bindingSha256: manifest.binding_sha256,
 		retention: manifest.retention,

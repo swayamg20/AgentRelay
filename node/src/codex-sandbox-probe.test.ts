@@ -197,7 +197,7 @@ async function createProbeFixture(name: string, launcherSource: string): Promise
 			launcherHome,
 			launcherPath,
 			workspaceRoot,
-			workspaceAccess: "read",
+			providerWorkspaceAccess: "read",
 			gitDirectory,
 			runtimeTmp,
 			probe: {

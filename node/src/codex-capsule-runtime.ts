@@ -15,6 +15,7 @@ import {
 } from "./codex-capsule-runner-contract.js";
 import { CodexCapsuleRunner } from "./codex-capsule-runner.js";
 import { CodexCapsuleStore } from "./codex-capsule-store.js";
+import { assertPinnedOwnerGitExecutable } from "./codex-git-artifact.js";
 import {
 	CodexOwnerCredentialChannel,
 	type InheritedCodexOwnerCredentialChannel,
@@ -192,6 +193,12 @@ export class CodexCapsuleRuntimeController implements CapsuleRuntimeController {
 					workspaceAccess,
 				);
 				if (workspaceAccess === "write") {
+					const mediator = containment.authorization.workspaceMediator;
+					if (mediator === null) {
+						throw new Error("Recovered write containment is missing patch mediator authority");
+					}
+					await assertPinnedOwnerGitExecutable(mediator.git);
+					this.assertAvailable(authority.signal);
 					throw new CodexWorkspaceWriteActivationNotEnabledError();
 				}
 
@@ -306,8 +313,14 @@ function assertRecoveredContainment(
 		throw new Error("Recovered containment does not match the Capsule descriptor");
 	}
 	const authorization = containment.authorization;
-	if (authorization.workspaceAccess !== expectedWorkspaceAccess) {
+	if (authorization.logicalWorkspaceAccess !== expectedWorkspaceAccess) {
 		throw new Error("Recovered containment does not enforce the granted workspace access");
+	}
+	if (authorization.providerWorkspaceAccess !== "read") {
+		throw new Error("Recovered containment gives the Codex provider workspace write access");
+	}
+	if ((expectedWorkspaceAccess === "write") !== (authorization.workspaceMediator !== null)) {
+		throw new Error("Recovered containment has inconsistent patch mediator authority");
 	}
 	if (
 		authorization.controlDirectory !== directory ||

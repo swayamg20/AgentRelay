@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
+import { pinnedOwnerGitExecutableSchema } from "./codex-git-artifact.js";
 import { buildCodexProviderEgressToml } from "./codex-provider-egress-policy.js";
 import {
 	CODEX_SANDBOX_CONFIG_FILE,
@@ -51,12 +52,14 @@ export function assertCodexSandboxInput(input: CodexSandboxContainmentInput): vo
 	if ((input.readOnlyRoots?.length ?? 0) > 32 || (input.forbiddenRoots?.length ?? 0) > 32) {
 		throw new Error("Containment supports at most 32 additional read or denied roots");
 	}
-	if (
-		input.workspaceAccess !== undefined &&
-		input.workspaceAccess !== "read" &&
-		input.workspaceAccess !== "write"
-	) {
+	if (input.workspaceAccess !== "read" && input.workspaceAccess !== "write") {
 		throw new Error("Containment workspace access must be read or write");
+	}
+	if ((input.workspaceAccess === "write") !== (input.workspaceMediator !== undefined)) {
+		throw new Error("Containment workspace mediator is required exactly for logical write access");
+	}
+	if (input.workspaceMediator !== undefined) {
+		pinnedOwnerGitExecutableSchema.parse(input.workspaceMediator.git);
 	}
 	for (const digest of [
 		input.launcher.sha256,
@@ -91,9 +94,41 @@ export async function prepareContainmentLayout(
 		mode === "create" ? ensurePrivateStateDirectory : assertPrivateStateDirectory;
 	await prepareDirectory(input.controlDirectory);
 	await prepareDirectory(input.runtimeDirectory);
+	if (input.workspaceMediator !== undefined) {
+		await prepareDirectory(input.workspaceMediator.globalControlRoot);
+	}
 	assertDisjoint(input.controlDirectory, input.runtimeDirectory, "control and runtime roots");
 	assertDisjoint(input.controlDirectory, input.workspace.root, "control root and workspace");
 	assertDisjoint(input.runtimeDirectory, input.workspace.root, "runtime root and workspace");
+	if (input.workspaceMediator !== undefined) {
+		assertDisjoint(
+			input.workspaceMediator.globalControlRoot,
+			input.controlDirectory,
+			"workspace-global control and Capsule control roots",
+		);
+		assertDisjoint(
+			input.workspaceMediator.globalControlRoot,
+			input.runtimeDirectory,
+			"workspace-global control and runtime roots",
+		);
+		assertDisjoint(
+			input.workspaceMediator.globalControlRoot,
+			input.workspace.root,
+			"workspace-global control root and workspace",
+		);
+		for (const root of [
+			input.controlDirectory,
+			input.runtimeDirectory,
+			input.workspaceMediator.globalControlRoot,
+			input.workspace.root,
+		]) {
+			assertDisjoint(
+				input.workspaceMediator.git.executable.path,
+				root,
+				"owner Git executable and writable state",
+			);
+		}
+	}
 
 	const launcherHome = join(input.controlDirectory, "sandbox-launcher");
 	const stagedProbeRoot = join(input.runtimeDirectory, "probe-runtime");
@@ -134,15 +169,11 @@ export async function buildCodexSandboxConfig(
 	const ownerHome = await realpath(homedir());
 	const explicitDeniedRoots = await canonicalContainmentRoots([
 		layout.controlRoot,
+		...(input.workspaceMediator === undefined ? [] : [input.workspaceMediator.globalControlRoot]),
 		...(input.forbiddenRoots ?? []),
 	]);
 	const deniedRoots = [...new Set([ownerHome, ...explicitDeniedRoots])].sort();
-	const workspaceAccess = input.workspaceAccess ?? "write";
-	const writableRoots = [
-		...(workspaceAccess === "write" ? [input.workspace.root] : []),
-		layout.runtimeHome,
-		layout.runtimeTmp,
-	];
+	const writableRoots = [layout.runtimeHome, layout.runtimeTmp];
 	for (const readRoot of readRoots) {
 		for (const writableRoot of writableRoots) {
 			assertDisjoint(readRoot, writableRoot, "trusted read and writable roots");
@@ -161,11 +192,7 @@ export async function buildCodexSandboxConfig(
 			),
 		)
 	) {
-		throw new Error(
-			workspaceAccess === "write"
-				? "An explicitly denied containment root cannot contain a writable root"
-				: "An explicitly denied containment root cannot contain an accessible root",
-		);
+		throw new Error("An explicitly denied containment root cannot contain an accessible root");
 	}
 	if (readRoots.some((readRoot) => deniedRoots.some((denied) => isPathWithin(denied, readRoot)))) {
 		throw new Error("A readable root cannot contain a denied containment root");
@@ -180,7 +207,7 @@ export async function buildCodexSandboxConfig(
 	filesystemEntries.set(":minimal", "read");
 	for (const path of explicitDenyRoots) filesystemEntries.set(path, "deny");
 	for (const path of readRoots) filesystemEntries.set(path, "read");
-	filesystemEntries.set(input.workspace.root, workspaceAccess);
+	filesystemEntries.set(input.workspace.root, "read");
 	filesystemEntries.set(input.workspace.gitDirectory, "read");
 	filesystemEntries.set(layout.runtimeHome, "write");
 	filesystemEntries.set(layout.runtimeTmp, "write");

@@ -56,7 +56,7 @@ describe("Capsule runtime factory", () => {
 		await controller.close();
 	});
 
-	it("dispatches schema v2 to a passive Codex controller", async () => {
+	it("dispatches schema v3 to a passive Codex controller", async () => {
 		const directory = await temporaryDirectory();
 		const descriptor = codexDescriptor(directory);
 		await writeDescriptor(directory, descriptor);
@@ -82,7 +82,7 @@ describe("Capsule runtime factory", () => {
 		await controller.close();
 	});
 
-	it("keeps a configured v2 server passive through probe, lookup, and authority install", async () => {
+	it("keeps a configured v3 server passive through probe, lookup, and authority install", async () => {
 		const directory = await temporaryDirectory();
 		const capsuleId = randomUUID();
 		const descriptor = codexDescriptor(directory, capsuleId);
@@ -147,7 +147,7 @@ function fakeDescriptor(): CapsuleLaunchDescriptor {
 
 function codexDescriptor(directory: string, capsuleId = IDS.capsule): CapsuleLaunchDescriptor {
 	return capsuleLaunchDescriptorSchema.parse({
-		schema_version: 2,
+		schema_version: 3,
 		capsule_id: capsuleId,
 		capability_token: `ar_capsule_${"b".repeat(64)}`,
 		socket_path: capsuleSocketPath(capsuleId),

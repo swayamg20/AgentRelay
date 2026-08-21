@@ -93,7 +93,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		expect(launchedDescriptor).toBe(descriptor);
 	});
 
-	it("rejects a schema-v2 descriptor in the detached fake launcher before spawn", async () => {
+	it("rejects a schema-v3 descriptor in the detached fake launcher before spawn", async () => {
 		const directory = await temporaryDirectory();
 		const markerPath = join(directory, "spawned");
 		const launcher = createDetachedCapsuleLauncher({
@@ -943,7 +943,7 @@ describe("PersistentFakeCapsuleAdapter", () => {
 		const directory = join(rootDirectory, IDS.mission);
 		const descriptor = await readFakeCapsuleLaunchDescriptor(directory);
 		const codexDescriptor = codexCapsuleLaunchDescriptorSchema.parse({
-			schema_version: 2,
+			schema_version: 3,
 			capsule_id: descriptor.capsule_id,
 			capability_token: descriptor.capability_token,
 			socket_path: descriptor.socket_path,
@@ -1164,7 +1164,7 @@ function testFakeDescriptor(directory: string): FakeCapsuleLaunchDescriptor {
 
 function testCodexDescriptor(directory: string): CapsuleLaunchDescriptor {
 	return codexCapsuleLaunchDescriptorSchema.parse({
-		schema_version: 2,
+		schema_version: 3,
 		capsule_id: IDS.otherMission,
 		capability_token: `ar_capsule_${"e".repeat(64)}`,
 		socket_path: capsuleSocketPath(IDS.otherMission),

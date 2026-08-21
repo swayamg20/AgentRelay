@@ -12,7 +12,7 @@ import type { CodexCapsuleStore } from "./codex-capsule-store.js";
 
 export const CODEX_CAPSULE_ADAPTER_INFO: AdapterInfo = adapterInfoSchema.parse({
 	name: "capsule-codex",
-	version: "0.2.0",
+	version: "0.3.0",
 	capabilities: { cancellation: true, recovery: true, usage: "turn_cumulative" },
 });
 

@@ -6,10 +6,12 @@ import { digestCanonicalJson } from "./capsule-correlation.js";
 import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import type { RuntimeContainmentBinding } from "./runtime-containment-manifest.js";
 import {
+	RUNTIME_CONTAINMENT_CONTRACT,
 	containmentEvidence,
 	createRuntimeContainmentManifest,
 	openRuntimeContainmentManifest,
 	readRuntimeContainmentManifest,
+	runtimeContainmentBindingSchema,
 } from "./runtime-containment-manifest.js";
 
 const temporaryDirectories: string[] = [];
@@ -48,8 +50,9 @@ describe("runtime containment manifest", () => {
 		const reopened = await openRuntimeContainmentManifest(path, binding);
 
 		expect(reopened).toEqual(created);
-		expect("workspace_access" in reopened.binding).toBe(false);
-		expect(await readFile(path, "utf8")).not.toContain("workspace_access");
+		expect(reopened.binding.logical_workspace_access).toBe("read");
+		expect(reopened.binding.provider_workspace_access).toBe("read");
+		expect(reopened.binding.workspace_mediator).toBeUndefined();
 		expect(await readRuntimeContainmentManifest(path)).toEqual(created);
 		expect((await stat(path)).mode & 0o777).toBe(0o600);
 		await expect(createRuntimeContainmentManifest(path, binding)).resolves.toEqual(created);
@@ -93,22 +96,78 @@ describe("runtime containment manifest", () => {
 		expect((await stat(path)).nlink).toBe(1);
 	});
 
-	it("binds explicit read-only workspace access into the retained digest", async () => {
+	it("binds logical write authority while keeping provider access read-only", async () => {
 		const directory = await realpath(
 			await mkdtemp(join(tmpdir(), "agentrelay-containment-manifest-")),
 		);
 		temporaryDirectories.push(directory);
 		const path = join(directory, "containment.json");
-		const binding = { ...validBinding(), workspace_access: "read" as const };
+		const binding: RuntimeContainmentBinding = {
+			...validBinding(),
+			logical_workspace_access: "write",
+			workspace_mediator: {
+				global_control_root: boundPath("/private/workspace-patches", "70"),
+				git: {
+					executable: boundPath("/usr/bin/git", "71"),
+					sha256: "9".repeat(64),
+				},
+			},
+		};
 
 		const created = await createRuntimeContainmentManifest(path, binding);
 		const reopened = await openRuntimeContainmentManifest(path, binding);
 
 		expect(reopened).toEqual(created);
-		expect(reopened.binding.workspace_access).toBe("read");
+		expect(reopened.binding.logical_workspace_access).toBe("write");
+		expect(reopened.binding.provider_workspace_access).toBe("read");
+		expect(reopened.binding.workspace_mediator).toEqual(binding.workspace_mediator);
 		await expect(
-			openRuntimeContainmentManifest(path, { ...binding, workspace_access: "write" }),
+			openRuntimeContainmentManifest(path, {
+				...binding,
+				logical_workspace_access: "read",
+				workspace_mediator: undefined,
+			}),
 		).rejects.toThrow("does not authorize this exact workspace and policy");
+	});
+
+	it("requires mediator authority exactly for logical write access", () => {
+		const read = validBinding();
+		const mediator = {
+			global_control_root: boundPath("/private/workspace-patches", "70"),
+			git: {
+				executable: boundPath("/usr/bin/git", "71"),
+				sha256: "9".repeat(64),
+			},
+		};
+		expect(
+			runtimeContainmentBindingSchema.safeParse({ ...read, workspace_mediator: mediator }).success,
+		).toBe(false);
+		expect(
+			runtimeContainmentBindingSchema.safeParse({
+				...read,
+				logical_workspace_access: "write",
+			}).success,
+		).toBe(false);
+		expect(
+			runtimeContainmentBindingSchema.safeParse({
+				...read,
+				provider_workspace_access: "write",
+			}).success,
+		).toBe(false);
+	});
+
+	it("rejects the old containment manifest version without upgrading it", async () => {
+		const directory = await realpath(
+			await mkdtemp(join(tmpdir(), "agentrelay-containment-manifest-")),
+		);
+		temporaryDirectories.push(directory);
+		const path = join(directory, "containment.json");
+		const created = await createRuntimeContainmentManifest(path, validBinding());
+		await writeFile(path, `${JSON.stringify({ ...created, schema_version: 1 })}\n`);
+		await chmod(path, 0o600);
+
+		await expect(readRuntimeContainmentManifest(path)).rejects.toThrow();
+		expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ schema_version: 1 });
 	});
 
 	it("rejects legacy egress-less and altered provider policies", async () => {
@@ -119,7 +178,7 @@ describe("runtime containment manifest", () => {
 		const path = join(directory, "containment.json");
 		const binding = validBinding();
 		const created = await createRuntimeContainmentManifest(path, binding);
-		expect(created.schema_version).toBe(1);
+		expect(created.schema_version).toBe(2);
 		expect(created.binding.provider_egress).toEqual(codexProviderEgressBinding());
 		expect(JSON.stringify(created)).not.toContain("OPENAI_API_KEY");
 		expect(JSON.stringify(created)).not.toContain("CODEX_API_KEY");
@@ -180,51 +239,54 @@ describe("runtime containment manifest", () => {
 });
 
 function validBinding(): RuntimeContainmentBinding {
-	const path = (value: string, inode: string) => ({
-		path: value,
-		identity: { device: "1", inode },
-	});
 	return {
+		containment_contract: RUNTIME_CONTAINMENT_CONTRACT,
 		backend: "codex_bubblewrap_0_146",
 		runtime_version: "0.146.0",
+		logical_workspace_access: "read",
+		provider_workspace_access: "read",
 		workspace: {
 			repository_url: "https://github.com/example/backend.git",
 			base_commit: "a".repeat(40),
 			reachable_from_ref: "refs/heads/main",
-			root: path("/private/workspace", "10"),
-			git_directory: path("/private/workspace/.git", "11"),
+			root: boundPath("/private/workspace", "10"),
+			git_directory: boundPath("/private/workspace/.git", "11"),
 		},
 		launcher: {
-			executable: path("/private/launcher/bin/codex", "20"),
+			executable: boundPath("/private/launcher/bin/codex", "20"),
 			executable_sha256: "b".repeat(64),
-			read_root: path("/private/launcher", "21"),
+			read_root: boundPath("/private/launcher", "21"),
 			sandbox_helper: {
-				executable: path("/private/launcher/codex-resources/bwrap", "22"),
+				executable: boundPath("/private/launcher/codex-resources/bwrap", "22"),
 				executable_sha256: "f".repeat(64),
 			},
 			config_path: "/private/control/config.toml",
 			config_sha256: "c".repeat(64),
 		},
 		provider: {
-			executable: path("/private/provider/bin/codex", "30"),
+			executable: boundPath("/private/provider/bin/codex", "30"),
 			executable_sha256: "d".repeat(64),
-			read_root: path("/private/provider", "31"),
+			read_root: boundPath("/private/provider", "31"),
 		},
 		provider_egress: codexProviderEgressBinding(),
 		probe: {
-			executable: path("/private/node/bin/node", "32"),
+			executable: boundPath("/private/node/bin/node", "32"),
 			executable_sha256: "1".repeat(64),
-			read_root: path("/private/node/bin", "33"),
+			read_root: boundPath("/private/node/bin", "33"),
 		},
 		private_paths: {
-			control_root: path("/private/control", "40"),
-			launcher_home: path("/private/control/launcher", "41"),
-			runtime_root: path("/private/runtime", "42"),
-			runtime_home: path("/private/runtime/home", "43"),
-			runtime_tmp: path("/private/runtime/tmp", "44"),
+			control_root: boundPath("/private/control", "40"),
+			launcher_home: boundPath("/private/control/launcher", "41"),
+			runtime_root: boundPath("/private/runtime", "42"),
+			runtime_home: boundPath("/private/runtime/home", "43"),
+			runtime_tmp: boundPath("/private/runtime/tmp", "44"),
 		},
-		read_only_roots: [path("/private/read", "50")],
-		denied_roots: [path("/private/denied", "60")],
+		read_only_roots: [boundPath("/private/read", "50")],
+		denied_roots: [boundPath("/private/denied", "60")],
 		policy_grant_sha256: "e".repeat(64),
 	};
+}
+
+function boundPath(value: string, inode: string) {
+	return { path: value, identity: { device: "1", inode } };
 }

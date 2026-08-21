@@ -5,6 +5,10 @@ import { type SessionInput, sessionInputSchema } from "@agentrelay/protocol";
 import { z } from "zod";
 import type { CodexCapsuleLaunchDescriptor } from "./capsule-launch-descriptor.js";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
+import {
+	type PinnedOwnerGitExecutable,
+	assertPinnedOwnerGitExecutable,
+} from "./codex-git-artifact.js";
 import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import { sha256PinnedFile } from "./codex-sandbox-binding.js";
 import {
@@ -16,6 +20,7 @@ import {
 	type PinnedCodexLauncher,
 } from "./codex-sandbox-contract.js";
 import type { PreparedMissionWorkspace } from "./mission-workspace.js";
+import { assertPrivateStateDirectory } from "./private-state-file.js";
 import {
 	RuntimeAuthorityDeniedError,
 	type RuntimeWorkspaceAuthority,
@@ -23,6 +28,7 @@ import {
 	runtimeAuthorityDenyCodeSchema,
 } from "./runtime-authority.js";
 import {
+	RUNTIME_CONTAINMENT_CONTRACT,
 	type RuntimeContainmentManifest,
 	parseRuntimeContainmentManifest,
 	workspaceBinding,
@@ -51,6 +57,10 @@ export interface CodexContainmentProvisioningExpectation {
 	readonly workspace: PreparedMissionWorkspace;
 	readonly policyGrantSha256: string;
 	readonly workspaceAccess: CodexWorkspaceAccess;
+	readonly workspaceMediator: Readonly<{
+		globalControlRoot: string;
+		git: PinnedOwnerGitExecutable;
+	}> | null;
 }
 
 export function parseCodexCapsuleProvisionInput(
@@ -171,10 +181,18 @@ export async function assertCurrentCodexContainmentManifest(
 		runtimeTmp: join(runtimeDirectory, "tmp"),
 	};
 	const binding = manifest.binding;
-	const expectedDeniedRoots = [ownerHome, controlDirectory].sort();
+	const expectedDeniedRoots = [
+		ownerHome,
+		controlDirectory,
+		...(expectation.workspaceMediator === null
+			? []
+			: [expectation.workspaceMediator.globalControlRoot]),
+	].sort();
 	const actualDeniedRoots = binding.denied_roots.map((root) => root.path).sort();
 	const exact =
-		binding.workspace_access === expectation.workspaceAccess &&
+		binding.containment_contract === RUNTIME_CONTAINMENT_CONTRACT &&
+		binding.logical_workspace_access === expectation.workspaceAccess &&
+		binding.provider_workspace_access === "read" &&
 		isDeepStrictEqual(binding.workspace, workspaceBinding(expectation.workspace)) &&
 		binding.policy_grant_sha256 === expectation.policyGrantSha256 &&
 		binding.private_paths.control_root.path === expectedPrivatePaths.controlRoot &&
@@ -182,6 +200,7 @@ export async function assertCurrentCodexContainmentManifest(
 		binding.private_paths.runtime_root.path === expectedPrivatePaths.runtimeRoot &&
 		binding.private_paths.runtime_home.path === expectedPrivatePaths.runtimeHome &&
 		binding.private_paths.runtime_tmp.path === expectedPrivatePaths.runtimeTmp &&
+		matchesWorkspaceMediator(binding.workspace_mediator, expectation.workspaceMediator) &&
 		binding.launcher.executable.path === launcher.executable &&
 		binding.launcher.executable_sha256 === launcher.sha256 &&
 		binding.launcher.read_root.path === launcher.readRoot &&
@@ -198,7 +217,10 @@ export async function assertCurrentCodexContainmentManifest(
 		binding.probe.executable.path === join(runtimeDirectory, "probe-runtime", "bin", "node") &&
 		binding.read_only_roots.length === 0 &&
 		isDeepStrictEqual(actualDeniedRoots, expectedDeniedRoots);
-	if (!exact || !(await currentArtifactMatches(manifest, launcher))) {
+	if (
+		!exact ||
+		!(await currentArtifactMatches(manifest, launcher, expectation.workspaceMediator))
+	) {
 		throw new Error("Codex containment does not match the current Node-owned provisioning input");
 	}
 }
@@ -233,6 +255,8 @@ export function assertRecoveredCodexContainment(
 		containment.evidence.instanceId === manifest.instance_id &&
 		containment.evidence.bindingSha256 === manifest.binding_sha256 &&
 		containment.evidence.runtimeVersion === SUPPORTED_CODEX_CLI_VERSION &&
+		containment.evidence.containmentContract === RUNTIME_CONTAINMENT_CONTRACT &&
+		containment.evidence.providerWorkspaceAccess === "read" &&
 		containment.evidence.baseCommit === expectation.workspace.baseCommit &&
 		containment.runtimeHome === join(runtimeDirectory, "codex-home") &&
 		containment.runtimeTmp === join(runtimeDirectory, "tmp") &&
@@ -241,7 +265,12 @@ export function assertRecoveredCodexContainment(
 		containment.authorization.providerExecutable === manifest.binding.provider.executable.path &&
 		containment.authorization.runtimeVersion === SUPPORTED_CODEX_CLI_VERSION &&
 		containment.authorization.policyGrantSha256 === expectation.policyGrantSha256 &&
-		containment.authorization.workspaceAccess === expectation.workspaceAccess &&
+		containment.authorization.logicalWorkspaceAccess === expectation.workspaceAccess &&
+		containment.authorization.providerWorkspaceAccess === "read" &&
+		matchesAuthorizationWorkspaceMediator(
+			containment.authorization.workspaceMediator,
+			expectation.workspaceMediator,
+		) &&
 		isDeepStrictEqual(containment.authorization.workspace, {
 			root: expectation.workspace.root,
 			repositoryUrl: expectation.workspace.repositoryUrl,
@@ -262,23 +291,65 @@ function hasWorkspaceCapability(
 	);
 }
 
+function matchesWorkspaceMediator(
+	actual: RuntimeContainmentManifest["binding"]["workspace_mediator"],
+	expected: CodexContainmentProvisioningExpectation["workspaceMediator"],
+): boolean {
+	if (expected === null) return actual == null;
+	return (
+		actual != null &&
+		actual.global_control_root.path === expected.globalControlRoot &&
+		isDeepStrictEqual(actual.git, expected.git)
+	);
+}
+
+function matchesAuthorizationWorkspaceMediator(
+	actual: CodexSandboxContainment["authorization"]["workspaceMediator"],
+	expected: CodexContainmentProvisioningExpectation["workspaceMediator"],
+): boolean {
+	if (expected === null) return actual === null;
+	return (
+		actual !== null &&
+		actual.globalControlRoot.path === expected.globalControlRoot &&
+		isDeepStrictEqual(actual.git, expected.git)
+	);
+}
+
 async function currentArtifactMatches(
 	manifest: RuntimeContainmentManifest,
 	launcher: PinnedCodexLauncher,
+	workspaceMediator: CodexContainmentProvisioningExpectation["workspaceMediator"],
 ): Promise<boolean> {
 	const binding = manifest.binding;
-	await assertPinnedCodexArtifact(launcher);
-	const [executableIdentity, readRootIdentity, helperIdentity] = await Promise.all([
-		filesystemIdentity(launcher.executable),
-		filesystemIdentity(launcher.readRoot),
-		filesystemIdentity(launcher.sandboxHelper.executable),
+	await Promise.all([
+		assertPinnedCodexArtifact(launcher),
+		...(workspaceMediator === null
+			? []
+			: [
+					assertPrivateStateDirectory(workspaceMediator.globalControlRoot),
+					assertPinnedOwnerGitExecutable(workspaceMediator.git),
+				]),
 	]);
+	const [executableIdentity, readRootIdentity, helperIdentity, globalControlRootIdentity] =
+		await Promise.all([
+			filesystemIdentity(launcher.executable),
+			filesystemIdentity(launcher.readRoot),
+			filesystemIdentity(launcher.sandboxHelper.executable),
+			workspaceMediator === null
+				? Promise.resolve(null)
+				: filesystemIdentity(workspaceMediator.globalControlRoot),
+		]);
 	return (
 		isDeepStrictEqual(binding.launcher.executable.identity, executableIdentity) &&
 		isDeepStrictEqual(binding.launcher.read_root.identity, readRootIdentity) &&
 		isDeepStrictEqual(binding.launcher.sandbox_helper.executable.identity, helperIdentity) &&
 		isDeepStrictEqual(binding.provider.executable.identity, executableIdentity) &&
-		isDeepStrictEqual(binding.provider.read_root.identity, readRootIdentity)
+		isDeepStrictEqual(binding.provider.read_root.identity, readRootIdentity) &&
+		(workspaceMediator === null ||
+			isDeepStrictEqual(
+				binding.workspace_mediator?.global_control_root.identity,
+				globalControlRootIdentity,
+			))
 	);
 }
 

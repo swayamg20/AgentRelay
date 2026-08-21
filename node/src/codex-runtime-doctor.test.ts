@@ -16,7 +16,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import * as codexArtifact from "./codex-artifact.js";
-import { runCodexRuntimeDoctor } from "./codex-runtime-doctor.js";
+import { runCodexRuntimeDoctor, runCodexWorkspaceMediatorDoctor } from "./codex-runtime-doctor.js";
 import type { PinnedCodexLauncher } from "./codex-sandbox-contract.js";
 
 const temporaryDirectories: string[] = [];
@@ -30,6 +30,39 @@ afterEach(async () => {
 });
 
 describe.runIf(process.platform !== "win32")("Codex runtime doctor", () => {
+	it("pins the exact owner-selected Git artifact without probing a PATH candidate", async () => {
+		const gitExecutable = "/owner/selected/git";
+		const pinned = {
+			executable: { path: gitExecutable, identity: { device: "1", inode: "2" } },
+			sha256: "a".repeat(64),
+		};
+		const pinGit = vi.fn(async () => pinned);
+
+		const result = await runCodexWorkspaceMediatorDoctor(
+			{ signal: new AbortController().signal, gitExecutable },
+			{ pinGit },
+		);
+
+		expect(pinGit).toHaveBeenCalledOnce();
+		expect(pinGit).toHaveBeenCalledWith(gitExecutable);
+		expect(result).toEqual(pinned);
+		expect(result).not.toBe(pinned);
+		expect(Object.isFrozen(result.executable.identity)).toBe(true);
+	});
+
+	it("reports a fixed Git-artifact failure before runtime state is opened", async () => {
+		await expect(
+			runCodexWorkspaceMediatorDoctor(
+				{ signal: new AbortController().signal, gitExecutable: "/owner/selected/git" },
+				{ pinGit: async () => Promise.reject(new Error("secret owner path failure")) },
+			),
+		).rejects.toMatchObject({
+			name: "CodexRuntimeDoctorError",
+			reason: "git",
+			message: "Owner-selected Git executable verification failed",
+		});
+	});
+
 	it("rejects an unsupported production host before resolution or probe state", async () => {
 		const homesBefore = await doctorProbeHomes();
 		const resolveLauncher = vi.spyOn(codexArtifact, "resolvePinnedCodexLauncher");

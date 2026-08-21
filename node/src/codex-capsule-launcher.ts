@@ -19,7 +19,7 @@ const FAILURE_MESSAGES = {
 	cancelled: "Codex Mission capsule launch was cancelled",
 	credential: "Codex owner credential is unavailable",
 	invalidCommand: "Codex Mission capsule command is invalid",
-	invalidDescriptor: "Codex Mission capsule launcher requires a schema-v2 descriptor",
+	invalidDescriptor: "Codex Mission capsule launcher requires a schema-v3 descriptor",
 	invalidDirectory: "Codex Mission capsule directory is invalid",
 	invalidTimeout: "Codex owner credential timeout is invalid",
 	spawn: "Codex Mission capsule could not be started",
@@ -47,7 +47,7 @@ export function createDetachedCodexCapsuleLauncher(
 
 	return {
 		async start(capsuleDirectory, descriptor) {
-			if (descriptor.schema_version !== 2) throw launchFailure("invalidDescriptor");
+			if (descriptor.schema_version !== 3) throw launchFailure("invalidDescriptor");
 			await startDetachedCodexCapsule({
 				command,
 				capsuleDirectory: validateCapsuleDirectory(capsuleDirectory),

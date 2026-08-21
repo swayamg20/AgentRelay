@@ -67,7 +67,7 @@ describe("Capsule launch descriptors", () => {
 		expect(capsuleLaunchDescriptorSchema.parse(descriptor)).toEqual(descriptor);
 	});
 
-	it("accepts only the pinned v2 Codex runtime and exact containment handle", () => {
+	it("accepts only the pinned v3 Codex runtime and exact containment handle", () => {
 		const descriptor = codexDescriptor();
 
 		expect(codexCapsuleLaunchDescriptorSchema.parse(descriptor)).toEqual(descriptor);
@@ -76,6 +76,7 @@ describe("Capsule launch descriptors", () => {
 
 	it.each([
 		["old runtime contract", { runtime_contract: "agentrelay/codex-capsule/v1" }],
+		["old write-capable runtime contract", { runtime_contract: "agentrelay/codex-capsule/v2" }],
 		["unsupported Codex CLI", { codex_cli_version: "0.147.0" }],
 		["invented protocol version", { protocolVersion: "1" }],
 	])("rejects an %s", (_name, runtimeOverride) => {
@@ -103,7 +104,10 @@ describe("Capsule launch descriptors", () => {
 		expect(capsuleLaunchDescriptorSchema.safeParse({ ...codex, schema_version: 1 }).success).toBe(
 			false,
 		);
-		expect(capsuleLaunchDescriptorSchema.safeParse({ ...fake, schema_version: 2 }).success).toBe(
+		expect(capsuleLaunchDescriptorSchema.safeParse({ ...fake, schema_version: 3 }).success).toBe(
+			false,
+		);
+		expect(capsuleLaunchDescriptorSchema.safeParse({ ...codex, schema_version: 2 }).success).toBe(
 			false,
 		);
 	});
@@ -139,7 +143,7 @@ describe("Capsule launch descriptors", () => {
 		);
 	});
 
-	it("keeps the Codex reader narrowed to provisioned v2 descriptors", async () => {
+	it("keeps the Codex reader narrowed to provisioned v3 descriptors", async () => {
 		const directory = await temporaryDirectory();
 		const descriptor = fakeCapsuleLaunchDescriptorSchema.parse({
 			schema_version: 1,
@@ -160,7 +164,7 @@ describe("Capsule launch descriptors", () => {
 
 function codexDescriptor(overrides: { readonly socket_path?: string } = {}) {
 	return {
-		schema_version: 2 as const,
+		schema_version: 3 as const,
 		capsule_id: IDS.capsule,
 		capability_token: `ar_capsule_${"b".repeat(64)}`,
 		socket_path: overrides.socket_path ?? "/tmp/ar-capsules-501/codex.sock",

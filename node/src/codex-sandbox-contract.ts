@@ -1,6 +1,8 @@
 import { isAbsolute, normalize } from "node:path";
 import { z } from "zod";
+import type { PinnedOwnerGitExecutable } from "./codex-git-artifact.js";
 import type { CodexProcessBoundary } from "./codex-process-boundary.js";
+import type { LocalFilesystemIdentity } from "./mission-workspace.js";
 import type { PreparedMissionWorkspace } from "./mission-workspace.js";
 import type { RuntimeContainmentEvidence } from "./runtime-containment-manifest.js";
 
@@ -36,11 +38,16 @@ export interface CodexSandboxContainmentInput {
 	readonly workspace: PreparedMissionWorkspace;
 	readonly launcher: PinnedCodexLauncher;
 	readonly provider: PinnedExecutable;
+	readonly workspaceMediator?: Readonly<{
+		/** Canonical private Node state shared by every write-capable Capsule. */
+		globalControlRoot: string;
+		git: PinnedOwnerGitExecutable;
+	}>;
 	readonly readOnlyRoots?: readonly string[];
 	readonly forbiddenRoots?: readonly string[];
 	readonly policyGrantSha256: string;
-	/** Omission defaults to write; new manifests persist the resolved access explicitly. */
-	readonly workspaceAccess?: CodexWorkspaceAccess;
+	/** Logical grant used by the trusted mediator; the provider mount is always read-only. */
+	readonly workspaceAccess: CodexWorkspaceAccess;
 }
 
 export interface CodexSandboxContainment {
@@ -60,7 +67,15 @@ export interface CodexSandboxAuthorization {
 	readonly providerExecutable: string;
 	readonly runtimeVersion: RuntimeContainmentEvidence["runtimeVersion"];
 	readonly policyGrantSha256: string;
-	readonly workspaceAccess: CodexWorkspaceAccess;
+	readonly logicalWorkspaceAccess: CodexWorkspaceAccess;
+	readonly providerWorkspaceAccess: "read";
+	readonly workspaceMediator: Readonly<{
+		globalControlRoot: Readonly<{
+			path: string;
+			identity: LocalFilesystemIdentity;
+		}>;
+		git: PinnedOwnerGitExecutable;
+	}> | null;
 	readonly workspace: Readonly<{
 		root: string;
 		repositoryUrl: string;

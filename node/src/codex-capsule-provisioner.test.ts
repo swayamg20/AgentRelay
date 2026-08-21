@@ -26,6 +26,7 @@ import {
 	type CodexCapsuleProvisioningAuthority,
 	type CodexContainmentProvisioningPort,
 } from "./codex-capsule-provisioner.js";
+import { type PinnedOwnerGitExecutable, pinOwnerGitExecutable } from "./codex-git-artifact.js";
 import { codexProviderEgressBinding } from "./codex-provider-egress-policy.js";
 import type {
 	CodexSandboxContainment,
@@ -40,6 +41,7 @@ import type { PreparedMissionWorkspace } from "./mission-workspace.js";
 import { authorityGrant } from "./runtime-authority.test-support.js";
 import {
 	RUNTIME_CONTAINMENT_BACKEND,
+	RUNTIME_CONTAINMENT_CONTRACT,
 	type RuntimeContainmentBinding,
 	type RuntimeContainmentManifest,
 	boundPath,
@@ -63,7 +65,7 @@ afterEach(async () => {
 });
 
 describe("CodexCapsuleProvisioner", () => {
-	it("pins the artifact at open and publishes a strict passive v2 descriptor", async () => {
+	it("pins the artifacts at open and publishes a strict passive v3 descriptor", async () => {
 		const fixture = await createFixture();
 		const activation = activationFor(fixture.input);
 
@@ -81,7 +83,8 @@ describe("CodexCapsuleProvisioner", () => {
 			policyGrantSha256: POLICY_SHA256,
 		});
 		expect(fixture.port.prepareInputs[0]?.provider).toBe(fixture.port.prepareInputs[0]?.launcher);
-		expect(descriptor.schema_version).toBe(2);
+		expect(fixture.port.prepareInputs[0]?.workspaceMediator).toBeUndefined();
+		expect(descriptor.schema_version).toBe(3);
 		expect(descriptor.runtime.kind).toBe("codex");
 		expect(await readCapsuleLaunchDescriptor(join(fixture.controlRoot, IDS.mission))).toEqual(
 			descriptor,
@@ -119,6 +122,33 @@ describe("CodexCapsuleProvisioner", () => {
 		expect(fixture.port.recoverCalls).toBe(1);
 	});
 
+	it("rejects a replaced mediator Git artifact before containment recovery", async () => {
+		const fixture = await createFixture("write");
+		await fixture.provisioner.provision(fixture.input, activationFor(fixture.input).authority);
+		await chmod(fixture.git.executable.path, 0o700);
+		await writeFile(fixture.git.executable.path, "changed-git", { mode: 0o500 });
+		await chmod(fixture.git.executable.path, 0o500);
+		const recoveryCalls = fixture.port.recoverCalls;
+
+		await expect(
+			fixture.provisioner.recover(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("changed after it was pinned");
+		expect(fixture.port.recoverCalls).toBe(recoveryCalls);
+	});
+
+	it("rejects a replaced Node-wide mediator root before containment recovery", async () => {
+		const fixture = await createFixture("write");
+		await fixture.provisioner.provision(fixture.input, activationFor(fixture.input).authority);
+		await rm(fixture.workspaceGlobalControlRoot, { recursive: true });
+		await mkdir(fixture.workspaceGlobalControlRoot, { mode: 0o700 });
+		const recoveryCalls = fixture.port.recoverCalls;
+
+		await expect(
+			fixture.provisioner.recover(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("Node-owned provisioning input");
+		expect(fixture.port.recoverCalls).toBe(recoveryCalls);
+	});
+
 	it("provisions and recovers explicit write containment only under write authority", async () => {
 		const fixture = await createFixture("write");
 		const provisionAuthority = activationFor(fixture.input);
@@ -131,7 +161,13 @@ describe("CodexCapsuleProvisioner", () => {
 		expect(provisionAuthority.readEffectCalls).toBe(0);
 		expect(provisionAuthority.writeEffectCalls).toBe(1);
 		expect(fixture.port.prepareInputs[0]?.workspaceAccess).toBe("write");
-		expect(fixture.port.manifest?.binding.workspace_access).toBe("write");
+		expect(fixture.port.prepareInputs[0]?.workspaceMediator).toEqual({
+			globalControlRoot: fixture.workspaceGlobalControlRoot,
+			git: fixture.git,
+		});
+		expect(fixture.port.manifest?.binding.logical_workspace_access).toBe("write");
+		expect(fixture.port.manifest?.binding.provider_workspace_access).toBe("read");
+		expect(fixture.port.manifest?.binding.workspace_mediator).toBeDefined();
 
 		const recoveryAuthority = activationFor(fixture.input);
 		await expect(
@@ -140,6 +176,64 @@ describe("CodexCapsuleProvisioner", () => {
 		expect(recoveryAuthority.readEffectCalls).toBe(0);
 		expect(recoveryAuthority.writeEffectCalls).toBe(1);
 		expect(fixture.port.recoverCalls).toBe(1);
+	});
+
+	it("fails write provisioning before containment when no mediator is configured", async () => {
+		const fixture = await createFixture("write");
+		const controlRootDirectory = join(fixture.root, "unmediated-control");
+		const runtimeRootDirectory = join(fixture.root, "unmediated-runtime");
+		const port = new RecordingContainmentPort();
+		const provisioner = await CodexCapsuleProvisioner.open(
+			{ controlRootDirectory, runtimeRootDirectory },
+			{ resolveLauncher: async () => fixture.launcher, containment: port },
+		);
+
+		await expect(
+			provisioner.provision(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("requires a configured patch mediator");
+		expect(port.prepareCalls).toBe(0);
+	});
+
+	it("rejects overlapping Node-wide private roots before provisioning", async () => {
+		const root = await temporaryDirectory();
+		const launcher = await createLauncher(root);
+		const git = await createOwnerGit(root);
+		const controlRootDirectory = join(root, "control");
+
+		await expect(
+			CodexCapsuleProvisioner.open(
+				{
+					controlRootDirectory,
+					runtimeRootDirectory: join(root, "runtime"),
+					workspaceGlobalControlRoot: join(controlRootDirectory, "workspace-patches"),
+					gitExecutable: git.executable.path,
+				},
+				{ resolveLauncher: async () => launcher, resolveGit: async () => git },
+			),
+		).rejects.toThrow("pairwise disjoint");
+	});
+
+	it("rejects a configured Node-wide mediator path inside a Mission workspace", async () => {
+		const fixture = await createFixture();
+		const port = new RecordingContainmentPort();
+		const provisioner = await CodexCapsuleProvisioner.open(
+			{
+				controlRootDirectory: join(fixture.root, "nested-mediator-control"),
+				runtimeRootDirectory: join(fixture.root, "nested-mediator-runtime"),
+				workspaceGlobalControlRoot: join(fixture.workspace.root, "workspace-patches"),
+				gitExecutable: fixture.git.executable.path,
+			},
+			{
+				resolveLauncher: async () => fixture.launcher,
+				resolveGit: async () => fixture.git,
+				containment: port,
+			},
+		);
+
+		await expect(
+			provisioner.provision(fixture.input, activationFor(fixture.input).authority),
+		).rejects.toThrow("disjoint from the workspace");
+		expect(port.prepareCalls).toBe(0);
 	});
 
 	it("does not create or repair runtime state when recover-only state is missing", async () => {
@@ -227,7 +321,7 @@ describe("CodexCapsuleProvisioner", () => {
 		expect(fixture.port.prepareCalls).toBe(1);
 		gate.resolve();
 
-		await expect(first).resolves.toMatchObject({ schema_version: 2 });
+		await expect(first).resolves.toMatchObject({ schema_version: 3 });
 		await expect(changed).rejects.toThrow("Node-owned provisioning input");
 		expect(fixture.port.prepareCalls).toBe(1);
 		expect(fixture.port.recoverCalls).toBe(0);
@@ -240,7 +334,8 @@ describe("CodexCapsuleProvisioner", () => {
 			join(fixture.controlRoot, IDS.mission, "containment.json"),
 		);
 		fixture.port.mutateBinding((binding) => {
-			binding.workspace_access = "write";
+			binding.logical_workspace_access = "write";
+			binding.workspace_mediator = dummyWorkspaceMediatorBinding();
 		});
 
 		await expect(
@@ -260,13 +355,13 @@ describe("CodexCapsuleProvisioner", () => {
 			containmentInput(fixture),
 			join(fixture.controlRoot, IDS.mission, "containment.json"),
 		);
-		fixture.port.mutateBinding((binding) => {
-			delete binding.workspace_access;
+		fixture.port.mutateRawBinding((binding) => {
+			delete binding.logical_workspace_access;
 		});
 
 		await expect(
 			fixture.provisioner.provision(fixture.input, activationFor(fixture.input).authority),
-		).rejects.toThrow("Node-owned provisioning input");
+		).rejects.toThrow("logical_workspace_access");
 
 		expect(fixture.port.prepareCalls).toBe(0);
 		expect(fixture.port.recoverCalls).toBe(0);
@@ -279,7 +374,8 @@ describe("CodexCapsuleProvisioner", () => {
 			join(fixture.controlRoot, IDS.mission, "containment.json"),
 		);
 		fixture.port.mutateBinding((binding) => {
-			binding.workspace_access = "read";
+			binding.logical_workspace_access = "read";
+			delete binding.workspace_mediator;
 		});
 
 		await expect(
@@ -352,7 +448,8 @@ describe("CodexCapsuleProvisioner", () => {
 				await chmod(fixture.launcher.executable, 0o500);
 			} else if (mismatch === "access") {
 				fixture.port.mutateBinding((binding) => {
-					binding.workspace_access = "write";
+					binding.logical_workspace_access = "write";
+					binding.workspace_mediator = dummyWorkspaceMediatorBinding();
 				});
 			} else {
 				fixture.port.mutateBinding((binding) => {
@@ -505,6 +602,8 @@ interface Fixture {
 	readonly root: string;
 	readonly controlRoot: string;
 	readonly runtimeRoot: string;
+	readonly workspaceGlobalControlRoot: string;
+	readonly git: PinnedOwnerGitExecutable;
 	readonly launcher: PinnedCodexLauncher;
 	readonly workspace: PreparedMissionWorkspace;
 	readonly input: CodexCapsuleProvisionInput;
@@ -517,8 +616,10 @@ async function createFixture(workspaceAccess: CodexWorkspaceAccess = "read"): Pr
 	const root = await temporaryDirectory();
 	const controlRoot = join(root, "control");
 	const runtimeRoot = join(root, "runtime");
+	const workspaceGlobalControlRoot = join(root, "workspace-patches");
 	await Promise.all([mkdir(controlRoot, { mode: 0o700 }), mkdir(runtimeRoot, { mode: 0o700 })]);
 	const launcher = await createLauncher(root);
+	const git = await createOwnerGit(root);
 	const workspace = await createWorkspace(root);
 	const input: CodexCapsuleProvisionInput = {
 		session: {
@@ -533,12 +634,18 @@ async function createFixture(workspaceAccess: CodexWorkspaceAccess = "read"): Pr
 	const port = new RecordingContainmentPort();
 	let resolveCalls = 0;
 	const provisioner = await CodexCapsuleProvisioner.open(
-		{ controlRootDirectory: controlRoot, runtimeRootDirectory: runtimeRoot },
+		{
+			controlRootDirectory: controlRoot,
+			runtimeRootDirectory: runtimeRoot,
+			workspaceGlobalControlRoot,
+			gitExecutable: git.executable.path,
+		},
 		{
 			resolveLauncher: async () => {
 				resolveCalls += 1;
 				return launcher;
 			},
+			resolveGit: async () => git,
 			containment: port,
 		},
 	);
@@ -546,6 +653,8 @@ async function createFixture(workspaceAccess: CodexWorkspaceAccess = "read"): Pr
 		root,
 		controlRoot,
 		runtimeRoot,
+		workspaceGlobalControlRoot,
+		git,
 		launcher,
 		workspace,
 		input,
@@ -632,6 +741,17 @@ class RecordingContainmentPort implements CodexContainmentProvisioningPort {
 		this.manifest = manifestFor(binding, this.manifest.instance_id);
 	}
 
+	mutateRawBinding(mutator: (binding: Record<string, unknown>) => void): void {
+		if (this.manifest === null) throw new Error("test containment manifest is missing");
+		const binding = structuredClone(this.manifest.binding) as unknown as Record<string, unknown>;
+		mutator(binding);
+		this.manifest = {
+			...this.manifest,
+			binding_sha256: digestCanonicalJson(binding),
+			binding,
+		} as unknown as RuntimeContainmentManifest;
+	}
+
 	private containment(): CodexSandboxContainment {
 		if (this.manifest === null || this.manifestPath === null) {
 			throw new Error("test containment manifest is missing");
@@ -647,8 +767,10 @@ class RecordingContainmentPort implements CodexContainmentProvisioningPort {
 			},
 			evidence: {
 				instanceId: manifest.instance_id,
+				containmentContract: RUNTIME_CONTAINMENT_CONTRACT,
 				backend: RUNTIME_CONTAINMENT_BACKEND,
 				runtimeVersion: "0.146.0",
+				providerWorkspaceAccess: "read",
 				baseCommit: manifest.binding.workspace.base_commit,
 				bindingSha256: manifest.binding_sha256,
 				retention: "retain_for_review",
@@ -659,7 +781,15 @@ class RecordingContainmentPort implements CodexContainmentProvisioningPort {
 				providerExecutable: manifest.binding.provider.executable.path,
 				runtimeVersion: "0.146.0",
 				policyGrantSha256: manifest.binding.policy_grant_sha256,
-				workspaceAccess: manifest.binding.workspace_access ?? "write",
+				logicalWorkspaceAccess: manifest.binding.logical_workspace_access,
+				providerWorkspaceAccess: manifest.binding.provider_workspace_access,
+				workspaceMediator:
+					manifest.binding.workspace_mediator == null
+						? null
+						: {
+								globalControlRoot: manifest.binding.workspace_mediator.global_control_root,
+								git: manifest.binding.workspace_mediator.git,
+							},
 				workspace: {
 					root: manifest.binding.workspace.root.path,
 					repositoryUrl: manifest.binding.workspace.repository_url,
@@ -684,9 +814,11 @@ async function runtimeBinding(
 	const probe = join(probeRoot, "bin", "node");
 	const ownerHome = await realpath(homedir());
 	return runtimeContainmentBindingSchema.parse({
+		containment_contract: RUNTIME_CONTAINMENT_CONTRACT,
 		backend: RUNTIME_CONTAINMENT_BACKEND,
 		runtime_version: "0.146.0",
-		workspace_access: input.workspaceAccess,
+		logical_workspace_access: input.workspaceAccess,
+		provider_workspace_access: "read",
 		workspace: workspaceBinding(input.workspace),
 		launcher: {
 			executable: await inspectedPath(input.launcher.executable),
@@ -717,8 +849,26 @@ async function runtimeBinding(
 			runtime_home: await inspectedPath(join(runtime, "codex-home")),
 			runtime_tmp: await inspectedPath(join(runtime, "tmp")),
 		},
+		...(input.workspaceMediator === undefined
+			? {}
+			: {
+					workspace_mediator: {
+						global_control_root: await inspectedPath(input.workspaceMediator.globalControlRoot),
+						git: input.workspaceMediator.git,
+					},
+				}),
 		read_only_roots: [],
-		denied_roots: await Promise.all([ownerHome, control].sort().map((path) => inspectedPath(path))),
+		denied_roots: await Promise.all(
+			[
+				ownerHome,
+				control,
+				...(input.workspaceMediator === undefined
+					? []
+					: [input.workspaceMediator.globalControlRoot]),
+			]
+				.sort()
+				.map((path) => inspectedPath(path)),
+		),
 		policy_grant_sha256: input.policyGrantSha256,
 	});
 }
@@ -731,6 +881,9 @@ async function prepareFakeLayout(input: CodexSandboxContainmentInput): Promise<v
 		mkdir(join(probeRoot, "bin"), { recursive: true, mode: 0o700 }),
 		mkdir(join(input.runtimeDirectory, "codex-home"), { recursive: true, mode: 0o700 }),
 		mkdir(join(input.runtimeDirectory, "tmp"), { recursive: true, mode: 0o700 }),
+		...(input.workspaceMediator === undefined
+			? []
+			: [mkdir(input.workspaceMediator.globalControlRoot, { recursive: true, mode: 0o700 })]),
 	]);
 	await Promise.all([
 		writeFile(join(launcherHome, "config.toml"), "test-config", { mode: 0o600 }),
@@ -743,7 +896,7 @@ function manifestFor(
 	instanceId: string = IDS.containment,
 ): RuntimeContainmentManifest {
 	return runtimeContainmentManifestSchema.parse({
-		schema_version: 1,
+		schema_version: 2,
 		instance_id: instanceId,
 		created_at: "2026-08-19T00:00:00.000Z",
 		retention: "retain_for_review",
@@ -770,6 +923,14 @@ function containmentInput(fixture: Fixture): CodexSandboxContainmentInput {
 		workspace: fixture.workspace,
 		launcher: fixture.launcher,
 		provider: fixture.launcher,
+		...(fixture.input.workspaceAccess === "read"
+			? {}
+			: {
+					workspaceMediator: {
+						globalControlRoot: fixture.workspaceGlobalControlRoot,
+						git: fixture.git,
+					},
+				}),
 		policyGrantSha256: POLICY_SHA256,
 		workspaceAccess: fixture.input.workspaceAccess,
 	};
@@ -854,6 +1015,27 @@ async function createLauncher(root: string): Promise<PinnedCodexLauncher> {
 		readRoot,
 		sha256: sha256("test-codex"),
 		sandboxHelper: { executable: helper, readRoot, sha256: sha256("test-bwrap") },
+	};
+}
+
+async function createOwnerGit(root: string): Promise<PinnedOwnerGitExecutable> {
+	const directory = join(root, "owner-tools");
+	const executable = join(directory, "git");
+	await mkdir(directory, { mode: 0o700 });
+	await writeFile(executable, "test-git", { mode: 0o500 });
+	return pinOwnerGitExecutable(executable);
+}
+
+function dummyWorkspaceMediatorBinding() {
+	return {
+		global_control_root: boundPath("/private/workspace-patches", {
+			device: "1",
+			inode: "90",
+		}),
+		git: {
+			executable: boundPath("/usr/bin/git", { device: "1", inode: "91" }),
+			sha256: "9".repeat(64),
+		},
 	};
 }
 

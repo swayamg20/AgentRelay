@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import { CodexCapsuleProvisioner } from "./codex-capsule-provisioner.js";
+import { pinOwnerGitExecutable } from "./codex-git-artifact.js";
 import { openCodexNodeRuntime } from "./codex-node-runtime.js";
 import * as codexRuntimeDoctor from "./codex-runtime-doctor.js";
 import type { PinnedCodexLauncher } from "./codex-sandbox-contract.js";
@@ -18,6 +19,37 @@ afterEach(async () => {
 });
 
 describe("openCodexNodeRuntime", () => {
+	it("pins one Node-wide mediator root and exact owner-selected Git artifact", async () => {
+		const stateDirectory = await temporaryDirectory();
+		const pinnedLauncher = await createPinnedLauncher(stateDirectory);
+		const git = await pinOwnerGitExecutable(pinnedLauncher.executable);
+		const launcher = capsuleLauncher();
+		const pinGit = vi.fn(async () => git);
+		const provisionerOpen = vi.spyOn(CodexCapsuleProvisioner, "open");
+
+		await openCodexNodeRuntime(
+			{ stateDirectory, launcher, gitExecutable: git.executable.path },
+			{ doctor: { resolveLauncher: async () => pinnedLauncher, pinGit } },
+		);
+
+		expect(pinGit).toHaveBeenCalledOnce();
+		expect(provisionerOpen).toHaveBeenCalledWith(
+			{
+				controlRootDirectory: join(stateDirectory, "codex-control"),
+				runtimeRootDirectory: join(stateDirectory, "codex-runtime"),
+				workspaceGlobalControlRoot: join(stateDirectory, "workspace-patches"),
+				gitExecutable: git.executable.path,
+			},
+			expect.objectContaining({
+				resolveLauncher: expect.any(Function),
+				resolveGit: expect.any(Function),
+			}),
+		);
+		const provisionerDependencies = provisionerOpen.mock.calls[0]![1]!;
+		expect(await provisionerDependencies.resolveGit?.(git.executable.path)).toEqual(git);
+		expect(launcher.start).not.toHaveBeenCalled();
+	});
+
 	it("opens a matched passive adapter and provisioner beneath the owner state directory", async () => {
 		const stateDirectory = await temporaryDirectory();
 		const pinnedLauncher = await createPinnedLauncher(stateDirectory);

@@ -59,11 +59,7 @@ export async function prepareCodexSandboxContainment(
 	input: CodexSandboxContainmentInput,
 	signal: AbortSignal,
 ): Promise<CodexSandboxContainment> {
-	return prepareContainment(
-		{ ...input, workspaceAccess: input.workspaceAccess ?? "write" },
-		"create",
-		signal,
-	);
+	return prepareContainment(input, "create", signal);
 }
 
 /** Reopens a retained binding only when the Node journal names the same instance and digest. */
@@ -106,8 +102,16 @@ export async function recoverCodexSandboxContainment(
 		{
 			controlDirectory,
 			runtimeDirectory: binding.private_paths.runtime_root.path,
-			workspaceAccess: binding.workspace_access,
+			workspaceAccess: binding.logical_workspace_access,
 			workspace,
+			...(binding.workspace_mediator == null
+				? {}
+				: {
+						workspaceMediator: {
+							globalControlRoot: binding.workspace_mediator.global_control_root.path,
+							git: binding.workspace_mediator.git,
+						},
+					}),
 			launcher: {
 				executable: binding.launcher.executable.path,
 				readRoot: binding.launcher.read_root.path,
@@ -188,7 +192,7 @@ async function prepareContainment(
 			launcherHome: layout.launcherHome,
 			launcherPath: layout.launcherPath,
 			workspaceRoot: input.workspace.root,
-			workspaceAccess: input.workspaceAccess ?? "write",
+			providerWorkspaceAccess: "read",
 			gitDirectory: input.workspace.gitDirectory,
 			runtimeTmp: layout.runtimeTmp,
 			probe,
@@ -231,7 +235,28 @@ function containmentAuthorization(binding: RuntimeContainmentBinding): CodexSand
 		providerExecutable: binding.provider.executable.path,
 		runtimeVersion: binding.runtime_version,
 		policyGrantSha256: binding.policy_grant_sha256,
-		workspaceAccess: binding.workspace_access ?? "write",
+		logicalWorkspaceAccess: binding.logical_workspace_access,
+		providerWorkspaceAccess: binding.provider_workspace_access,
+		workspaceMediator:
+			binding.workspace_mediator == null
+				? null
+				: Object.freeze({
+						globalControlRoot: Object.freeze({
+							path: binding.workspace_mediator.global_control_root.path,
+							identity: Object.freeze({
+								...binding.workspace_mediator.global_control_root.identity,
+							}),
+						}),
+						git: Object.freeze({
+							executable: Object.freeze({
+								path: binding.workspace_mediator.git.executable.path,
+								identity: Object.freeze({
+									...binding.workspace_mediator.git.executable.identity,
+								}),
+							}),
+							sha256: binding.workspace_mediator.git.sha256,
+						}),
+					}),
 		workspace: Object.freeze({
 			root: binding.workspace.root.path,
 			repositoryUrl: binding.workspace.repository_url,

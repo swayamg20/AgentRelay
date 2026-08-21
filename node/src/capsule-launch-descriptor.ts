@@ -9,7 +9,7 @@ import { SUPPORTED_CODEX_CLI_VERSION } from "./codex-app-server-protocol.js";
 import { codexSandboxRecoveryExpectationSchema } from "./codex-sandbox-contract.js";
 
 export const CAPSULE_DESCRIPTOR_FILE = "launch.json";
-export const CODEX_CAPSULE_RUNTIME_CONTRACT = "agentrelay/codex-capsule/v2";
+export const CODEX_CAPSULE_RUNTIME_CONTRACT = "agentrelay/codex-capsule/v3";
 
 const MAX_CAPSULE_SOCKET_PATH_BYTES = 100;
 const capsuleDescriptorCommonShape = {
@@ -41,7 +41,7 @@ export const fakeCapsuleLaunchDescriptorSchema = z
 
 export const codexCapsuleLaunchDescriptorSchema = z
 	.object({
-		schema_version: z.literal(2),
+		schema_version: z.literal(3),
 		...capsuleDescriptorCommonShape,
 		runtime: z
 			.object({
@@ -89,7 +89,7 @@ export async function readCodexCapsuleLaunchDescriptor(
 	directory: string,
 ): Promise<CodexCapsuleLaunchDescriptor> {
 	const descriptor = await readCapsuleLaunchDescriptor(directory);
-	if (descriptor.schema_version !== 2) {
+	if (descriptor.schema_version !== 3) {
 		throw new Error("Capsule launch descriptor does not select Codex");
 	}
 	return descriptor;

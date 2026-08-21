@@ -5,6 +5,7 @@ import { buildCodexChildEnvironment } from "./capsule-environment.js";
 import { CodexAppServerError, verifyCodexCliVersion } from "./codex-app-server-process.js";
 import { resolvePinnedCodexLauncher } from "./codex-artifact.js";
 import { assertPinnedCodexArtifact } from "./codex-capsule-provisioning-validation.js";
+import { type PinnedOwnerGitExecutable, pinOwnerGitExecutable } from "./codex-git-artifact.js";
 import type { CodexProcessBoundary } from "./codex-process-boundary.js";
 import type { PinnedCodexLauncher } from "./codex-sandbox-contract.js";
 
@@ -12,13 +13,19 @@ export interface CodexRuntimeDoctorOptions {
 	readonly signal: AbortSignal;
 }
 
+export interface CodexWorkspaceMediatorDoctorOptions extends CodexRuntimeDoctorOptions {
+	readonly gitExecutable: string;
+}
+
 export interface CodexRuntimeDoctorDependencies {
 	readonly resolveLauncher?: () => Promise<PinnedCodexLauncher>;
+	readonly pinGit?: (executable: string) => Promise<PinnedOwnerGitExecutable>;
 }
 
 export type CodexRuntimeDoctorFailure =
 	| "unsupported"
 	| "artifact"
+	| "git"
 	| "setup"
 	| "version"
 	| "cancelled"
@@ -28,6 +35,7 @@ export type CodexRuntimeDoctorFailure =
 const FAILURE_MESSAGES: Readonly<Record<CodexRuntimeDoctorFailure, string>> = Object.freeze({
 	unsupported: "Codex runtime doctor requires linux/x64",
 	artifact: "Pinned Codex runtime artifact verification failed",
+	git: "Owner-selected Git executable verification failed",
 	setup: "Codex runtime doctor could not prepare its private probe home",
 	version: "Pinned Codex runtime version probe failed",
 	cancelled: "Codex runtime doctor was cancelled",
@@ -120,6 +128,30 @@ export async function runCodexRuntimeDoctor(
 	if (failure !== null) throw failure;
 	if (result === null) throw new CodexRuntimeDoctorError("version");
 	return result;
+}
+
+/** Pins the owner-selected compiler used only by the trusted workspace mediator. */
+export async function runCodexWorkspaceMediatorDoctor(
+	options: CodexWorkspaceMediatorDoctorOptions,
+	dependencies: CodexRuntimeDoctorDependencies = {},
+): Promise<PinnedOwnerGitExecutable> {
+	if (options.signal.aborted) throw new CodexRuntimeDoctorError("cancelled");
+	try {
+		const git = await (dependencies.pinGit ?? pinOwnerGitExecutable)(options.gitExecutable);
+		options.signal.throwIfAborted();
+		if (git.executable.path !== options.gitExecutable) {
+			throw new Error("Git verification changed the owner-selected path");
+		}
+		return Object.freeze({
+			executable: Object.freeze({
+				path: git.executable.path,
+				identity: Object.freeze({ ...git.executable.identity }),
+			}),
+			sha256: git.sha256,
+		});
+	} catch {
+		throw new CodexRuntimeDoctorError(options.signal.aborted ? "cancelled" : "git");
+	}
 }
 
 async function createPrivateProbeHome(): Promise<string> {

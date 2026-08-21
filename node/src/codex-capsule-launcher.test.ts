@@ -98,7 +98,7 @@ describe.runIf(process.platform !== "win32")("createDetachedCodexCapsuleLauncher
 		});
 
 		await expect(launcher.start(directory, fakeDescriptor())).rejects.toMatchObject({
-			message: "Codex Mission capsule launcher requires a schema-v2 descriptor",
+			message: "Codex Mission capsule launcher requires a schema-v3 descriptor",
 		});
 		expect(claims).toBe(0);
 		await delay(50);
@@ -518,7 +518,7 @@ function nodeCommand(script: string, ...args: string[]) {
 
 function codexDescriptor(directory: string) {
 	return codexCapsuleLaunchDescriptorSchema.parse({
-		schema_version: 2,
+		schema_version: 3,
 		capsule_id: DESCRIPTOR_IDS.capsule,
 		capability_token: `ar_capsule_${"a".repeat(64)}`,
 		socket_path: capsuleSocketPath(DESCRIPTOR_IDS.capsule),

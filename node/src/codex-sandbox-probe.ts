@@ -8,7 +8,6 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
 	CODEX_SANDBOX_OFFLINE_PROFILE_NAME,
 	CodexContainmentTerminationError,
-	type CodexWorkspaceAccess,
 	type PinnedExecutable,
 } from "./codex-sandbox-contract.js";
 import { assertContainmentProbeAttestation } from "./codex-sandbox-probe-attestation.js";
@@ -26,7 +25,7 @@ export interface CodexSandboxProbeInput {
 	readonly launcherHome: string;
 	readonly launcherPath: string;
 	readonly workspaceRoot: string;
-	readonly workspaceAccess: CodexWorkspaceAccess;
+	readonly providerWorkspaceAccess: "read";
 	readonly gitDirectory: string;
 	readonly runtimeTmp: string;
 	readonly probe: ContainmentProbeExecutable;
@@ -45,7 +44,7 @@ export async function runCodexSandboxProbe(
 	const probePaths = {
 		workspaceRead: join(input.gitDirectory, "HEAD"),
 		workspaceWrite: join(input.workspaceRoot, `.agentrelay-${randomUUID()}.probe`),
-		workspaceAccess: input.workspaceAccess,
+		workspaceAccess: input.providerWorkspaceAccess,
 		gitWrite: join(input.gitDirectory, `.agentrelay-${randomUUID()}.probe`),
 		runtimeTmpWrite: join(input.runtimeTmp, `.agentrelay-${randomUUID()}.probe`),
 		controlRead: input.launcherPath,

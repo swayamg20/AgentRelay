@@ -10,7 +10,6 @@ import {
 	codexCapsuleLaunchDescriptorSchema,
 	fakeCapsuleLaunchDescriptorSchema,
 } from "./capsule-launch-descriptor.js";
-import { CAPSULE_ADAPTER_INFO } from "./capsule-protocol.js";
 import { startConfiguredCapsuleServer } from "./capsule-runtime-factory.js";
 import type { CapsuleRuntimeController } from "./capsule-runtime.js";
 import { ensurePrivateCapsuleDirectory } from "./capsule-server-io.js";
@@ -154,7 +153,7 @@ describe("PersistentCodexCapsuleAdapter", () => {
 		},
 	);
 
-	it("installs authority through a v2 Capsule without activating containment or a provider", async () => {
+	it("installs authority through a v3 Capsule without activating containment or a provider", async () => {
 		const rootDirectory = await temporaryDirectory();
 		const directory = missionDirectory(rootDirectory);
 		const descriptorPath = await writeDescriptor(directory, codexDescriptor(directory));
@@ -210,7 +209,7 @@ describe("PersistentCodexCapsuleAdapter", () => {
 		expect(await readFile(descriptorPath, "utf8")).toBe(before);
 	});
 
-	it("rejects an authenticated live Capsule with the wrong static adapter identity", async () => {
+	it("rejects an authenticated live Capsule with the old Codex adapter identity", async () => {
 		const rootDirectory = await temporaryDirectory();
 		const directory = missionDirectory(rootDirectory);
 		const descriptor = codexDescriptor(directory);
@@ -268,7 +267,7 @@ const PersistentCapsuleServerForTest = {
 			},
 			openController: async (): Promise<CapsuleRuntimeController> => ({
 				async probe() {
-					return structuredClone(CAPSULE_ADAPTER_INFO);
+					return { ...structuredClone(CODEX_CAPSULE_ADAPTER_INFO), version: "0.2.0" };
 				},
 				async ensureSession() {
 					throw new Error("runtime session was not expected");
@@ -306,7 +305,7 @@ function codexDescriptor(
 	overrides: { readonly session?: ReturnType<typeof session> } = {},
 ): CodexCapsuleLaunchDescriptor {
 	return codexCapsuleLaunchDescriptorSchema.parse({
-		schema_version: 2,
+		schema_version: 3,
 		capsule_id: IDS.containment,
 		capability_token: `ar_capsule_${"b".repeat(64)}`,
 		socket_path: capsuleSocketPath(IDS.containment),
