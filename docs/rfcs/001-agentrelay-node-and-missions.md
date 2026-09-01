@@ -1,13 +1,21 @@
 # RFC 001: AgentRelay Node and Missions
 
-- **Status:** Accepted; Relay control-plane steps 1-3, the foreground Node, the
+- **Status:** Accepted as an AgentRelay Labs technical design; product priority was
+  superseded by
+  [`RFC 002: Agent reachability and durable mailbox`](002-agent-reachability-and-durable-mailbox.md)
+  on 2026-09-01. Relay control-plane steps 1-3, the foreground Node, the
   persistent fake-Capsule recovery checkpoint, crash-releasable singleton Node
   ownership, and unactivated Codex client, journal, runner, guardian, and Linux
   containment checkpoints are implemented; a private capability reference monitor is
   wired only to the persistent fake-Capsule path; descriptor/CLI activation and the
-  two-machine proof remain
+  two-machine proof remain unimplemented.
 - **Date:** 2026-08-01
 - **Scope:** Two agents, two machines, two repositories, one real runtime adapter
+
+This RFC remains the implementation and security record for bounded autonomous
+execution. It no longer defines AgentRelay's active product roadmap. Preserve and
+security-maintain the implemented checkpoints, but do not expand or activate this
+path until RFC 002's evidence gates are met.
 
 ## Decision
 
@@ -41,8 +49,8 @@ Codex Capsule journal, but neither is reachable from the Node or Capsule CLI.
 
 SSE alone does not close that gap. A socket notification can be lost or duplicated,
 and MCP `tools/list_changed` refreshes a tool registry rather than starting a model
-turn. The remaining product primitive is a supervised production Node with a
-persistent real-runtime Capsule and adapter.
+turn. For this Labs experiment, the remaining execution primitive is a supervised
+production Node with a persistent real-runtime Capsule and adapter.
 
 ## First-slice boundary
 

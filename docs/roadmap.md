@@ -1,255 +1,294 @@
 # Roadmap
 
-> **Updated:** 2026-08-17. This roadmap replaces the old mailbox -> Auto Mode ->
-> Ambient Agent release sequence. The architectural contract is
-> [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
+> **Updated:** 2026-09-02. This roadmap resets product priority around the
+> shipped mailbox. It changes neither current runtime behavior nor existing public
+> contracts. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md) is the
+> active product-direction contract. [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md)
+> and the implemented Node/Mission work are retained as Labs history, not as the
+> active product queue.
 
-## Direction
+## Product center
 
-AgentRelay is a cross-device communication and collaboration network for independently
-owned agents. Coding across separate repositories is the first proving vertical, not
-the product's final boundary.
+AgentRelay makes an agent owned by one person reachable by an agent owned by
+another person.
 
-The current repository combines an authenticated asynchronous mailbox, a mounted
-Mission and delivery control plane, and an experimental foreground Node. The Node
-journals Relay authority and starts or resumes either an in-process fake-host turn or
-an independently persistent fake Mission Capsule. The detached Capsule and Node-
-process restart proof are implemented. The first pinned Codex client, durable journal,
-provider-neutral Capsule server, injected runner, and provider guardian now exist as
-an unactivated library checkpoint. The guardian owns provider-generation spawn,
-liveness, and local authority inputs; its prearmed persistent out-of-group witness owns
-process-group removal and post-absence quiescence proof. A Linux-only Codex `0.146.0`
-containment library adds
-owner-controlled standalone-workspace admission, an explicit Bubblewrap policy,
-mandatory runtime canary, and exact retained-manifest recovery. It is not selected by
-the Capsule/Node CLI, but its dedicated Linux process proof now starts pinned Codex
-through both boundaries. The persistent fake-Capsule path now also installs a private,
-fenced capability grant into independent Node and Capsule reference monitors. This is
-the partial issue #97 reference-monitor checkpoint, not completion of the still-open
-issue or real-runtime activation. The next runtime milestone is guarded Codex activation
-through an explicit descriptor (#98), not another protocol abstraction.
+The core product is a stable address, owner control, and a durable two-party
+mailbox that works across machines and agent hosts. A sender should be able to say
+"ask Pranjal's agent," and the receiving owner should be able to let an already
+running agent inspect the thread and reply. The Relay stores and routes the exchange;
+it does not need to start the receiver's model or execute work on the receiver's
+machine.
 
-We progress through evidence gates, not calendar promises or version hype.
+The product promise is deliberately narrow:
 
-## Stage 0: make the existing foundation honest
+- stable agent identity and explicit recipient selection;
+- invitation, authentication, block, and revocation boundaries;
+- durable handoffs, ordered thread messages, replies, and terminal state;
+- store-and-forward behavior while one participant is offline;
+- provenance on teammate-originated content; and
+- truthful state: Relay storage is not proof that a person or agent read or acted on
+  a message.
 
-Before autonomous execution:
+Missions, runtime activation, autonomous execution, A2A compatibility, federation,
+and hosted multi-tenancy are possible applications or adapters. None is required to
+validate the mailbox.
 
-- Preserve the current handoff API as a compatibility surface.
-- Fix teammate-originated artifact fields that bypass provenance wrapping.
-- Preserve `send_message` payloads and completion artifacts end to end.
-- Make local block state and relay block enforcement converge.
-- Stop claiming current A2A v1 conformance until a current compatibility suite passes.
-- Stop describing the returned trust overlay as runtime enforcement.
-- Add regression tests for each corrected contract.
+## Truth at the reset
 
-**Exit gate:** current docs, code, and tests agree about the mailbox's actual security
-and delivery guarantees.
+### Product path available now
 
-## Stage 1: executable Mission contract
+The repository already contains the product path to validate:
 
-**Status:** deterministic exit gate passed on 2026-08-02. See
-[`experiment 001`](experiments/001-backend-android-deterministic-proof.md). Durable
-Relay delivery and an experimental fake-runtime Node now exist; real coding-agent
-Nodes remain unproved.
+- Postgres-backed agent identities, cards, credentials, invites, blocks, handoffs,
+  ordered messages, and scoped audit records;
+- an authenticated Relay and seven local MCP tools for discovery, send, inbox,
+  accept, reply, inspect, and complete;
+- idempotent handoff creation and message append;
+- participant authorization and provenance-preserving mailbox reads;
+- CLI registration, invite/join, Claude Code and Codex installation, doctor/fix,
+  key rotation, audit, and trust commands; and
+- best-effort Slack notification after the durable mailbox mutation commits.
 
-- Add a small shared protocol package or module with Mission, participant, message,
-  artifact, delivery, run, and policy schemas.
-- Implement deterministic Mission and delivery state machines with invalid-transition
-  tests.
-- Add fake backend and Android repositories with frozen commits and executable
-  acceptance fixtures.
-- Build a fake runtime adapter so coordination can be tested without model variance.
+Pickup remains explicit. An active agent session calls `check_inbox`; the MCP server
+does not wake a sleeping machine or start a new model turn. Slack dispatch is
+process-local and can be lost across Relay restart. Those are current limits to
+measure, not reasons to replace the mailbox with a runtime system.
 
-**Exit gate:** a deterministic two-participant fixture completes through typed events,
-including one contract revision, without a real coding-agent runtime.
+### Labs history retained
 
-## Stage 2: durable delivery ledger
+Substantial Mission and Node engineering is preserved:
 
-**Status:** Relay control plane implemented. It includes independent acceptance
-receipts, source-bound result settlement, verification generations, joined cursor and
-recovery scans, separately revocable Node credentials, public Mission routes, and
-fenced claim/start/renew/complete/release operations with exact durable receipts.
-Postgres tests cover concurrent claims, stale fences, expiry after lock waits, lost
-response replay, retry discovery, dead-lettering, terminal reconciliation, blocks,
-and revocation races. A journaled client now proves runner reconstruction and duplicate
-polling without a second fake-host turn. A Postgres E2E restarts the real Relay process
-before claim, after claim, and after a committed completion response is lost; it
-reopens the Node journal, converges cursor polling with cursorless recovery, and
-rejects stale or terminal output without a second effect. This proof uses no
-notification transport.
+- strict Mission, artifact, delivery, runtime, and evidence contracts plus a
+  deterministic backend/Android fixture;
+- a Postgres Mission ledger with transactional derived deliveries, cursor replay,
+  recovery scans, leases, fencing, exact receipts, revocation, and terminal
+  reconciliation;
+- an experimental foreground Node, atomic journal, detached fake Mission Capsule,
+  crash-releasable singleton ownership, and private capability enforcement; and
+- unactivated Codex runner, provider guardian, teardown witness, and Linux
+  containment libraries.
 
-- Add Node identity, workspace-binding, Mission, event, delivery, claim, and
-  acknowledgement persistence. Relay-visible run persistence remains part of the
-  later runtime-evidence work.
-- Commit domain events and delivery rows in the same Postgres transaction.
-- Implement ordered cursor replay, bounded claims, lease expiry, retry, cancellation,
-  and duplicate suppression.
-- Start with cursor polling over the durable ledger.
-- Defer authenticated SSE until replay, claims, and recovery are already correct.
+These are real implementation accomplishments, but no selected production path runs
+a real Codex model turn through a Mission. Labs code remains tested and maintained
+for security or regression defects. Expansion is frozen until mailbox validation
+creates a concrete reason to resume it.
 
-**Exit gate:** passed. Forced disconnects, relay restarts, expired leases, and
-duplicate discovery/polling cause no lost event and no duplicated effect in the
-durable fake-runtime proof.
+The target sections of [`architecture.md`](architecture.md) and RFC 001 therefore
+describe the Labs architecture. [`hld.md`](hld.md) and [`lld.md`](lld.md) remain the
+current-behavior references. RFC 002 owns product priority; this roadmap applies its
+30-day gate.
 
-Stable assignment pagination, restart/replay evidence, and deterministic terminal
-reconciliation are implemented. Reconciliation is lazy at delivery discovery and
-delivery-operation boundaries; it does not require a scheduler.
+## The 30-day decision
 
-## Stage 3: AgentRelay Node
+From 2026-09-01 through 2026-09-30, answer one question:
 
-**Status:** persistent fake-Capsule checkpoint implemented. The foreground Node has a
-mode-0600 device config, local workspace/policy mapping, atomic journal,
-recovery-before-poll loop, fenced Relay operations, repository preflight, and fake
-adapter replay. It can launch a detached, Mission-scoped fake Capsule through a
-private capability-authenticated Unix socket. Unit fault injection and real
-Relay/Postgres E2E coverage prove one host turn per processed delivery across
-duplicate polling, runner reconstruction, and `SIGKILL` after host acceptance. The
-Node now holds a stable private `run.lock` with a kernel advisory lock: process death
-or reboot releases ownership, direct restart needs no file deletion, and a stopped or
-stalled live owner cannot be displaced by a timeout. The lock inode remains
-permanently in place, and PID metadata in `run.owner.json` is diagnostic rather than
-authority. Every legacy schema-1 PID lock requires a one-time explicit offline
-migration because PID-only evidence cannot rule out another namespace. The Capsule
-server is now provider-neutral while the existing descriptor, CLI, and wire remain
-fake-compatible. An injected Codex runner is tested through that real Unix wire.
-Runtime shutdown concurrently fences admitted work, and background runtime failures
-can retire their server generation, but no production path selects Codex. OS
-service/cgroup containment, automatic process respawn, witness/all-owner loss,
-escaped-descendant cleanup, and restart/upgrade/rollback behavior remain #120.
-Contract acknowledgement, verification execution, durable containment-handle
-lifecycle wiring, guarded real-runtime activation, and the two-machine exit gate also
-remain open. On the persistent fake path, journal schema 4 stores an exact authority
-grant before activation or a predecessor awaiting proven Capsule retirement. The Node
-and Capsule enforce its lease, fence, expiry, scope, capabilities, and aggregate
-output/usage/artifact limits independently; the
-Node also aborts final Relay completion when authority is lost. Evidence records go to
-injected sinks and are not durably stored by default.
+> Do independently owned agents use an owner-controlled durable mailbox repeatedly
+> because it makes direct agent-to-agent communication meaningfully easier than
+> copying context through chat, tickets, or a human intermediary?
 
-- Add a `node/` pnpm workspace and daemon CLI.
-- Register device-scoped credentials and capabilities.
-- Map logical workspace aliases to locally approved repositories.
-- Persist the event cursor, processing journal, and Mission-to-session mapping.
-- Validate a pre-registered clean checkout or operator-created worktree, including
-  repository identity, base commit, and dirty state before each run.
-- Require an owner-controlled standalone checkout for the Linux Codex boundary and
-  retain it for review; linked worktrees and automatic disposal remain unsupported.
-- Apply local path, command, network, approval, budget, expiry, and revocation policy
-  outside the model.
-- Record runtime, tool, artifact, test, and policy-decision evidence.
+A polished demo is evidence that the path works once. It is not evidence of repeated
+demand. No protocol or autonomy expansion starts during this window.
 
-**Exit gate:** two Nodes on separate machines complete the fake-adapter Mission after
-one Node is killed and restarted mid-run.
+## Operating rules
 
-## Stage 4: Codex vertical slice
+1. Use the existing handoff/MCP path before adding product machinery.
+2. Fix only a demonstrated blocker, correctness defect, or security defect.
+3. Keep Relay storage, receiver pickup, agent interpretation, and external action as
+   separate facts.
+4. Do not make a Node, Mission, SSE stream, webhook, or manager model part of mailbox
+   correctness.
+5. Record failed setup and abandoned threads; do not count only successful demos.
+6. Keep peer content untrusted and preserve participant, block, revocation, and
+   provenance behavior.
+7. Do not merge the issue-98 Codex activation branch during the validation window.
 
-**Status:** unactivated guardian and fake-runtime authority checkpoints implemented.
-The pinned read-only client, schema-v2 journal, injected runner, and provider guardian
-now sit behind a provider-neutral Capsule server. The runner publishes a stable logical
-turn before provider binding, consumes one provider event stream, and reconciles an
-uncertain start only in a guardian-owned fresh generation. The guardian owns the
-kernel-locked start barrier, Capsule and provider liveness, absolute deadline, and
-local revocation.
-Before the barrier it prearms an out-of-group witness that retains the same lock,
-removes the guardian/provider group, and records durable quiescence only after proving
-absence. Tests exercise the real Capsule Unix wire with fake app-server clients and
-real OS process trees, including joint Capsule/guardian loss on Linux. For an inherited
-uncertain interrupt, the fresh generation reads the exact intent once, persists a
-terminal provider outcome when available, or records a transient failure without
-issuing another interrupt. A separate Linux-only containment library validates a
-standalone workspace, constructs the pinned Bubblewrap boundary, runs a mandatory
-child canary, and binds recovery to an exact `retain_for_review` manifest. Its process
-job starts pinned Codex through both unactivated boundaries. The verified authority
-checkpoint is wired only to the persistent fake-Capsule descriptor: it does not store
-the Linux recovery handle or activate the Codex composition, and no test executes a
-model turn.
+## Thirty-day sequence
 
-- [ ] Add registered verification delivery and execution handling (#93), with a
-  canonical absolute executable identity bound into local authority instead of a
-  restart-sensitive bare `PATH` lookup.
-- [ ] Carry bounded provenance-marked Mission artifacts end to end (#94).
-- [x] Add guardian-owned provider generations, liveness, deadline/revocation inputs,
-  a prearmed teardown witness, durable post-absence quiescence, and process-group
-  teardown (#96).
-- [x] Add the partial issue #97 private, bound capability reference-monitor checkpoint
-  to the persistent fake Capsule; deny push, merge, publish, deploy, arbitrary network
-  access, secrets, and privilege expansion, and stop output/final completion on
-  authority loss. This does not close issue #97, activate Codex, or provide a
-  verification-command executor.
-- [ ] Activate the pinned Codex adapter through an explicit descriptor, compose the
-  Linux boundary, and durably store its exact recovery handle before provider start
-  (#98).
-- [ ] Persist durable local authority and execution evidence (#99).
-- [ ] Run the adversarial capability and recovery matrix against the activated runtime
-  (#104).
-- [ ] Require one structured turn disposition with bounded local execution evidence.
-- Pass Guarded Real Mission 0 through the public pipeline before attempting the
-  backend-and-Android two-machine scenario.
+### Days 1-3: freeze and establish the baseline
 
-The proof must include:
+- [x] Apply the issue-governance reset in
+  [`issue-reset-2026-09-01.md`](issue-reset-2026-09-01.md) after explicit owner
+  approval. The tracker reset completed on 2026-09-02.
+- Freeze Mission/Node and A2A expansion. Preserve branches and completed tests.
+- Write one exact two-owner mailbox scenario with no hidden manual repair.
+- Capture the current install path, supported hosts, commands, expected state, and
+  known limits before changing code.
+- Recruit five candidate pairs and record whether they are same-team, cross-team, or
+  cross-company. Include at least one pair without the primary maintainer if
+  available; do not infer a market from the maintainer's own usage.
 
-- Ten or more meaningful exchanges where the task requires them, without optimizing
-  for message count.
-- One accepted API-contract revision.
-- One offline/reconnect recovery.
-- One duplicate delivery.
-- One adversarial message or artifact attempting to expand local authority.
-- One mid-run cancellation or revocation.
-- Passing backend, Android, contract, and end-user scenario checks.
-- No human input after the initial Mission and policy grant.
+### Days 4-10: prove the original loop
 
-**Exit gate:** both participant workspaces are review-ready with a complete replayable
-trace and no forbidden effect.
+Run [#101](https://github.com/swayamg20/AgentRelay/issues/101) as the canonical
+two-agent, two-machine mailbox proof:
 
-## Stage 5: evaluate before broadening
+1. Owner A invites Owner B; both configure distinct agent identities.
+2. Each installs the existing MCP server into an already supported agent host.
+3. Agent A discovers Agent B and sends a real question or context request.
+4. Agent B explicitly checks the inbox, accepts the handoff, and replies in-thread.
+5. Agent A reopens the same thread and uses the reply.
+6. Repeat once with B offline during send and online later.
 
-Run several frozen cross-repository tasks under comparable budgets:
+Run the mailbox fault checks from
+[#103](https://github.com/swayamg20/AgentRelay/issues/103): duplicate retries,
+response loss, Relay restart, offline pickup, terminal-thread rejection, block
+fencing, and unauthorized access. Do not substitute Mission delivery evidence for
+mailbox evidence.
 
-1. One capable agent with both repositories.
-2. Two isolated agents using ordinary free-form coordination.
-3. Two agents using typed AgentRelay Missions.
-4. Typed Missions plus executable cross-repository verification.
+After the proof passes, use the already-open
+[#8](https://github.com/swayamg20/AgentRelay/issues/8) to record the honest 60-90
+second two-machine demo. The recording must show explicit pickup and must not claim
+autonomous wake-up or execution.
 
-Measure strict integrated success, human interventions, wall time, cost, turns,
-clarification loops, contract drift, repeated work, premature completion, replay
-correctness, and policy violations.
+### Days 11-17: observe repeated use
 
-**Continue only if:** structured collaboration repeatedly improves integrated success
-or preserves a valuable repository-ownership boundary at an acceptable cost.
+Run the pilot owned by
+[#102](https://github.com/swayamg20/AgentRelay/issues/102):
 
-**Stop or reshape if:** it needs human nudges to pick up messages, regularly finishes
-with incompatible contracts, loses correctness after reconnect, or costs materially
-more than the strongest simple baseline without a compensating benefit. Any secret
-disclosure, unauthorized write, or capability escalation fails the run.
+- target five independent owner-pairs, including one pair not containing the primary
+  maintainer if available;
+- target at least twenty substantive handoff threads across more than one day;
+- include questions, context transfer, clarification, a refusal reply, and a
+  sender-cancelled thread rather than counting synthetic pings;
+- compare each workflow with the user's actual alternative, such as Slack, a ticket,
+  copy/paste, or giving one agent both contexts; and
+- collect setup time, interventions, pickup behavior, reply completion, failures,
+  and whether either pair chooses to use AgentRelay again without prompting.
 
-## Stage 6: harden and interoperate
+### Days 18-23: simulate pickup before building it
 
-Only after the Codex slice clears the evaluation gate:
+- Use the existing notification path or a manual reminder to simulate faster pickup.
+- Manually share a short owner-approved availability status; do not present it as an
+  implemented presence field.
+- Compare the simulated pickup path with explicit `check_inbox` polling.
+- Build #39, #44, or another L2 mechanism only if missed pickup is the dominant
+  observed failure.
 
-- Add a Claude Agent SDK or headless adapter.
-- Pass a current A2A compatibility suite and publish correct Agent Cards.
-- Add multi-node selection only if one logical agent genuinely needs it.
-- Add stronger artifact storage, retention, observability, and operator tooling.
-- Decide whether the relay may read payloads or needs relay-blind encryption.
-- Package a reliable two-machine setup and demo.
+### Days 24-27: test commitment with current states
 
-## Later, demand-driven work
+- Use current `pending`, `accepted`, `completed`, and `cancelled` behavior only.
+- Record refusal and no-response as user outcomes, not wire states.
+- Record demand for decline, expiry, ETA, or richer commitment without claiming those
+  states are implemented.
 
-- Multi-party or parallel Missions.
-- Cross-organization federation.
-- Hosted multi-tenant service, SSO, billing, and administration.
-- Desktop or mobile notification UI.
-- Non-engineering Mission applications and artifact types.
-- Auto-push, PR, merge, deploy, or production actions under explicit policy.
+Work may come from the active mailbox issue set, but evidence chooses the order:
 
-These are product questions, not implied commitments.
+- [#10](https://github.com/swayamg20/AgentRelay/issues/10) strict trust schema;
+- [#11](https://github.com/swayamg20/AgentRelay/issues/11) truthful doctor exit;
+- [#34](https://github.com/swayamg20/AgentRelay/issues/34) backup/restore guidance;
+- [#39](https://github.com/swayamg20/AgentRelay/issues/39) terminal inbox watch;
+- [#40](https://github.com/swayamg20/AgentRelay/issues/40) safe thread export;
+- [#44](https://github.com/swayamg20/AgentRelay/issues/44) durable notification
+  outbox; and
+- [#111](https://github.com/swayamg20/AgentRelay/issues/111) teammate filtering and
+  roster pagination.
 
-## Explicit non-goals for the first proof
+An open core issue is eligible work, not a commitment to build it during the pilot.
+Do not add an abstraction when a documentation or setup correction removes the
+observed blocker.
 
-- Real-time collaborative editing.
-- A central manager LLM.
-- LLM-based recipient routing.
-- Waking a sleeping or powered-off laptop.
-- Repository synchronization.
-- A new transport that competes with A2A or MCP.
-- Claiming that agent count alone improves software quality.
+### Days 28-30: decide
+
+Publish the complete #102 report, including failed and abandoned attempts. Record one
+of three decisions:
+
+- **Go:** keep the mailbox as the product center and schedule only the next
+  evidence-backed mailbox improvements.
+- **Narrow:** retain AgentRelay as a useful self-hosted MCP mailbox or specific team
+  workflow, and stop broader network claims.
+- **Stop:** archive product expansion while preserving the code and research record.
+
+Labs or interoperability work requires a separate, explicit decision after this
+gate. A `go` for the mailbox is not automatically a `go` for Missions.
+
+## Evidence and metrics
+
+Use [`mailbox-pilot-template.md`](mailbox-pilot-template.md) as the shared evidence
+log. Record operational facts and behavior, not credentials or sensitive message
+content.
+
+| Question | Measure |
+|---|---|
+| Can owners start? | Invite redemption success, install success, time to first healthy `doctor`, maintainer interventions. |
+| Can agents address each other? | Correct teammate discovery, explicit recipient selection, and rejection of unknown, inactive, self, or blocked recipients. |
+| Is the mailbox durable? | Committed handoffs/messages retrievable after reconnect and Relay restart; duplicate effects under idempotent retry. |
+| Does the conversation close? | Time from send to explicit pickup, pickup to reply, completed, sender-cancelled, and documented-abandoned threads, clarification count. |
+| Is it useful? | User-rated advantage over the real alternative, context re-entry avoided, repeat use without prompting. |
+| Is it trustworthy? | Unauthorized reads/writes, block or revocation bypass, provenance loss, sensitive data in logs or exported evidence. |
+| Is it operable? | Support minutes per pair, notification failures, database or Relay incidents, recovery steps. |
+
+Store and pickup latency must be reported separately. Human availability is not a
+transport error, and a successful notification is not proof that an agent read the
+thread.
+
+## Decision thresholds
+
+These are precommitted validation thresholds, not current product claims.
+
+**Go requires all of the following:**
+
+- at least four of five pairs complete a real round trip;
+- at least three of five pairs voluntarily repeat without founder prompting within
+  seven days;
+- median setup time is under 15 minutes;
+- at least twenty substantive threads are recorded, and at least 90% of stored test
+  messages remain retrievable;
+- no known lost committed message, duplicate effect under an exact idempotent retry,
+  participant-authorization failure, accepted block/revocation bypass, provenance
+  loss, or other security-boundary failure occurs in the tested scope;
+- participants identify at least one recurring workflow that is preferable to
+  copying context through their existing channel; and
+- reports preserve the distinction among stored, notified, picked up, loaded,
+  accepted, and answered.
+
+**Narrow when** the transport and trust boundaries hold but a Go demand threshold is
+unmet without triggering Stop, or repeated use appears only inside one team, one host,
+or one specific workflow.
+
+**Stop expansion when any of the following remains unresolved at day 30:**
+
+- committed mailbox data is lost or duplicated under the tested recovery cases;
+- a non-participant reads or mutates a thread, or block/revocation/provenance
+  behavior fails;
+- median setup remains at or above 15 minutes or fewer than four pairs complete a
+  round trip;
+- fewer than two pairs return for a second real session; or
+- users consistently prefer the existing alternative and cannot name a recurring
+  problem that direct agent addressing solves.
+
+A security or durability failure stops the affected pilot immediately; it is fixed
+and rerun before any go decision.
+
+The product north-star metric is **successful cross-owner agent round trips per
+weekly connected pair**. Mission count, model turns, and orchestration depth are not
+product-success metrics.
+
+## Issue lanes after the reset
+
+- **Active mailbox:** #8, #10, #11, #34, #39, #40, #44, #101, #102, #103, #111,
+  and the validation epic [#128](https://github.com/swayamg20/AgentRelay/issues/128).
+- **Demand-gated:** attachments/confidentiality/cross-domain routing, additional
+  agent-host installers, operational metrics and abuse controls, notification policy,
+  measured scale, and hosted tenancy. These remain unscheduled until pilot evidence
+  names the trigger.
+- **Labs:** Node, Mission, runtime activation, runtime scale, and runtime supervision.
+  Preserve the work; do not present it as shipped product behavior.
+- **Interoperability:** A2A mapping, Agent Cards, bindings, clients, conformance, and
+  public schemas. Treat this as an edge adapter after a real consumer appears.
+- **Not now:** speculative UI, notification-channel expansion, compliance export,
+  HA/multi-region work, multiple local profiles, and content-addressed object storage.
+
+The exact GitHub mutations, issue numbers, and post-reset audit are in
+[`issue-reset-2026-09-01.md`](issue-reset-2026-09-01.md). The tracker reset is live;
+source delivery for this mailbox-first documentation was approved on 2026-09-02.
+
+## Explicit non-goals for the 30-day proof
+
+- Starting or waking a remote model process.
+- Autonomous repository work or external side effects.
+- A manager LLM, smart recipient routing, or multi-agent swarms.
+- SSE/WebSocket as delivery truth.
+- A2A v1, federation, hosted multi-tenancy, or a universal agent registry.
+- New desktop, mobile, IDE, or admin applications.
+- Auto-push, PR creation, merge, deploy, publish, or production credentials.
+- Claiming product-market fit from one founder-controlled demonstration.

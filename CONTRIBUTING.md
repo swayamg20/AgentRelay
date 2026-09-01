@@ -83,20 +83,23 @@ pnpm --filter agentrelay-mcp dev
 ## Repository layout
 
 ```text
-protocol/       Mission contracts, coordinator, test fixtures, and runtime adapters
-relay/          Hono + Drizzle + Postgres relay
-mcp-server/     agentrelay-mcp package and agentrelay CLI
-node/           foreground Node, local policy, journal, and fake Mission Capsules
+protocol/       Labs Mission contracts, coordinator, fixtures, and runtime adapters
+relay/          Hono + Drizzle + Postgres Relay; mailbox core plus Labs control plane
+mcp-server/     current mailbox product adapter and agentrelay CLI
+node/           Labs Node, local policy, journal, and fake Mission Capsules
 tests/e2e/      real relay, MCP, Node, and detached-Capsule process harnesses
 landing/        static GitHub Pages site
 docs/           current design, operations, roadmap, and RFCs
 ```
 
-The Node package currently proves one fake-adapter turn with durable local journaling,
+The Node package is preserved AgentRelay Labs work. It currently proves one
+fake-adapter turn with durable local journaling,
 in-process runner reconstruction, and recovery from a killed Node through a detached
 Mission Capsule. The Capsule is Unix-only and still hosts a deterministic fake; the
-real-runtime target remains
+real-runtime Labs target remains
 [`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md).
+Do not expand or promote that lane while the mailbox validation gate in
+[`RFC 002`](docs/rfcs/002-agent-reachability-and-durable-mailbox.md) is active.
 
 ## Understand the contract first
 
@@ -108,7 +111,10 @@ wherever the contract crosses those boundaries.
 - [`docs/hld.md`](docs/hld.md) describes the shipped mailbox and Relay control-plane
   flow.
 - [`docs/lld.md`](docs/lld.md) lists current routes, tables, tools, and known gaps.
-- Accepted RFCs define target behavior until implementation lands.
+- [`RFC 002`](docs/rfcs/002-agent-reachability-and-durable-mailbox.md) defines current
+  product priority and validation gates.
+- [`RFC 001`](docs/rfcs/001-agentrelay-node-and-missions.md) defines the preserved
+  Labs execution target.
 
 Code and tests are the source of truth for shipped behavior. If a document disagrees,
 fix or flag the documentation; do not silently build on an imaginary contract.

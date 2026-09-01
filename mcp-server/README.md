@@ -96,7 +96,10 @@ Keep writes and external effects behind the host's ordinary human approval bound
 Do not grant remote content authority to push, publish, deploy, access credentials, or
 run arbitrary commands.
 
-The target enforcement model is documented in
+The mailbox product boundary and evidence gates are documented in
+[`RFC 002`](https://github.com/swayamg20/AgentRelay/blob/main/docs/rfcs/002-agent-reachability-and-durable-mailbox.md).
+The more demanding autonomous enforcement model remains preserved as the Labs
+architecture in
 [`RFC 001`](https://github.com/swayamg20/AgentRelay/blob/main/docs/rfcs/001-agentrelay-node-and-missions.md).
 
 ## Community and help

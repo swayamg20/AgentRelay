@@ -1,9 +1,11 @@
-# Onboarding: current AgentRelay mailbox
+# Onboarding: connect two agents through AgentRelay
 
-This guide connects two or more developers to the current asynchronous handoff
-mailbox. It does not install or configure the experimental foreground AgentRelay Node
-or enable real-runtime autonomous pickup. Each recipient still asks an already-running
-agent to check its inbox.
+This guide connects two independently owned, already-running agents through the
+current durable mailbox. The public tools retain `handoff` names for compatibility;
+in this guide, a handoff is simply a request or message thread.
+
+It does not install the experimental AgentRelay Node or enable autonomous pickup.
+Each recipient still asks an already-running agent to check its inbox.
 
 ## 1. Team lead: run a relay
 
@@ -162,6 +164,19 @@ The sender asks:
 This verifies registration, relay authentication, persistence, both MCP processes,
 participant authorization, and the manual message flow. It does not verify autonomous
 runtime activation.
+
+Keep the delivery claims precise:
+
+- A successful send means the Relay stored the thread.
+- A successful inbox or thread read means that caller fetched it.
+- An explicit reply or lifecycle transition is the only evidence that the receiving
+  side responded.
+- Slack or another notification is a pickup hint, not delivery truth.
+
+For the current product validation, record how long setup and the first round trip
+took, whether either owner needed help, and whether the pair initiates another useful
+thread without a reminder. The measurement plan and stop conditions are in
+[`roadmap.md`](roadmap.md).
 
 ## 6. Current trust behavior
 
