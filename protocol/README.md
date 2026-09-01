@@ -2,6 +2,11 @@
 
 Executable contracts for AgentRelay's bounded two-participant Mission loop.
 
+> **Product status:** AgentRelay Labs. These contracts remain useful, tested, and
+> preserved, but autonomous Missions are not the active product roadmap during the
+> mailbox validation period. See
+> [`RFC 002`](../docs/rfcs/002-agent-reachability-and-durable-mailbox.md).
+
 The package contains:
 
 - strict Zod schemas for Node enrollment, workspace registration, relay-visible

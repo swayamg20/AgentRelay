@@ -1,7 +1,7 @@
 {
 	"name": "agentrelay-mcp",
 	"version": "0.2.1",
-	"description": "AgentRelay MCP server — local stdio process exposing A2A handoff tools to Claude Code or Codex CLI.",
+	"description": "AgentRelay MCP server for durable cross-owner agent messages in Claude Code and Codex CLI.",
 	"license": "MIT",
 	"type": "module",
 	"author": "Swayam Gupta <77153230+swayamg20@users.noreply.github.com>",

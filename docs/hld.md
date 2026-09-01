@@ -1,20 +1,29 @@
-# High-level design: current relay implementation
+# High-level design: mailbox core and Labs implementation
 
-> **Scope:** Current repository implementation as of 2026-08-17.
-> This document describes the existing handoff plane, public Mission delivery
-> control plane, experimental Node, and unactivated Codex runtime libraries.
-> It does not describe a complete autonomous coding runtime. See
-> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) for the target system.
+> **Scope:** Current repository implementation as of 2026-09-01.
+> This document describes the core handoff mailbox and the same-repository Mission,
+> Node, Capsule, and Codex Labs track. Product direction and priority live in
+> [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md). The Labs target
+> remains [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md); it is not a complete
+> or activated autonomous coding runtime.
 
 ## Purpose
 
-The current AgentRelay implementation lets two registered developers' already-running
-agents exchange structured handoff threads through a shared relay. The relay persists
-the conversation and enforces participant access. A local stdio MCP server exposes
-the mailbox as tools to Claude Code or Codex.
+The core AgentRelay implementation lets two registered developers' independently
+operated, already-running agents address each other and exchange durable handoff
+threads through a shared relay. The relay persists ordered messages and enforces
+participant access. A local stdio MCP server exposes the mailbox as tools to Claude
+Code or Codex.
 
-Humans or active agent sessions still initiate mailbox checks. Separately, the
-foreground `agentrelay-node` command can use a pre-issued Node credential, accept a
+An AgentRelay address is currently a handle inside one relay/team trust domain, not a
+global or federated address. Invite redemption establishes membership, blocks provide
+negative consent, and handoff acceptance records task commitment. Either participant
+can read or reply while a handoff remains `pending`, so communication does not depend
+on accepting the task. Humans or active agent sessions still initiate mailbox checks;
+notification does not prove pickup, reading, or processing.
+
+Separately, in Labs, the foreground `agentrelay-node` command can use a pre-issued
+Node credential, accept a
 Mission assignment, durably lease one turn, and drive either an in-process fake
 adapter or a detached persistent fake Mission Capsule. A provider-neutral Capsule
 server, injected Codex runner, and provider guardian now exist behind that wire as a
@@ -38,11 +47,11 @@ agentrelay-mcp                                          agentrelay-mcp
       | HTTPS JSON-RPC/REST                                   | HTTPS JSON-RPC/REST
       +------------------- relay -----------------------------+
                          Hono + Postgres
-              identity, handoffs, Missions, delivery, audit
+            core: identity, consent, handoffs, messages, audit
                               |
                    best-effort Slack webhook
 
-Experimental path on each machine:
+Same-repository Labs path on each machine:
 agentrelay-node -> atomic local journal
         |-- in-process deterministic fake adapter
         `-- private grant + Unix socket -> provider-neutral Capsule server
@@ -53,7 +62,7 @@ agentrelay-node -> atomic local journal
                                                   `-- spawns detached teardown witness
                                                       outside the process group
 
-Unactivated Linux composition:
+Labs, unactivated Linux composition:
 owner-prepared checkout -> containment library -> pinned Codex sandbox/app-server
 ```
 
@@ -68,9 +77,13 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - API-key rotation and block records.
 - Handoff and ordered-message persistence.
 - Participant authorization and lifecycle transitions.
-- Audit records for invite, handoff/message, block, Node/workspace, Mission, and
-  delivery mutations.
-- An in-process Slack dispatcher with encrypted-at-rest webhook configuration.
+- Audit records for invite, handoff/message, and block mutations.
+- An optional in-process Slack notification adapter with encrypted-at-rest webhook
+  configuration.
+
+Its Labs routes additionally own:
+
+- Audit records for Node/workspace, Mission, and delivery mutations.
 - Agent-authenticated Mission creation plus Node-authenticated Mission list, detail,
   and participant acceptance.
 - Node-authenticated cursor polling and recovery discovery, followed by fenced claim,
@@ -105,7 +118,7 @@ The `agentrelay` binary supports registration, invite/join, client installation,
 rotation, doctor/fix, audit, block/unblock, trust management, and starting the stdio
 MCP server.
 
-### Experimental foreground Node
+### Labs: experimental foreground Node
 
 The private `agentrelay-node` workspace consumes the public Node routes. While its
 foreground command is running, it verifies the configured Node and workspaces,
@@ -172,7 +185,11 @@ and binding digest. Future Mission lifecycle wiring must store that handle durab
 current commands do not. Detailed mechanics live in
 [research 006](research/006-mission-workspace-containment.md).
 
-## Core data model
+## Data model
+
+The first branch below is the core mailbox model. The second is the Labs Mission and
+execution extension; sharing a schema does not make that extension a prerequisite for
+mailbox operation.
 
 ```text
 Agent 1---1 AgentCard
@@ -207,6 +224,9 @@ Agent 1---N Node ---N NodeCredential
 - `AgentBlock` prevents a blocked sender from creating a new handoff for the blocker
   or appending another message to an existing thread whose receiver blocked them.
 - `Invite` records signed-token identity, expiry, and one-time redemption.
+
+The Labs extension adds:
+
 - `Node` and `WorkspaceBinding` are relay-visible routing identities without a local
   checkout path or executable command authority.
 - `NodeCredential` stores only the hashed, separately revocable credential used by
@@ -236,6 +256,7 @@ pending --accept--> accepted --complete--> completed
 - Only the recipient may accept or complete.
 - Only the sender may cancel, and only while pending.
 - Either participant may append messages while pending or accepted.
+- Acceptance records task commitment; it is not required to read or reply.
 - Completed and cancelled handoffs are terminal.
 - State transitions and audit writes happen transactionally.
 - Per-handoff message sequence allocation is protected with a Postgres advisory lock.
@@ -263,9 +284,11 @@ pending --accept--> accepted --complete--> completed
 3. The relay authenticates the sender, checks the recipient and block relationship,
    then stores the handoff, first message, and audit entry.
 4. After commit, the relay enqueues a best-effort notification.
-5. The recipient later calls `check_inbox`, then `accept_handoff`.
-6. The MCP server returns the thread with provenance-wrapped text, marked structured
-   teammate data, and the local trust decision.
+5. The recipient later calls `check_inbox`, then reads or replies to the thread.
+6. If the recipient is committing to the requested task, it separately calls
+   `accept_handoff`.
+7. The MCP server returns teammate content with provenance-wrapped text, marked
+   structured data, and the local trust decision.
 
 ### Clarify and complete
 
@@ -281,13 +304,16 @@ and the relay-owned idempotency key is not exposed to the model.
 
 ## Correctness boundaries
 
-### Durable today
+### Durable core mailbox today
 
 - Handoffs, messages, lifecycle state, identities, invites, and blocks, plus audit
-  rows for invite, handoff/message, block, Node/workspace, Mission, and delivery
-  mutations.
+  rows for invite, handoff/message, and block mutations.
 - Participant access checks and most state transitions.
 - Idempotent replay for handoff creation and message append.
+
+### Durable Labs state today
+
+- Audit rows for Node/workspace, Mission, and delivery mutations.
 - Through public agent and Node routes: Mission creation, assignment list/detail,
   independent exact participant acceptance, ordered event append through completion,
   reducer-projection updates, source-delivery and causal links, derived deliveries,
@@ -326,13 +352,20 @@ and the relay-owned idempotency key is not exposed to the model.
   completion. Decision records are emitted only to an injected evidence sink, and no
   durable sink is selected by default.
 
-### Best effort today
+### Best effort in the core mailbox today
 
 - Slack dispatcher execution. Webhook URLs are encrypted before storage, but the
   queue is in memory, has a finite capacity, and can lose jobs across process restart.
 - Human or active-session pickup. `check_inbox` is explicit polling.
 
-### Not implemented today
+### Not implemented in the core mailbox today
+
+- A global or federated address beyond one relay/team trust domain.
+- Durable push or portable wake-up of a closed agent host.
+- Truthful unread/read receipts and complete list pagination.
+- A current A2A compatibility proof.
+
+### Not implemented in Labs today
 
 - A production-activated coding-agent runtime session. The Node/Capsule process proof
   still exercises only the deterministic fake; the injected Codex runner is covered
@@ -350,18 +383,19 @@ and the relay-owned idempotency key is not exposed to the model.
 - Contract-acknowledgement and registered verification-command delivery handlers.
 - Durable local command, edit, test, authority, and permission-decision audit.
 - A real two-machine, two-repository execution proof.
-- A current A2A compatibility proof.
 
 ## Security boundaries
 
-Implemented protections include type-separated hashed agent and Node credentials,
-participant authorization, block checks on new handoffs, pending acceptance,
-active-thread appends, and content-bearing completion, a shared directed-pair lock
-between those checks and block-list writes, the same trust fence across Mission
-creation, acceptance, event publication, and delivery execution, current routing
-revalidation, revocation-driven delivery cancellation, scoped relay audit, provenance
+Core mailbox protections include hashed and revocable agent credentials, participant
+authorization, block checks on new handoffs, pending acceptance, active-thread
+appends, and content-bearing completion, plus a shared directed-pair lock between
+those checks and block-list writes. They also include scoped relay audit, provenance
 wrappers or markers on teammate-originated mailbox fields, static host permission
 recommendations, and per-acceptance local trust loading.
+
+Labs adds separately scoped Node credentials, the same trust fence across Mission
+creation, acceptance, event publication, and delivery execution, current routing
+revalidation, and revocation-driven delivery cancellation.
 
 At an unactivated Linux library boundary, the Node can also require an owner-controlled
 standalone checkout, a writable worktree with read-only Git metadata, explicit read
@@ -385,9 +419,10 @@ They are not yet one end-to-end enforcement system:
   commands or edits happened because of a handoff.
 - Outbound AgentRelay tools are not constrained by a Mission-specific data policy.
 
-Autonomous execution must still wait for the Node to activate this boundary around a
-real runtime and mediate every concrete command, network, path, and side effect outside
-the model. See the security section of [`architecture.md`](architecture.md).
+Labs autonomous execution must still wait for the Node to activate this boundary
+around a real runtime and mediate every concrete command, network, path, and side
+effect outside the model. This is not a mailbox product gate. See the security
+section of [`architecture.md`](architecture.md).
 
 ## Failure behavior
 
@@ -471,19 +506,22 @@ the model. See the security section of [`architecture.md`](architecture.md).
   deliveries; immutable Mission and operation history remains for audit and recovery
   analysis.
 
-## Relationship to the next design
+## Product direction and Labs boundary
 
-The mailbox remains a compatibility and inspection surface. The relay exposes a
-separate, authenticated Mission and delivery control plane without stretching the
-handoff row into a scheduler. The foreground Node now consumes one turn through that
-API with either an in-process fake or a detached persistent fake Capsule. A pinned
-Codex client, injected runner, and provider guardian now pass the provider-neutral
-Capsule boundary with fake app-server clients, and a Linux-only containment library
-now defines the workspace boundary. Its dedicated Linux process proof starts pinned
-Codex through both unactivated boundaries. The next gates are contract/artifact
-carriage, registered verification execution, descriptor/CLI composition of the new
-authority checkpoint with durable recovery-handle storage, durable structured
-execution evidence, adversarial evaluation, and Guarded Real Mission 0 through the
-public pipeline. Installed service/cgroup containment,
-witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120.
-The two-machine proof follows; see the roadmap for the dependency order.
+The mailbox is the core product surface. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md)
+governs its next priorities: prove that real pairs can address each other, retain
+thread context, reply asynchronously, and return to the workflow before adding
+autonomous activation. The relay database remains the source of truth; notification
+or a future SSE/WebSocket signal may improve latency but cannot stand in for durable
+state or a processing receipt.
+
+The relay also exposes a separate, authenticated Mission and delivery control plane
+without stretching the handoff row into a scheduler. That plane, the foreground Node,
+the fake and provider-neutral Capsules, the Codex guardian, and Linux containment are
+same-repository Labs governed by [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
+Their remaining gates include contract/artifact carriage, registered verification
+execution, descriptor/CLI composition of the authority checkpoint with durable
+recovery-handle storage, durable structured execution evidence, adversarial
+evaluation, Guarded Real Mission 0, installed service/cgroup containment, and a real
+two-machine execution proof. Those gates are retained research work, not the active
+product dependency order.

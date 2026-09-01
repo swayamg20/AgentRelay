@@ -1,26 +1,34 @@
-# Low-level design: current relay contracts
+# Low-level design: mailbox core and Labs contracts
 
-> **Scope:** Current repository implementation as of 2026-08-17.
+> **Scope:** Current repository implementation as of 2026-09-01.
 > This is a compact source-oriented reference, not a promise that planned fields or
-> routes exist. Unimplemented local Node runtime behavior remains in
-> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
+> routes exist. Product direction and priority live in
+> [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md). Mission, Node,
+> Capsule, and autonomous-execution contracts are same-repository Labs whose target
+> remains [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
 
 ## Repository layout
 
 ```text
 .
 ├── landing/             GitHub Pages landing page
-├── protocol/            Mission schemas, coordinator, fixtures, and adapter contract
-├── relay/               Hono, Drizzle, Postgres relay
-├── mcp-server/          agentrelay-mcp package and agentrelay CLI
-├── node/                Node, Capsule wire, fake runtime, and unactivated Codex boundaries
-├── tests/e2e/           relay, MCP, Node, and detached-Capsule process harnesses
+├── protocol/            Labs Mission schemas, coordinator, and runtime contracts
+├── relay/               Core mailbox plus same-process Labs routes and ledgers
+├── mcp-server/          Core agentrelay-mcp package and agentrelay CLI
+├── node/                Labs Node, Capsule, fake runtime, and Codex boundaries
+├── tests/e2e/           core mailbox and Labs process harnesses
 ├── docs/                product, implementation, operations, and RFC docs
 ├── docker-compose.yml   Postgres dev service and self-host relay profile
 └── package.json         pnpm workspace scripts
 ```
 
-The private `agentrelay-node` workspace now provides a foreground daemon and durable
+The core product path is `mcp-server/` to the relay's authenticated `/a2a` mailbox
+route, then to durable `handoffs` and `messages` rows. Its supported human-scale flow
+is invite, install, address a teammate, check, read, reply, and revisit the thread.
+An address is currently stable only inside one relay/team trust domain. Thread
+acceptance records task commitment; it is not required to read or reply.
+
+In Labs, the private `agentrelay-node` workspace provides a foreground daemon and durable
 consumer for fake-adapter turn deliveries. It validates local workspace/policy state,
 journals discovery and operation intent, and can recover exact host events from an
 independently persistent fake Mission Capsule after the Node process is killed. There
@@ -35,7 +43,7 @@ No descriptor, CLI, or Mission lifecycle selects them. Separately, the persisten
 fake-Capsule path now installs and continuously enforces one private, fenced runtime
 grant. This does not activate Codex.
 
-## Protocol workspace
+## Labs protocol workspace
 
 `@agentrelay/protocol` currently implements:
 
@@ -69,6 +77,12 @@ collaborating across machines. Exact evidence and nonclaims are recorded in
 Column-level truth lives in [`relay/src/db/schema.ts`](../relay/src/db/schema.ts) and
 the committed Drizzle migrations.
 
+`agents`, `agent_cards`, `api_keys`, `handoffs`, `messages`, `audit_log`,
+`agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
+workspace, Mission, delivery, and receipt tables are the same-schema Labs extension;
+they remain mounted and migrated for current compatibility but are not prerequisites
+for mailbox use.
+
 | Table | Current purpose |
 |---|---|
 | `agents` | Developer identity: handle, email, display name, role, active/disabled state. |
@@ -90,11 +104,11 @@ the committed Drizzle migrations.
 
 Public mailbox authentication still represents a logical developer/agent. Until a
 separate owner/organization identity exists, that agent credential is the enrollment
-authority for its own Nodes. Node credentials now exist for the identity/workspace
-surface and delivery leases. The Relay deliberately stores no local checkout path or
-runtime-session row and has no Mission-wide execution lease; the experimental Node
-keeps its checkout mapping and host-session references in local configuration and its
-journal.
+authority for its own Labs Nodes as well. Labs Node credentials exist for the
+identity/workspace surface and delivery leases. The Relay deliberately stores no
+local checkout path or runtime-session row and has no Mission-wide execution lease;
+the experimental Node keeps its checkout mapping and host-session references in local
+configuration and its journal.
 
 ## Authentication
 
@@ -105,6 +119,9 @@ journal.
   in a mode-0600 file.
 - Self-rotation revokes all active keys for the caller, writes a replacement, and
   updates local config after the response.
+
+The Labs route family adds a disjoint Node credential:
+
 - Node routes accept only `ar_node_live_*` or `ar_node_test_*` credentials; agent
   credentials cannot authenticate them, and Node credentials cannot authenticate
   agent or A2A routes.
@@ -118,7 +135,7 @@ journal.
   agent. Successful requests update credential last-used and Node presence on a
   best-effort, debounced path.
 
-## Mission and delivery ledger
+## Labs Mission and delivery ledger
 
 `relay/src/services/mission-ledger.ts`, `delivery-ledger.ts`, and
 `mission-reconciliation.ts` back public agent and Node routes.
@@ -188,7 +205,7 @@ There is no `/metrics`, `/inbox/:id`, or
 | `DELETE` | `/admin/agents/:id` | In one transaction, disable an Agent, revoke its keys, owned Nodes, active Node credentials and workspace bindings, cancel affected active deliveries, and write admin audit evidence. |
 | `POST` | `/admin/invites` | Mint a signed, expiring, single-use invite URL. |
 
-### Authenticated agent routes
+### Authenticated core agent routes
 
 | Method | Path | Behavior |
 |---|---|---|
@@ -200,16 +217,21 @@ There is no `/metrics`, `/inbox/:id`, or
 | `GET` | `/agents/me/block` | List caller's server-side blocks. |
 | `POST` | `/agents/me/block` | Add a server-side block by handle. |
 | `DELETE` | `/agents/me/block/:handle` | Remove a server-side block. |
+
+`/agents` is authenticated. The stored card JSON is not currently exposed through an
+A2A well-known discovery URL.
+
+### Authenticated agent-owned Labs routes
+
+| Method | Path | Behavior |
+|---|---|---|
 | `POST` | `/agents/me/nodes` | Enroll a Node and return its raw Node credential once. Duplicate active names return `state_changed`; they never replay a secret. |
 | `GET` | `/agents/me/nodes` | List owner-only summaries for every owned Node, including revoked history and the current active credential ID or `null`. No token or hash is exposed. |
 | `POST` | `/agents/me/nodes/:nodeId/credentials/rotate` | Require `{expected_credential_id}`, atomically replace only that active generation, and return the new raw credential once. A stale generation returns `state_changed`. |
 | `DELETE` | `/agents/me/nodes/:nodeId` | Idempotently revoke an owned Node, its active credentials and bindings, and active deliveries across affected Missions while retaining history. |
 | `POST` | `/agents/me/missions` | Validate and create the exact manifest Mission, resolve both persisted participant routes, and return the Mission state and bindings. Fresh already-expired manifests are rejected using relay database time; exact manifest-ID replay returns the prior result even after expiry. |
 
-`/agents` is authenticated. The stored card JSON is not currently exposed through an
-A2A well-known discovery URL.
-
-### Authenticated Node routes
+### Authenticated Labs Node routes
 
 | Method | Path | Behavior |
 |---|---|---|
@@ -242,7 +264,7 @@ background scheduler.
 ## JSON-RPC surface
 
 `POST /a2a` accepts JSON-RPC 2.0 envelopes with bearer authentication. Current
-methods are:
+methods form the core mailbox wire used by `agentrelay-mcp`:
 
 - `message/send`
 - `tasks/get`
@@ -301,9 +323,11 @@ pending --cancel--------------------------------> cancelled
 ```
 
 Recipient owns accept and complete. Sender owns cancel. Completed and cancelled are
-terminal. Completion artifacts are persisted separately from the original handoff
-artifacts and returned by both the completion response and `tasks/get`; `view_thread`
-also returns the completion summary, provenance-wrapped when read by its peer. Accepting an
+terminal. Acceptance records task commitment; either participant can read and append
+while a handoff remains pending. Completion artifacts are persisted separately from
+the original handoff artifacts and returned by both the completion response and
+`tasks/get`; `view_thread` also returns the completion summary, provenance-wrapped
+when read by its peer. Accepting an
 already accepted handoff returns its current row, but complete and cancel do not yet
 have general idempotency receipts or replay guarantees. A recipient cannot accept a
 pending handoff after blocking its sender, and a blocked recipient cannot send
@@ -314,7 +338,7 @@ completion summary/artifact content back to the sender.
 Returns every active teammate. The MCP tool sends optional role, skill, and repository
 filters, but the relay currently ignores those filters.
 
-## MCP tool surface
+## Core MCP tool surface
 
 Source of truth: [`mcp-server/src/tools/index.ts`](../mcp-server/src/tools/index.ts).
 
@@ -333,6 +357,9 @@ tool today.
 
 ## Artifact types
 
+Artifacts are optional mailbox payloads; a normal address, message, and reply flow
+does not require them. The current coding-oriented vocabulary is retained for
+compatible clients and Labs applications, but it does not define the product.
 Current MCP write schemas support:
 
 - `file_diff`
@@ -371,7 +398,7 @@ overlay for the sender, and returns it to the agent. No production code applies
 `auto_write_paths` dynamically to a Codex or Claude runtime; `isPathAutoWritable` is
 currently exercised only by tests and exports.
 
-## Node and Capsule process surface
+## Labs Node and Capsule process surface
 
 The private `agentrelay-node` binary has two fake-runtime commands:
 
@@ -653,10 +680,11 @@ Important limits:
 
 ## Audit and revocation
 
-Relay audit rows cover invite mint/redeem, handoff create/accept/complete/cancel,
-message append, block/unblock, Node enroll/credential-rotate/revoke, workspace
-register/revoke, Mission create/participant accept/event append, every public Node
-delivery mutation, `mission.terminal`, and relay lease-expiry/cancellation transitions.
+Core relay audit rows cover invite mint/redeem, handoff
+create/accept/complete/cancel, message append, and block/unblock. Labs audit adds Node
+enroll/credential-rotate/revoke, workspace register/revoke, Mission
+create/participant accept/event append, every public Node delivery mutation,
+`mission.terminal`, and relay lease-expiry/cancellation transitions.
 Each terminal reconciliation writes a system Mission audit plus Relay `cancel`
 receipts and audits tied to the terminal event for every remaining runnable delivery.
 The matching `delivery_operation_receipts` retain exact Node-operation results and
@@ -747,19 +775,26 @@ RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agen
 `pnpm -r test` includes the E2E workspace and is not the database-free unit-test
 command.
 
-## Boundary with the next design
+## Product direction and Labs boundary
 
-Do not extend `accepted_by_session` or the four-state handoff table into a distributed
-runtime scheduler. Nodes, credentials, workspace bindings, Missions, events, and
-deliveries have a separate model and public control plane. The local Node now proves
-both the journaled in-process fake-turn boundary and detached fake-Capsule recovery
-after Node-process death. The provider-neutral server, injected Codex runner, and
-provider guardian/reaper add an unactivated wire/process checkpoint; the Linux containment
+The mailbox API is the core product surface. Its active direction is
+[`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md): make address, consent,
+durable send, check, read, reply, and honest state work repeatedly for real pairs.
+Do not turn the four-state handoff table into a distributed runtime scheduler, and do
+not require a Node, Mission, or Capsule for mailbox communication. Notification and
+future streaming may reduce latency, but persisted mailbox state remains
+authoritative.
+
+Nodes, credentials, workspace bindings, Missions, events, and deliveries have a
+separate public control plane and same-repository Labs model. The local Node proves
+the journaled in-process fake-turn boundary and detached fake-Capsule recovery after
+Node-process death. The provider-neutral server, injected Codex runner, and provider
+guardian/reaper add an unactivated wire/process checkpoint; the Linux containment
 library adds an unactivated workspace boundary with exact retained recovery identity
-and a passing Linux process proof. A bound reference monitor now protects only the
-persistent fake-Capsule path. The next gates are registered verification and artifact
-carriage, descriptor/CLI composition of that authority with durable handle storage,
-durable structured execution evidence, adversarial evaluation, Guarded Real Mission 0,
-and finally the two-machine proof. Installed service/cgroup containment,
-witness/all-owner loss, escaped descendants, and restart/upgrade/rollback remain #120. The
-mailbox API remains a compatibility and inspection surface.
+and a passing Linux process proof. A bound reference monitor protects only the
+persistent fake-Capsule path. [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md)
+remains the Labs target; registered verification, artifact carriage, activated
+authority composition, durable execution evidence, Guarded Real Mission 0, the
+two-machine proof, installed service/cgroup containment, witness/all-owner loss,
+escaped descendants, and restart/upgrade/rollback remain Labs gates rather than
+product priorities.

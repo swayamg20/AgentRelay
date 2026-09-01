@@ -15,12 +15,16 @@ need.
   - `docs/architecture.md` for current and target component boundaries.
   - `docs/hld.md` for the implemented mailbox and Relay control-plane flow.
   - `docs/lld.md` for current schemas, routes, tools, and known gaps.
-  - `docs/rfcs/001-agentrelay-node-and-missions.md` for the next architecture.
+  - `docs/rfcs/002-agent-reachability-and-durable-mailbox.md` for current product
+    priority and validation gates.
+  - `docs/rfcs/001-agentrelay-node-and-missions.md` for the preserved Labs
+    execution architecture.
 - Trace cross-package behavior through `protocol/`, `relay/`, `mcp-server/`, and
   `node/` as applicable. A contract is not understood until its producer and consumer
   have both been checked.
-- Treat active code and tests as current behavior. Treat an accepted RFC as target
-  behavior. If they disagree, state the discrepancy instead of silently choosing.
+- Treat active code and tests as current behavior. RFC 002 defines product priority;
+  RFC 001 defines the parked Labs execution target. If code and a design source
+  disagree, state the discrepancy instead of silently choosing.
 
 ## Implementation style
 
@@ -40,8 +44,13 @@ need.
 
 ## Product boundaries
 
-- The relay is model-free. It owns identity, durable coordination, routing, audit,
-  and revocation.
+- The ten-second product model is "My agent can message your agent": stable identity,
+  explicit consent, durable threaded communication, and honest delivery/reply state
+  between independently owned agents.
+- Communication comes before coordination; coordination before commitment;
+  commitment before delegation; and delegation before autonomy.
+- The relay is model-free. It owns identity, durable correspondence and coordination,
+  routing, audit, and revocation.
 - The AgentRelay Node owns local runtime activation, mapping logical workspace aliases
   to approved repositories, worktrees, policy enforcement, and run traces. Its current
   fake-runtime paths, including the detached Mission Capsule, are checkpoints of that
@@ -49,8 +58,13 @@ need.
 - MCP is a local tool and context boundary, not a portable wake-up mechanism.
 - SSE or WebSocket can reduce delivery latency, but durable database state and
   replay cursors remain the source of truth.
-- Missions are the first application on the communication network, not the entire
-  identity of the product.
+- Mission, Node, Capsule, and autonomous-runtime work is a preserved Labs application,
+  not the identity or active roadmap of the product. Keep it compiling and secure,
+  but do not expand or promote it without the evidence gates in RFC 002.
+- A Relay receipt means durable storage, not device pickup, agent processing, or a
+  reply. Do not conflate those states in code, documentation, metrics, or UI.
+- Presence and push transports are optional hints. They do not replace durable state
+  or give a remote peer local authority.
 - Do not introduce a manager LLM where a deterministic state machine is sufficient.
 
 ## Security and data rules

@@ -1,244 +1,229 @@
 # Next steps
 
-This is the near-term implementation queue. The architecture is defined in
-[`RFC 001`](rfcs/001-agentrelay-node-and-missions.md); the broader sequence and
-evaluation gates live in [`roadmap.md`](roadmap.md).
+> **Window:** 2026-09-01 through 2026-09-30. This is the mailbox-first
+> validation queue for
+> [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md) and
+> [`roadmap.md`](roadmap.md). The GitHub changes described in
+> [`issue-reset-2026-09-01.md`](issue-reset-2026-09-01.md) were executed with owner
+> approval on 2026-09-02. No branch, pull request, commit, release, or deployment was
+> changed by that tracker reset.
 
-## 1. Close current mailbox integrity gaps
+## Work rule
 
-- [x] Provenance-wrap every teammate-originated artifact and proposed-action field.
-- [x] Preserve `send_message.payload` through the relay instead of storing only
-  artifacts.
-- [x] Preserve completion artifacts through `complete_handoff`.
-- [x] Make `agentrelay block` update both local trust state and relay enforcement, or
-  clearly separate the two operations.
-- [x] Correct webhook storage/dispatch encryption behavior.
-- [x] Add tests that demonstrate the effective security and payload boundary.
+Do not begin with a new implementation. First run the existing product with two real
+owners and record what prevents repeated use. A change enters the queue only when it:
 
-These fixes come first because autonomous execution must not amplify known contract
-or trust gaps.
+1. removes an observed onboarding or communication blocker;
+2. fixes a mailbox correctness or security defect; or
+3. is necessary to collect trustworthy validation evidence.
 
-The mailbox now stores generic message payloads separately from typed message
-artifacts, preserves explicit questions and custom handoff metadata, and returns
-completion summary/artifacts without dropping their provenance,
-re-checks the receiving participant's block state on append and content-bearing
-transitions, and serializes those checks with block-list writes. It encrypts allowlisted
-Slack webhook URLs before storage and marks structured teammate data without flattening
-its type.
-CLI block is local-first and unblock is relay-first so partial failures leave local
-denial active; success converges both stores, but it is not a distributed transaction.
+Mission/Node, Codex activation, A2A, federation, hosted tenancy, new clients, and new
+notification channels remain frozen. Preserve their code and tests; do not expand
+them during this window.
 
-## 2. Write executable Mission schemas
+## 1. Establish the exact current loop
 
-- [x] Add Mission, participant, revision, typed message, artifact, policy, delivery,
-  and run schemas.
-- [x] Add Mission and delivery state-machine transition tests.
-- [x] Define one fake backend repository and one fake Android repository at frozen
-  commits.
-- [x] Define a hidden cross-repository acceptance scenario.
-- [x] Add a fake runtime adapter with duplicate, recovery, and cancellation tests.
-- [x] Add a deterministic coordinator and transcript fixture with one accepted
-  contract revision, duplicate suppression, partial-stream recovery, registered
-  round-fenced verification, and zero scripted human interventions after kickoff.
-- [ ] Publish JSON Schema and OpenAPI bindings before a non-TypeScript Node or public
-  A2A gateway consumes this contract.
+- [ ] Use two different agent identities and two different machines.
+- [ ] Use the current Relay, CLI, and MCP packages without a Node or Mission.
+- [ ] Record the exact versions, Relay URL class, agent hosts, installation commands,
+  and whether either owner needed maintainer intervention.
+- [ ] Confirm both local configuration files are private and no credential appears in
+  the evidence.
+- [ ] Run `agentrelay doctor` and retain its report and exit status as separate facts;
+  [#11](https://github.com/swayamg20/AgentRelay/issues/11) already tracks the known
+  non-zero-exit gap.
+- [ ] Confirm `list_teammates` can identify the intended recipient. Record any ignored
+  filter or pagination behavior against
+  [#111](https://github.com/swayamg20/AgentRelay/issues/111).
 
-Keep this layer small. Do not implement multi-party Missions, parallel actors, smart
-routing, or provider-specific fields.
+Do not repair the setup silently. Record the failure, elapsed time, attempted
+remediation, and final outcome first.
 
-Evidence for this checkpoint is in
-[`experiment 001`](experiments/001-backend-android-deterministic-proof.md). It is an
-in-memory scripted proof, not durable relay or real-runtime evidence.
+## 2. Run the canonical two-machine proof
 
-## 3. Build durable delivery
+[#101](https://github.com/swayamg20/AgentRelay/issues/101) owns this proof. Run its
+mailbox contract as written.
 
-- [x] Persist internal Nodes, workspace bindings, exact Mission participant routing,
-  Mission config/projection, append-only events, and initially stored deliveries.
-- [x] Append each coordinator event, reducer projection, derived delivery set, and
-  audit row transactionally.
-- [x] Add relay-owned per-Mission event sequence numbers and read-only per-Node cursor
-  replay over joined immutable events.
-- [x] Persist two independent exact acceptance receipts, bind results to source work,
-  and prevent settled or stale verification-round work from advancing a Mission.
-- [x] Add independently revocable Node credentials plus authenticated enrollment,
-  credential rotation/revocation, and logical workspace registration routes.
-- [x] Add authenticated Mission creation/acceptance/result and Node delivery-polling
-  routes.
-- [x] Add Relay-issued claim leases, renewal, expiry, retry, cancellation, and
-  dead-letter policy.
-- [x] Persist current attempt/fence state, transport acknowledgement, and exact
-  operation receipts for the Mission retention period.
-- [x] Prove service-level duplicate, expired-lease, retry-scan, stale-fence, lost
-  response, revocation-race, and final-dead-letter behavior against Postgres.
-- [x] Prove journal reopening, runner reconstruction, and duplicate cursor polling
-  without a second fake-host turn.
-- [x] Prove Relay-process restart plus Node reconnect through cursor/recovery polling;
-  leave SSE out of this slice.
-- [x] Reconcile active/verifying deadlines to `expired` and unsettled dead-lettered
-  work to `failed`, cancelling remaining runnable deliveries transactionally.
-- [x] Add stable Node-scoped keyset pagination to Mission assignment discovery. The
-  foreground Node persists its continuation and advances one bounded page only after
-  servicing delivery work; it rejects immediate cursor loops, and the Relay excludes
-  expired `awaiting_acceptance` rows using database time.
+### Normal path
 
-Agent and Node credentials are type-separated, and Node revocation atomically revokes
-its active credentials and workspace bindings without deleting Mission history. The
-Mission and delivery control plane is now authenticated and mounted. Cursor polling
-discovers work without claiming it; a Node must claim an exact delivery and present
-the Relay-issued lease ID and fence before execution-related mutations. Completion
-atomically appends Mission output, settles source work, acknowledges transport, and
-stores the exact replay receipt. The foreground Node now consumes this boundary for
-turn deliveries. The Postgres E2E harness now restarts the real Relay child on the
-same database and port while a Node reopens its file journal.
+1. Owner A invites Owner B, and B joins with a distinct handle.
+2. Agent A lists teammates and sends a substantive `ask_question` handoff to Agent B.
+3. The Relay returns the stored handoff ID.
+4. Agent B, in an already-running host, explicitly calls `check_inbox`.
+5. Agent B accepts, inspects the provenance-marked thread, and sends a reply.
+6. Agent A opens the same thread and uses the reply in its original work.
+7. The receiving owner completes, replies with a refusal, or leaves the thread active
+   intentionally; only the sender can cancel a pending handoff, and the evidence must
+   not invent a terminal state.
 
-The client journal, after-host-acceptance runner reconstruction, and independently
-persistent fake-host recovery now exist. The restart proof does not use MCP, SSE,
-WebSocket, or the process-local notification queue. Its exact failure matrix is:
+### Offline path
 
-| Failure point | Durable state at failure | Public recovery proof |
-|---|---|---|
-| Relay exits before claim | Postgres has the `stored` delivery; the Node journal has only Mission acceptance state. | The restarted Relay returns the delivery from ordered cursor polling. Cursorless recovery correctly excludes never-claimed work. |
-| Node disconnects after claim | Postgres has the active lease and fence; the file journal has the claimed delivery and advanced cursor. | Polling after that cursor returns nothing, while `/node/v1/deliveries/recoverable` returns the leased delivery. Re-ingesting it starts no host turn until execution resumes. |
-| Completion commits but its HTTP response is lost | Postgres atomically has the Mission event, acknowledged delivery, exact receipt, and audit row; the journal retains `complete_intent`. | After another Relay restart and journal reopen, replay returns the stored result with `replayed: true`. A second replay is structurally identical, the audit has one completion, and the fake host has one turn. |
-| A transient release becomes due behind the cursor | Postgres returns the delivery to `stored` with database-time backoff; the journal cursor already exceeds its creation cursor. | Cursor polling cannot rediscover it. The cursorless recovery route returns it when due, and the next claim advances the fence. |
-| Old or terminal work publishes late output | Postgres has either a newer active fence or a terminal Mission and acknowledged source delivery. | The old fence is rejected with `state_changed`; a fresh completion after the terminal max-turn transition is rejected with `invalid_transition`. Neither creates a second Mission turn. |
+1. Stop B's agent host or MCP process before A sends.
+2. Send and confirm only that the Relay stored the handoff.
+3. Start B's host later, call `check_inbox`, and complete the same reply loop.
+4. Report store time, explicit pickup time, and reply time separately.
 
-Deterministic terminal reconciliation now closes the remaining delivery-control-plane
-gap. The next runtime gate is guarded Codex descriptor/CLI activation; the later
-cross-device product proof remains a real two-machine, two-repository run through the
-public control plane.
+### Required evidence
 
-## 4. Build the local Node
+- redacted CLI and MCP transcripts from both sides;
+- one handoff/thread ID and ordered message sequence from the real Relay;
+- the participant identities and authorization results without raw credentials;
+- whether Slack notification occurred, clearly labeled best effort;
+- every human instruction needed between send and reply; and
+- the exact commit and package versions used.
 
-- [x] Add a `node/` workspace with a foreground daemon command first.
-- [ ] Add Node-side enrollment and credential-rotation commands; the Relay already
-  registers device-scoped credentials and capabilities.
-- [x] Consume a pre-issued device credential from a separate mode-0600 Node config.
-- [x] Configure logical workspace aliases locally.
-- [x] Persist delivery cursor, operation intents, Mission sessions, host events, and
-  delivery processing state through atomic local replacement.
-- [x] Validate repository URL, exact base commit, allowed base ref, canonical root,
-  and dirty-worktree policy before each turn.
-- [x] Validate a pre-registered clean checkout.
-- [x] Add stricter unactivated Mission-workspace admission for Linux containment:
-  current-user ownership, a standalone checkout-local `.git`, no Git alternates,
-  nested mounts, special files, or extra hard links, and stable root/Git identities.
-- [x] Install one private capability grant on the persistent fake-Capsule path, bound
-  to Agent, Node, workspace resource, Mission, delivery, execution attempt, lease,
-  fence, accepted local-policy digest, and hard expiry. Enforce product hard denials,
-  aggregate output/usage/artifact limits, expiry, renewal, revocation, and final Relay
-  completion outside the model as the partial issue #97 reference-monitor checkpoint.
-- [ ] Mediate the remaining concrete filesystem, command, and network effects when
-  their handlers are implemented. The checkpoint does not create those effects or
-  authorize verification execution, so issue #97 remains open.
-- [x] Reduce and persist normalized fake-runtime events with acceptance-first ordering,
-  replay equality, usage, output, artifact, and token limits.
-- [ ] Add deterministic contract acknowledgement and registered verification-command
-  delivery handlers.
-- [x] Move the fake host into a detached, Mission-scoped Capsule with a strict private
-  Unix-socket capability protocol and exact-input durable recovery.
-- [x] Kill the Node after Capsule acceptance, prove the same Capsule remains live,
-  restart directly without deleting `run.lock`, and recover one turn/result.
-- [x] Add crash-releasable Node ownership with a stable private kernel lock. Treat
-  `run.owner.json` PID metadata as diagnostic, keep the `run.lock` inode permanently
-  in place, never steal ownership on a heartbeat timeout, and fail closed on every
-  legacy schema-1 PID lock until an explicit offline migration.
-- [ ] Package the Node as an installed background service with OS/cgroup supervision
-  (#120), automatic process respawn, bounded restart/upgrade/rollback, and cleanup for
-  witness/all-owner loss or descendants that escape the supervised process group.
-  Crash-releasable ownership makes restart safe; it does not start the replacement.
+The proof fails if a maintainer edits database state, manually moves a message,
+substitutes a Mission delivery, or claims an open agent session was remotely woken.
 
-Start with one eligible Node per logical agent and one active turn per Mission. The
-Capsule path is experimental and Unix-only; it is not yet an installed background
-service.
+## 3. Prove mailbox failure behavior
 
-## 5. Add the first real adapter
+[#103](https://github.com/swayamg20/AgentRelay/issues/103) owns this handoff
+control-plane proof. Run focused existing tests first and add a test only for an
+uncovered contract.
 
-- [x] Pin Codex app-server `0.146.0` and fail closed on a different runtime identity.
-- [x] Validate the bounded request/response/notification subset consumed from the
-  matching generated protocol and reject malformed or oversized frames.
-- [x] Add a guarded read-only client with one event consumer, correlated responses,
-  denied server-initiated authority, and process-group cleanup.
-- [x] Add an unactivated schema-v2 Capsule journal and deterministic normalizer with
-  exact input/provider-intent persistence, at-most-once start barriers, a stable
-  logical turn and acceptance event before provider binding, one active turn, private
-  bounded storage, terminal replay, and provider-payload redaction.
-- [x] Extract a provider-neutral persistent Capsule server while preserving the fake
-  descriptor, CLI, and versioned Unix wire. Authenticate before runtime calls, keep
-  one socket owner, close the runtime concurrently while admitted handlers drain, and
-  let unexpected request or detached background failures retire the generation.
-- [x] Implement an injected Codex runner for probe, session start/resume, turn start,
-  one event consumer, cancellation, and recovery. Exercise it through the real
-  Capsule Unix wire using fake app-server clients; this is not production activation.
-- [x] Reconcile an ambiguous `turn/start` by exact `clientUserMessageId` and text only
-  in a fresh guardian-owned provider generation. Carry
-  cancellation across pre-binding recovery, durably terminalize a bounded zero match,
-  and never resend an uncertain start.
-- [x] Resolve an inherited `interrupt_maybe_sent` barrier only in the fresh provider
-  generation: read the exact intent once, persist an authoritative terminal provider
-  outcome when present, otherwise record a transient failure, and never reissue it.
-- [x] Allowlist the Codex child environment and derive its home locally beneath the
-  Capsule as a canonical, current-user-owned exact-mode-0700 directory.
-- [x] Implement a Linux-only Codex `0.146.0` containment library with a writable
-  workspace, read-only `.git`, explicit read/deny roots, private home/temp, rejected
-  ambient system Codex configuration, disabled legacy Landlock and network,
-  recursive read-tree alias checks, a mandatory runtime canary, exact pinned
-  executable/helper identity, and a private `retain_for_review` manifest.
-- [x] Pass the dedicated Linux containment process job, including the policy canaries
-  and pinned Codex app-server handshake. Keep macOS and every unsupported platform
-  fail-closed rather than claiming parity.
-- [ ] Add registered verification-command delivery and execution handling (#93),
-  resolving a canonical absolute executable and binding its identity into local
-  authority before any process starts.
-- [ ] Carry bounded provenance-marked Mission artifacts end to end (#94).
-- [x] Add a provider guardian that atomically owns one kernel-locked generation,
-  heartbeat and provider liveness, absolute deadline, local revocation, a prearmed
-  out-of-group teardown witness, and durable quiescence only after process-group
-  absence (#96).
-- [x] Derive, journal, install, renew, and revoke one fenced capability grant outside
-  the model on the persistent fake-Capsule path as the partial issue #97 checkpoint.
-  The Capsule gates session, start, recovery, cancellation, streamed output, usage,
-  and artifacts; the Node independently gates final Relay completion with a continuous
-  abort signal. Redacted decisions use injected sinks and are not durably persisted by
-  default. This does not close issue #97 or activate a real runtime.
-- [ ] Wire an explicit Codex descriptor/runtime factory into the Capsule and Node CLI
-  (#98).
-  Before provider start, durably store `{manifestPath, instanceId, bindingSha256}` and
-  recover only that exact containment instance.
-- [ ] Require the RFC's structured turn dispositions and bounded local execution
-  evidence (#99).
-- [ ] Run the adversarial capability and recovery matrix against the activated runtime
-  (#104).
-- [ ] Pass Guarded Real Mission 0 through the public pipeline.
-- [ ] Run the two-machine backend-and-Android Mission only after that integration gate.
+- [ ] Retry handoff creation with one idempotency key and identical input; observe
+  one handoff.
+- [ ] Retry a message append after losing the response; observe one ordered message.
+- [ ] Restart the Relay after a committed send; retrieve the same thread afterward.
+- [ ] Keep the receiver offline, reconnect later, and retrieve all committed messages
+  in order.
+- [ ] Attempt a read and mutation as a non-participant; both must fail without thread
+  disclosure.
+- [ ] Commit a block, then attempt new content from the blocked peer; no later content
+  mutation may commit.
+- [ ] Attempt append, accept, complete, and cancel operations in invalid or terminal
+  states; preserve the documented ownership rules.
+- [ ] Inspect returned teammate text, metadata, proposed actions, and typed artifacts
+  for provenance preservation.
+- [ ] Restart during best-effort notification dispatch; a lost notification must not
+  lose the committed handoff.
 
-The Codex Capsule journal remains schema v2 and has no migration from its earlier
-unactivated schema-v1 development checkpoint. Separately, Node journal schema 4 now
-stores the exact runtime-authority grant plus the bounded predecessor-retirement state,
-and migrates schema 2 or 3 entries without inventing authority.
-No production Codex path writes either Codex format, so its compatibility must be
-decided before descriptor or CLI activation.
+Any durability, authorization, block, revocation, or provenance failure pauses user
+validation until the defect is fixed and the case is rerun.
 
-Do not use Codex remote control, generic MCP notifications, or preview host channels
-as the activation foundation.
+## 4. Record the product proof
 
-## 6. Evaluate
+After #101 passes, execute the recording contract in
+[#8](https://github.com/swayamg20/AgentRelay/issues/8), which is already reopened.
 
-- [ ] Freeze several coupled cross-repository tasks and budgets.
-- [ ] Run the baseline and structured AgentRelay conditions.
-- [ ] Record strict integrated success, intervention count, cost, time, contract drift,
-  repeated work, replay behavior, and security violations.
-- [ ] Publish the trace and an honest result, including failed runs.
-- [ ] Decide whether to continue, narrow, or stop before adding more runtimes.
+- [ ] Record a 60-90 second two-machine handoff and reply.
+- [ ] Show the recipient explicitly checking the inbox.
+- [ ] Keep the inbound provenance marker visible.
+- [ ] Redact handles when required and remove every token, invite secret, webhook,
+  local path, and unrelated message.
+- [ ] Say "stored by the Relay" before pickup and "replied" only after the actual
+  reply.
+- [ ] Do not mention Mission execution, autonomous wake-up, A2A conformance, or an
+  unattended answering agent.
 
-## Deferred decisions
+The recording supports pilot recruitment and README truth. It does not satisfy the
+30-day demand gate by itself.
 
-- Relay-readable versus relay-blind payloads.
-- Inline patches versus signed artifact storage versus immutable git references.
-- Separate owner/organization identity and operator-facing enrollment/recovery UX
-  beyond the current agent-authorized compare-and-swap API.
-- Claude adapter choice.
-- Hosted service and federation.
+## 5. Run repeated-use validation
 
-Open GitHub issues should link back to the RFC section they implement. Closed mailbox
-issues remain in GitHub history; this file no longer mirrors old release milestones.
+Use [#102](https://github.com/swayamg20/AgentRelay/issues/102) as the pilot and
+decision issue. Record the run in
+[`mailbox-pilot-template.md`](mailbox-pilot-template.md).
+
+For every participant pair, record:
+
+| Field | Required evidence |
+|---|---|
+| Pair context | Same team, cross-team, or cross-company; prior collaboration method. |
+| Setup | Elapsed time, successful steps, failed steps, maintainer interventions. |
+| Thread purpose | Question, context transfer, clarification, decision, or refusal. |
+| Storage/retrieval | Relay store time and whether committed content was later retrievable. |
+| Pickup | Explicit inbox-check time and what prompted it. |
+| Outcome | Reply, refusal reply, sender cancellation, completion, or documented abandonment. |
+| Comparative value | What the pair would otherwise have done and which was easier. |
+| Repeat behavior | Whether the pair initiated another real session without prompting. |
+
+- [ ] Recruit five independent pairs, including one without the primary maintainer if
+  available.
+- [ ] At least four of five pairs complete one real round trip.
+- [ ] Collect at least twenty substantive threads across multiple days.
+- [ ] At least three of five pairs repeat without founder prompting within seven
+  days.
+- [ ] Median setup time is under 15 minutes, and at least 90% of stored test messages
+  remain retrievable.
+- [ ] Include failures and abandoned setup attempts in the report.
+- [ ] Interview both owners separately before showing them a preferred conclusion.
+- [ ] Publish a `go`, `narrow`, or `stop` result against the precommitted thresholds
+  in the roadmap.
+
+## 6. Simulate L2 pickup before building it
+
+- [ ] Use the current notification path or a manual reminder to simulate fast pickup.
+- [ ] Manually share a short owner-approved availability status and label it as a
+  simulation, not an implemented presence field.
+- [ ] Record whether missed pickup is the dominant failure.
+- [ ] Build a watch or notification improvement only if the evidence supports it.
+
+## 7. Simulate L3 commitment with current states
+
+- [ ] Use only `pending`, `accepted`, `completed`, and `cancelled` as wire states.
+- [ ] Record refusal, no-response, desired ETA, decline, and expiry as user requests
+  or outcomes; `declined` and `expired` are not implemented handoff states.
+- [ ] Determine whether commitment ambiguity is common enough to justify an L3
+  contract proposal.
+
+## 8. Triage measured blockers
+
+Use this order only after evidence identifies a blocker:
+
+1. Correctness and security failures in existing mailbox contracts.
+2. Setup truth: [#10](https://github.com/swayamg20/AgentRelay/issues/10),
+   [#11](https://github.com/swayamg20/AgentRelay/issues/11), or documentation.
+3. Discovery correctness:
+   [#111](https://github.com/swayamg20/AgentRelay/issues/111).
+4. Pickup ergonomics: [#39](https://github.com/swayamg20/AgentRelay/issues/39),
+   while durable polling remains authoritative.
+5. Notification durability:
+   [#44](https://github.com/swayamg20/AgentRelay/issues/44), only if notifications
+   materially affect repeated use.
+6. Operational recovery:
+   [#34](https://github.com/swayamg20/AgentRelay/issues/34).
+7. User-owned archive:
+   [#40](https://github.com/swayamg20/AgentRelay/issues/40).
+
+Prefer a small correction to the current path. Do not turn a pickup problem into
+remote runtime activation, or a notification problem into delivery truth.
+
+## 9. End-of-window decision
+
+- [ ] Reconcile every pilot thread and failure with the evidence log.
+- [ ] Report metrics without combining Relay storage and user pickup latency.
+- [ ] Apply the roadmap's go/narrow/stop thresholds.
+- [ ] Name the smallest next product bet, if any.
+- [ ] Decide separately whether any Labs or interoperability issue has earned
+  reactivation.
+- [ ] Update the README and landing page only after the product decision is supported
+  by evidence.
+
+## Frozen Labs and interoperability state
+
+The following accomplishments remain valid history: executable Mission schemas,
+the durable Mission/delivery ledger, Relay restart and Node replay proofs, the
+foreground Node, persistent fake Capsule, local capability monitor, unactivated
+Codex runner/guardian, and Linux containment boundary.
+
+During the 30-day window:
+
+- do not merge or open a PR for `codex/issue-98-codex-activation`;
+- do not implement #93, #94, #97-#100, #104, #112, #114-#116, #118, or #120;
+- do not implement #49 or use SSE/WebSocket as correctness;
+- do not implement A2A issues #105-#110 or #113; and
+- continue to fix security defects or regressions in already merged Labs code when
+  they threaten the repository, but do not treat maintenance as product validation.
+
+## Explicitly deferred
+
+- File/object storage, relay-blind encryption, cross-Relay federation, and hosted
+  tenancy until a validated workflow requires them.
+- Cursor, aider, Continue, Zed, IDE, mobile, or admin clients until a pilot user is
+  blocked on that host or surface.
+- Metrics, rate limits, scale work, HA, and multi-region design until measured
+  operating evidence requires them.
+- Extra notification channels, digesting, and quiet-hour policy until pickup behavior
+  is understood.
+- Automatic agent answering, autonomous execution, and every external side effect.

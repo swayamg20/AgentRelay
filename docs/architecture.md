@@ -1,10 +1,13 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-08-17.
+> **Status:** Canonical system overview as of 2026-09-01.
 > Current implementation details live in [`hld.md`](hld.md) and
-> [`lld.md`](lld.md). The accepted next target lives in
-> [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md),
-> and the shipped lease design is recorded in
+> [`lld.md`](lld.md). Product direction and priority live in
+> [`RFC 002: Agent reachability and durable mailbox`](rfcs/002-agent-reachability-and-durable-mailbox.md).
+> Mission, Node, Capsule, and autonomous-execution work is a same-repository Labs
+> track whose target remains
+> [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
+> Its shipped lease design is recorded in
 > [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md). The
 > first local checkpoint is recorded in
 > [`Foreground Node runtime`](research/002-foreground-node-runtime.md), and the
@@ -22,26 +25,51 @@
 
 ## Product thesis
 
-AgentRelay gives independently owned AI agents a secure, persistent way to discover,
-communicate, and collaborate across devices and runtimes.
+**My agent can message your agent.** AgentRelay gives independently owned agents a
+stable address, explicit owner-controlled consent, and durable threaded communication
+through a model-free relay. The core product succeeds when one person can address a
+teammate's agent, leave a message while either side is offline, and later receive a
+reply without copying context through a human chat channel.
 
-The first proof is software delivery across repositories: a backend agent and an
-Android or frontend agent should be able to negotiate a shared contract, implement
-their local work, exchange evidence, and finish with compatible, tested changes. The
-network is broader than this one workflow; Missions and code artifacts are the first
-application on top of it.
+Today, an address is an authenticated handle inside one relay/team trust domain.
+Membership is consented through an invite, a recipient can block a sender, and
+handoff acceptance expresses commitment to a task; acceptance is not required to
+read or reply to an active thread. Messages are durable, but pickup still depends on
+an already-running host calling the mailbox tools. Best-effort notification is a
+hint, not proof that an agent read or processed a message.
+
+Missions and autonomous repository execution are one possible application of this
+communication network. They remain valuable engineering research, but they are not
+the identity, prerequisite, or active product roadmap of AgentRelay.
 
 ## Current implementation
 
-The repository currently ships an authenticated asynchronous mailbox plus its first
-durable coordination foundations:
+### Core product: reachable, durable agent mailboxes
+
+The repository currently ships:
 
 - Postgres-backed developer identities, cards, API keys, invites, blocks, handoffs,
-  and messages, with audit records for invite, handoff/message, block,
-  Node/workspace, Mission, and delivery mutations.
+  and ordered messages, with audit records for invite, handoff/message, and block
+  mutations.
 - A Hono relay with REST onboarding and an A2A-shaped JSON-RPC endpoint.
 - Seven stdio MCP tools for sending, receiving, replying to, inspecting, and
   completing handoff threads.
+- Optional typed engineering artifacts plus provenance wrapping or structural
+  markers on all teammate-originated mailbox content.
+- An optional in-process Slack notification adapter with encrypted-at-rest webhook
+  setup.
+- CLI setup, invite/join, key rotation, doctor, audit, block, and trust commands.
+
+The mailbox is the product surface. Its current lifecycle distinguishes communication
+from commitment: either participant can exchange messages while a handoff is
+`pending`, while `accept_handoff` records that the recipient accepted the task.
+
+### Labs: Mission coordination and autonomous execution
+
+The same repository also contains an experimental stack. It is retained as Labs so
+its contracts, tests, and security work stay inspectable without being mistaken for
+the product's current promise:
+
 - An executable protocol workspace with Mission/delivery/runtime contracts and an
   in-memory deterministic backend-Android coordination proof.
 - A public Postgres Mission and delivery control plane with relay-visible Node and
@@ -101,13 +129,11 @@ durable coordination foundations:
   process proof passes. No descriptor, CLI, or Mission lifecycle selects it;
   [research 006](research/006-mission-workspace-containment.md) owns the detailed
   policy and evidence boundary.
-- Typed engineering artifacts plus provenance wrapping or structural markers on all
-  teammate-originated mailbox content.
-- An in-process Slack notification dispatcher with encrypted-at-rest webhook setup.
-- CLI setup, invite/join, key rotation, doctor, audit, block, and trust commands.
+- Audit records for Node/workspace, Mission, and delivery mutations alongside the
+  core audit records.
 
-This is useful groundwork, but it is not yet an autonomous agent network. The current
-system does not contain:
+Labs is useful groundwork, but it is not an activated autonomous agent network. It
+does not contain:
 
 - A production-activated coding-agent path. The persistent CLI still hosts only the
   deterministic fake runtime; the Codex runner has no descriptor/CLI selection,
@@ -124,10 +150,58 @@ system does not contain:
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
 - End-to-end traces of local commands, edits, policy decisions, and tests.
 
-Do not describe the current release as autonomous, fully A2A-compliant, or protected
-by an end-to-end four-layer trust guarantee.
+The core mailbox also does not yet provide a global or federated address, durable
+push delivery, truthful unread/read receipts, complete pagination, or verified A2A
+compatibility. Do not describe the current release as autonomous, globally
+federated, fully A2A-compliant, or protected by an end-to-end four-layer trust
+guarantee.
 
-## Target system
+## Product target: durable agent reachability
+
+```text
+Agent host A                                             Agent host B
+     | MCP stdio                                             | MCP stdio
+local agentrelay-mcp                                   local agentrelay-mcp
+     | authenticated HTTPS                                  | authenticated HTTPS
+     +---------------- AgentRelay relay ---------------------+
+                    model-free, store-and-forward
+                       identity + durable threads
+```
+
+The core product has two boundaries.
+
+### Relay: mailbox and reachability plane
+
+The relay owns:
+
+- Team-scoped logical agent addresses and revocable credentials.
+- Invite-based membership, authenticated discovery, explicit routing, and blocks.
+- Durable two-party threads, ordered messages, typed artifacts, lifecycle state,
+  idempotent writes, and scoped audit evidence.
+- Store-and-forward behavior while either agent host is offline.
+- Honest transport state. Persisted, listed, fetched, accepted, and replied are
+  different facts; the relay must not invent read or execution receipts.
+
+The relay does not run a model, wake a closed agent host, inspect a local checkout,
+or turn message content into local authority.
+
+### Local MCP: agent-facing mailbox tools
+
+The MCP process gives an already-running Codex or Claude session explicit tools to
+address, list, read, reply to, accept, and complete threads. It validates local tool
+input, provenance-marks teammate content, and exposes the owner's local trust
+decision. It is neither the durable store nor a portable wake-up mechanism.
+
+The existing `/a2a` JSON-RPC route is the mailbox wire used by that client. Its names
+are A2A-inspired, but current A2A conformance is not claimed. A future standards or
+federation layer must preserve the same durable-thread and consent semantics rather
+than replace them with an online-only signal.
+
+## Labs target: Missions and local execution
+
+The following architecture remains the target of the same-repository Labs track in
+[`RFC 001`](rfcs/001-agentrelay-node-and-missions.md). It is not a prerequisite for
+the mailbox product or the active product roadmap.
 
 ```text
 Machine A                                              Machine B
@@ -143,23 +217,22 @@ AgentRelay Node A  <---------- AgentRelay relay --------> AgentRelay Node B
                      durable, model-free coordination
 ```
 
-The product has three clear boundaries.
+The Labs design has three clear boundaries.
 
-### Relay: durable coordination plane
+### Labs relay extension: durable Mission coordination
 
 The relay owns:
 
-- Logical agent and device identity.
-- Discovery and explicit routing.
+- Device and workspace identity layered on the core agent identity.
 - Mission truth and accepted revisions.
-- Ordered messages, artifacts, and durable delivery events.
+- Ordered Mission events, artifacts, and durable delivery records.
 - Claims, acknowledgements, retries, expiry, audit, and revocation.
 - Store-and-forward behavior while a node is offline.
 
 The relay does not run a model, inspect a local checkout, choose a working directory,
 or decide which command a coding agent may execute.
 
-### AgentRelay Node: local execution plane
+### Labs AgentRelay Node: local execution plane
 
 One long-running Node runs on each participating machine. It owns:
 
@@ -174,7 +247,7 @@ One long-running Node runs on each participating machine. It owns:
 All connections originate from the Node. AgentRelay does not expose a remote shell or
 open an inbound port on the developer's laptop.
 
-### Runtime adapter: host-specific activation
+### Labs runtime adapter: host-specific activation
 
 Runtime behavior is not portable across MCP, A2A, Codex, and Claude. A small adapter
 normalizes each host's actual lifecycle:
@@ -190,9 +263,9 @@ The Node checkpoints the validated `StartTurnInput` before host lookup/start and
 reuses that object after restart, even if newer peer state exists. An adapter must
 reject recovery when the durable turn and this journaled input differ.
 
-The first adapter targets Codex app-server over local stdio or a Unix socket. Claude
-follows through its Agent SDK or headless CLI. Experimental remote transports are not
-part of the correctness boundary.
+RFC 001 proposes Codex app-server over local stdio or a Unix socket as the first
+adapter, with Claude later through its Agent SDK or headless CLI. Experimental remote
+transports are not part of the correctness boundary.
 
 The Codex adapter library now implements this interface behind the provider-neutral
 Capsule server. Its child environment is allowlisted, and its home is derived locally
@@ -209,17 +282,21 @@ not Relay evidence: future lifecycle wiring must durably store the manifest path
 instance ID, and binding digest before it can rely on crash recovery. The current
 Capsule descriptor and CLI never construct this composition.
 
-## Why MCP, A2A, and SSE are not the Node
+## Why mailbox storage, protocols, push, and activation stay separate
 
 - **MCP** exposes local tools and context to a model host. An MCP server cannot
   portably require a host to start a new model turn. `tools/list_changed` means the
   tool registry changed; it is not proof of message processing.
-- **A2A** provides public agent, message, task, artifact, streaming, and discovery
-  semantics. It does not launch a process on an offline developer machine or define
-  the local sandbox.
+- **The current JSON-RPC mailbox wire** moves mailbox operations between MCP and the
+  relay. Its A2A-shaped names do not prove standards compatibility or agent pickup.
+- **A2A** can provide public agent, message, task, artifact, streaming, and discovery
+  semantics. It still does not launch a process on an offline developer machine or
+  define the local sandbox.
 - **SSE or WebSocket** can signal that work is available. The connection may drop,
-  restart, or duplicate a notification. Durable database events and cursor replay
+  restart, or duplicate a notification. Durable mailbox rows and replayable cursors
   remain the source of truth.
+- **The Labs Node** investigates durable local activation and execution. It is not
+  required for one already-running agent to message another through the mailbox.
 
 AgentRelay uses each at its natural boundary instead of asking one protocol to solve
 all three problems.
@@ -230,10 +307,13 @@ all three problems.
 
 The current mailbox stores a two-party handoff with `pending`, `accepted`,
 `completed`, and `cancelled` states. Humans or already-running agents explicitly call
-MCP tools to advance it. This API remains a compatibility and inspection surface
-while the Node slice is built.
+MCP tools to use it. This is the core product surface: send, list, read, reply, and
+retain context across independently operated agent sessions. Either participant may
+reply while the handoff is `pending`; acceptance separately records that the
+recipient has committed to the requested task. Reading, accepting, completing, and
+actually executing work are distinct claims.
 
-### Missions and fake execution today
+### Labs: Missions and fake execution today
 
 A Mission is a bounded collaborative objective with:
 
@@ -282,7 +362,7 @@ This is a library and fault-harness checkpoint. The fake Capsule descriptor and 
 remain unchanged, and the guardian boundary's detached reaper is the authoritative
 quiescence finalizer. No real Codex model turn has crossed the Mission delivery path.
 
-## Delivery semantics
+## Labs delivery semantics
 
 Message persistence and agent processing are separate facts:
 
@@ -336,25 +416,32 @@ Schema-v1 development files are not migrated by this checkpoint.
 
 Remote agent content is untrusted data. The receiving owner controls local authority.
 
-### Implemented safeguards
+### Implemented mailbox safeguards
 
-- Hashed and revocable agent and Node credentials with disjoint bearer formats and
-  route scopes.
+- Hashed and revocable agent credentials.
 - Participant-only handoff access and role-specific state transitions.
 - Relay-side block checks when creating, accepting, appending to, or completing a
   content-bearing handoff. A shared directed-pair transaction lock makes a committed
-  block a fence for those mutations. Mission creation, acceptance, event publication,
-  and delivery operations re-check the same participant trust boundary, so a
-  committed block fences later Mission activation and execution.
-- Delivery operations revalidate the active Node credential, participant, workspace,
-  and Mission route. Node, workspace, or owner revocation cancels active work across
-  every affected Mission, with immutable cancellation receipts and audit rows.
+  block a fence for those mutations.
 - Provenance wrappers on teammate text and non-spoofable structural markers on
   teammate payloads, proposals, and artifacts returned by mailbox MCP tools.
 - Fail-safe CLI synchronization: block writes local trust first; unblock clears the
   relay first. The running MCP reloads trust before every acceptance decision.
 - AES-GCM encrypted notification webhooks at rest, restricted to exact HTTPS Slack
   incoming-webhook targets and dispatched without redirects.
+- Static recommended host permission configuration.
+- Local per-teammate trust parsing and decision output.
+
+### Implemented Labs safeguards
+
+- Hashed and revocable Node credentials with bearer formats and route scopes disjoint
+  from agent credentials.
+- Mission creation, acceptance, event publication, and delivery operations re-check
+  the same participant trust boundary as the mailbox, so a committed block fences
+  later Mission activation and execution.
+- Delivery operations revalidate the active Node credential, participant, workspace,
+  and Mission route. Node, workspace, or owner revocation cancels active work across
+  every affected Mission, with immutable cancellation receipts and audit rows.
 - An allowlisted Codex child environment, a locally derived canonical owner-owned
   exact-mode-0700 home, and generic internal Capsule errors that retire the affected
   running server generation. Concurrent runtime close fences admitted work, and a
@@ -371,10 +458,8 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   Authority loss aborts the local stream and final Relay completion.
 - A Linux-only, fail-closed Codex containment library. This is library capability,
   not an active Mission security claim.
-- Static recommended host permission configuration.
-- Local per-teammate trust parsing and decision output.
 
-### Gaps before autonomous execution
+### Current mailbox gaps
 
 - Agent registration, card updates, and agent-key rotation are not written to the
   current relay audit log. Agent disable, Node enrollment, credential rotation, Node
@@ -389,6 +474,11 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
+- Notification delivery is process-local and does not prove pickup, reading, or
+  response. The mailbox has no durable wake-up channel.
+
+### Labs gaps before autonomous execution
+
 - The private reference-monitor checkpoint is not composed with the guarded Codex
   descriptor. Its redacted evidence goes only to injected sinks and is not durably
   persisted by default. Local verification commands, network effects, and other
@@ -398,15 +488,18 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   Linux process proof passes as library-level evidence, but that does not activate a
   Mission runtime; macOS remains unsupported.
 
-### Target invariant
+### Labs execution invariant
 
 The effective capability is the intersection of the Mission request and a local,
 pre-authorized policy. A remote participant can never expand repository scope,
 working directory, permissions, network access, secrets, or budget through a message.
-The Node applies policy outside the model before every turn and mediated side effect.
+The target Node must apply policy outside the model before every turn and mediated
+side effect.
 
-The first slice allows bounded edits and tests inside an isolated worktree. It denies
-push, merge, publish, deploy, arbitrary network effects, and production credentials.
+The intended first slice will allow bounded edits and tests inside an isolated
+worktree while denying push, merge, publish, deploy, arbitrary network effects, and
+production credentials. Current fake-runtime paths perform neither repository edits
+nor verification commands.
 
 ## Data and trust boundaries
 
@@ -424,30 +517,34 @@ push, merge, publish, deploy, arbitrary network effects, and production credenti
 
 The relay can run anywhere that supports the relay container image and Postgres. Teams
 may self-host it or use a future hosted service. Every developer machine can run its
-own MCP process for interactive tools. The experimental AgentRelay Node is a separate
-foreground process today. It can launch detached fake Mission Capsules that outlive a
-normal Node exit or `SIGKILL`. Its kernel-held singleton ownership is released on
-process death, so a replacement Node can restart directly and recover the same
-Capsule turn. No OS service manager currently installs, monitors, or automatically
-respawns that foreground process. The detached provider guardian and its independent
-teardown witness handle Capsule-plus-guardian loss as long as the witness survives.
-Loss of the witness or every local lifecycle owner fails closed; an installed
-service/cgroup boundary is still needed for restart, upgrade, rollback, and descendants
-that escape the supervised process group (#120). The provider-neutral server,
-guardian, injected Codex runner, and Linux containment library do not change which
-runtime the current CLI launches, and no Mission lifecycle stores the containment
-recovery handle yet.
+own MCP process for interactive tools. A sleeping or powered-off machine remains
+offline; its mailbox messages remain durable and become visible when an agent host
+later starts MCP and checks them.
 
-A sleeping or powered-off machine remains offline. The relay queues work and the Node
-processes it after reconnecting.
+The Labs AgentRelay Node is a separate foreground process today. It can launch
+detached fake Mission Capsules that outlive a normal Node exit or `SIGKILL`. Its
+kernel-held singleton ownership is released on process death, so a replacement Node
+can restart directly and recover the same Capsule turn. No OS service manager
+currently installs, monitors, or automatically respawns that foreground process. The
+detached provider guardian and its independent teardown witness handle
+Capsule-plus-guardian loss as long as the witness survives. Loss of the witness or
+every local lifecycle owner fails closed; an installed service/cgroup boundary is
+still needed for restart, upgrade, rollback, and descendants that escape the
+supervised process group (#120). The provider-neutral server, guardian, injected
+Codex runner, and Linux containment library do not change which runtime the current
+CLI launches, and no Mission lifecycle stores the containment recovery handle yet.
 
 ## Documentation hierarchy
 
 - [`README.md`](../README.md): product entry point and honest current status.
-- [`architecture.md`](architecture.md): canonical current/target boundary overview.
+- [`architecture.md`](architecture.md): canonical core-product and Labs boundary
+  overview.
 - [`hld.md`](hld.md): high-level reference for the current relay implementation.
 - [`lld.md`](lld.md): concrete current routes, tables, tools, and known gaps.
-- [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): next build contract.
+- [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md): active product
+  direction and priority.
+- [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): retained Labs target for
+  Mission, Node, and autonomous-execution research.
 - [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md):
   implemented lease, recovery, fencing, and receipt decisions.
 - [`Foreground Node runtime`](research/002-foreground-node-runtime.md): initial local
@@ -464,16 +561,19 @@ processes it after reconnecting.
   provider ownership, liveness, authority inputs, and teardown-witness proof.
 - [`Local runtime authority`](research/008-local-runtime-authority.md): private bound
   grants, Node/Capsule reference monitors, crash-safe renewal, and current nonclaims.
-- [`roadmap.md`](roadmap.md): implementation order and stop/go gates.
+- [`roadmap.md`](roadmap.md): active 30-day mailbox validation, decision thresholds,
+  and issue lanes; RFC 002 governs product priority.
 - [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
   superseded explorations retained as decision records.
 
-Code and tests define shipped behavior. Accepted RFCs define intended behavior. When
-they disagree, document the gap; do not present the target as already shipped.
+Code and tests define shipped behavior. RFC 002 defines product direction; RFC 001
+defines the retained Labs target. When code and a target disagree, document the gap;
+do not present planned behavior as already shipped.
 
 ## Glossary
 
-- **Agent:** a logical network identity owned by a person or organization.
+- **Agent:** a logical mailbox identity owned by a person or organization. Today its
+  stable address is a handle within one relay/team trust domain.
 - **Node:** a separately authenticated relay device identity plus an experimental
   foreground daemon that launches detached fake Mission Capsules. Its library also
   contains an unactivated provider-neutral Capsule/Codex path, provider guardian, and
@@ -482,9 +582,10 @@ they disagree, document the gap; do not present the target as already shipped.
 - **Workspace binding:** a relay-visible logical alias and repository/base-ref
   constraint that the current Node maps locally to an approved checkout.
 - **Runtime adapter:** host-specific control of a coding-agent session.
-- **Handoff:** the current manually consumed two-party mailbox thread.
-- **Mission:** a bounded, versioned collaborative objective coordinated by the relay
-  and intended for execution by Nodes.
+- **Handoff:** the core durable two-party mailbox thread. Its acceptance state records
+  task commitment, not whether communication is permitted.
+- **Mission:** a Labs application: a bounded, versioned collaborative objective
+  coordinated by the relay and intended for execution by Nodes.
 - **Delivery:** transport and processing state for one durable event.
 - **Run:** one participant's local runtime session, worktree, policy, usage, and
   evidence for a Mission.

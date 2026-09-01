@@ -6,6 +6,11 @@ durable delivery, local authority checks, and runtime recovery with the determin
 fake paths while the guarded Codex and Linux-containment libraries remain
 unactivated.
 
+> **Product status:** AgentRelay Labs. Preserve, compile, test, and security-maintain
+> this package, but do not treat it as the active product roadmap during the mailbox
+> validation period. See
+> [`RFC 002`](../docs/rfcs/002-agent-reachability-and-durable-mailbox.md).
+
 ## What works
 
 - A separate Node-scoped bearer credential in a mode-0600 config file.

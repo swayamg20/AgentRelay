@@ -2,7 +2,7 @@
 	"name": "agentrelay",
 	"version": "0.0.1",
 	"private": true,
-	"description": "Cross-developer agent-to-agent communication on the A2A protocol.",
+	"description": "Stable identity, owner control, and durable messages for independently owned AI agents.",
 	"license": "MIT",
 	"type": "module",
 	"engines": {
