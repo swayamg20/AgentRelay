@@ -21,6 +21,30 @@ Mission/Node, Codex activation, A2A, federation, hosted tenancy, new clients, an
 notification channels remain frozen. Preserve their code and tests; do not expand
 them during this window.
 
+### Owner decision: reopen a narrow pickup experiment
+
+On 2026-09-04, the first two-owner machine test exposed missed pickup as the
+dominant communication failure: the Relay stored the message, but the receiving
+owner did not know it existed until they manually asked their agent to check the
+mailbox. The owner therefore reopened only the smallest L2 pickup experiment.
+
+The approved experiment is limited to:
+
+- an opaque durable recipient-event cursor written atomically with mailbox state;
+- an authenticated, replayable event feed whose live connection is only a latency
+  hint;
+- explicit consent for one exact sender and one locally selected existing Codex thread
+  identifier, without claiming the connector can verify its current liveness; and
+- a reference adapter that may attract the attention of that session without
+  granting the remote peer any local authority.
+
+This decision supersedes the notification-channel and issue #49 freeze only for
+that bounded experiment. It does not reopen Mission/Node execution, presence,
+automatic answering, remote runtime startup, automatic accept/reply/complete,
+workspace mutation, command execution, or any other external side effect. Relay
+storage, event observation, local enqueue, model pickup, and reply remain separate
+facts.
+
 ## 1. Establish the exact current loop
 
 - [ ] Use two different agent identities and two different machines.

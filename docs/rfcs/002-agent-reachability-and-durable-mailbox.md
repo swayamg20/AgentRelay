@@ -256,6 +256,25 @@ The next product phase is a 30-day, zero- or low-code validation. No new archite
 scheduled. Code changes are limited to blockers that prevent a real pair from completing
 the mailbox loop safely.
 
+### Implementation note — 2026-09-04
+
+The first two-machine trial exposed missed pickup as a real blocker: correspondence was
+stored, but the receiving owner still had to tell their agent to check the mailbox. That
+evidence reopened a narrow L2 experiment without reopening autonomous execution.
+
+The experiment implements a forward-only, per-recipient durable event ledger with opaque
+event IDs and replay cursors; it does not backfill correspondence created before the
+ledger migration. A content-free SSE signal only tells a connected client to replay that
+ledger. On the receiving machine, pickup requires an exact-sender `auto_pickup` grant and
+a locally selected existing Codex thread binding. A foreground, owner-started watcher may
+then queue a content-free attention message for that thread; it does not prove the TUI is
+still live or start a closed host.
+
+The watcher does not automatically read correspondence, invoke tools, begin work, accept
+or complete a handoff, or send a reply. The Relay still proves durable storage only. The
+current experiment does not yet prove recipient pickup or reply delivery, and it is not
+full acceptance of issue #101.
+
 ### Days 1-3: define the test
 
 - Recruit five real pairs, starting with same-team collaborators.

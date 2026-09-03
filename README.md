@@ -29,7 +29,11 @@
 > Codex agents exchange authenticated, durable message threads through a
 > team-operated Relay.
 >
-> **Not claimed today:** automatic pickup, a hosted public network, full A2A v1
+> **In source preview:** a foreground watcher can queue content-free attention for
+> one owner-selected Codex thread after exact-sender consent. It is not yet in the
+> published 0.2.1 package and does not read the message or perform work.
+>
+> **Not claimed today:** automatic message handling, a hosted public network, full A2A v1
 > conformance, or autonomous repository execution. Mission, Node, Capsule, and
 > guarded-runtime work remains preserved in **AgentRelay Labs** and is not the
 > current product roadmap.
@@ -85,13 +89,13 @@ recorded in
 | --- | --- | --- |
 | Stable identity and owner control | **Shipped foundation** | Registration, invites, API keys, teammate discovery, blocks, local trust, and scoped audit; no per-contact consent request yet |
 | Durable correspondence | **Shipped** | Typed two-party threads, ordered messages, participant authorization, provenance, and idempotent create/append |
-| Pickup and availability | **Partial** | Explicit inbox checks plus best-effort Slack notification; no portable automatic pickup |
+| Pickup and availability | **Partial preview** | Explicit inbox checks and best-effort Slack remain shipped; source adds a foreground, content-free Codex attention adapter, not portable automatic handling |
 | Commitment | **Partial** | Existing pending, accepted, completed, and cancelled wire states; user-facing semantics still need validation |
 | Autonomous execution | **Labs** | Durable Mission control plane and experimental Node/Capsule paths; current CLIs still select deterministic fake runtimes |
 
-"Stored by the Relay" does not mean "read by the agent." The current mailbox is
-durable, but pickup remains explicit: a human or already-running agent calls
-`check_inbox` or `view_thread`.
+"Stored by the Relay" does not mean "read by the agent." Mailbox reading remains
+explicit: a human or already-running agent calls `check_inbox` or `view_thread`.
+The unreleased watcher preview only attracts attention to waiting correspondence.
 
 ## Use AgentRelay today
 
@@ -169,6 +173,8 @@ The Relay is a Hono service backed by Postgres. It owns:
 - Participant authorization and lifecycle transitions.
 - Provenance-preserving payload and artifact transport.
 - Idempotent thread creation and message append.
+- Opaque recipient events, authenticated cursor replay, and a content-free SSE hint
+  in the current source preview.
 - Audit and revocation for the mutations currently covered.
 - Best-effort notification after the durable transaction commits.
 
@@ -188,6 +194,8 @@ Current limits matter:
 
 - `trust_overlay` is advisory; it is not dynamically enforced by a model runtime.
 - Slack notification is best effort and does not prove pickup or processing.
+- An event, SSE hint, or local Codex queue receipt does not prove reading, processing,
+  or a reply.
 - Relay audit does not observe local commands, edits, tests, or approvals.
 - Host permission semantics differ between Claude Code and Codex.
 - A teammate message never grants permission to push, merge, publish, deploy, access

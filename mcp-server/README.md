@@ -1,13 +1,16 @@
 # agentrelay-mcp
 
 The current local tool surface for [AgentRelay](https://github.com/swayamg20/AgentRelay).
-It runs as a stdio MCP process and lets an already-running Claude Code or Codex host
-use the AgentRelay handoff mailbox.
+It provides a stdio MCP process for mailbox tools plus an optional foreground
+connector that gives an owner-selected runtime low-latency mailbox attention.
 
 > **Package:** `agentrelay-mcp` 0.2.1.
-> **Boundary:** this package does not run a background listener, wake a closed host,
-> or start autonomous coding-agent turns. Runtime activation belongs to the separate
-> experimental AgentRelay Node, which is currently fake-adapter only.
+> **Boundary:** the connector does not wake a closed host, load peer content, perform
+> work, or grant local authority. Its first Codex adapter queues only a content-free
+> attention turn. Autonomous execution remains outside the mailbox product.
+>
+> **Unreleased preview:** `bind` and `watch` currently exist only in this repository
+> checkout; the published npm package at 0.2.1 does not contain them yet.
 
 Requires Node 20.18.1 or newer.
 
@@ -53,6 +56,56 @@ configuration is written to the current Claude and Codex user config locations.
 The relay stores messages durably, but pickup is explicit. A human or running agent
 must call `check_inbox` or `view_thread`.
 
+## Auto-pickup preview
+
+The preview removes silent mailbox waiting without making a remote teammate an
+operator of your machine. It uses a persistent server-sent-event connection as a
+content-free wake hint and an authenticated cursor API for authoritative replay.
+Losing or duplicating the live hint cannot lose mailbox data.
+
+For now, build the source checkout from the repository root. Then update the
+generated host policy; existing installations should use `--overwrite` so the old
+broad AgentRelay tool wildcard is removed:
+
+```bash
+pnpm --filter agentrelay-mcp build
+node ./mcp-server/dist/bin/agentrelay.js install --client all --overwrite
+```
+
+Then grant one exact sender, bind the Codex chat that should receive attention, and
+run the foreground connector:
+
+```bash
+node ./mcp-server/dist/bin/agentrelay.js trust set alice@team --auto-pickup true
+
+# Run from a shell launched inside the target Codex chat so CODEX_THREAD_ID is local.
+node ./mcp-server/dist/bin/agentrelay.js bind codex
+
+# Keep this running in a terminal while you want live pickup.
+node ./mcp-server/dist/bin/agentrelay.js watch
+```
+
+`agentrelay watch --once` replays currently pending recipient events and exits. The
+Codex adapter calls `codex queue`; on a standalone Codex TUI, Codex's own local queue
+refresh may add roughly ten seconds before the attention turn appears. The connector
+never puts teammate text in that turn and never calls a tool. It only tells the local
+user that durable correspondence is waiting for manual inspection.
+
+Consent is fail-closed and separable:
+
+- `auto_pickup` applies only to the exact listed sender; join, defaults, and unknown
+  sender policy cannot grant it.
+- `agentrelay bind codex` selects one local UUID; Relay events cannot choose it.
+- stopping `watch` closes the live connection; `agentrelay unbind codex` removes the
+  saved target.
+- `agentrelay trust set alice@team --auto-pickup false` revokes attention, while
+  `agentrelay block alice@team` also fences new Relay content.
+
+The saved cursor advances after an event is intentionally rejected by local policy,
+coalesced, or durably accepted by the runtime queue. It does not advance after a
+runtime enqueue failure. Runtime queue acceptance is not a read, processing,
+delivery, acceptance, completion, or reply receipt.
+
 The stdio server caps each MCP JSON-RPC request at 10 MiB. For larger code artifacts,
 send a `file_ref` instead of putting a huge diff or other content inline.
 
@@ -67,6 +120,8 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 - `agentrelay audit`
 - `agentrelay block <handle>` / `unblock <handle>`
 - `agentrelay trust list|set|reset`
+- `agentrelay bind codex` / `unbind codex`
+- `agentrelay watch [--once]`
 - `agentrelay mcp`
 
 ## Security posture
@@ -81,8 +136,12 @@ local trust parsing.
 
 Known limits:
 
-- Pickup is explicit; this stdio process does not listen in the background or start a
-  host turn.
+- `watch` is a foreground preview, not an installed operating-system service.
+- One local state directory permits one watcher at a time, preventing competing
+  processes from racing its replay cursor.
+- The Codex reference adapter provides content-free attention, not automatic reading
+  or work, because queued turns cannot yet receive a narrower host-enforced tool
+  envelope.
 - `accept_handoff` returns `trust_overlay`, but this package does not dynamically
   apply it to an active Claude or Codex session.
 - Host permission semantics are provider-specific; generated config is a
