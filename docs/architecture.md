@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-09-01.
+> **Status:** Canonical system overview as of 2026-09-04.
 > Current implementation details live in [`hld.md`](hld.md) and
 > [`lld.md`](lld.md). Product direction and priority live in
 > [`RFC 002: Agent reachability and durable mailbox`](rfcs/002-agent-reachability-and-durable-mailbox.md).
@@ -34,9 +34,12 @@ reply without copying context through a human chat channel.
 Today, an address is an authenticated handle inside one relay/team trust domain.
 Membership is consented through an invite, a recipient can block a sender, and
 handoff acceptance expresses commitment to a task; acceptance is not required to
-read or reply to an active thread. Messages are durable, but pickup still depends on
-an already-running host calling the mailbox tools. Best-effort notification is a
-hint, not proof that an agent read or processed a message.
+read or reply to an active thread. Messages and opaque recipient events are durable.
+An optional foreground connector can attract the attention of one owner-selected
+Codex chat. Its queued prompt is constant and contains no mailbox content or event
+reference; the recommended host policy requires approval before content-bearing
+mailbox reads. It does not prove that an agent read or processed a message.
+Best-effort notification and the live stream remain hints.
 
 Missions and autonomous repository execution are one possible application of this
 communication network. They remain valuable engineering research, but they are not
@@ -58,7 +61,13 @@ The repository currently ships:
   markers on all teammate-originated mailbox content.
 - An optional in-process Slack notification adapter with encrypted-at-rest webhook
   setup.
-- CLI setup, invite/join, key rotation, doctor, audit, block, and trust commands.
+- A durable, recipient-isolated mailbox event ledger and authenticated replay cursor.
+  A content-free SSE signal reduces replay latency but is never correctness state.
+- An optional local `agentrelay watch` preview with exact-sender consent, one local
+  Codex thread binding, persisted pickup dedupe, and a fixed content-free attention
+  adapter.
+- CLI setup, invite/join, key rotation, doctor, audit, block, trust, bind, and watch
+  commands.
 
 The mailbox is the product surface. Its current lifecycle distinguishes communication
 from commitment: either participant can exchange messages while a handoff is
@@ -150,9 +159,10 @@ does not contain:
 - A current A2A v1 Agent Card endpoint or verified A2A compatibility.
 - End-to-end traces of local commands, edits, policy decisions, and tests.
 
-The core mailbox also does not yet provide a global or federated address, durable
-push delivery, truthful unread/read receipts, complete pagination, or verified A2A
-compatibility. Do not describe the current release as autonomous, globally
+The core mailbox also does not yet provide a global or federated address, truthful
+unread/read receipts, complete handoff-list pagination, automatic mailbox reading or
+work, or verified A2A compatibility. The live connection is a hint over a durable
+event cursor, not durable push delivery. Do not describe the current release as autonomous, globally
 federated, fully A2A-compliant, or protected by an end-to-end four-layer trust
 guarantee.
 
@@ -162,10 +172,12 @@ guarantee.
 Agent host A                                             Agent host B
      | MCP stdio                                             | MCP stdio
 local agentrelay-mcp                                   local agentrelay-mcp
-     | authenticated HTTPS                                  | authenticated HTTPS
-     +---------------- AgentRelay relay ---------------------+
-                    model-free, store-and-forward
-                       identity + durable threads
+     | authenticated HTTPS                                  | mailbox tools
+     |                                      owner consent -> | local watch connector
+     |                                                       |        ^
+     +---------------- AgentRelay relay ---------------------+--------+
+                    model-free, store-and-forward         SSE hint
+              identity + threads + recipient event cursor
 ```
 
 The core product has two boundaries.
@@ -191,6 +203,19 @@ The MCP process gives an already-running Codex or Claude session explicit tools 
 address, list, read, reply to, accept, and complete threads. It validates local tool
 input, provenance-marks teammate content, and exposes the owner's local trust
 decision. It is neither the durable store nor a portable wake-up mechanism.
+
+The optional local connector is a separate foreground CLI responsibility. It keeps
+one authenticated SSE connection, replays opaque events from a locally persisted
+cursor, rechecks exact-sender `auto_pickup` consent, and passes relay-owned event and
+thread identifiers to a runtime-attention adapter for validation and local dedupe.
+The current Codex adapter targets a UUID chosen locally with `agentrelay bind codex`
+and queues a constant prompt through `codex queue`; the prompt contains neither ID nor
+teammate content. The connector itself does not fetch mailbox content or call an MCP
+tool, but the queued model turn still runs under that session's host policy. The
+recommended install profile prompts before content-bearing mailbox reads and all
+AgentRelay mutations. The adapter cannot start a closed Codex process. Other runtimes
+must implement the same local adapter boundary; the Relay has no Codex- or
+Claude-specific routing state.
 
 The existing `/a2a` JSON-RPC route is the mailbox wire used by that client. Its names
 are A2A-inspired, but current A2A conformance is not claimed. A future standards or
@@ -292,9 +317,11 @@ Capsule descriptor and CLI never construct this composition.
 - **A2A** can provide public agent, message, task, artifact, streaming, and discovery
   semantics. It still does not launch a process on an offline developer machine or
   define the local sandbox.
-- **SSE or WebSocket** can signal that work is available. The connection may drop,
-  restart, or duplicate a notification. Durable mailbox rows and replayable cursors
-  remain the source of truth.
+- **SSE** now signals that recipient state may have changed. It is one-way because
+  the connector sends no command or acknowledgement over the live channel. The
+  connection may drop, restart, or duplicate a notification; durable mailbox rows
+  and replayable cursors remain the source of truth. WebSocket remains unnecessary
+  until a real bidirectional transport requirement exists.
 - **The Labs Node** investigates durable local activation and execution. It is not
   required for one already-running agent to message another through the mailbox.
 
@@ -431,6 +458,13 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   incoming-webhook targets and dispatched without redirects.
 - Static recommended host permission configuration.
 - Local per-teammate trust parsing and decision output.
+- Same-transaction opaque recipient events, with cursor allocation serialized per
+  recipient so a committed lower cursor cannot appear after a consumed higher one.
+- Exact-sender auto-pickup consent that cannot be inherited from defaults or join,
+  a locally selected Codex UUID, and content-free runtime attention with persisted
+  replay dedupe. Codex and Claude install profiles approval-gate content-bearing
+  mailbox reads and AgentRelay mutations instead of auto-allowing the former broad
+  wildcard.
 
 ### Implemented Labs safeguards
 
@@ -475,7 +509,15 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
 - Notification delivery is process-local and does not prove pickup, reading, or
-  response. The mailbox has no durable wake-up channel.
+  response. The new event feed likewise proves only durable event storage; an SSE
+  write and a Codex queue receipt remain weaker facts than model pickup.
+- The connector is foreground-only and its first migration is a forward-only event
+  cutover. A local process lock enforces one watcher for each local cursor; copying one
+  identity and its credentials to multiple machines remains outside this pilot model.
+- The saved Codex binding remains until explicit unbind. The adapter cannot prove a
+  standalone TUI is still open or impose a narrower per-turn tool envelope. It queues
+  a constant content-free turn, and the recommended host policy places mailbox reads
+  and mutations behind approval rather than treating prompt text as enforcement.
 
 ### Labs gaps before autonomous execution
 
@@ -517,9 +559,10 @@ nor verification commands.
 
 The relay can run anywhere that supports the relay container image and Postgres. Teams
 may self-host it or use a future hosted service. Every developer machine can run its
-own MCP process for interactive tools. A sleeping or powered-off machine remains
-offline; its mailbox messages remain durable and become visible when an agent host
-later starts MCP and checks them.
+own MCP process for interactive tools and may separately run the foreground watch
+connector. A sleeping or powered-off machine remains offline; its mailbox messages
+and recipient events remain durable. When the connector later resumes, it replays
+from its local cursor. It never starts a closed agent host.
 
 The Labs AgentRelay Node is a separate foreground process today. It can launch
 detached fake Mission Capsules that outlive a normal Node exit or `SIGKILL`. Its

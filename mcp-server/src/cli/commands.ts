@@ -11,8 +11,18 @@ import { z } from "zod";
 import { type AgentRelayConfig, loadConfig } from "../config.js";
 import { logger } from "../logger.js";
 import { FALLBACK_TRUST, type TrustFile, loadTrust } from "../trust.js";
-import { type TomlMergeReport, mergeCodexSettings, renderTomlMergeReport } from "./install-toml.js";
 import {
+	CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS,
+	CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE,
+	CODEX_PROMPTED_AGENTRELAY_TOOLS,
+	type TomlMergeReport,
+	mergeCodexSettings,
+	renderTomlMergeReport,
+} from "./install-toml.js";
+import {
+	AGENTRELAY_AUTO_APPROVED_TOOL_RULES,
+	AGENTRELAY_PROMPTED_TOOL_RULES,
+	LEGACY_AGENTRELAY_WILDCARD_RULE,
 	type MergeReport,
 	mergeClaudeJsonMcp,
 	mergeClaudeOverlay,
@@ -318,9 +328,9 @@ export async function install(
 			const overlayResult = mergeClaudeOverlay(currentOverlay, {
 				overwritePermissions: opts.overwrite,
 			});
-			const overlayHasChanges = Object.values(overlayResult.permissionsAdded).some(
-				(arr) => arr.length > 0,
-			);
+			const overlayHasChanges =
+				Object.values(overlayResult.permissionsAdded).some((arr) => arr.length > 0) ||
+				Object.values(overlayResult.permissionsRemoved).some((arr) => arr.length > 0);
 			if (overlayHasChanges) {
 				await writeSettings(overlayPath, `${JSON.stringify(overlayResult.next, null, 2)}\n`);
 			}
@@ -332,6 +342,7 @@ export async function install(
 				mcpServerOverwritten: mcpResult.mcpServerOverwritten,
 				permissionsAdded: overlayResult.permissionsAdded,
 				permissionsRemovedFromOtherBuckets: overlayResult.permissionsRemovedFromOtherBuckets,
+				permissionsRemoved: overlayResult.permissionsRemoved,
 			};
 			const written =
 				mcpResult.mcpServerAdded || mcpResult.mcpServerOverwritten || overlayHasChanges;
@@ -353,7 +364,8 @@ export async function install(
 			const changed =
 				report.mcpServerAdded ||
 				report.mcpServerOverwritten ||
-				Object.values(report.permissionsAdded).some((arr) => arr.length > 0);
+				report.approvalSettingsAdded.length > 0 ||
+				report.approvalSettingsUpdated.length > 0;
 			if (changed) {
 				await writeSettings(settingsPath, tomlText.endsWith("\n") ? tomlText : `${tomlText}\n`);
 			}
@@ -499,10 +511,8 @@ export async function doctor(
 					(settings as Record<string, Record<string, unknown>>)?.[mcpKey]?.agentrelay,
 				);
 			}
-			const allowList: string[] =
-				((settings as Record<string, Record<string, unknown>>)?.permissions?.allow as string[]) ??
-				[];
-			report.overlayApplied[client] = allowList.includes("mcp__agentrelay__*");
+			report.overlayApplied[client] =
+				client === "claude-code" ? claudeOverlayApplied(settings) : codexOverlayApplied(settings);
 		} catch {
 			report.notes.push(`${client} settings file is malformed`);
 			if (mcpFilePath === settingsPath) {
@@ -517,6 +527,40 @@ export async function doctor(
 	}
 
 	return report;
+}
+
+function claudeOverlayApplied(settings: unknown): boolean {
+	const permissions = asRecord(asRecord(settings)?.permissions);
+	const allow = Array.isArray(permissions?.allow) ? permissions.allow : [];
+	const ask = Array.isArray(permissions?.ask) ? permissions.ask : [];
+	return (
+		!allow.includes(LEGACY_AGENTRELAY_WILDCARD_RULE) &&
+		AGENTRELAY_PROMPTED_TOOL_RULES.every((rule) => !allow.includes(rule)) &&
+		AGENTRELAY_AUTO_APPROVED_TOOL_RULES.every((rule) => allow.includes(rule)) &&
+		AGENTRELAY_PROMPTED_TOOL_RULES.every((rule) => ask.includes(rule))
+	);
+}
+
+function codexOverlayApplied(settings: unknown): boolean {
+	const mcpServers = asRecord(asRecord(settings)?.mcp_servers);
+	const entry = asRecord(mcpServers?.agentrelay);
+	if (entry?.default_tools_approval_mode !== CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE) return false;
+	const tools = asRecord(entry.tools);
+	return (
+		CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS.every(
+			(tool) => asRecord(tools?.[tool])?.approval_mode === "auto",
+		) &&
+		CODEX_PROMPTED_AGENTRELAY_TOOLS.every((tool) => {
+			const mode = asRecord(tools?.[tool])?.approval_mode;
+			return mode === undefined || mode === "prompt";
+		})
+	);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
 }
 
 /**

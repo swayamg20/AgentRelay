@@ -24,7 +24,7 @@ import { join } from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
 
-const teammateEntrySchema = z
+const inheritedTrustEntrySchema = z
 	.object({
 		auto_read: z.boolean().optional(),
 		auto_test: z.boolean().optional(),
@@ -32,6 +32,12 @@ const teammateEntrySchema = z
 		require_approval: z.array(z.string()).optional(),
 	})
 	.passthrough();
+
+const teammateEntrySchema = inheritedTrustEntrySchema.extend({
+	// Runtime pickup is deliberately exact-sender consent. It is never
+	// inherited from defaults or granted to an unknown teammate.
+	auto_pickup: z.boolean().optional(),
+});
 
 const trustFileSchema = z
 	.object({
@@ -44,7 +50,7 @@ const trustFileSchema = z
 			.optional()
 			.default({ policy: "reject" }),
 		blocked: z.array(z.string()).optional().default([]),
-		defaults: teammateEntrySchema.optional().default({}),
+		defaults: inheritedTrustEntrySchema.optional().default({}),
 	})
 	.passthrough();
 
@@ -52,6 +58,7 @@ export type TrustFile = z.infer<typeof trustFileSchema>;
 export type TeammateEntry = z.infer<typeof teammateEntrySchema>;
 
 export interface TrustOverlay {
+	auto_pickup: boolean;
 	auto_read: boolean;
 	auto_test: boolean;
 	auto_write_paths: string[];
@@ -85,6 +92,7 @@ export const FALLBACK_TRUST: TrustFile = {
 };
 
 const SAFE_OVERLAY: TrustOverlay = {
+	auto_pickup: false,
 	auto_read: false,
 	auto_test: false,
 	auto_write_paths: [],
@@ -94,7 +102,10 @@ const SAFE_OVERLAY: TrustOverlay = {
 export function resolveTrustPath(env: NodeJS.ProcessEnv = process.env): string {
 	const override = env.AGENTRELAY_TRUST_PATH;
 	if (override && override.length > 0) return override;
-	return join(homedir(), ".agentrelay", "trust.yaml");
+	const homeOverride = env.AGENTRELAY_HOME;
+	const root =
+		homeOverride && homeOverride.length > 0 ? homeOverride : join(homedir(), ".agentrelay");
+	return join(root, "trust.yaml");
 }
 
 export async function loadTrust(env: NodeJS.ProcessEnv = process.env): Promise<LoadTrustResult> {
@@ -103,7 +114,10 @@ export async function loadTrust(env: NodeJS.ProcessEnv = process.env): Promise<L
 	let exists = true;
 	try {
 		await stat(path);
-	} catch {
+	} catch (err) {
+		if (!isMissingFile(err)) {
+			return { ok: false, reason: "unreadable", path, detail: errMsg(err) };
+		}
 		exists = false;
 	}
 	if (!exists) {
@@ -148,7 +162,7 @@ export function computeOverlay(trust: TrustFile, senderHandle: string): OverlayD
 		return {
 			decision: "allow",
 			source: "listed",
-			overlay: mergeEntries(trust.defaults, entry),
+			overlay: mergeEntries(trust.defaults, entry, entry.auto_pickup === true),
 		};
 	}
 
@@ -159,7 +173,7 @@ export function computeOverlay(trust: TrustFile, senderHandle: string): OverlayD
 	return {
 		decision: "allow",
 		source: "defaults",
-		overlay: mergeEntries(undefined, trust.defaults),
+		overlay: mergeEntries(undefined, trust.defaults, false),
 	};
 }
 
@@ -183,9 +197,14 @@ export function isPathAutoWritable(overlay: TrustOverlay, path: string): boolean
 	return false;
 }
 
-function mergeEntries(base: TeammateEntry | undefined, override: TeammateEntry): TrustOverlay {
+function mergeEntries(
+	base: TrustFile["defaults"] | undefined,
+	override: TrustFile["defaults"] | TeammateEntry,
+	autoPickup: boolean,
+): TrustOverlay {
 	const fallback = SAFE_OVERLAY;
 	return {
+		auto_pickup: autoPickup,
 		auto_read: pickBool(override.auto_read, base?.auto_read, fallback.auto_read),
 		auto_test: pickBool(override.auto_test, base?.auto_test, fallback.auto_test),
 		auto_write_paths: pickArr(
@@ -222,4 +241,8 @@ function stripLeadingSlash(s: string): string {
 function errMsg(err: unknown): string {
 	if (err instanceof Error) return err.message;
 	return String(err);
+}
+
+function isMissingFile(err: unknown): boolean {
+	return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
 }

@@ -71,6 +71,13 @@
 			"when": 1786107600000,
 			"tag": "0009_mission_terminal_reconciliation",
 			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1786194000000,
+			"tag": "0010_mailbox_events",
+			"breakpoints": true
 		}
 	]
 }

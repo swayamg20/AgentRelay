@@ -77,8 +77,8 @@ collaborating across machines. Exact evidence and nonclaims are recorded in
 Column-level truth lives in [`relay/src/db/schema.ts`](../relay/src/db/schema.ts) and
 the committed Drizzle migrations.
 
-`agents`, `agent_cards`, `api_keys`, `handoffs`, `messages`, `audit_log`,
-`agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
+`agents`, `agent_cards`, `api_keys`, `handoffs`, `messages`, `mailbox_events`,
+`audit_log`, `agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
 workspace, Mission, delivery, and receipt tables are the same-schema Labs extension;
 they remain mounted and migrated for current compatibility but are not prerequisites
 for mailbox use.
@@ -90,6 +90,7 @@ for mailbox use.
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
 | `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
+| `mailbox_events` | Opaque recipient event ID, bigint cursor, recipient/actor/thread references, finite kind, internal source ID, and timestamp. It contains no message body, summary, payload, artifact, runtime, session, path, or authority. A recipient-scoped transaction lock serializes cursor allocation before commit. |
 | `audit_log` | Invite, handoff/message, block, Agent-disable, Node/workspace, Mission, and delivery mutation records: actor kind, nullable Agent actor ID, action, resource, metadata, request ID, timestamp. Admin and relay-system actors never borrow an Agent ID. |
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
@@ -212,6 +213,8 @@ There is no `/metrics`, `/inbox/:id`, or
 | `GET` | `/agents/me` | Return caller identity and card metadata. |
 | `POST` | `/agents/me/keys/rotate` | Rotate the caller's API key. |
 | `GET` | `/agents/me/audit` | Query relay audit rows where the caller is the actor. |
+| `GET` | `/agents/me/mailbox/events` | Replay only the caller's opaque recipient events after an optional positive bigint `after_cursor`, oldest first, with a bounded limit. The returned actor handle is relay-owned identity data; content and internal source IDs are excluded. |
+| `GET` | `/agents/me/mailbox/events/stream` | Keep an authenticated SSE connection for `ready`, `resync`, `mailbox.changed`, and heartbeat hints. Every useful hint means replay the durable endpoint; it is not an event body or receipt. |
 | `GET` | `/agents` | List active teammate roster and public card fields. |
 | `PUT` | `/agents/me/card` | Update caller role, skills, repo labels, or webhook field. |
 | `GET` | `/agents/me/block` | List caller's server-side blocks. |
@@ -386,17 +389,38 @@ command, diff, link, or inline contract as locally authorized execution.
 
 Default location is `~/.agentrelay/`:
 
-- `config.json`: relay URL, agent handle and ID, API key, optional default session ID.
+- `config.json`: relay URL, agent handle and ID, API key, optional default session ID,
+  and an optional locally selected connector binding.
 - `trust.yaml`: schema version, teammate entries, unknown-sender policy, defaults,
-  and local blocked list.
+  exact-sender `auto_pickup`, and local blocked list. `auto_pickup` is ignored in
+  defaults and is never inferred from join or unknown-sender policy.
+- `connector-state.json`: versioned, mode-0600 replay cursors and hashed
+  sender/thread coalescing keys. A cursor records local disposition or runtime queue
+  acceptance, not remote delivery or model processing.
+- `connector-state.json.watch-lock`: a persistent lock file whose kernel-held ownership
+  lasts for the foreground watch lifetime so two local processes cannot race the shared
+  cursor. Closing the process, including after a crash, releases ownership automatically.
 
-`AGENTRELAY_HOME`, `AGENTRELAY_CONFIG_PATH`, and `AGENTRELAY_TRUST_PATH` can override
-paths for tests or controlled environments.
+`AGENTRELAY_HOME`, `AGENTRELAY_CONFIG_PATH`, `AGENTRELAY_TRUST_PATH`, and
+`AGENTRELAY_CONNECTOR_STATE_PATH` can override paths for tests or controlled
+environments. A connector state override must resolve to an absolute path in a
+canonical, owner-controlled directory.
 
 The MCP server reloads local trust before each `accept_handoff`, computes a trust
 overlay for the sender, and returns it to the agent. No production code applies
 `auto_write_paths` dynamically to a Codex or Claude runtime; `isPathAutoWritable` is
 currently exercised only by tests and exports.
+
+The foreground connector reloads trust before each recipient event. Only a listed
+sender with `auto_pickup: true` can produce runtime attention; block wins. The Codex
+adapter uses `execFile("codex", ["queue", ...])`, never a shell, and queues a constant
+local prompt containing neither event/thread UUIDs nor peer content. The connector
+does not retrieve correspondence or invoke an MCP tool. The resulting model turn still
+uses the bound session's policy, so the recommended install configuration prompts before
+content-bearing mailbox reads and every AgentRelay mutation. Enqueue failure leaves the
+cursor unchanged; successful enqueue persists the cursor and pickup dedupe together.
+Delivery is at-least-once across an ambiguous runtime failure, so the constant prompt is
+safe to repeat.
 
 ## Labs Node and Capsule process surface
 
@@ -650,12 +674,21 @@ The `agentrelay` binary currently provides:
 - `audit`
 - `block`, `unblock`
 - `trust list`, `trust set`, `trust reset`
+- `bind codex`, `unbind codex`
+- `watch [--once]`
 - `mcp`
 
 `join` writes local credentials, adds the inviter to local trust, and invokes install
 for both clients. `install` writes the Claude MCP entry to `~/.claude.json`, the
 Claude permission overlay to `~/.claude/settings.json`, and Codex configuration to
 `~/.codex/config.toml`.
+
+The recommended Claude overlay auto-allows only `list_teammates`; content-bearing
+`check_inbox` and `view_thread` calls plus AgentRelay mutations are in the ask bucket,
+and the old `mcp__agentrelay__*` wildcard is removed. Codex uses its native
+`mcp_servers.agentrelay.default_tools_approval_mode = "prompt"` plus one explicit
+`auto` override for `list_teammates`. Existing installations must run `install
+--overwrite` to replace an older AgentRelay entry safely.
 
 The generated settings are recommendations. Documentation must not claim every host
 enforces identical allow/ask/deny semantics or that a returned trust overlay changes
@@ -781,9 +814,10 @@ The mailbox API is the core product surface. Its active direction is
 [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md): make address, consent,
 durable send, check, read, reply, and honest state work repeatedly for real pairs.
 Do not turn the four-state handoff table into a distributed runtime scheduler, and do
-not require a Node, Mission, or Capsule for mailbox communication. Notification and
-future streaming may reduce latency, but persisted mailbox state remains
-authoritative.
+not require a Node, Mission, or Capsule for mailbox communication. The implemented
+SSE stream reduces latency, but persisted mailbox and recipient-event state remains
+authoritative. The first connector is content-free attention, not automatic reading,
+work, or answering; the generated host policy asks before content-bearing mailbox reads.
 
 Nodes, credentials, workspace bindings, Missions, events, and deliveries have a
 separate public control plane and same-repository Labs model. The local Node proves

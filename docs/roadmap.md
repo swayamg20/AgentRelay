@@ -1,6 +1,6 @@
 # Roadmap
 
-> **Updated:** 2026-09-02. This roadmap resets product priority around the
+> **Updated:** 2026-09-04. This roadmap resets product priority around the
 > shipped mailbox. It changes neither current runtime behavior nor existing public
 > contracts. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md) is the
 > active product-direction contract. [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md)
@@ -49,10 +49,12 @@ The repository already contains the product path to validate:
   key rotation, audit, and trust commands; and
 - best-effort Slack notification after the durable mailbox mutation commits.
 
-Pickup remains explicit. An active agent session calls `check_inbox`; the MCP server
-does not wake a sleeping machine or start a new model turn. Slack dispatch is
-process-local and can be lost across Relay restart. Those are current limits to
-measure, not reasons to replace the mailbox with a runtime system.
+Mailbox reading remains explicit. An active agent session calls `check_inbox`; the
+MCP server does not wake a sleeping machine. After the first two-machine test showed
+missed pickup as the dominant blocker, a narrow source preview added durable opaque
+events, a content-free SSE hint, and foreground Codex attention. It does not wake a
+closed host, read teammate content, or start work. Slack dispatch remains process-local
+and can be lost across Relay restart.
 
 ### Labs history retained
 
@@ -156,6 +158,10 @@ Run the pilot owned by
   and whether either pair chooses to use AgentRelay again without prompting.
 
 ### Days 18-23: simulate pickup before building it
+
+The 2026-09-04 two-machine trial supplied the required missed-pickup evidence. The
+bounded L2 source preview is now implemented, but remains unaccepted until the same
+two-machine loop proves observation, local enqueue, user pickup, and reply separately.
 
 - Use the existing notification path or a manual reminder to simulate faster pickup.
 - Manually share a short owner-approved availability status; do not present it as an

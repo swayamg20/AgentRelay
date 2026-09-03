@@ -173,7 +173,51 @@ export const messages = pgTable(
 	}),
 );
 
-// ─── 2.6 audit_log ──────────────────────────────────────────────────────────
+// ─── mailbox_events ───────────────────────────────────────────────────────────
+export const mailboxEvents = pgTable(
+	"mailbox_events",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		cursor: bigserial("cursor", { mode: "bigint" }).notNull(),
+		recipientAgentId: uuid("recipient_agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		actorAgentId: uuid("actor_agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		threadId: uuid("thread_id")
+			.notNull()
+			.references(() => handoffs.id, { onDelete: "restrict" }),
+		kind: text("kind").notNull(),
+		sourceId: uuid("source_id").notNull(),
+		createdAt,
+	},
+	(t) => ({
+		cursorIdx: uniqueIndex("idx_mailbox_events_cursor").on(t.cursor),
+		recipientCursorIdx: index("idx_mailbox_events_recipient_cursor").on(
+			t.recipientAgentId,
+			t.cursor,
+		),
+		recipientSourceIdx: uniqueIndex("idx_mailbox_events_recipient_kind_source").on(
+			t.recipientAgentId,
+			t.kind,
+			t.sourceId,
+		),
+		recipientNotActor: check(
+			"mailbox_events_recipient_not_actor_chk",
+			sql`${t.recipientAgentId} != ${t.actorAgentId}`,
+		),
+		kindCheck: check(
+			"mailbox_events_kind_chk",
+			sql`${t.kind} IN (
+				'thread.created','message.appended','thread.accepted',
+				'thread.completed','thread.cancelled'
+			)`,
+		),
+	}),
+);
+
+// ─── 2.6 audit_log ───────────────────────────────────────────────────────────
 export const auditLog = pgTable(
 	"audit_log",
 	{
@@ -773,6 +817,7 @@ export type AgentCard = typeof agentCards.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type Handoff = typeof handoffs.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type MailboxEvent = typeof mailboxEvents.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
 export type Node = typeof nodes.$inferSelect;
 export type NodeCredential = typeof nodeCredentials.$inferSelect;

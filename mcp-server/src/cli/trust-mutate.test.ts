@@ -59,7 +59,11 @@ describe("trust-mutate.unblockTeammate", () => {
 
 describe("trust-mutate.setTeammate", () => {
 	it("creates a new teammate entry", () => {
-		const next = setTeammate(seed(), "carol@acme", { auto_write_paths: ["docs/"] });
+		const next = setTeammate(seed(), "carol@acme", {
+			auto_pickup: true,
+			auto_write_paths: ["docs/"],
+		});
+		expect(next.teammates["carol@acme"]?.auto_pickup).toBe(true);
 		expect(next.teammates["carol@acme"]?.auto_write_paths).toEqual(["docs/"]);
 	});
 

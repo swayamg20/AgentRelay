@@ -1,6 +1,6 @@
 # High-level design: mailbox core and Labs implementation
 
-> **Scope:** Current repository implementation as of 2026-09-01.
+> **Scope:** Current repository implementation as of 2026-09-04.
 > This document describes the core handoff mailbox and the same-repository Mission,
 > Node, Capsule, and Codex Labs track. Product direction and priority live in
 > [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md). The Labs target
@@ -19,8 +19,10 @@ An AgentRelay address is currently a handle inside one relay/team trust domain, 
 global or federated address. Invite redemption establishes membership, blocks provide
 negative consent, and handoff acceptance records task commitment. Either participant
 can read or reply while a handoff remains `pending`, so communication does not depend
-on accepting the task. Humans or active agent sessions still initiate mailbox checks;
-notification does not prove pickup, reading, or processing.
+on accepting the task. A foreground connector can now place content-free attention
+in one locally selected Codex chat after exact-sender consent. The user still decides
+whether to inspect the message; an event, live hint, or local queue receipt does not
+prove pickup, reading, or processing.
 
 Separately, in Labs, the foreground `agentrelay-node` command can use a pre-issued
 Node credential, accept a
@@ -47,9 +49,13 @@ agentrelay-mcp                                          agentrelay-mcp
       | HTTPS JSON-RPC/REST                                   | HTTPS JSON-RPC/REST
       +------------------- relay -----------------------------+
                          Hono + Postgres
-            core: identity, consent, handoffs, messages, audit
+       core: identity, consent, handoffs, messages, events, audit
                               |
                    best-effort Slack webhook
+
+Optional receiver pickup path:
+Postgres event + NOTIFY -> content-free SSE -> agentrelay watch
+    -> exact-sender consent -> locally bound runtime-attention adapter
 
 Same-repository Labs path on each machine:
 agentrelay-node -> atomic local journal
@@ -76,6 +82,8 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
 - Agent roster and self-managed card metadata.
 - API-key rotation and block records.
 - Handoff and ordered-message persistence.
+- Opaque recipient-event persistence, per-recipient commit-safe cursor allocation,
+  authenticated replay, and a content-free SSE hint.
 - Participant authorization and lifecycle transitions.
 - Audit records for invite, handoff/message, and block mutations.
 - An optional in-process Slack notification adapter with encrypted-at-rest webhook
@@ -95,8 +103,10 @@ Its Labs routes additionally own:
   plus Node-authenticated logical workspace registration and revocation. These
   operations are audited in the same transaction as their state changes.
 
-The HTTP application is stateless with respect to durable domain rows, but the
-notification queue is process-local and not durable.
+The HTTP application is stateless with respect to durable domain rows. One process
+level PostgreSQL listener fans content-free changes out to local SSE streams; missed
+hints are recovered through durable replay. The separate Slack notification queue is
+still process-local and not durable.
 
 ### MCP server
 
@@ -111,12 +121,17 @@ notification queue is process-local and not durable.
 
 The MCP process is not persistent when its host is closed. It does not subscribe to
 the relay, start model turns, manage worktrees, or apply a dynamic runtime policy.
+The optional foreground `agentrelay watch` connector is separate from MCP stdio. It
+replays opaque events, rechecks local trust, coalesces duplicate attention, and calls
+a host adapter with relay-owned event/thread identifiers. The first adapter validates
+those references but queues a constant prompt containing neither reference nor peer
+content.
 
 ### CLI
 
 The `agentrelay` binary supports registration, invite/join, client installation, key
-rotation, doctor/fix, audit, block/unblock, trust management, and starting the stdio
-MCP server.
+rotation, doctor/fix, audit, block/unblock, trust management, local runtime
+bind/unbind, the foreground watch connector, and starting the stdio MCP server.
 
 ### Labs: experimental foreground Node
 
@@ -197,6 +212,7 @@ Agent 1---1 AgentCard
   +---N ApiKey
   +---N Invite (as inviter or redeemer)
   +---N AgentBlock
+  +---N MailboxEvent (as recipient or actor)
   |
   +---N Handoff ---N Message
              |
@@ -217,6 +233,9 @@ Agent 1---N Node ---N NodeCredential
   proposed action, and lifecycle timestamps.
 - `Message` is append-only, stores payload and typed artifacts separately, and
   receives a per-handoff sequence number.
+- `MailboxEvent` is an opaque, append-only recipient signal derived in the same
+  transaction as a mailbox mutation. It stores relay-owned identities and references,
+  never message text or artifacts. Its bigint cursor is serialized per recipient.
 - `AuditLog` records invite, handoff/message, block, Agent disable, Node/workspace,
   Mission, and delivery mutations, not every relay mutation or any local host action.
   Agent-authenticated entries retain an Agent ID; admin and relay-system entries use
@@ -282,9 +301,15 @@ pending --accept--> accepted --complete--> completed
 1. The sender's running agent calls `handoff_to_teammate`.
 2. The MCP server posts `message/send` with an idempotency key.
 3. The relay authenticates the sender, checks the recipient and block relationship,
-   then stores the handoff, first message, and audit entry.
-4. After commit, the relay enqueues a best-effort notification.
-5. The recipient later calls `check_inbox`, then reads or replies to the thread.
+   then stores the handoff, first message, recipient event, and audit entry in one
+   transaction.
+4. Commit releases a content-free PostgreSQL notification. Connected SSE clients use
+   it only as a reason to replay the durable recipient-event cursor.
+5. Without local pickup consent, the recipient later calls `check_inbox` as before.
+   With exact-sender consent and a bound Codex thread, `agentrelay watch` may queue a
+   fixed content-free attention turn. The connector does not read the thread, and the
+   recommended host policy asks before the queued model can invoke a content-bearing
+   mailbox tool.
 6. If the recipient is committing to the requested task, it separately calls
    `accept_handoff`.
 7. The MCP server returns teammate content with provenance-wrapped text, marked
@@ -295,8 +320,10 @@ pending --accept--> accepted --complete--> completed
 Either participant can call `send_message` while the handoff is active. Generic
 payload and typed artifacts remain distinct across the round trip. The recipient
 eventually calls `complete_handoff`; the relay persists the summary and completion
-artifacts, marks the handoff terminal, and records the mutation. There is no
-background loop that ensures the other agent notices the new message.
+artifacts, marks the handoff terminal, records the mutation, and creates an opaque
+counterparty event. On a healthy live path, a running connector notices the durable
+event without interval polling, but it does not turn that observation into a lifecycle
+transition.
 
 An explicit handoff question and caller metadata also round-trip through both MCP read
 tools. Peer metadata is structurally marked, its known free-form question is wrapped,
@@ -308,6 +335,8 @@ and the relay-owned idempotency key is not exposed to the model.
 
 - Handoffs, messages, lifecycle state, identities, invites, and blocks, plus audit
   rows for invite, handoff/message, and block mutations.
+- Same-transaction recipient events for fresh thread/message and lifecycle mutations,
+  with authenticated recipient-only replay and content-free live hints.
 - Participant access checks and most state transitions.
 - Idempotent replay for handoff creation and message append.
 
@@ -356,12 +385,15 @@ and the relay-owned idempotency key is not exposed to the model.
 
 - Slack dispatcher execution. Webhook URLs are encrypted before storage, but the
   queue is in memory, has a finite capacity, and can lose jobs across process restart.
-- Human or active-session pickup. `check_inbox` is explicit polling.
+- Local runtime attention. The connector is foreground-only, Codex may take roughly
+  ten seconds to observe an externally queued turn in standalone mode, and a queue
+  receipt is not proof of model pickup.
 
 ### Not implemented in the core mailbox today
 
 - A global or federated address beyond one relay/team trust domain.
 - Durable push or portable wake-up of a closed agent host.
+- Automatic teammate-content loading, answering, or work from the pickup connector.
 - Truthful unread/read receipts and complete list pagination.
 - A current A2A compatibility proof.
 
@@ -429,8 +461,14 @@ section of [`architecture.md`](architecture.md).
 - If Postgres is unavailable, relay requests fail; there is no alternate durable
   store.
 - If a notification fails, the persisted handoff remains available for polling.
+- If an SSE connection drops, the connector reconnects and replays from its local
+  cursor. It advances only after policy deliberately skips an event or the runtime
+  accepts the content-free attention item; ambiguous enqueue failures may duplicate
+  attention but cannot duplicate a mailbox mutation.
 - If the MCP process exits, no manual mailbox tool call is processed until a host
-  starts it again. A separately running foreground Node can continue Mission polling.
+  starts it again. `agentrelay watch` is a separate foreground process; stopping it
+  stops live attention without affecting durable mail. A separately running
+  foreground Node can continue Mission polling.
 - A normal Node exit releases its singleton lock and leaves detached Capsules alive.
   During `SIGINT` or `SIGTERM`, an in-flight turn is first asked to cancel. A
   `SIGKILL` or host reboot releases the kernel lock without deleting the stable
@@ -511,9 +549,9 @@ section of [`architecture.md`](architecture.md).
 The mailbox is the core product surface. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md)
 governs its next priorities: prove that real pairs can address each other, retain
 thread context, reply asynchronously, and return to the workflow before adding
-autonomous activation. The relay database remains the source of truth; notification
-or a future SSE/WebSocket signal may improve latency but cannot stand in for durable
-state or a processing receipt.
+autonomous activation. The relay database remains the source of truth; the implemented
+SSE signal improves latency but cannot stand in for durable state or a processing
+receipt.
 
 The relay also exposes a separate, authenticated Mission and delivery control plane
 without stretching the handoff row into a scheduler. That plane, the foreground Node,

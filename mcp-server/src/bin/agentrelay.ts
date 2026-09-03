@@ -26,6 +26,8 @@ import {
 	unblockCmd,
 } from "../cli/commands.js";
 import { listTrust } from "../cli/trust-mutate.js";
+import { bindCodex, unbindCodex } from "../connector/binding.js";
+import { watchConfiguredCodex } from "../connector/watch.js";
 import { FALLBACK_TRUST, loadTrust } from "../trust.js";
 import { PACKAGE_VERSION } from "../version.js";
 
@@ -262,6 +264,7 @@ cli.command("trust list", "List per-teammate trust entries").action(async () => 
 
 cli
 	.command("trust set <handle>", "Set trust overlay for a teammate")
+	.option("--auto-pickup <bool>", "true|false (exact-sender runtime attention consent)")
 	.option("--auto-read <bool>", "true|false")
 	.option("--auto-test <bool>", "true|false")
 	.option("--auto-write-paths <list>", "comma-separated globs (e.g. docs/,README.md)")
@@ -277,6 +280,68 @@ cli
 	.action(async (handle: string) => {
 		const changed = await trustResetCmd(handle);
 		process.stdout.write(changed ? `reset ${handle}\n` : `${handle} had no entry\n`);
+	});
+
+cli
+	.command("bind <runtime>", "Bind a local runtime session for AgentRelay attention")
+	.option("--thread <uuid>", "Codex thread UUID (defaults to CODEX_THREAD_ID)")
+	.action(async (runtime: string, opts: Record<string, unknown>) => {
+		if (runtime !== "codex") {
+			throw new Error(`unsupported runtime '${runtime}'; currently supported: codex`);
+		}
+		const binding = await bindCodex({
+			threadId: typeof opts.thread === "string" ? opts.thread : undefined,
+		});
+		process.stdout.write(`bound codex thread ${binding.thread_id}\n`);
+	});
+
+cli
+	.command("unbind <runtime>", "Remove a local runtime session binding")
+	.action(async (runtime: string) => {
+		if (runtime !== "codex") {
+			throw new Error(`unsupported runtime '${runtime}'; currently supported: codex`);
+		}
+		const changed = await unbindCodex();
+		process.stdout.write(changed ? "unbound codex\n" : "codex was not bound\n");
+	});
+
+cli
+	.command("watch", "Keep a live, replayable connection for locally consented attention")
+	.option("--once", "Drain currently queued mailbox events and exit", { default: false })
+	.action(async (opts: Record<string, unknown>) => {
+		const controller = new AbortController();
+		const stop = () => controller.abort();
+		process.once("SIGINT", stop);
+		process.once("SIGTERM", stop);
+		try {
+			await watchConfiguredCodex({
+				signal: controller.signal,
+				once: Boolean(opts.once),
+				onStatus: (status) => {
+					switch (status.type) {
+						case "connected":
+							process.stdout.write("AgentRelay live connection ready\n");
+							break;
+						case "queued":
+							process.stdout.write(
+								`queued attention for ${status.senderHandle} in thread ${status.threadId}\n`,
+							);
+							break;
+						case "reconnecting":
+							process.stderr.write(
+								`AgentRelay connection interrupted; retrying in ${status.delayMs}ms (${status.error})\n`,
+							);
+							break;
+						case "skipped":
+							break;
+					}
+				},
+			});
+			if (opts.once) process.stdout.write("AgentRelay mailbox replay complete\n");
+		} finally {
+			process.removeListener("SIGINT", stop);
+			process.removeListener("SIGTERM", stop);
+		}
 	});
 
 cli.command("mcp", "Start the AgentRelay MCP server (stdio)").action(async () => {
@@ -300,6 +365,7 @@ try {
 }
 
 function parseTrustSetOptions(opts: Record<string, unknown>): {
+	auto_pickup?: boolean;
 	auto_read?: boolean;
 	auto_test?: boolean;
 	auto_write_paths?: string[];
@@ -307,6 +373,7 @@ function parseTrustSetOptions(opts: Record<string, unknown>): {
 } {
 	const out: ReturnType<typeof parseTrustSetOptions> = {};
 	// cac auto-camelCases dashed flags: --auto-read → opts.autoRead, etc.
+	if (opts.autoPickup !== undefined) out.auto_pickup = parseBool(opts.autoPickup);
 	if (opts.autoRead !== undefined) out.auto_read = parseBool(opts.autoRead);
 	if (opts.autoTest !== undefined) out.auto_test = parseBool(opts.autoTest);
 	if (opts.autoWritePaths !== undefined) out.auto_write_paths = parseList(opts.autoWritePaths);

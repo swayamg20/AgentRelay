@@ -6,6 +6,27 @@
 
 import { z } from "zod";
 
+export const AGENTRELAY_AUTO_APPROVED_TOOL_RULES = ["mcp__agentrelay__list_teammates"] as const;
+
+export const AGENTRELAY_CONTENT_READ_TOOL_RULES = [
+	"mcp__agentrelay__check_inbox",
+	"mcp__agentrelay__view_thread",
+] as const;
+
+export const AGENTRELAY_MUTATING_TOOL_RULES = [
+	"mcp__agentrelay__handoff_to_teammate",
+	"mcp__agentrelay__accept_handoff",
+	"mcp__agentrelay__send_message",
+	"mcp__agentrelay__complete_handoff",
+] as const;
+
+export const AGENTRELAY_PROMPTED_TOOL_RULES = [
+	...AGENTRELAY_CONTENT_READ_TOOL_RULES,
+	...AGENTRELAY_MUTATING_TOOL_RULES,
+] as const;
+
+export const LEGACY_AGENTRELAY_WILDCARD_RULE = "mcp__agentrelay__*";
+
 export const RECOMMENDED_PERMISSIONS = {
 	allow: [
 		"Read",
@@ -16,9 +37,9 @@ export const RECOMMENDED_PERMISSIONS = {
 		"Bash(cargo test*)",
 		"Bash(npm run lint*)",
 		"Bash(tsc*)",
-		"mcp__agentrelay__*",
+		...AGENTRELAY_AUTO_APPROVED_TOOL_RULES,
 	],
-	ask: ["Edit", "Write", "Bash(git commit*)", "Bash(git diff*)"],
+	ask: ["Edit", "Write", "Bash(git commit*)", "Bash(git diff*)", ...AGENTRELAY_PROMPTED_TOOL_RULES],
 	deny: [
 		"Bash(git push*)",
 		"Bash(npm publish*)",
@@ -76,6 +97,7 @@ export interface MergeReport {
 	mcpServerOverwritten: boolean;
 	permissionsAdded: { allow: string[]; ask: string[]; deny: string[] };
 	permissionsRemovedFromOtherBuckets: { allow: string[]; ask: string[]; deny: string[] };
+	permissionsRemoved: { allow: string[]; ask: string[]; deny: string[] };
 }
 
 export interface MergeOptions {
@@ -113,7 +135,10 @@ export function mergeClaudeSettings(
 		mcpServerOverwritten: false,
 		permissionsAdded: { allow: [], ask: [], deny: [] },
 		permissionsRemovedFromOtherBuckets: { allow: [], ask: [], deny: [] },
+		permissionsRemoved: { allow: [], ask: [], deny: [] },
 	};
+
+	removeLegacyWildcard(next.permissions.allow, report.permissionsRemoved.allow);
 
 	const existingMcp = (next.mcpServers as Record<string, unknown>).agentrelay;
 	if (existingMcp === undefined) {
@@ -192,6 +217,7 @@ export function mergeClaudeOverlay(
 	next: ClaudeSettings;
 	permissionsAdded: { allow: string[]; ask: string[]; deny: string[] };
 	permissionsRemovedFromOtherBuckets: { allow: string[]; ask: string[]; deny: string[] };
+	permissionsRemoved: { allow: string[]; ask: string[]; deny: string[] };
 } {
 	const parsed = current === undefined || current === null ? {} : settingsSchema.parse(current);
 	const next: ClaudeSettings = JSON.parse(JSON.stringify(parsed));
@@ -206,6 +232,13 @@ export function mergeClaudeOverlay(
 		ask: [] as string[],
 		deny: [] as string[],
 	};
+	const permissionsRemoved = {
+		allow: [] as string[],
+		ask: [] as string[],
+		deny: [] as string[],
+	};
+
+	removeLegacyWildcard(next.permissions.allow, permissionsRemoved.allow);
 
 	for (const bucket of ["allow", "ask", "deny"] as const) {
 		const recommended = RECOMMENDED_PERMISSIONS[bucket];
@@ -228,7 +261,7 @@ export function mergeClaudeOverlay(
 		}
 	}
 
-	return { next, permissionsAdded, permissionsRemovedFromOtherBuckets };
+	return { next, permissionsAdded, permissionsRemovedFromOtherBuckets, permissionsRemoved };
 }
 
 /**
@@ -247,10 +280,20 @@ export function renderMergeReport(report: MergeReport): string {
 		for (const rule of report.permissionsRemovedFromOtherBuckets[bucket]) {
 			lines.push(`- permissions.${bucket}: ${rule} (moved to recommended bucket)`);
 		}
+		for (const rule of report.permissionsRemoved[bucket]) {
+			lines.push(`- permissions.${bucket}: ${rule} (replaced by tool-specific rules)`);
+		}
 	}
 	return lines.length === 0 ? "(no changes — already in sync)" : lines.join("\n");
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
 	return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function removeLegacyWildcard(bucket: string[], removed: string[]): void {
+	const index = bucket.indexOf(LEGACY_AGENTRELAY_WILDCARD_RULE);
+	if (index === -1) return;
+	bucket.splice(index, 1);
+	removed.push(LEGACY_AGENTRELAY_WILDCARD_RULE);
 }
