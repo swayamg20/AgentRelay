@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly DEFAULT_IMAGE='ghcr.io/swayamg20/agentrelay-relay@sha256:595586c46b66d0106d420a85148aa6624fa9b72d02235541a3634abb05cdaf54'
+readonly DEFAULT_IMAGE='ghcr.io/swayamg20/agentrelay-relay@sha256:7bd29bee61450f18437c6ffb5b0e44990ebed1c46d718226184a695909c089ba'
 readonly DEFAULT_PREFIX='agentrelay'
 readonly POSTGRES_LOGIN='agentrelay_admin'
 

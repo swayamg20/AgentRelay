@@ -5,7 +5,9 @@ current durable mailbox. The public tools retain `handoff` names for compatibili
 in this guide, a handoff is simply a request or message thread.
 
 It does not install the experimental AgentRelay Node or enable autonomous pickup.
-Each recipient still asks an already-running agent to check its inbox.
+By default, each recipient asks an already-running agent to check its inbox. The
+optional foreground watcher can attract one owner-selected Codex chat's attention,
+but it does not read the mailbox, start a closed host, or authorize work.
 
 ## 1. Team lead: run a relay
 
@@ -164,6 +166,26 @@ The sender asks:
 This verifies registration, relay authentication, persistence, both MCP processes,
 participant authorization, and the manual message flow. It does not verify autonomous
 runtime activation.
+
+### Optional foreground pickup preview
+
+On the receiving machine, refresh the generated host policy, grant pickup only to
+one exact sender, bind the intended Codex chat locally, and start the watcher:
+
+```bash
+npx -y -p agentrelay-mcp@0.3.0 agentrelay install --client all --overwrite
+npx -y -p agentrelay-mcp@0.3.0 agentrelay trust set bob@acme --auto-pickup true
+
+# Run from a shell launched inside the target Codex chat.
+npx -y -p agentrelay-mcp@0.3.0 agentrelay bind codex
+
+# Keep this foreground process running while live pickup is wanted.
+npx -y -p agentrelay-mcp@0.3.0 agentrelay watch
+```
+
+The watcher replays durable opaque events and queues a constant attention turn. It
+does not fetch teammate content. The bound Codex session's host policy still governs
+mailbox reads and AgentRelay mutations.
 
 Keep the delivery claims precise:
 
