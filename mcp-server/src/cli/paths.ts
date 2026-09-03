@@ -9,7 +9,8 @@ export interface ClientPaths {
 }
 
 export function configDir(env: NodeJS.ProcessEnv = process.env): string {
-	return env.AGENTRELAY_HOME ?? join(homedir(), ".agentrelay");
+	const override = env.AGENTRELAY_HOME;
+	return override && override.length > 0 ? override : join(homedir(), ".agentrelay");
 }
 
 export function configPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -18,6 +19,15 @@ export function configPath(env: NodeJS.ProcessEnv = process.env): string {
 
 export function trustPath(env: NodeJS.ProcessEnv = process.env): string {
 	return env.AGENTRELAY_TRUST_PATH ?? join(configDir(env), "trust.yaml");
+}
+
+export function connectorStatePath(env: NodeJS.ProcessEnv = process.env): string {
+	const override = env.AGENTRELAY_CONNECTOR_STATE_PATH;
+	return override && override.length > 0 ? override : join(configDir(env), "connector-state.json");
+}
+
+export function connectorWatchLockPath(env: NodeJS.ProcessEnv = process.env): string {
+	return `${connectorStatePath(env)}.watch-lock`;
 }
 
 /**

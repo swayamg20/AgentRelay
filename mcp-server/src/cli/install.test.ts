@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+	AGENTRELAY_MUTATING_TOOL_RULES,
+	AGENTRELAY_READ_ONLY_TOOL_RULES,
 	RECOMMENDED_MCP_ENTRY,
 	RECOMMENDED_PERMISSIONS,
 	mergeClaudeSettings,
@@ -23,6 +25,36 @@ describe("mergeClaudeSettings", () => {
 		);
 		expect(report.permissionsAdded.allow).toEqual([...RECOMMENDED_PERMISSIONS.allow]);
 		expect(next.permissions?.deny).toEqual([...RECOMMENDED_PERMISSIONS.deny]);
+		expect(next.permissions?.allow).toEqual(
+			expect.arrayContaining([...AGENTRELAY_READ_ONLY_TOOL_RULES]),
+		);
+		expect(next.permissions?.ask).toEqual(
+			expect.arrayContaining([...AGENTRELAY_MUTATING_TOOL_RULES]),
+		);
+		expect(next.permissions?.allow).not.toContain("mcp__agentrelay__*");
+	});
+
+	it("migrates the legacy AgentRelay wildcard without touching unrelated rules", () => {
+		const current = {
+			permissions: {
+				allow: ["mcp__agentrelay__*", "Bash(my-custom-tool*)"],
+				ask: [],
+				deny: [],
+			},
+		};
+		const { next, report } = mergeClaudeSettings(current, {
+			overwriteMcp: false,
+			overwritePermissions: false,
+		});
+		expect(next.permissions?.allow).not.toContain("mcp__agentrelay__*");
+		expect(next.permissions?.allow).toContain("Bash(my-custom-tool*)");
+		expect(next.permissions?.allow).toEqual(
+			expect.arrayContaining([...AGENTRELAY_READ_ONLY_TOOL_RULES]),
+		);
+		expect(next.permissions?.ask).toEqual(
+			expect.arrayContaining([...AGENTRELAY_MUTATING_TOOL_RULES]),
+		);
+		expect(report.permissionsRemoved.allow).toEqual(["mcp__agentrelay__*"]);
 	});
 
 	it("preserves the user's existing permission entries", () => {

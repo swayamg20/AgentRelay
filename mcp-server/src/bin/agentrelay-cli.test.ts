@@ -35,6 +35,7 @@ describeIfBuilt("agentrelay CLI mcp subcommand", () => {
 
 		expect(result.status, result.stderr).toBe(0);
 		expect(result.stdout).toMatch(/mcp\s+Start the AgentRelay MCP server/);
+		expect(result.stdout).toMatch(/watch\s+Keep a live, replayable connection/);
 	});
 
 	it("reports the package version", () => {

@@ -20,6 +20,14 @@ const configSchema = z
 		agent_id: z.string().min(1),
 		api_key: z.string().min(1),
 		default_session_id: z.string().nullable().optional().default(null),
+		connector_binding: z
+			.object({
+				runtime: z.literal("codex"),
+				thread_id: z.string().uuid(),
+			})
+			.strict()
+			.nullable()
+			.optional(),
 	})
 	.strict();
 
@@ -37,7 +45,10 @@ export type LoadConfigResult =
 export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
 	const override = env.AGENTRELAY_CONFIG_PATH;
 	if (override && override.length > 0) return override;
-	return join(homedir(), ".agentrelay", "config.json");
+	const homeOverride = env.AGENTRELAY_HOME;
+	const root =
+		homeOverride && homeOverride.length > 0 ? homeOverride : join(homedir(), ".agentrelay");
+	return join(root, "config.json");
 }
 
 export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<LoadConfigResult> {
@@ -47,7 +58,10 @@ export async function loadConfig(env: NodeJS.ProcessEnv = process.env): Promise<
 	try {
 		await stat(path);
 		exists = true;
-	} catch {
+	} catch (err) {
+		if (!isMissingFile(err)) {
+			return { ok: false, reason: "unreadable", path, detail: errMsg(err) };
+		}
 		exists = false;
 	}
 	if (!exists) {
@@ -97,4 +111,8 @@ export function unavailableMessage(result: Extract<LoadConfigResult, { ok: false
 function errMsg(err: unknown): string {
 	if (err instanceof Error) return err.message;
 	return String(err);
+}
+
+function isMissingFile(err: unknown): boolean {
+	return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
 }

@@ -27,6 +27,11 @@ import {
 	trustSetCmd,
 	unblockCmd,
 } from "./commands.js";
+import {
+	AGENTRELAY_MUTATING_TOOL_RULES,
+	AGENTRELAY_READ_ONLY_TOOL_RULES,
+	RECOMMENDED_PERMISSIONS,
+} from "./install.js";
 import { serializeTrust } from "./trust-mutate.js";
 
 describe("register", () => {
@@ -362,7 +367,13 @@ describe("install", () => {
 		// And NOT to settings.json — that file only has the permission overlay.
 		const overlayObj = JSON.parse(overlayJson?.[1] ?? "{}");
 		expect(overlayObj.mcpServers).toBeUndefined();
-		expect(overlayObj.permissions.allow).toContain("mcp__agentrelay__*");
+		expect(overlayObj.permissions.allow).toEqual(
+			expect.arrayContaining([...AGENTRELAY_READ_ONLY_TOOL_RULES]),
+		);
+		expect(overlayObj.permissions.ask).toEqual(
+			expect.arrayContaining([...AGENTRELAY_MUTATING_TOOL_RULES]),
+		);
+		expect(overlayObj.permissions.allow).not.toContain("mcp__agentrelay__*");
 		expect(overlayObj.permissions.deny).toContain("Bash(git push*)");
 
 		expect(trustWrites[0]?.[1]).toContain("version: 1");
@@ -386,7 +397,9 @@ describe("install", () => {
 		expect(result.clients[0]?.written).toBe(true);
 		expect(writes[0]?.[1]).toContain("[mcp_servers.agentrelay]");
 		expect(writes[0]?.[1]).toContain('command = "npx"');
-		expect(writes[0]?.[1]).toContain("[permissions]");
+		expect(writes[0]?.[1]).toContain('default_tools_approval_mode = "prompt"');
+		expect(writes[0]?.[1]).toContain("[mcp_servers.agentrelay.tools.view_thread]");
+		expect(writes[0]?.[1]).not.toContain("[permissions]");
 	});
 
 	it("--client all writes claude.json + claude settings.json + codex TOML", async () => {
@@ -422,29 +435,9 @@ describe("install", () => {
 		const existing = JSON.stringify({
 			mcpServers: { agentrelay: { command: "npx", args: ["-y", "agentrelay-mcp"], env: {} } },
 			permissions: {
-				allow: [
-					"Read",
-					"Grep",
-					"Glob",
-					"Bash(npm test*)",
-					"Bash(pytest*)",
-					"Bash(cargo test*)",
-					"Bash(npm run lint*)",
-					"Bash(tsc*)",
-					"mcp__agentrelay__*",
-				],
-				ask: ["Edit", "Write", "Bash(git commit*)", "Bash(git diff*)"],
-				deny: [
-					"Bash(git push*)",
-					"Bash(npm publish*)",
-					"Bash(rm -rf*)",
-					"Bash(curl*)",
-					"Bash(wget*)",
-					"Bash(eval*)",
-					"Bash(*ssh*)",
-					"Bash(*aws*)",
-					"Bash(*kubectl*)",
-				],
+				allow: [...RECOMMENDED_PERMISSIONS.allow],
+				ask: [...RECOMMENDED_PERMISSIONS.ask],
+				deny: [...RECOMMENDED_PERMISSIONS.deny],
 			},
 		});
 		const writes: string[] = [];
@@ -469,7 +462,10 @@ describe("doctor", () => {
 	it("reports config + trust + overlay status", async () => {
 		const settings = JSON.stringify({
 			mcpServers: { agentrelay: {} },
-			permissions: { allow: ["mcp__agentrelay__*"] },
+			permissions: {
+				allow: [...AGENTRELAY_READ_ONLY_TOOL_RULES],
+				ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+			},
 		});
 		// loadConfig + loadTrust use process.env paths; point them at temp files via env override.
 		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-"));
@@ -520,10 +516,38 @@ describe("doctor", () => {
 		}
 	});
 
+	it("reports a Claude overlay with the legacy AgentRelay wildcard as unsafe", async () => {
+		const settings = JSON.stringify({
+			mcpServers: { agentrelay: {} },
+			permissions: {
+				allow: ["mcp__agentrelay__*", ...AGENTRELAY_READ_ONLY_TOOL_RULES],
+				ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+			},
+		});
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-wildcard-"));
+		try {
+			process.env.AGENTRELAY_CONFIG_PATH = join(dir, "missing.json");
+			process.env.AGENTRELAY_TRUST_PATH = join(dir, "missing.yaml");
+			const result = await doctor({
+				readSettings: async () => settings,
+				clientPaths: () => ({ settingsPath: "/x/settings.json", format: "json" }),
+				whoami: async () => true,
+			});
+			expect(result.overlayApplied["claude-code"]).toBe(false);
+		} finally {
+			process.env.AGENTRELAY_CONFIG_PATH = undefined;
+			process.env.AGENTRELAY_TRUST_PATH = undefined;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("formatDoctor does not append hints to OK lines", async () => {
 		const settings = JSON.stringify({
 			mcpServers: { agentrelay: {} },
-			permissions: { allow: ["mcp__agentrelay__*"] },
+			permissions: {
+				allow: [...AGENTRELAY_READ_ONLY_TOOL_RULES],
+				ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+			},
 		});
 		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-clean-"));
 		try {
@@ -565,16 +589,28 @@ describe("doctorFix", () => {
 				return JSON.stringify({ mcpServers: { agentrelay: { command: "npx" } } });
 			}
 			if (path === claudeSettingsPath) {
-				return JSON.stringify({ permissions: { allow: ["mcp__agentrelay__*"] } });
+				return JSON.stringify({
+					permissions: {
+						allow: [...AGENTRELAY_READ_ONLY_TOOL_RULES],
+						ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+					},
+				});
 			}
 			if (path === codexSettingsPath) {
 				return [
 					"[mcp_servers.agentrelay]",
 					'command = "npx"',
 					'args = ["-y", "agentrelay-mcp"]',
+					'default_tools_approval_mode = "prompt"',
 					"",
-					"[permissions]",
-					'allow = ["mcp__agentrelay__*"]',
+					"[mcp_servers.agentrelay.tools.check_inbox]",
+					'approval_mode = "auto"',
+					"",
+					"[mcp_servers.agentrelay.tools.list_teammates]",
+					'approval_mode = "auto"',
+					"",
+					"[mcp_servers.agentrelay.tools.view_thread]",
+					'approval_mode = "auto"',
 				].join("\n");
 			}
 			return undefined;

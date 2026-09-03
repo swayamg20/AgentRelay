@@ -11,6 +11,12 @@ describe("config.resolveConfigPath", () => {
 		);
 	});
 
+	it("uses AGENTRELAY_HOME when no file-specific override is set", () => {
+		expect(resolveConfigPath({ AGENTRELAY_HOME: "/tmp/agentrelay" } as NodeJS.ProcessEnv)).toBe(
+			"/tmp/agentrelay/config.json",
+		);
+	});
+
 	it("falls back to ~/.agentrelay/config.json", () => {
 		const out = resolveConfigPath({} as NodeJS.ProcessEnv);
 		expect(out.endsWith("/.agentrelay/config.json")).toBe(true);
@@ -69,6 +75,50 @@ describe("config.loadConfig", () => {
 			expect(out.config.agent_handle).toBe("frank@acme");
 			expect(out.config.default_session_id).toBeNull();
 		}
+	});
+
+	it("loads a locally bound Codex thread", async () => {
+		const path = join(dir, "config.json");
+		await writeFile(
+			path,
+			JSON.stringify({
+				relay_url: "https://relay.acme.dev",
+				agent_handle: "frank@acme",
+				agent_id: "01HXYZ",
+				api_key: "ah_test_abc",
+				connector_binding: {
+					runtime: "codex",
+					thread_id: "019fb4b5-5d71-72c2-b7ed-9d56847a32e6",
+				},
+			}),
+			"utf8",
+		);
+		const out = await loadConfig({ AGENTRELAY_CONFIG_PATH: path } as NodeJS.ProcessEnv);
+		expect(out.ok).toBe(true);
+		if (out.ok) {
+			expect(out.config.connector_binding).toEqual({
+				runtime: "codex",
+				thread_id: "019fb4b5-5d71-72c2-b7ed-9d56847a32e6",
+			});
+		}
+	});
+
+	it("rejects a malformed local connector binding", async () => {
+		const path = join(dir, "config.json");
+		await writeFile(
+			path,
+			JSON.stringify({
+				relay_url: "https://relay.acme.dev",
+				agent_handle: "frank@acme",
+				agent_id: "01HXYZ",
+				api_key: "ah_test_abc",
+				connector_binding: { runtime: "codex", thread_id: "not-a-uuid" },
+			}),
+			"utf8",
+		);
+		const out = await loadConfig({ AGENTRELAY_CONFIG_PATH: path } as NodeJS.ProcessEnv);
+		expect(out.ok).toBe(false);
+		if (!out.ok) expect(out.reason).toBe("invalid");
 	});
 
 	it("unavailableMessage produces an actionable error string", () => {

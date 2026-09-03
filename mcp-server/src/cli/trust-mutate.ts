@@ -35,6 +35,7 @@ export function unblockTeammate(
 }
 
 export interface TrustSetUpdate {
+	auto_pickup?: boolean;
 	auto_read?: boolean;
 	auto_test?: boolean;
 	auto_write_paths?: string[];
@@ -45,6 +46,7 @@ export function setTeammate(file: TrustFile, handle: string, update: TrustSetUpd
 	const next = ensureTrust(file);
 	const existing: TeammateEntry = next.teammates[handle] ?? {};
 	const merged: TeammateEntry = { ...existing };
+	if (update.auto_pickup !== undefined) merged.auto_pickup = update.auto_pickup;
 	if (update.auto_read !== undefined) merged.auto_read = update.auto_read;
 	if (update.auto_test !== undefined) merged.auto_test = update.auto_test;
 	if (update.auto_write_paths !== undefined) merged.auto_write_paths = [...update.auto_write_paths];

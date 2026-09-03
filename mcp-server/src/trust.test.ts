@@ -21,6 +21,7 @@ const fullTrust: TrustFile = {
 			require_approval: ["Edit", "Write", "Bash"],
 		},
 		"carol@acme": {
+			auto_pickup: true,
 			auto_read: true,
 			auto_test: true,
 			auto_write_paths: ["docs/", "README.md"],
@@ -55,7 +56,14 @@ describe("trust.computeOverlay precedence", () => {
 			expect(out.source).toBe("listed");
 			expect(out.overlay.auto_write_paths).toEqual(["docs/", "README.md"]);
 			expect(out.overlay.auto_read).toBe(true);
+			expect(out.overlay.auto_pickup).toBe(true);
 		}
+	});
+
+	it("does not grant pickup to a listed teammate without exact consent", () => {
+		const out = computeOverlay(fullTrust, "bob@acme");
+		expect(out.decision).toBe("allow");
+		if (out.decision === "allow") expect(out.overlay.auto_pickup).toBe(false);
 	});
 
 	it("unknown teammates with reject policy → reject", () => {
@@ -73,7 +81,26 @@ describe("trust.computeOverlay precedence", () => {
 		if (out.decision === "allow") {
 			expect(out.source).toBe("defaults");
 			expect(out.overlay.auto_read).toBe(true);
+			expect(out.overlay.auto_pickup).toBe(false);
 		}
+	});
+
+	it("never inherits auto_pickup from defaults", () => {
+		const trust = {
+			...fullTrust,
+			teammates: { "bob@acme": {} },
+			defaults: { ...fullTrust.defaults, auto_pickup: true },
+		} as TrustFile;
+		const listed = computeOverlay(trust, "bob@acme");
+		expect(listed.decision).toBe("allow");
+		if (listed.decision === "allow") expect(listed.overlay.auto_pickup).toBe(false);
+
+		const unknown = computeOverlay(
+			{ ...trust, unknown_teammates: { policy: "allow_with_default_trust" } },
+			"stranger@elsewhere",
+		);
+		expect(unknown.decision).toBe("allow");
+		if (unknown.decision === "allow") expect(unknown.overlay.auto_pickup).toBe(false);
 	});
 
 	it("teammate-level fields override defaults field-by-field", () => {
@@ -93,6 +120,7 @@ describe("trust.computeOverlay precedence", () => {
 
 describe("trust.isPathAutoWritable", () => {
 	const overlay = {
+		auto_pickup: false,
 		auto_read: true,
 		auto_test: true,
 		auto_write_paths: ["docs/", "README.md"],
@@ -132,6 +160,12 @@ describe("trust.loadTrust", () => {
 	it("respects AGENTRELAY_TRUST_PATH override", () => {
 		expect(resolveTrustPath({ AGENTRELAY_TRUST_PATH: "/tmp/t.yaml" } as NodeJS.ProcessEnv)).toBe(
 			"/tmp/t.yaml",
+		);
+	});
+
+	it("uses AGENTRELAY_HOME when no file-specific override is set", () => {
+		expect(resolveTrustPath({ AGENTRELAY_HOME: "/tmp/agentrelay" } as NodeJS.ProcessEnv)).toBe(
+			"/tmp/agentrelay/trust.yaml",
 		);
 	});
 

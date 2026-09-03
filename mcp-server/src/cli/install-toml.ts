@@ -1,39 +1,44 @@
 /**
  * Pure TOML merger for Codex CLI's `~/.codex/config.toml`.
  *
- * Mirrors `install.ts` (the JSON merger for Claude Code) with the same
- * preserve-by-default semantics:
+ * Uses Codex's native MCP approval settings with preserve-by-default
+ * semantics:
  *
  * - Adds `[mcp_servers.agentrelay]` if absent. Overwrites it only when
  *   `overwriteMcp` is set.
- * - Adds AgentRelay's recommended permission rules to `[permissions]`
- *   buckets (`allow`/`ask`/`deny`). Rules already present are kept.
- *   Rules placed in a different bucket by the user stay put unless
- *   `overwritePermissions` is true.
+ * - Defaults every AgentRelay tool to `prompt`.
+ * - Allows only the three read-only mailbox tools without a prompt.
+ * - Preserves unrelated user configuration, including any legacy top-level
+ *   `[permissions]` table; Codex does not use that table for MCP approvals.
  * - Returns `{next, report}` plus the raw toml string. Caller decides
  *   whether to persist; we never write here.
  *
- * lld.md §5.2 commits to Codex on day-1 alongside Claude Code. The
- * permission syntax under `[permissions]` is documented as "equivalent",
- * which we render as the same allow/ask/deny lists Claude Code uses —
- * Codex's harness reads them in the same risk-tiered way.
+ * Current Codex config uses approval controls directly under the MCP server:
+ * `default_tools_approval_mode` and `tools.<name>.approval_mode`.
  */
 
 import { parse, stringify } from "smol-toml";
 import { z } from "zod";
-import { RECOMMENDED_MCP_ENTRY, RECOMMENDED_PERMISSIONS } from "./install.js";
+import { RECOMMENDED_MCP_ENTRY } from "./install.js";
+
+export const CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS = [
+	"check_inbox",
+	"list_teammates",
+	"view_thread",
+] as const;
+
+export const CODEX_MUTATING_AGENTRELAY_TOOLS = [
+	"handoff_to_teammate",
+	"accept_handoff",
+	"send_message",
+	"complete_handoff",
+] as const;
+
+export const CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE = "prompt" as const;
 
 const tomlSettingsSchema = z
 	.object({
 		mcp_servers: z.record(z.string(), z.unknown()).optional(),
-		permissions: z
-			.object({
-				allow: z.array(z.string()).optional(),
-				ask: z.array(z.string()).optional(),
-				deny: z.array(z.string()).optional(),
-			})
-			.passthrough()
-			.optional(),
 	})
 	.passthrough();
 
@@ -42,8 +47,8 @@ export type CodexSettings = z.infer<typeof tomlSettingsSchema>;
 export interface TomlMergeReport {
 	mcpServerAdded: boolean;
 	mcpServerOverwritten: boolean;
-	permissionsAdded: { allow: string[]; ask: string[]; deny: string[] };
-	permissionsRemovedFromOtherBuckets: { allow: string[]; ask: string[]; deny: string[] };
+	approvalSettingsAdded: string[];
+	approvalSettingsUpdated: string[];
 }
 
 export interface TomlMergeOptions {
@@ -70,56 +75,26 @@ export function mergeCodexSettings(
 	const next: CodexSettings = JSON.parse(JSON.stringify(validated));
 
 	next.mcp_servers = next.mcp_servers ?? {};
-	next.permissions = next.permissions ?? {};
-	next.permissions.allow = next.permissions.allow ?? [];
-	next.permissions.ask = next.permissions.ask ?? [];
-	next.permissions.deny = next.permissions.deny ?? [];
 
 	const report: TomlMergeReport = {
 		mcpServerAdded: false,
 		mcpServerOverwritten: false,
-		permissionsAdded: { allow: [], ask: [], deny: [] },
-		permissionsRemovedFromOtherBuckets: { allow: [], ask: [], deny: [] },
+		approvalSettingsAdded: [],
+		approvalSettingsUpdated: [],
 	};
 
 	const mcpServers = next.mcp_servers as Record<string, unknown>;
-	const codexMcpEntry = {
-		// Codex's TOML schema uses `command` + `args`. The `env` key in the
-		// JSON form is unsupported in the documented Codex shape (lld §5.2),
-		// so we omit it here. If the user added other keys we leave them.
-		command: RECOMMENDED_MCP_ENTRY.command,
-		args: [...RECOMMENDED_MCP_ENTRY.args],
-	};
-
 	const existing = mcpServers.agentrelay;
 	if (existing === undefined) {
-		mcpServers.agentrelay = codexMcpEntry;
+		mcpServers.agentrelay = recommendedCodexMcpEntry();
 		report.mcpServerAdded = true;
+		report.approvalSettingsAdded.push(...recommendedApprovalPaths());
 	} else if (!entryMatchesRecommended(existing) && options.overwriteMcp) {
-		mcpServers.agentrelay = codexMcpEntry;
+		mcpServers.agentrelay = recommendedCodexMcpEntry();
 		report.mcpServerOverwritten = true;
-	}
-
-	for (const bucket of ["allow", "ask", "deny"] as const) {
-		const recommended = RECOMMENDED_PERMISSIONS[bucket];
-		const buckets = next.permissions as Record<"allow" | "ask" | "deny", string[]>;
-		for (const rule of recommended) {
-			if (buckets[bucket].includes(rule)) continue;
-			const otherBuckets = (["allow", "ask", "deny"] as const).filter((b) => b !== bucket);
-			const inOther = otherBuckets.find((b) => buckets[b].includes(rule));
-			if (inOther) {
-				if (options.overwritePermissions) {
-					buckets[inOther] = buckets[inOther].filter((r) => r !== rule);
-					buckets[bucket].push(rule);
-					report.permissionsRemovedFromOtherBuckets[inOther].push(rule);
-					report.permissionsAdded[bucket].push(rule);
-				}
-				// Else: respect user choice silently (matches JSON path).
-			} else {
-				buckets[bucket].push(rule);
-				report.permissionsAdded[bucket].push(rule);
-			}
-		}
+		report.approvalSettingsAdded.push(...recommendedApprovalPaths());
+	} else if (entryMatchesRecommended(existing)) {
+		mergeCodexApprovals(existing as Record<string, unknown>, options.overwritePermissions, report);
 	}
 
 	const tomlText = stringifyOrdered(next);
@@ -131,13 +106,11 @@ export function renderTomlMergeReport(report: TomlMergeReport): string {
 	if (report.mcpServerAdded) lines.push("+ mcp_servers.agentrelay (added)");
 	if (report.mcpServerOverwritten)
 		lines.push("~ mcp_servers.agentrelay (overwritten with recommended)");
-	for (const bucket of ["allow", "ask", "deny"] as const) {
-		for (const rule of report.permissionsAdded[bucket]) {
-			lines.push(`+ permissions.${bucket}: ${rule}`);
-		}
-		for (const rule of report.permissionsRemovedFromOtherBuckets[bucket]) {
-			lines.push(`- permissions.${bucket}: ${rule} (moved to recommended bucket)`);
-		}
+	for (const setting of report.approvalSettingsAdded) {
+		lines.push(`+ ${setting}`);
+	}
+	for (const setting of report.approvalSettingsUpdated) {
+		lines.push(`~ ${setting}`);
 	}
 	return lines.length === 0 ? "(no changes — already in sync)" : lines.join("\n");
 }
@@ -153,6 +126,115 @@ function entryMatchesRecommended(entry: unknown): boolean {
 	);
 }
 
+function recommendedCodexMcpEntry(): Record<string, unknown> {
+	return {
+		// Codex's TOML schema uses `command` + `args`; the JSON-only `env`
+		// value in RECOMMENDED_MCP_ENTRY is deliberately omitted here.
+		command: RECOMMENDED_MCP_ENTRY.command,
+		args: [...RECOMMENDED_MCP_ENTRY.args],
+		default_tools_approval_mode: CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE,
+		tools: Object.fromEntries(
+			CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS.map((tool) => [tool, { approval_mode: "auto" }]),
+		),
+	};
+}
+
+function recommendedApprovalPaths(): string[] {
+	return [
+		"mcp_servers.agentrelay.default_tools_approval_mode = prompt",
+		...CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS.map(
+			(tool) => `mcp_servers.agentrelay.tools.${tool}.approval_mode = auto`,
+		),
+	];
+}
+
+function mergeCodexApprovals(
+	entry: Record<string, unknown>,
+	overwrite: boolean,
+	report: TomlMergeReport,
+): void {
+	mergeApprovalValue(
+		entry,
+		"default_tools_approval_mode",
+		CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE,
+		"mcp_servers.agentrelay.default_tools_approval_mode = prompt",
+		overwrite,
+		report,
+	);
+
+	let tools = asRecord(entry.tools);
+	if (!tools) {
+		if (entry.tools !== undefined && !overwrite) return;
+		tools = {};
+		entry.tools = tools;
+	}
+	for (const tool of CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS) {
+		let toolConfig = asRecord(tools[tool]);
+		if (!toolConfig) {
+			if (tools[tool] !== undefined && !overwrite) continue;
+			toolConfig = {};
+			tools[tool] = toolConfig;
+		}
+		mergeApprovalValue(
+			toolConfig,
+			"approval_mode",
+			"auto",
+			`mcp_servers.agentrelay.tools.${tool}.approval_mode = auto`,
+			overwrite,
+			report,
+		);
+	}
+	if (!overwrite) return;
+	for (const tool of CODEX_MUTATING_AGENTRELAY_TOOLS) {
+		const current = tools[tool];
+		if (current === undefined) continue;
+		let toolConfig = asRecord(current);
+		if (!toolConfig) {
+			toolConfig = { approval_mode: "prompt" };
+			tools[tool] = toolConfig;
+			report.approvalSettingsUpdated.push(
+				`mcp_servers.agentrelay.tools.${tool}.approval_mode = prompt`,
+			);
+			continue;
+		}
+		if (toolConfig.approval_mode === undefined) continue;
+		mergeApprovalValue(
+			toolConfig,
+			"approval_mode",
+			"prompt",
+			`mcp_servers.agentrelay.tools.${tool}.approval_mode = prompt`,
+			true,
+			report,
+		);
+	}
+}
+
+function mergeApprovalValue(
+	container: Record<string, unknown>,
+	key: string,
+	value: string,
+	path: string,
+	overwrite: boolean,
+	report: TomlMergeReport,
+): void {
+	if (container[key] === value) return;
+	if (container[key] === undefined) {
+		container[key] = value;
+		report.approvalSettingsAdded.push(path);
+		return;
+	}
+	if (overwrite) {
+		container[key] = value;
+		report.approvalSettingsUpdated.push(path);
+	}
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
 /**
  * Stringify with deterministic top-level ordering. smol-toml preserves
  * insertion order; we control order by building the object explicitly.
@@ -160,13 +242,10 @@ function entryMatchesRecommended(entry: unknown): boolean {
  * at the end so we don't drop data.
  */
 function stringifyOrdered(settings: CodexSettings): string {
-	const known = new Set(["mcp_servers", "permissions"]);
+	const known = new Set(["mcp_servers"]);
 	const ordered: Record<string, unknown> = {};
 	if (settings.mcp_servers && Object.keys(settings.mcp_servers).length > 0) {
 		ordered.mcp_servers = settings.mcp_servers;
-	}
-	if (settings.permissions && Object.keys(settings.permissions).length > 0) {
-		ordered.permissions = settings.permissions;
 	}
 	for (const [k, v] of Object.entries(settings)) {
 		if (!known.has(k)) ordered[k] = v;
