@@ -36,8 +36,10 @@ Membership is consented through an invite, a recipient can block a sender, and
 handoff acceptance expresses commitment to a task; acceptance is not required to
 read or reply to an active thread. Messages and opaque recipient events are durable.
 An optional foreground connector can attract the attention of one owner-selected
-Codex chat, but it does not load peer content or prove that an agent read or processed
-a message. Best-effort notification and the live stream remain hints.
+Codex chat. Its queued prompt is constant and contains no mailbox content or event
+reference; the recommended host policy requires approval before content-bearing
+mailbox reads. It does not prove that an agent read or processed a message.
+Best-effort notification and the live stream remain hints.
 
 Missions and autonomous repository execution are one possible application of this
 communication network. They remain valuable engineering research, but they are not
@@ -62,7 +64,7 @@ The repository currently ships:
 - A durable, recipient-isolated mailbox event ledger and authenticated replay cursor.
   A content-free SSE signal reduces replay latency but is never correctness state.
 - An optional local `agentrelay watch` preview with exact-sender consent, one local
-  Codex thread binding, persisted pickup dedupe, and a reference-only attention
+  Codex thread binding, persisted pickup dedupe, and a fixed content-free attention
   adapter.
 - CLI setup, invite/join, key rotation, doctor, audit, block, trust, bind, and watch
   commands.
@@ -204,12 +206,16 @@ decision. It is neither the durable store nor a portable wake-up mechanism.
 
 The optional local connector is a separate foreground CLI responsibility. It keeps
 one authenticated SSE connection, replays opaque events from a locally persisted
-cursor, rechecks exact-sender `auto_pickup` consent, and passes only event and thread
-identifiers to a runtime-attention adapter. The current Codex adapter targets a UUID
-chosen locally with `agentrelay bind codex` and queues a fixed prompt through
-`codex queue`. It does not fetch teammate content, call a mailbox tool, or start a
-closed Codex process. Other runtimes must implement the same local adapter boundary;
-the Relay has no Codex- or Claude-specific routing state.
+cursor, rechecks exact-sender `auto_pickup` consent, and passes relay-owned event and
+thread identifiers to a runtime-attention adapter for validation and local dedupe.
+The current Codex adapter targets a UUID chosen locally with `agentrelay bind codex`
+and queues a constant prompt through `codex queue`; the prompt contains neither ID nor
+teammate content. The connector itself does not fetch mailbox content or call an MCP
+tool, but the queued model turn still runs under that session's host policy. The
+recommended install profile prompts before content-bearing mailbox reads and all
+AgentRelay mutations. The adapter cannot start a closed Codex process. Other runtimes
+must implement the same local adapter boundary; the Relay has no Codex- or
+Claude-specific routing state.
 
 The existing `/a2a` JSON-RPC route is the mailbox wire used by that client. Its names
 are A2A-inspired, but current A2A conformance is not claimed. A future standards or
@@ -456,8 +462,9 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   recipient so a committed lower cursor cannot appear after a consumed higher one.
 - Exact-sender auto-pickup consent that cannot be inherited from defaults or join,
   a locally selected Codex UUID, and content-free runtime attention with persisted
-  replay dedupe. Codex and Claude install profiles approval-gate AgentRelay mutation
-  tools instead of auto-allowing the former broad wildcard.
+  replay dedupe. Codex and Claude install profiles approval-gate content-bearing
+  mailbox reads and AgentRelay mutations instead of auto-allowing the former broad
+  wildcard.
 
 ### Implemented Labs safeguards
 
@@ -508,8 +515,9 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   cutover. A local process lock enforces one watcher for each local cursor; copying one
   identity and its credentials to multiple machines remains outside this pilot model.
 - The saved Codex binding remains until explicit unbind. The adapter cannot prove a
-  standalone TUI is still open or impose a narrower per-turn tool envelope, so it
-  queues content-free attention rather than automatically reading or doing work.
+  standalone TUI is still open or impose a narrower per-turn tool envelope. It queues
+  a constant content-free turn, and the recommended host policy places mailbox reads
+  and mutations behind approval rather than treating prompt text as enforcement.
 
 ### Labs gaps before autonomous execution
 

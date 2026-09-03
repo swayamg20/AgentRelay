@@ -29,9 +29,10 @@
 > Codex agents exchange authenticated, durable message threads through a
 > team-operated Relay.
 >
-> **In source preview:** a foreground watcher can queue content-free attention for
-> one owner-selected Codex thread after exact-sender consent. It is not yet in the
-> published 0.2.1 package and does not read the message or perform work.
+> **In source preview:** a foreground watcher can queue a fixed, content-free turn
+> for one owner-selected Codex thread after exact-sender consent. It is not yet in
+> the published 0.2.1 package. The recommended host policy requires approval before
+> that turn can read mailbox content or perform an AgentRelay mutation.
 >
 > **Not claimed today:** automatic message handling, a hosted public network, full A2A v1
 > conformance, or autonomous repository execution. Mission, Node, Capsule, and

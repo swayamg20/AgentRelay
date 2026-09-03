@@ -270,10 +270,13 @@ a locally selected existing Codex thread binding. A foreground, owner-started wa
 then queue a content-free attention message for that thread; it does not prove the TUI is
 still live or start a closed host.
 
-The watcher does not automatically read correspondence, invoke tools, begin work, accept
-or complete a handoff, or send a reply. The Relay still proves durable storage only. The
-current experiment does not yet prove recipient pickup or reply delivery, and it is not
-full acceptance of issue #101.
+The watcher itself does not read correspondence or invoke mailbox tools. Its constant
+queued prompt carries no event reference or teammate content. Because `codex queue` has
+no narrower per-turn tool envelope, the recommended host configuration requires approval
+for content-bearing mailbox reads and every AgentRelay mutation; prompt text is not the
+enforcement boundary. The Relay still proves durable storage only. The current experiment
+does not yet prove recipient pickup or reply delivery, and it is not full acceptance of
+issue #101.
 
 ### Days 1-3: define the test
 

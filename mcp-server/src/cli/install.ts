@@ -6,9 +6,10 @@
 
 import { z } from "zod";
 
-export const AGENTRELAY_READ_ONLY_TOOL_RULES = [
+export const AGENTRELAY_AUTO_APPROVED_TOOL_RULES = ["mcp__agentrelay__list_teammates"] as const;
+
+export const AGENTRELAY_CONTENT_READ_TOOL_RULES = [
 	"mcp__agentrelay__check_inbox",
-	"mcp__agentrelay__list_teammates",
 	"mcp__agentrelay__view_thread",
 ] as const;
 
@@ -17,6 +18,11 @@ export const AGENTRELAY_MUTATING_TOOL_RULES = [
 	"mcp__agentrelay__accept_handoff",
 	"mcp__agentrelay__send_message",
 	"mcp__agentrelay__complete_handoff",
+] as const;
+
+export const AGENTRELAY_PROMPTED_TOOL_RULES = [
+	...AGENTRELAY_CONTENT_READ_TOOL_RULES,
+	...AGENTRELAY_MUTATING_TOOL_RULES,
 ] as const;
 
 export const LEGACY_AGENTRELAY_WILDCARD_RULE = "mcp__agentrelay__*";
@@ -31,9 +37,9 @@ export const RECOMMENDED_PERMISSIONS = {
 		"Bash(cargo test*)",
 		"Bash(npm run lint*)",
 		"Bash(tsc*)",
-		...AGENTRELAY_READ_ONLY_TOOL_RULES,
+		...AGENTRELAY_AUTO_APPROVED_TOOL_RULES,
 	],
-	ask: ["Edit", "Write", "Bash(git commit*)", "Bash(git diff*)", ...AGENTRELAY_MUTATING_TOOL_RULES],
+	ask: ["Edit", "Write", "Bash(git commit*)", "Bash(git diff*)", ...AGENTRELAY_PROMPTED_TOOL_RULES],
 	deny: [
 		"Bash(git push*)",
 		"Bash(npm publish*)",

@@ -123,7 +123,9 @@ The MCP process is not persistent when its host is closed. It does not subscribe
 the relay, start model turns, manage worktrees, or apply a dynamic runtime policy.
 The optional foreground `agentrelay watch` connector is separate from MCP stdio. It
 replays opaque events, rechecks local trust, coalesces duplicate attention, and calls
-a host adapter with event/thread identifiers only.
+a host adapter with relay-owned event/thread identifiers. The first adapter validates
+those references but queues a constant prompt containing neither reference nor peer
+content.
 
 ### CLI
 
@@ -305,7 +307,9 @@ pending --accept--> accepted --complete--> completed
    it only as a reason to replay the durable recipient-event cursor.
 5. Without local pickup consent, the recipient later calls `check_inbox` as before.
    With exact-sender consent and a bound Codex thread, `agentrelay watch` may queue a
-   fixed content-free attention turn; it does not read the thread.
+   fixed content-free attention turn. The connector does not read the thread, and the
+   recommended host policy asks before the queued model can invoke a content-bearing
+   mailbox tool.
 6. If the recipient is committing to the requested task, it separately calls
    `accept_handoff`.
 7. The MCP server returns teammate content with provenance-wrapped text, marked

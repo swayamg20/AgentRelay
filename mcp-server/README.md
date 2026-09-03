@@ -87,9 +87,11 @@ node ./mcp-server/dist/bin/agentrelay.js watch
 
 `agentrelay watch --once` replays currently pending recipient events and exits. The
 Codex adapter calls `codex queue`; on a standalone Codex TUI, Codex's own local queue
-refresh may add roughly ten seconds before the attention turn appears. The connector
-never puts teammate text in that turn and never calls a tool. It only tells the local
-user that durable correspondence is waiting for manual inspection.
+refresh may add roughly ten seconds before the attention turn appears. The queued
+prompt is constant: it includes no teammate text, event ID, or mailbox thread ID. The
+connector itself calls no mailbox tool. The queued model turn still uses the bound
+session's policy, so the generated Codex and Claude configurations ask the user before
+content-bearing mailbox reads or AgentRelay mutations.
 
 Consent is fail-closed and separable:
 
@@ -140,8 +142,9 @@ Known limits:
 - One local state directory permits one watcher at a time, preventing competing
   processes from racing its replay cursor.
 - The Codex reference adapter provides content-free attention, not automatic reading
-  or work, because queued turns cannot yet receive a narrower host-enforced tool
-  envelope.
+  or work. Queued turns cannot yet receive a narrower host-enforced tool envelope, so
+  the generated host policy approval-gates mailbox reads and mutations instead of
+  treating the fixed prompt as enforcement.
 - `accept_handoff` returns `trust_overlay`, but this package does not dynamically
   apply it to an active Claude or Codex session.
 - Host permission semantics are provider-specific; generated config is a

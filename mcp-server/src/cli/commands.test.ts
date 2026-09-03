@@ -28,8 +28,8 @@ import {
 	unblockCmd,
 } from "./commands.js";
 import {
-	AGENTRELAY_MUTATING_TOOL_RULES,
-	AGENTRELAY_READ_ONLY_TOOL_RULES,
+	AGENTRELAY_AUTO_APPROVED_TOOL_RULES,
+	AGENTRELAY_PROMPTED_TOOL_RULES,
 	RECOMMENDED_PERMISSIONS,
 } from "./install.js";
 import { serializeTrust } from "./trust-mutate.js";
@@ -368,10 +368,10 @@ describe("install", () => {
 		const overlayObj = JSON.parse(overlayJson?.[1] ?? "{}");
 		expect(overlayObj.mcpServers).toBeUndefined();
 		expect(overlayObj.permissions.allow).toEqual(
-			expect.arrayContaining([...AGENTRELAY_READ_ONLY_TOOL_RULES]),
+			expect.arrayContaining([...AGENTRELAY_AUTO_APPROVED_TOOL_RULES]),
 		);
 		expect(overlayObj.permissions.ask).toEqual(
-			expect.arrayContaining([...AGENTRELAY_MUTATING_TOOL_RULES]),
+			expect.arrayContaining([...AGENTRELAY_PROMPTED_TOOL_RULES]),
 		);
 		expect(overlayObj.permissions.allow).not.toContain("mcp__agentrelay__*");
 		expect(overlayObj.permissions.deny).toContain("Bash(git push*)");
@@ -398,7 +398,8 @@ describe("install", () => {
 		expect(writes[0]?.[1]).toContain("[mcp_servers.agentrelay]");
 		expect(writes[0]?.[1]).toContain('command = "npx"');
 		expect(writes[0]?.[1]).toContain('default_tools_approval_mode = "prompt"');
-		expect(writes[0]?.[1]).toContain("[mcp_servers.agentrelay.tools.view_thread]");
+		expect(writes[0]?.[1]).toContain("[mcp_servers.agentrelay.tools.list_teammates]");
+		expect(writes[0]?.[1]).not.toContain("[mcp_servers.agentrelay.tools.view_thread]");
 		expect(writes[0]?.[1]).not.toContain("[permissions]");
 	});
 
@@ -463,8 +464,8 @@ describe("doctor", () => {
 		const settings = JSON.stringify({
 			mcpServers: { agentrelay: {} },
 			permissions: {
-				allow: [...AGENTRELAY_READ_ONLY_TOOL_RULES],
-				ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+				allow: [...AGENTRELAY_AUTO_APPROVED_TOOL_RULES],
+				ask: [...AGENTRELAY_PROMPTED_TOOL_RULES],
 			},
 		});
 		// loadConfig + loadTrust use process.env paths; point them at temp files via env override.
@@ -520,8 +521,8 @@ describe("doctor", () => {
 		const settings = JSON.stringify({
 			mcpServers: { agentrelay: {} },
 			permissions: {
-				allow: ["mcp__agentrelay__*", ...AGENTRELAY_READ_ONLY_TOOL_RULES],
-				ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+				allow: ["mcp__agentrelay__*", ...AGENTRELAY_AUTO_APPROVED_TOOL_RULES],
+				ask: [...AGENTRELAY_PROMPTED_TOOL_RULES],
 			},
 		});
 		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-wildcard-"));
@@ -545,8 +546,8 @@ describe("doctor", () => {
 		const settings = JSON.stringify({
 			mcpServers: { agentrelay: {} },
 			permissions: {
-				allow: [...AGENTRELAY_READ_ONLY_TOOL_RULES],
-				ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+				allow: [...AGENTRELAY_AUTO_APPROVED_TOOL_RULES],
+				ask: [...AGENTRELAY_PROMPTED_TOOL_RULES],
 			},
 		});
 		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-clean-"));
@@ -591,8 +592,8 @@ describe("doctorFix", () => {
 			if (path === claudeSettingsPath) {
 				return JSON.stringify({
 					permissions: {
-						allow: [...AGENTRELAY_READ_ONLY_TOOL_RULES],
-						ask: [...AGENTRELAY_MUTATING_TOOL_RULES],
+						allow: [...AGENTRELAY_AUTO_APPROVED_TOOL_RULES],
+						ask: [...AGENTRELAY_PROMPTED_TOOL_RULES],
 					},
 				});
 			}
@@ -603,13 +604,7 @@ describe("doctorFix", () => {
 					'args = ["-y", "agentrelay-mcp"]',
 					'default_tools_approval_mode = "prompt"',
 					"",
-					"[mcp_servers.agentrelay.tools.check_inbox]",
-					'approval_mode = "auto"',
-					"",
 					"[mcp_servers.agentrelay.tools.list_teammates]",
-					'approval_mode = "auto"',
-					"",
-					"[mcp_servers.agentrelay.tools.view_thread]",
 					'approval_mode = "auto"',
 				].join("\n");
 			}

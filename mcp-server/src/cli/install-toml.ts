@@ -7,7 +7,8 @@
  * - Adds `[mcp_servers.agentrelay]` if absent. Overwrites it only when
  *   `overwriteMcp` is set.
  * - Defaults every AgentRelay tool to `prompt`.
- * - Allows only the three read-only mailbox tools without a prompt.
+ * - Allows teammate discovery without a prompt. Content-bearing mailbox reads
+ *   and every mutation keep the prompt-by-default policy.
  * - Preserves unrelated user configuration, including any legacy top-level
  *   `[permissions]` table; Codex does not use that table for MCP approvals.
  * - Returns `{next, report}` plus the raw toml string. Caller decides
@@ -21,17 +22,20 @@ import { parse, stringify } from "smol-toml";
 import { z } from "zod";
 import { RECOMMENDED_MCP_ENTRY } from "./install.js";
 
-export const CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS = [
-	"check_inbox",
-	"list_teammates",
-	"view_thread",
-] as const;
+export const CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS = ["list_teammates"] as const;
+
+export const CODEX_CONTENT_READ_AGENTRELAY_TOOLS = ["check_inbox", "view_thread"] as const;
 
 export const CODEX_MUTATING_AGENTRELAY_TOOLS = [
 	"handoff_to_teammate",
 	"accept_handoff",
 	"send_message",
 	"complete_handoff",
+] as const;
+
+export const CODEX_PROMPTED_AGENTRELAY_TOOLS = [
+	...CODEX_CONTENT_READ_AGENTRELAY_TOOLS,
+	...CODEX_MUTATING_AGENTRELAY_TOOLS,
 ] as const;
 
 export const CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE = "prompt" as const;
@@ -185,7 +189,7 @@ function mergeCodexApprovals(
 		);
 	}
 	if (!overwrite) return;
-	for (const tool of CODEX_MUTATING_AGENTRELAY_TOOLS) {
+	for (const tool of CODEX_PROMPTED_AGENTRELAY_TOOLS) {
 		const current = tools[tool];
 		if (current === undefined) continue;
 		let toolConfig = asRecord(current);

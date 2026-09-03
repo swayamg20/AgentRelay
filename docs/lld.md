@@ -413,11 +413,14 @@ currently exercised only by tests and exports.
 
 The foreground connector reloads trust before each recipient event. Only a listed
 sender with `auto_pickup: true` can produce runtime attention; block wins. The Codex
-adapter uses `execFile("codex", ["queue", ...])`, never a shell, and passes a fixed
-local prompt containing only event/thread UUIDs. It never includes or retrieves peer
-content. Enqueue failure leaves the cursor unchanged; successful enqueue persists the
-cursor and pickup dedupe together. Delivery is at-least-once across an ambiguous
-runtime failure, so the prompt is reference-only and idempotent.
+adapter uses `execFile("codex", ["queue", ...])`, never a shell, and queues a constant
+local prompt containing neither event/thread UUIDs nor peer content. The connector
+does not retrieve correspondence or invoke an MCP tool. The resulting model turn still
+uses the bound session's policy, so the recommended install configuration prompts before
+content-bearing mailbox reads and every AgentRelay mutation. Enqueue failure leaves the
+cursor unchanged; successful enqueue persists the cursor and pickup dedupe together.
+Delivery is at-least-once across an ambiguous runtime failure, so the constant prompt is
+safe to repeat.
 
 ## Labs Node and Capsule process surface
 
@@ -680,11 +683,11 @@ for both clients. `install` writes the Claude MCP entry to `~/.claude.json`, the
 Claude permission overlay to `~/.claude/settings.json`, and Codex configuration to
 `~/.codex/config.toml`.
 
-The recommended Claude overlay auto-allows only `check_inbox`, `list_teammates`, and
-`view_thread`; AgentRelay mutations are in the ask bucket and the old
-`mcp__agentrelay__*` wildcard is removed. Codex uses its native
-`mcp_servers.agentrelay.default_tools_approval_mode = "prompt"` plus explicit `auto`
-overrides for those three read tools. Existing installations must run `install
+The recommended Claude overlay auto-allows only `list_teammates`; content-bearing
+`check_inbox` and `view_thread` calls plus AgentRelay mutations are in the ask bucket,
+and the old `mcp__agentrelay__*` wildcard is removed. Codex uses its native
+`mcp_servers.agentrelay.default_tools_approval_mode = "prompt"` plus one explicit
+`auto` override for `list_teammates`. Existing installations must run `install
 --overwrite` to replace an older AgentRelay entry safely.
 
 The generated settings are recommendations. Documentation must not claim every host
@@ -814,7 +817,7 @@ Do not turn the four-state handoff table into a distributed runtime scheduler, a
 not require a Node, Mission, or Capsule for mailbox communication. The implemented
 SSE stream reduces latency, but persisted mailbox and recipient-event state remains
 authoritative. The first connector is content-free attention, not automatic reading,
-work, or answering.
+work, or answering; the generated host policy asks before content-bearing mailbox reads.
 
 Nodes, credentials, workspace bindings, Missions, events, and deliveries have a
 separate public control plane and same-repository Labs model. The local Node proves

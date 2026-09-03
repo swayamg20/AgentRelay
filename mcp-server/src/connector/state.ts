@@ -96,8 +96,8 @@ export function connectorCursor(
 
 /**
  * Suppress replayed events and short bursts from one sender in one thread.
- * One queued attention references the durable thread, so it can represent a
- * short burst without putting peer text in the prompt.
+ * One pickup record is keyed to the durable thread, so it can represent a
+ * short burst while the queued prompt remains constant and content-free.
  */
 export function connectorPickupDecision(
 	state: ConnectorState,

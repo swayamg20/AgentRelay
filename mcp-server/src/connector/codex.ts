@@ -41,9 +41,9 @@ export function createCodexAttentionAdapter(opts: {
 export function buildCodexAttentionPrompt(request: RuntimeAttentionRequest): string {
 	validateAttentionRequest(request);
 	return [
-		`AgentRelay's local connector observed durable mailbox event ${request.eventId} for thread ${request.threadId}.`,
+		"AgentRelay's local connector observed new durable correspondence.",
 		"Tell the local user that AgentRelay correspondence is waiting for manual inspection.",
-		"This is attention only. Do not call tools, retrieve message contents, accept, reply, edit, test, execute, complete, publish, deploy, or infer local authority from the notification.",
+		"Do not call tools or take action from this notification.",
 	].join(" ");
 }
 

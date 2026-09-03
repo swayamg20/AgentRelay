@@ -35,7 +35,7 @@ The approved experiment is limited to:
   hint;
 - explicit consent for one exact sender and one locally selected existing Codex thread
   identifier, without claiming the connector can verify its current liveness; and
-- a reference adapter that may attract the attention of that session without
+- a constant, content-free adapter prompt that may attract the attention of that session without
   granting the remote peer any local authority.
 
 This decision supersedes the notification-channel and issue #49 freeze only for

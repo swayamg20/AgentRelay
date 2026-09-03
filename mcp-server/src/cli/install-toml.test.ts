@@ -2,7 +2,7 @@ import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import {
 	CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS,
-	CODEX_MUTATING_AGENTRELAY_TOOLS,
+	CODEX_PROMPTED_AGENTRELAY_TOOLS,
 	mergeCodexSettings,
 	renderTomlMergeReport,
 } from "./install-toml.js";
@@ -26,7 +26,7 @@ describe("mergeCodexSettings", () => {
 		for (const tool of CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS) {
 			expect(entry.tools[tool].approval_mode).toBe("auto");
 		}
-		for (const tool of CODEX_MUTATING_AGENTRELAY_TOOLS) {
+		for (const tool of CODEX_PROMPTED_AGENTRELAY_TOOLS) {
 			expect(entry.tools[tool]).toBeUndefined();
 		}
 		expect(round.permissions).toBeUndefined();
@@ -43,8 +43,9 @@ args = ["-y", "agentrelay-mcp"]
 		});
 		const entry = (next.mcp_servers as Record<string, any>).agentrelay;
 		expect(entry.default_tools_approval_mode).toBe("prompt");
-		expect(entry.tools.view_thread.approval_mode).toBe("auto");
-		expect(report.approvalSettingsAdded).toHaveLength(4);
+		expect(entry.tools.list_teammates.approval_mode).toBe("auto");
+		expect(entry.tools.view_thread).toBeUndefined();
+		expect(report.approvalSettingsAdded).toHaveLength(2);
 	});
 
 	it("preserves an explicit stricter tool approval without overwrite", () => {
@@ -71,8 +72,11 @@ command = "npx"
 args = ["-y", "agentrelay-mcp"]
 default_tools_approval_mode = "auto"
 
+[mcp_servers.agentrelay.tools.check_inbox]
+approval_mode = "auto"
+
 [mcp_servers.agentrelay.tools.view_thread]
-approval_mode = "prompt"
+approval_mode = "auto"
 
 [mcp_servers.agentrelay.tools.send_message]
 approval_mode = "auto"
@@ -83,9 +87,10 @@ approval_mode = "auto"
 		});
 		const entry = (next.mcp_servers as Record<string, any>).agentrelay;
 		expect(entry.default_tools_approval_mode).toBe("prompt");
-		expect(entry.tools.view_thread.approval_mode).toBe("auto");
+		expect(entry.tools.check_inbox.approval_mode).toBe("prompt");
+		expect(entry.tools.view_thread.approval_mode).toBe("prompt");
 		expect(entry.tools.send_message.approval_mode).toBe("prompt");
-		expect(report.approvalSettingsUpdated).toHaveLength(3);
+		expect(report.approvalSettingsUpdated).toHaveLength(4);
 	});
 
 	it("preserves a legacy top-level permissions table as unrelated config", () => {
@@ -173,6 +178,6 @@ startup_timeout_sec = 7
 		const txt = renderTomlMergeReport(report);
 		expect(txt).toContain("+ mcp_servers.agentrelay");
 		expect(txt).toContain("default_tools_approval_mode = prompt");
-		expect(txt).toContain("tools.view_thread.approval_mode = auto");
+		expect(txt).toContain("tools.list_teammates.approval_mode = auto");
 	});
 });

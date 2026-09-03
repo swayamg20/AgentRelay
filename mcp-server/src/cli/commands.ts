@@ -14,14 +14,14 @@ import { FALLBACK_TRUST, type TrustFile, loadTrust } from "../trust.js";
 import {
 	CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS,
 	CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE,
-	CODEX_MUTATING_AGENTRELAY_TOOLS,
+	CODEX_PROMPTED_AGENTRELAY_TOOLS,
 	type TomlMergeReport,
 	mergeCodexSettings,
 	renderTomlMergeReport,
 } from "./install-toml.js";
 import {
-	AGENTRELAY_MUTATING_TOOL_RULES,
-	AGENTRELAY_READ_ONLY_TOOL_RULES,
+	AGENTRELAY_AUTO_APPROVED_TOOL_RULES,
+	AGENTRELAY_PROMPTED_TOOL_RULES,
 	LEGACY_AGENTRELAY_WILDCARD_RULE,
 	type MergeReport,
 	mergeClaudeJsonMcp,
@@ -535,9 +535,9 @@ function claudeOverlayApplied(settings: unknown): boolean {
 	const ask = Array.isArray(permissions?.ask) ? permissions.ask : [];
 	return (
 		!allow.includes(LEGACY_AGENTRELAY_WILDCARD_RULE) &&
-		AGENTRELAY_MUTATING_TOOL_RULES.every((rule) => !allow.includes(rule)) &&
-		AGENTRELAY_READ_ONLY_TOOL_RULES.every((rule) => allow.includes(rule)) &&
-		AGENTRELAY_MUTATING_TOOL_RULES.every((rule) => ask.includes(rule))
+		AGENTRELAY_PROMPTED_TOOL_RULES.every((rule) => !allow.includes(rule)) &&
+		AGENTRELAY_AUTO_APPROVED_TOOL_RULES.every((rule) => allow.includes(rule)) &&
+		AGENTRELAY_PROMPTED_TOOL_RULES.every((rule) => ask.includes(rule))
 	);
 }
 
@@ -550,7 +550,7 @@ function codexOverlayApplied(settings: unknown): boolean {
 		CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS.every(
 			(tool) => asRecord(tools?.[tool])?.approval_mode === "auto",
 		) &&
-		CODEX_MUTATING_AGENTRELAY_TOOLS.every((tool) => {
+		CODEX_PROMPTED_AGENTRELAY_TOOLS.every((tool) => {
 			const mode = asRecord(tools?.[tool])?.approval_mode;
 			return mode === undefined || mode === "prompt";
 		})

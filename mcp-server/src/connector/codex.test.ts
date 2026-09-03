@@ -6,7 +6,7 @@ const MAIL_THREAD = "019fb4b5-5d71-72c2-b7ed-9d56847a32e6";
 const EVENT = "b8bf5f45-7138-4ea1-89d9-7fa396cb785b";
 
 describe("Codex attention adapter", () => {
-	it("queues a fixed reference-only prompt with execFile-shaped arguments", async () => {
+	it("queues a fixed content-free prompt with execFile-shaped arguments", async () => {
 		const runFile = vi.fn(async () => ({ stdout: "queued\n", stderr: "" }));
 		const adapter = createCodexAttentionAdapter({ threadId: CODEX_THREAD, runFile });
 		const receipt = await adapter.enqueueAttention({
@@ -19,8 +19,8 @@ describe("Codex attention adapter", () => {
 		expect(file).toBe("codex");
 		expect(args?.slice(0, 4)).toEqual(["queue", "--thread", CODEX_THREAD, "--message"]);
 		const prompt = args?.[4] ?? "";
-		expect(prompt).toContain(EVENT);
-		expect(prompt).toContain(MAIL_THREAD);
+		expect(prompt).not.toContain(EVENT);
+		expect(prompt).not.toContain(MAIL_THREAD);
 		expect(prompt).toContain("manual inspection");
 		expect(prompt).toContain("Do not call tools");
 		expect(prompt).not.toContain("view_thread");
@@ -39,7 +39,7 @@ describe("Codex attention adapter", () => {
 			threadId: MAIL_THREAD,
 		});
 		expect(prompt).not.toContain("view_thread");
-		expect(prompt).toContain("Do not call tools, retrieve message contents");
+		expect(prompt).toContain("Do not call tools or take action");
 	});
 
 	it("rejects invalid local or mailbox identifiers before enqueue", async () => {
