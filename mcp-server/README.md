@@ -4,13 +4,13 @@ The current local tool surface for [AgentRelay](https://github.com/swayamg20/Age
 It provides a stdio MCP process for mailbox tools plus an optional foreground
 connector that gives an owner-selected runtime low-latency mailbox attention.
 
-> **Package:** `agentrelay-mcp` 0.2.1.
+> **Package:** `agentrelay-mcp` 0.3.0.
 > **Boundary:** the connector does not wake a closed host, load peer content, perform
 > work, or grant local authority. Its first Codex adapter queues only a content-free
 > attention turn. Autonomous execution remains outside the mailbox product.
 >
-> **Unreleased preview:** `bind` and `watch` currently exist only in this repository
-> checkout; the published npm package at 0.2.1 does not contain them yet.
+> **Pickup preview:** `bind` and `watch` are included in 0.3.0 as an optional,
+> owner-started foreground connector. They are not a background service.
 
 Requires Node 20.18.1 or newer.
 
@@ -56,33 +56,34 @@ configuration is written to the current Claude and Codex user config locations.
 The relay stores messages durably, but pickup is explicit. A human or running agent
 must call `check_inbox` or `view_thread`.
 
-## Auto-pickup preview
+## Foreground auto-pickup preview
 
 The preview removes silent mailbox waiting without making a remote teammate an
 operator of your machine. It uses a persistent server-sent-event connection as a
 content-free wake hint and an authenticated cursor API for authoritative replay.
 Losing or duplicating the live hint cannot lose mailbox data.
 
-For now, build the source checkout from the repository root. Then update the
-generated host policy; existing installations should use `--overwrite` so the old
-broad AgentRelay tool wildcard is removed:
+Install or upgrade to the exact release, then refresh the generated host policy.
+Existing installations should use `--overwrite` so the old broad AgentRelay tool
+wildcard is removed:
 
 ```bash
-pnpm --filter agentrelay-mcp build
-node ./mcp-server/dist/bin/agentrelay.js install --client all --overwrite
+npm install --global agentrelay-mcp@0.3.0
+agentrelay --version
+agentrelay install --client all --overwrite
 ```
 
 Then grant one exact sender, bind the Codex chat that should receive attention, and
 run the foreground connector:
 
 ```bash
-node ./mcp-server/dist/bin/agentrelay.js trust set alice@team --auto-pickup true
+agentrelay trust set alice@team --auto-pickup true
 
 # Run from a shell launched inside the target Codex chat so CODEX_THREAD_ID is local.
-node ./mcp-server/dist/bin/agentrelay.js bind codex
+agentrelay bind codex
 
 # Keep this running in a terminal while you want live pickup.
-node ./mcp-server/dist/bin/agentrelay.js watch
+agentrelay watch
 ```
 
 `agentrelay watch --once` replays currently pending recipient events and exits. The
