@@ -51,7 +51,7 @@ The repository already contains the product path to validate:
 
 Mailbox reading remains explicit. An active agent session calls `check_inbox`; the
 MCP server does not wake a sleeping machine. After the first two-machine test showed
-missed pickup as the dominant blocker, a narrow source preview added durable opaque
+missed pickup as the dominant blocker, a narrow 0.3.0 preview added durable opaque
 events, a content-free SSE hint, and foreground Codex attention. It does not wake a
 closed host, read teammate content, or start work. Slack dispatch remains process-local
 and can be lost across Relay restart.
@@ -157,18 +157,19 @@ Run the pilot owned by
 - collect setup time, interventions, pickup behavior, reply completion, failures,
   and whether either pair chooses to use AgentRelay again without prompting.
 
-### Days 18-23: simulate pickup before building it
+### Days 18-23: validate bounded pickup before extending it
 
 The 2026-09-04 two-machine trial supplied the required missed-pickup evidence. The
-bounded L2 source preview is now implemented, but remains unaccepted until the same
+bounded L2 preview is now published, but remains unaccepted until the same
 two-machine loop proves observation, local enqueue, user pickup, and reply separately.
 
-- Use the existing notification path or a manual reminder to simulate faster pickup.
+- Run the 0.3.0 foreground watcher in the same two-machine loop and record each
+  observation, local enqueue, user pickup, and reply separately.
 - Manually share a short owner-approved availability status; do not present it as an
   implemented presence field.
-- Compare the simulated pickup path with explicit `check_inbox` polling.
-- Build #39, #44, or another L2 mechanism only if missed pickup is the dominant
-  observed failure.
+- Compare the foreground watcher with explicit `check_inbox` polling.
+- Extend #39, build #44, or add another L2 mechanism only if missed pickup remains
+  the dominant observed failure.
 
 ### Days 24-27: test commitment with current states
 

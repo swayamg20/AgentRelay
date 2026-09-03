@@ -85,7 +85,7 @@ silently rotate `RELAY_PEPPER` or `RELAY_ENCRYPTION_KEY`.
 The default image is immutable:
 
 ```text
-ghcr.io/swayamg20/agentrelay-relay@sha256:595586c46b66d0106d420a85148aa6624fa9b72d02235541a3634abb05cdaf54
+ghcr.io/swayamg20/agentrelay-relay@sha256:7bd29bee61450f18437c6ffb5b0e44990ebed1c46d718226184a695909c089ba
 ```
 
 Supply `--image` only for another public image that you have built and verified. The
@@ -142,7 +142,7 @@ sequence is:
    reply from laptop B. This proves that PostgreSQL state, not a live process, owns
    delivery durability.
 
-Use `agentrelay-mcp@0.2.1` explicitly during the pilot so both machines test the same
+Use `agentrelay-mcp@0.3.0` explicitly during the pilot so both machines test the same
 published client:
 
 ```bash
@@ -152,7 +152,7 @@ export AGENTRELAY_ADMIN_TOKEN="$(az keyvault secret show \
   --query value \
   --output tsv)"
 
-npx -y -p agentrelay-mcp@0.2.1 agentrelay register \
+npx -y -p agentrelay-mcp@0.3.0 agentrelay register \
   --relay 'https://<relay-host>' \
   --admin-token "$AGENTRELAY_ADMIN_TOKEN" \
   --handle 'alice@your-team' \
@@ -161,12 +161,12 @@ npx -y -p agentrelay-mcp@0.2.1 agentrelay register \
   --role backend
 
 unset AGENTRELAY_ADMIN_TOKEN
-npx -y -p agentrelay-mcp@0.2.1 agentrelay install --client all
-npx -y -p agentrelay-mcp@0.2.1 agentrelay doctor
+npx -y -p agentrelay-mcp@0.3.0 agentrelay install --client all --overwrite
+npx -y -p agentrelay-mcp@0.3.0 agentrelay doctor
 ```
 
 Continue with the signed invite and round-trip commands in
-[`onboarding.md`](onboarding.md), substituting `agentrelay-mcp@0.2.1` in every pilot
+[`onboarding.md`](onboarding.md), substituting `agentrelay-mcp@0.3.0` in every pilot
 command on both machines. The command substitution keeps the literal token out of
 shell history, but `--admin-token "$AGENTRELAY_ADMIN_TOKEN"` still exposes it briefly
 in both the process environment and the registration process arguments. Run it only

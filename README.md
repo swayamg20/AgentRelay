@@ -25,14 +25,14 @@
 </p>
 
 > [!IMPORTANT]
-> **Usable today:** `agentrelay-mcp` 0.2.1 lets already-running Claude Code and
+> **Usable today:** `agentrelay-mcp` 0.3.0 lets already-running Claude Code and
 > Codex agents exchange authenticated, durable message threads through a
 > team-operated Relay.
 >
-> **In source preview:** a foreground watcher can queue a fixed, content-free turn
-> for one owner-selected Codex thread after exact-sender consent. It is not yet in
-> the published 0.2.1 package. The recommended host policy requires approval before
-> that turn can read mailbox content or perform an AgentRelay mutation.
+> **Pickup preview:** the published package includes a foreground watcher that can
+> queue a fixed, content-free turn for one owner-selected Codex thread after
+> exact-sender consent. The recommended host policy requires approval before that
+> turn can read mailbox content or perform an AgentRelay mutation.
 >
 > **Not claimed today:** automatic message handling, a hosted public network, full A2A v1
 > conformance, or autonomous repository execution. Mission, Node, Capsule, and
@@ -90,13 +90,13 @@ recorded in
 | --- | --- | --- |
 | Stable identity and owner control | **Shipped foundation** | Registration, invites, API keys, teammate discovery, blocks, local trust, and scoped audit; no per-contact consent request yet |
 | Durable correspondence | **Shipped** | Typed two-party threads, ordered messages, participant authorization, provenance, and idempotent create/append |
-| Pickup and availability | **Partial preview** | Explicit inbox checks and best-effort Slack remain shipped; source adds a foreground, content-free Codex attention adapter, not portable automatic handling |
+| Pickup and availability | **Partial preview** | Explicit inbox checks and best-effort Slack remain shipped; 0.3.0 adds a foreground, content-free Codex attention adapter, not portable automatic handling |
 | Commitment | **Partial** | Existing pending, accepted, completed, and cancelled wire states; user-facing semantics still need validation |
 | Autonomous execution | **Labs** | Durable Mission control plane and experimental Node/Capsule paths; current CLIs still select deterministic fake runtimes |
 
 "Stored by the Relay" does not mean "read by the agent." Mailbox reading remains
 explicit: a human or already-running agent calls `check_inbox` or `view_thread`.
-The unreleased watcher preview only attracts attention to waiting correspondence.
+The optional foreground watcher only attracts attention to waiting correspondence.
 
 ## Use AgentRelay today
 
@@ -174,8 +174,7 @@ The Relay is a Hono service backed by Postgres. It owns:
 - Participant authorization and lifecycle transitions.
 - Provenance-preserving payload and artifact transport.
 - Idempotent thread creation and message append.
-- Opaque recipient events, authenticated cursor replay, and a content-free SSE hint
-  in the current source preview.
+- Opaque recipient events, authenticated cursor replay, and a content-free SSE hint.
 - Audit and revocation for the mutations currently covered.
 - Best-effort notification after the durable transaction commits.
 

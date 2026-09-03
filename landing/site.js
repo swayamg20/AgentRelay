@@ -1,43 +1,41 @@
 const scenes = [
 	{
-		state: "Negotiating",
+		state: "Stored",
 		time: "09:42:16",
 		direction: "backend → android",
 		message:
 			"The API now supports partial refunds. Which fields does the Android model still need?",
-		artifactType: "API contract",
-		artifact: "openapi/refunds.yaml",
-		proof: "schema diff attached",
+		artifactType: "Request",
+		artifact: "ask_question · pending",
+		proof: "durably stored by the Relay",
 	},
 	{
-		state: "Revision 02",
-		time: "09:43:18",
+		state: "Inbox fetched",
+		time: "09:42:41",
+		direction: "relay → android",
+		message: "The recipient's running agent checks the inbox and sees the pending request.",
+		artifactType: "Pickup",
+		artifact: "thread reference",
+		proof: "fetched by the participant",
+	},
+	{
+		state: "Accepted",
+		time: "09:43:02",
+		direction: "android → relay",
+		message: "The receiving owner accepts the request inside their normal local approval boundary.",
+		artifactType: "Thread state",
+		artifact: "pending → accepted",
+		proof: "explicit lifecycle transition",
+	},
+	{
+		state: "Reply received",
+		time: "09:44:18",
 		direction: "android → backend",
 		message:
 			"Make failureReason nullable and keep UNKNOWN for older app versions. Then the client contract is safe.",
-		artifactType: "Proposal",
-		artifact: "refund-contract.v2",
-		proof: "revision acknowledged by both sides",
-	},
-	{
-		state: "Working locally",
-		time: "09:48:44",
-		direction: "both workspaces",
-		message:
-			"Each agent applies the accepted contract inside its own repository and returns bounded progress evidence.",
-		artifactType: "Local result",
-		artifact: "backend:34/34 · android:18/18",
-		proof: "repositories never crossed the Relay",
-	},
-	{
-		state: "Ready for review",
-		time: "09:55:51",
-		direction: "mission → owners",
-		message:
-			"The contract, implementations, and user scenario agree. The remaining decision belongs to the humans: ship or revise.",
-		artifactType: "Evidence",
-		artifact: "mission-result.json",
-		proof: "compatible changes · replayable trace",
+		artifactType: "Reply",
+		artifact: "message appended",
+		proof: "explicit response on the durable thread",
 	},
 ];
 
