@@ -5,6 +5,7 @@ import { type Handoff, agentBlocks, agents, handoffs, messages } from "../db/sch
 import { RelayError } from "../errors.js";
 import { lockAgentBlockPair } from "./agent-block-lock.js";
 import { writeAudit } from "./audit.js";
+import { appendMailboxEvent } from "./mailbox-events.js";
 
 export type Intent = "inform" | "ask_question" | "propose_action";
 export type HandoffStatus = "pending" | "accepted" | "completed" | "cancelled";
@@ -200,6 +201,13 @@ export async function createHandoff(
 			metadata: { intent: input.intent, recipient: input.recipientHandle },
 			requestId: input.requestId,
 		});
+		await appendMailboxEvent(tx, {
+			recipientAgentId: recipient.id,
+			actorAgentId: input.senderId,
+			threadId: handoff.id,
+			kind: "thread.created",
+			sourceId: handoff.id,
+		});
 
 		return { handoff, replayed: false };
 	});
@@ -283,6 +291,13 @@ export async function appendMessage(
 			metadata: { handoff_id: handoff.id, sequence_no: seq },
 			requestId: input.requestId,
 		});
+		await appendMailboxEvent(tx, {
+			recipientAgentId: recipientId,
+			actorAgentId: input.senderId,
+			threadId: handoff.id,
+			kind: "message.appended",
+			sourceId: created.id,
+		});
 
 		return {
 			messageId: created.id,
@@ -360,6 +375,13 @@ export async function transitionHandoff(db: Database, input: TransitionInput): P
 					metadata: { session_id: input.sessionId ?? null },
 					requestId: input.requestId,
 				});
+				await appendMailboxEvent(tx, {
+					recipientAgentId: handoff.senderId,
+					actorAgentId: input.callerId,
+					threadId: handoff.id,
+					kind: "thread.accepted",
+					sourceId: handoff.id,
+				});
 				return updated;
 			}
 
@@ -400,6 +422,13 @@ export async function transitionHandoff(db: Database, input: TransitionInput): P
 					resourceId: handoff.id,
 					requestId: input.requestId,
 				});
+				await appendMailboxEvent(tx, {
+					recipientAgentId: handoff.senderId,
+					actorAgentId: input.callerId,
+					threadId: handoff.id,
+					kind: "thread.completed",
+					sourceId: handoff.id,
+				});
 				return updated;
 			}
 
@@ -427,6 +456,13 @@ export async function transitionHandoff(db: Database, input: TransitionInput): P
 					resourceType: "handoff",
 					resourceId: handoff.id,
 					requestId: input.requestId,
+				});
+				await appendMailboxEvent(tx, {
+					recipientAgentId: handoff.recipientId,
+					actorAgentId: input.callerId,
+					threadId: handoff.id,
+					kind: "thread.cancelled",
+					sourceId: handoff.id,
 				});
 				return updated;
 			}

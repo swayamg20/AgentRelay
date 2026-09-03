@@ -6,12 +6,15 @@ import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { agentBlocks, agentCards, agents, apiKeys, auditLog } from "../db/schema.js";
 import { RelayError } from "../errors.js";
+import type { MailboxSignalHub } from "../events/mailbox-signal.js";
 import { encryptWebhook } from "../notifications/crypto.js";
 import { isSlackWebhookUrl } from "../notifications/slack.js";
 import { lockAgentBlockPair } from "../services/agent-block-lock.js";
 import { writeAudit } from "../services/audit.js";
+import { listMailboxEvents } from "../services/mailbox-events.js";
 import { lockAgentLifecycle } from "../services/node-enrollment.js";
 import type { AppEnv } from "../types.js";
+import { registerMailboxEventStream } from "./mailbox-events-stream.js";
 import { registerMissionOwnerRoutes } from "./mission-owner.js";
 import { registerNodeOwnerRoutes } from "./node-owner.js";
 
@@ -29,12 +32,27 @@ const updateCardSchema = z
 	})
 	.strict();
 
+const MAX_POSTGRES_BIGINT = "9223372036854775807";
+const mailboxEventsQuerySchema = z.object({
+	after_cursor: z
+		.string()
+		.regex(/^[1-9][0-9]*$/)
+		.max(19)
+		.refine(
+			(cursor) => cursor.length < MAX_POSTGRES_BIGINT.length || cursor <= MAX_POSTGRES_BIGINT,
+			"Mailbox cursor exceeds Postgres bigint range",
+		)
+		.optional(),
+	limit: z.coerce.number().int().positive().max(200).default(50),
+});
+
 export interface AgentsRoutesOptions {
 	db: Database;
 	pepper: string;
 	encryptionKey: string;
 	/** 'live' on production relays, 'test' otherwise. */
 	keyEnvironment: "live" | "test";
+	mailboxSignalHub?: MailboxSignalHub;
 }
 
 export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
@@ -42,6 +60,9 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 	router.use("*", bearerAuth({ db: opts.db, pepper: opts.pepper }));
 	registerNodeOwnerRoutes(router, opts);
 	registerMissionOwnerRoutes(router, opts);
+	if (opts.mailboxSignalHub) {
+		registerMailboxEventStream(router, { db: opts.db, hub: opts.mailboxSignalHub });
+	}
 
 	// GET /agents/me — whoami (lld §5.4 / R7)
 	router.get("/me", async (c) => {
@@ -72,6 +93,28 @@ export function createAgentsRoutes(opts: AgentsRoutesOptions): Hono<AppEnv> {
 			skills: row.skills ?? [],
 			repos_owned: row.reposOwned ?? [],
 		});
+	});
+
+	router.get("/me/mailbox/events", async (c) => {
+		const me = c.get("agent");
+		if (!me) throw new RelayError("unauthenticated", "Auth required");
+		const parsed = mailboxEventsQuerySchema.safeParse({
+			after_cursor: c.req.query("after_cursor"),
+			limit: c.req.query("limit"),
+		});
+		if (!parsed.success) {
+			throw new RelayError("invalid_params", "Invalid mailbox event query", {
+				issues: parsed.error.issues,
+			});
+		}
+		return c.json(
+			await listMailboxEvents(opts.db, {
+				recipientAgentId: me.id,
+				afterCursor:
+					parsed.data.after_cursor === undefined ? null : BigInt(parsed.data.after_cursor),
+				limit: parsed.data.limit,
+			}),
+		);
 	});
 
 	// POST /agents/me/keys/rotate — self-rotate using current key (lld §5.3 / R7)

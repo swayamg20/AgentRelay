@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
+import type { Database } from "./db/client.js";
 import { RelayError } from "./errors.js";
+import { MailboxSignalHub } from "./events/mailbox-signal.js";
 import { createLogger } from "./logger.js";
 import { createServer } from "./server.js";
 
@@ -77,6 +79,22 @@ describe("relay server", () => {
 		const body = (await res.json()) as { code: string; request_id: string };
 		expect(body.code).toBe("method_not_found");
 		expect(body.request_id).toMatch(/^req_/);
+	});
+
+	it("mounts the mailbox stream behind agent bearer authentication", async () => {
+		const config = loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv);
+		const logger = createLogger(config);
+		const mailboxSignalHub = new MailboxSignalHub({
+			listen: async () => ({ unlisten: async () => undefined }),
+		});
+		const app = createServer({
+			config,
+			logger,
+			db: {} as Database,
+			mailboxSignalHub,
+		});
+		const response = await app.request("/agents/me/mailbox/events/stream");
+		expect(response.status).toBe(401);
 	});
 
 	it("RelayError is rendered via the configured envelope", async () => {

@@ -1,8 +1,8 @@
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
-import { agentBlocks, agents, auditLog, handoffs } from "../db/schema.js";
+import { agentBlocks, agents, auditLog, handoffs, mailboxEvents } from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
 import { createLogger } from "../logger.js";
 import { createServer } from "../server.js";
@@ -180,6 +180,22 @@ d("a2a JSON-RPC + state machine", () => {
 			{ type: "file_ref", path: "src/profile-client.ts", git_sha: "abc123" },
 		]);
 
+		const eventRows = await handle.db
+			.select({
+				kind: mailboxEvents.kind,
+				recipientId: mailboxEvents.recipientAgentId,
+				actorId: mailboxEvents.actorAgentId,
+				threadId: mailboxEvents.threadId,
+			})
+			.from(mailboxEvents)
+			.orderBy(asc(mailboxEvents.cursor));
+		expect(eventRows).toEqual([
+			{ kind: "thread.created", recipientId: frank.id, actorId: bob.id, threadId: taskId },
+			{ kind: "thread.accepted", recipientId: bob.id, actorId: frank.id, threadId: taskId },
+			{ kind: "message.appended", recipientId: frank.id, actorId: bob.id, threadId: taskId },
+			{ kind: "thread.completed", recipientId: bob.id, actorId: frank.id, threadId: taskId },
+		]);
+
 		// Further messages denied
 		const after = await rpc(bob.key, "message/send", {
 			task_id: taskId,
@@ -240,6 +256,9 @@ d("a2a JSON-RPC + state machine", () => {
 		const audit = await handle.db.select({ action: auditLog.action }).from(auditLog);
 		expect(audit.filter((row) => row.action === "handoff.create")).toHaveLength(1);
 		expect(audit.filter((row) => row.action === "message.append")).toHaveLength(1);
+		const eventRows = await handle.db.select({ kind: mailboxEvents.kind }).from(mailboxEvents);
+		expect(eventRows.filter((row) => row.kind === "thread.created")).toHaveLength(1);
+		expect(eventRows.filter((row) => row.kind === "message.appended")).toHaveLength(1);
 	});
 
 	it("replays committed requests before later block and terminal gates", async () => {
@@ -448,6 +467,11 @@ d("a2a JSON-RPC + state machine", () => {
 		// cannot cancel twice
 		const again = await rpc(bob.key, "tasks/cancel", { task_id: taskId });
 		expect(again.body.error.data.code).toBe("invalid_transition");
+		const cancelledEvents = await handle.db
+			.select({ recipientId: mailboxEvents.recipientAgentId })
+			.from(mailboxEvents)
+			.where(eq(mailboxEvents.kind, "thread.cancelled"));
+		expect(cancelledEvents).toEqual([{ recipientId: frank.id }]);
 	});
 
 	it("cannot complete a pending (not yet accepted) thread", async () => {

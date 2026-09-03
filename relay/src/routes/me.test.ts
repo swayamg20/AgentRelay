@@ -4,6 +4,7 @@ import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
 import { agentCards } from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
+import { MailboxSignalHub } from "../events/mailbox-signal.js";
 import { createLogger } from "../logger.js";
 import { decryptWebhook } from "../notifications/crypto.js";
 import { NotificationDispatcher } from "../notifications/dispatcher.js";
@@ -37,7 +38,10 @@ d("self-management endpoints", () => {
 		handle = conn.handle;
 		const config = loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv);
 		const logger = createLogger(config);
-		app = createServer({ config, logger, db: handle.db });
+		const mailboxSignalHub = new MailboxSignalHub({
+			listen: async () => ({ unlisten: async () => undefined }),
+		});
+		app = createServer({ config, logger, db: handle.db, mailboxSignalHub });
 	});
 
 	beforeEach(async () => {
@@ -95,6 +99,129 @@ d("self-management endpoints", () => {
 	it("GET /agents/me requires auth", async () => {
 		const res = await app.request("/agents/me");
 		expect(res.status).toBe(401);
+	});
+
+	it("replays only the caller's opaque mailbox events with stable cursors", async () => {
+		const bob = await register("bob@acme");
+		const frank = await register("frank@acme");
+		const mallory = await register("mallory@acme");
+		const created = await app.request("/a2a", {
+			method: "POST",
+			headers: bearer(bob.key),
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: "create",
+				method: "message/send",
+				params: {
+					recipient: "frank@acme",
+					intent: "inform",
+					message: { parts: [{ type: "text", text: "private create body" }] },
+				},
+			}),
+		});
+		const createdBody = (await created.json()) as { result: { task_id: string } };
+		const threadId = createdBody.result.task_id;
+		await app.request("/a2a", {
+			method: "POST",
+			headers: bearer(bob.key),
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: "append",
+				method: "message/send",
+				params: {
+					task_id: threadId,
+					message: { parts: [{ type: "text", text: "private append body" }] },
+				},
+			}),
+		});
+		await app.request("/a2a", {
+			method: "POST",
+			headers: bearer(mallory.key),
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: "other",
+				method: "message/send",
+				params: {
+					recipient: "bob@acme",
+					intent: "inform",
+					message: { parts: [{ type: "text", text: "bob only" }] },
+				},
+			}),
+		});
+
+		const first = await app.request("/agents/me/mailbox/events?limit=1", {
+			headers: bearer(frank.key),
+		});
+		expect(first.status).toBe(200);
+		const firstBody = (await first.json()) as {
+			events: Array<Record<string, string>>;
+			next_cursor: string;
+		};
+		expect(firstBody.events).toHaveLength(1);
+		expect(firstBody.events[0]).toMatchObject({
+			event_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+			cursor: expect.stringMatching(/^[1-9][0-9]*$/),
+			kind: "thread.created",
+			thread_id: threadId,
+			actor_handle: "bob@acme",
+			created_at: expect.any(String),
+		});
+		expect(Object.keys(firstBody.events[0] ?? {}).sort()).toEqual([
+			"actor_handle",
+			"created_at",
+			"cursor",
+			"event_id",
+			"kind",
+			"thread_id",
+		]);
+		expect(JSON.stringify(firstBody)).not.toContain("private create body");
+
+		const replay = await app.request("/agents/me/mailbox/events?limit=1", {
+			headers: bearer(frank.key),
+		});
+		expect(await replay.json()).toEqual(firstBody);
+
+		const second = await app.request(
+			`/agents/me/mailbox/events?after_cursor=${firstBody.next_cursor}&limit=10`,
+			{ headers: bearer(frank.key) },
+		);
+		const secondBody = (await second.json()) as {
+			events: Array<{ kind: string; actor_handle: string }>;
+			next_cursor: string;
+		};
+		expect(secondBody.events).toEqual([
+			expect.objectContaining({ kind: "message.appended", actor_handle: "bob@acme" }),
+		]);
+		expect(JSON.stringify(secondBody)).not.toContain("private append body");
+
+		const exhausted = await app.request(
+			`/agents/me/mailbox/events?after_cursor=${secondBody.next_cursor}`,
+			{ headers: bearer(frank.key) },
+		);
+		expect(await exhausted.json()).toEqual({
+			events: [],
+			next_cursor: secondBody.next_cursor,
+		});
+	});
+
+	it("validates mailbox replay cursors and requires bearer auth", async () => {
+		const frank = await register("frank@acme");
+		const unauthenticated = await app.request("/agents/me/mailbox/events");
+		expect(unauthenticated.status).toBe(401);
+		const unauthenticatedStream = await app.request("/agents/me/mailbox/events/stream");
+		expect(unauthenticatedStream.status).toBe(401);
+
+		for (const query of [
+			"after_cursor=0",
+			"after_cursor=-1",
+			"after_cursor=9223372036854775808",
+			"limit=201",
+		]) {
+			const response = await app.request(`/agents/me/mailbox/events?${query}`, {
+				headers: bearer(frank.key),
+			});
+			expect(response.status).toBe(400);
+		}
 	});
 
 	it("GET /agents/me reflects card updates (skills, repos)", async () => {
