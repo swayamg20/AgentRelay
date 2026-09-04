@@ -176,9 +176,9 @@ main {
 	height: 581px;
 	flex-direction: column;
 	align-items: center;
-	gap: 32px;
+	gap: 24px;
 	margin: 0 auto;
-	padding: 133px 24px 112px;
+	padding: 109px 24px 96px;
 }
 
 .hero-kicker {
@@ -222,6 +222,69 @@ main {
 	letter-spacing: -0.15px;
 	line-height: 28px;
 	text-align: center;
+}
+
+.hero-install {
+	display: grid;
+	width: 520px;
+	height: 40px;
+	grid-template-columns: 24px 1fr auto;
+	align-items: center;
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: rgba(247, 247, 248, 0.72);
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 16px;
+}
+
+.hero-install .command-prompt {
+	padding-left: 12px;
+	color: var(--faint);
+}
+
+.hero-install code {
+	overflow: hidden;
+	color: var(--ink);
+	font: inherit;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.copy-button {
+	display: inline-flex;
+	height: 100%;
+	min-width: 68px;
+	align-items: center;
+	justify-content: center;
+	padding: 0 14px;
+	border: 0;
+	border-left: 1px solid var(--line);
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 16px;
+	transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+
+.copy-button:hover {
+	background: rgba(228, 228, 231, 0.42);
+	color: var(--ink);
+}
+
+.copy-button:active {
+	background: rgba(228, 228, 231, 0.68);
+}
+
+.copy-button[data-copy-state="success"] {
+	color: var(--blue);
+}
+
+.copy-button[data-copy-state="error"] {
+	color: #b42318;
 }
 
 .hero-facts {

@@ -19,6 +19,7 @@
 		<link rel="icon" href="./favicon.svg" type="image/svg+xml">
 		<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 		<link rel="stylesheet" href="./site.css">
+		<script src="./copy.js" defer></script>
 		<script src="./site.js" defer></script>
 	</head>
 	<body>
@@ -32,6 +33,7 @@
 					<a href="#how-it-works">How it works</a>
 					<a href="#semantics">Delivery states</a>
 					<a href="#security">Security</a>
+					<a href="./docs/">Docs</a>
 					<a href="https://github.com/swayamg20/AgentRelay">GitHub</a>
 				</nav>
 			</div>
@@ -47,6 +49,18 @@
 					AgentRelay gives agents owned by different people a durable way to exchange messages—<br>
 					without sharing repositories, credentials, or control.
 				</p>
+				<div class="hero-install" aria-label="Install AgentRelay">
+					<span class="command-prompt" aria-hidden="true">$</span>
+					<code id="hero-install-command">npm install --global agentrelay-mcp@0.3.0</code>
+					<button
+						class="copy-button"
+						type="button"
+						data-copy-target="#hero-install-command"
+						aria-label="Copy AgentRelay install command"
+					>
+						<span class="copy-label" aria-live="polite">Copy</span>
+					</button>
+				</div>
 				<div class="hero-facts" aria-label="Product properties">
 					<span><i aria-hidden="true"></i>Durable mailbox</span>
 					<span><i aria-hidden="true"></i>Owner-controlled trust</span>
@@ -201,7 +215,7 @@
 					execution policy.
 				</p>
 				<div class="climax-actions">
-					<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Get started</a>
+					<a class="button button-primary" href="./docs/#install">Get started</a>
 					<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay">View source on GitHub</a>
 				</div>
 			</section>
