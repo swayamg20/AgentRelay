@@ -179,6 +179,7 @@ const stageButtons = [...document.querySelectorAll("[data-stage]")];
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let currentStage = 0;
 let autoplayTimer;
+let autoplayInView = false;
 
 function setMultilineText(element, lines) {
 	element.replaceChildren();
@@ -249,11 +250,20 @@ function stopAutoplay() {
 	elements.autoplayLabel.textContent = "Autoplay";
 }
 
-function startAutoplay() {
+function startAutoplay(advanceImmediately = true) {
+	if (autoplayTimer) return;
+
 	elements.autoplay.setAttribute("aria-pressed", "true");
 	elements.autoplayLabel.textContent = "Pause";
-	renderStage(currentStage + 1);
+	if (advanceImmediately) renderStage(currentStage + 1);
 	autoplayTimer = window.setInterval(() => renderStage(currentStage + 1), 2600);
+}
+
+function restartAutoplayInView() {
+	if (document.hidden || prefersReducedMotion.matches) return;
+	stopAutoplay();
+	renderStage(0);
+	startAutoplay(false);
 }
 
 for (const button of stageButtons) {
@@ -281,8 +291,31 @@ elements.autoplay.addEventListener("click", () => {
 	startAutoplay();
 });
 
+const autoplayObserver = new IntersectionObserver(
+	([entry]) => {
+		if (entry.intersectionRatio >= 0.45 && !autoplayInView) {
+			autoplayInView = true;
+			restartAutoplayInView();
+			return;
+		}
+
+		if (entry.intersectionRatio <= 0.2) {
+			autoplayInView = false;
+			stopAutoplay();
+		}
+	},
+	{ rootMargin: "-15% 0px -15% 0px", threshold: [0.2, 0.45] },
+);
+
+autoplayObserver.observe(elements.canvas);
+
 document.addEventListener("visibilitychange", () => {
-	if (document.hidden && autoplayTimer) stopAutoplay();
+	if (document.hidden && autoplayTimer) {
+		stopAutoplay();
+		return;
+	}
+
+	if (!document.hidden && autoplayInView) restartAutoplayInView();
 });
 
 renderStage(0, false);
