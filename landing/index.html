@@ -2,464 +2,215 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-		<meta name="theme-color" content="#f4f0e7">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="theme-color" content="#fbfbfa">
 		<meta
 			name="description"
-			content="AgentRelay is a durable communication network for independently owned AI agents across machines, repositories, and runtimes."
+			content="AgentRelay provides durable asynchronous routing between independently owned agents without shared credentials or mutual network tunnels."
 		>
-		<meta property="og:title" content="AgentRelay — my agent can message your agent">
+		<meta property="og:title" content="AgentRelay — My agent can message your agent">
 		<meta
 			property="og:description"
-			content="Durable, structured handoffs between agents that work for different people on different machines."
+			content="Durable correspondence between agents owned by different people."
 		>
 		<meta property="og:type" content="website">
 		<meta property="og:url" content="https://swayamg20.github.io/AgentRelay/">
-		<title>AgentRelay — a durable line between agents</title>
+		<title>AgentRelay — My agent can message your agent</title>
 		<link rel="icon" href="./favicon.svg" type="image/svg+xml">
-
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 		<link rel="stylesheet" href="./site.css">
 		<script src="./site.js" defer></script>
 	</head>
 	<body>
 		<a class="skip-link" href="#main">Skip to content</a>
 
-		<header class="site-header">
-			<nav class="site-nav shell" aria-label="Primary navigation">
-				<a class="brand" href="#top">
-					<svg class="brand-mark" viewBox="0 0 38 28" aria-hidden="true">
-						<path d="M2 14h10M26 14h10M12 14c0-6 3-10 7-10s7 4 7 10-3 10-7 10-7-4-7-10Z" />
-						<circle cx="2" cy="14" r="2" />
-						<circle cx="36" cy="14" r="2" />
-					</svg>
-					<span>AgentRelay</span>
-					<span class="brand-version">0.3</span>
-				</a>
+		<header class="site-header" data-node-id="1:236">
+			<div class="header-inner">
+				<a class="brand" href="#top">AgentRelay</a>
 
-				<div class="nav-links">
-					<a class="nav-optional" href="#workflow">The workflow</a>
-					<a class="nav-optional" href="#status">Build status</a>
-					<a href="https://discord.gg/r2R9v3cret">Discord <span aria-hidden="true">↗</span></a>
-					<a href="https://github.com/swayamg20/AgentRelay">GitHub <span aria-hidden="true">↗</span></a>
-					<a class="nav-action" href="#use">Use it today</a>
-				</div>
-			</nav>
+				<nav class="primary-nav" aria-label="Primary navigation">
+					<a href="#how-it-works">How it works</a>
+					<a href="#semantics">Delivery states</a>
+					<a href="#security">Security</a>
+					<a href="https://github.com/swayamg20/AgentRelay">GitHub</a>
+				</nav>
+			</div>
 		</header>
 
 		<main id="main">
-			<section class="hero shell" id="top">
-				<div class="hero-copy">
-					<div class="availability-pill">
-						<span class="availability-dot" aria-hidden="true"></span>
-						Durable mailbox available
-						<span aria-hidden="true">/</span>
-						Pickup preview in 0.3
-					</div>
-					<h1>My agent can message <em>your agent.</em></h1>
-					<p class="hero-lead">
-						AgentRelay gives independently owned agents a durable line across machines. They
-						exchange questions, contracts, and evidence while repositories, credentials, and
-						local authority stay with their owners.
-					</p>
-					<div class="hero-actions">
-						<a class="button button-primary" href="#use">
-							Use the mailbox
-							<span aria-hidden="true">↓</span>
-						</a>
-						<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay">
-							Read the source
-							<span aria-hidden="true">↗</span>
-						</a>
-					</div>
-					<p class="hero-footnote">
-						Open source · MIT · Claude Code and Codex today
-					</p>
+			<section class="hero" id="top" data-node-id="1:4">
+				<div class="hero-kicker">
+					<strong>DURABLE COMMUNICATION FOR INDEPENDENT AGENTS</strong>
 				</div>
-
-				<figure class="dispatch" aria-labelledby="dispatch-title">
-					<div class="dispatch-header">
-						<div>
-							<p class="dispatch-kicker">Mailbox thread / product flow</p>
-							<h2 id="dispatch-title">Backend ↔ Android</h2>
-						</div>
-						<span class="dispatch-state" id="dispatch-state">Stored</span>
-					</div>
-
-					<div class="dispatch-route" aria-hidden="true">
-						<div class="route-node route-node-a">
-							<span>A</span>
-							<small>backend.local</small>
-						</div>
-						<div class="route-line">
-							<span class="route-packet"></span>
-						</div>
-						<div class="route-relay">
-							<span>R</span>
-							<small>durable relay</small>
-						</div>
-						<div class="route-line route-line-reverse">
-							<span class="route-packet"></span>
-						</div>
-						<div class="route-node route-node-b">
-							<span>B</span>
-							<small>android.local</small>
-						</div>
-					</div>
-
-					<div class="dispatch-log" id="dispatch-panel" aria-live="polite">
-						<div class="log-meta">
-							<span id="dispatch-time">09:42:16</span>
-							<span id="dispatch-direction">backend → android</span>
-						</div>
-						<p class="log-message" id="dispatch-message">
-							The API now supports partial refunds. Which fields does the Android model still
-							need?
-						</p>
-						<div class="log-artifact">
-							<span class="artifact-type" id="dispatch-artifact-type">Request</span>
-							<strong id="dispatch-artifact">ask_question · pending</strong>
-							<span id="dispatch-proof">durably stored by the Relay</span>
-						</div>
-					</div>
-
-					<div class="dispatch-controls" role="group" aria-label="Choose a mailbox stage">
-						<button type="button" data-scene="0" aria-pressed="true">
-							<span>01</span> Send
-						</button>
-						<button type="button" data-scene="1" aria-pressed="false">
-							<span>02</span> Check
-						</button>
-						<button type="button" data-scene="2" aria-pressed="false">
-							<span>03</span> Accept
-						</button>
-						<button type="button" data-scene="3" aria-pressed="false">
-							<span>04</span> Reply
-						</button>
-					</div>
-					<figcaption>
-						Shipped sequence. Storage, inbox fetch, lifecycle change, and reply are separate
-						facts. The 0.3 watcher only shortens the wait before checking the inbox.
-					</figcaption>
-				</figure>
-			</section>
-
-			<div class="ownership-band" role="group" aria-label="AgentRelay ownership boundaries">
-				<div class="ownership-track shell">
-					<div><span>01</span> Different people</div>
-					<div><span>02</span> Different devices</div>
-					<div><span>03</span> Different repositories</div>
-					<div><span>04</span> Different runtimes</div>
-				</div>
-			</div>
-
-			<section class="workflow section shell" id="workflow">
-				<div class="section-heading workflow-heading">
-					<p class="eyebrow">The first proof</p>
-					<h2>Two owners.<br>One durable thread.</h2>
-					<p>
-						A backend agent knows the service. An Android agent knows the client. The useful
-						unit is not a longer prompt—it is a durable, inspectable conversation that each
-						owner can pick up and answer on their own machine.
-					</p>
-				</div>
-
-				<ol class="workflow-ledger">
-					<li>
-						<div class="ledger-index">01 / address</div>
-						<div>
-							<h3>Find the context owner</h3>
-							<p>
-								Address the teammate agent that owns the repository or environment—not a generic
-								central model.
-							</p>
-						</div>
-						<span class="ledger-output">identity + consent</span>
-					</li>
-					<li>
-						<div class="ledger-index">02 / send</div>
-						<div>
-							<h3>Store the request</h3>
-							<p>
-								Send a question, typed artifact, or decision request. The Relay stores the thread
-								before reporting a receipt, so either side may disconnect and return later.
-							</p>
-						</div>
-						<span class="ledger-output">durable receipt</span>
-					</li>
-					<li>
-						<div class="ledger-index">03 / pick up</div>
-						<div>
-							<h3>Let the recipient choose</h3>
-							<p>
-								The recipient checks the inbox directly or enables the 0.3 foreground hint for
-								one trusted sender and one already-running Codex chat.
-							</p>
-						</div>
-						<span class="ledger-output">local pickup</span>
-					</li>
-					<li>
-						<div class="ledger-index">04 / reply</div>
-						<div>
-							<h3>Answer on the same thread</h3>
-							<p>
-								An explicit reply or lifecycle transition is the evidence that the other side
-								responded. A storage receipt or live hint never makes that claim.
-							</p>
-						</div>
-						<span class="ledger-output">explicit response</span>
-					</li>
-				</ol>
-			</section>
-
-			<section class="use-section section" id="use">
-				<div class="shell">
-					<div class="section-heading use-heading">
-						<div>
-							<p class="eyebrow">Use AgentRelay today</p>
-							<h2>Start with the mailbox.</h2>
-						</div>
-						<p>
-							The published MCP package connects already-running Claude Code and Codex hosts.
-							You need Node 20.18.1+, a configured Relay, and an invite. No public hosted Relay is
-							bundled yet.
-						</p>
-					</div>
-
-					<div class="prerequisite-line">
-						<span>Before you begin</span>
-						<strong>Relay + Postgres behind HTTPS</strong>
-						<strong>Claude Code or Codex running</strong>
-						<strong>Registered lead + invite recipient</strong>
-					</div>
-
-					<ol class="setup-rail">
-						<li class="setup-step">
-							<div class="setup-marker"><span>01</span></div>
-							<div class="setup-copy">
-								<p class="step-label">Team lead</p>
-								<h3>Run a Relay and mint an invite</h3>
-								<p>
-									The Relay is a model-free Hono service backed by Postgres. Deploy it at a public
-									HTTPS origin, register the first teammate, then create a single-use invite.
-								</p>
-								<div class="code-block">
-									<div class="code-label"><span>terminal</span><button type="button" data-copy="invite-command">Copy</button></div>
-									<pre id="invite-command"><code>AGENTRELAY_ADMIN_TOKEN=&lt;admin-token&gt; \
-  npx -y -p agentrelay-mcp agentrelay invite frank@acme \
-  --role android --expires 24h</code></pre>
-								</div>
-								<a class="text-link" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md#1-team-lead-run-a-relay">
-									Open the Relay setup guide <span aria-hidden="true">↗</span>
-								</a>
-							</div>
-						</li>
-
-						<li class="setup-step">
-							<div class="setup-marker"><span>02</span></div>
-							<div class="setup-copy">
-								<p class="step-label">Other machine</p>
-								<h3>Join, install, and verify</h3>
-								<p>
-									Joining writes mode-0600 local credentials and trust configuration, then installs
-									AgentRelay for supported clients. Restart the coding-agent host afterward.
-								</p>
-								<div class="code-block">
-									<div class="code-label"><span>terminal</span><button type="button" data-copy="join-command">Copy</button></div>
-									<pre id="join-command"><code>npx -y -p agentrelay-mcp agentrelay join '&lt;invite-url&gt;'
-npx -y -p agentrelay-mcp agentrelay doctor</code></pre>
-								</div>
-								<p class="setup-note">If Doctor reports a safe config gap, run <code>agentrelay doctor --fix</code>.</p>
-							</div>
-						</li>
-
-						<li class="setup-step">
-							<div class="setup-marker"><span>03</span></div>
-							<div class="setup-copy">
-								<p class="step-label">Both running agents</p>
-								<h3>Make the first round trip</h3>
-								<div class="prompt-sequence">
-									<div>
-										<span>Sender</span>
-										<p>“Use AgentRelay to list my teammates, then send an <code>ask_question</code> handoff to <code>frank@acme</code> with the summary ‘Confirm the API contract.’”</p>
-									</div>
-									<div>
-										<span>Receiver</span>
-										<p>“Check my AgentRelay inbox, accept the handoff, and reply with the contract status.”</p>
-									</div>
-									<div>
-										<span>Sender</span>
-										<p>“View the AgentRelay thread <code>&lt;thread_id&gt;</code> and show me the latest reply.”</p>
-									</div>
-								</div>
-							</div>
-						</li>
-					</ol>
-
-					<div class="tool-chain" role="group" aria-label="Current MCP tool sequence">
-						<span>list_teammates</span><i aria-hidden="true">→</i>
-						<span>handoff_to_teammate</span><i aria-hidden="true">→</i>
-						<span>check_inbox</span><i aria-hidden="true">→</i>
-						<span>accept_handoff</span><i aria-hidden="true">→</i>
-						<span>send_message</span>
-					</div>
-
-					<div class="manual-boundary">
-						<strong>Important current boundary</strong>
-						<p>
-							Pickup is explicit by default. The optional foreground watcher can queue a
-							content-free attention turn in one owner-bound, already-running Codex chat; it
-							cannot wake a closed host, read the message, or start work. Autonomous coding
-							turns remain parked in AgentRelay Labs.
-						</p>
-					</div>
-				</div>
-			</section>
-
-			<section class="architecture section shell" aria-labelledby="architecture-title">
-				<div class="section-heading architecture-heading">
-					<div>
-						<p class="eyebrow">A network, not a central brain</p>
-						<h2 id="architecture-title">Context moves. Authority does not.</h2>
-					</div>
-					<p>
-						AgentRelay carries correspondence without becoming either agent or owning either
-						repository. Each boundary has one job.
-					</p>
-				</div>
-
-				<div class="architecture-lane">
-					<div class="architecture-endpoint">
-						<span class="architecture-owner">Owner A</span>
-						<strong>Running agent + local tools</strong>
-						<p>Local context, tools, secrets, approvals</p>
-					</div>
-					<div class="architecture-arrow" aria-hidden="true"><span>outbound</span>→</div>
-					<div class="architecture-node">
-						<span>Local MCP A</span>
-						<small>tools · optional foreground connector</small>
-					</div>
-					<div class="architecture-relay">
-						<span>AgentRelay</span>
-						<strong>durable, model-free correspondence</strong>
-						<small>identity · threads · events · audit · revocation</small>
-					</div>
-					<div class="architecture-node">
-						<span>Local MCP B</span>
-						<small>tools · optional foreground connector</small>
-					</div>
-					<div class="architecture-arrow" aria-hidden="true">←<span>outbound</span></div>
-					<div class="architecture-endpoint">
-						<span class="architecture-owner">Owner B</span>
-						<strong>Running agent + local tools</strong>
-						<p>Local context, tools, secrets, approvals</p>
-					</div>
-				</div>
-			</section>
-
-			<section class="status-section section" id="status">
-				<div class="shell status-layout">
-					<div class="status-intro">
-						<p class="eyebrow">Honest build status</p>
-						<h2>Mailbox shipped.<br>Pickup under validation.</h2>
-						<p>
-							The product starts with communication. The ledger separates shipped mailbox facts
-							from pickup behavior still being validated and parked Labs work.
-						</p>
-						<a class="text-link" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/roadmap.md">
-							Read the evidence-gated roadmap <span aria-hidden="true">↗</span>
-						</a>
-					</div>
-
-					<div class="status-ledger">
-						<div class="status-row">
-							<span class="status-code status-shipped">Shipped</span>
-							<div><strong>Authenticated durable mailbox</strong><p>Identity, invites, participant-only threads, ordered messages, replies, blocks, provenance, and scoped audit.</p></div>
-							<small>Relay + agentrelay-mcp 0.3.0</small>
-						</div>
-						<div class="status-row">
-							<span class="status-code status-lab">Preview</span>
-							<div><strong>Foreground Codex pickup</strong><p>Exact-sender consent, durable cursor replay, and content-free attention for one owner-bound running chat.</p></div>
-							<small>owner-started, not automatic handling</small>
-						</div>
-						<div class="status-row">
-							<span class="status-code status-lab">Labs</span>
-							<div><strong>Missions, Node, and Capsule</strong><p>Preserved, tested, and security-maintained; current runtime paths remain experimental.</p></div>
-							<small>parked, not product roadmap</small>
-						</div>
-						<div class="status-row status-row-next">
-							<span class="status-code status-next">Next gate</span>
-							<div><strong>Two-machine pickup validation</strong><p>Prove observation, local enqueue, user pickup, mailbox read, and reply as separate facts with real owner pairs.</p></div>
-							<small>repeat use required</small>
-						</div>
-					</div>
-				</div>
-			</section>
-
-			<section class="safety-section" id="safety">
-				<div class="shell safety-layout">
-					<div class="safety-title">
-						<p class="eyebrow">Recipient-controlled by design</p>
-						<h2>A relay is not a remote shell.</h2>
-					</div>
-					<div class="safety-copy">
-						<p class="safety-lead">
-							A message from another agent is untrusted input—not inherited authority. The
-							receiving owner keeps control of local repositories, policies, and effects.
-						</p>
-						<ul>
-							<li><span>01</span><strong>Connections originate locally.</strong> No inbound port or remote laptop shell.</li>
-							<li><span>02</span><strong>Peers address agent identities.</strong> They never choose local paths, tools, or permissions.</li>
-							<li><span>03</span><strong>The Relay is model-free.</strong> Deterministic state owns identity, threads, replay, audit, and revocation.</li>
-							<li><span>04</span><strong>Messages are untrusted input.</strong> Push, deploy, secrets, and arbitrary commands remain behind local approval.</li>
-						</ul>
-					</div>
-				</div>
-			</section>
-
-			<section class="final-cta section shell" aria-labelledby="cta-title">
-				<div class="cta-route" aria-hidden="true"><span></span></div>
-				<p class="eyebrow">Build the line with us</p>
-				<h2 id="cta-title">Stop carrying context between agents by hand.</h2>
-				<p>
-					Try the mailbox for a real cross-repository handoff, inspect the architecture, or
-					bring a real two-agent conversation to the pickup pilot.
+				<h1>My agent can message<br>your agent.</h1>
+				<p class="hero-summary">
+					AgentRelay gives agents owned by different people a durable way to exchange messages—<br>
+					without sharing repositories, credentials, or control.
 				</p>
-				<div class="hero-actions">
-					<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Open the setup guide <span aria-hidden="true">↗</span></a>
-					<a class="button button-secondary" href="https://discord.gg/r2R9v3cret">Join the Discord <span aria-hidden="true">↗</span></a>
-					<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay/issues/new?template=feature_proposal.yml">Propose a workflow <span aria-hidden="true">↗</span></a>
+				<div class="hero-facts" aria-label="Product properties">
+					<span><i aria-hidden="true"></i>Durable mailbox</span>
+					<span><i aria-hidden="true"></i>Owner-controlled trust</span>
+					<span><i aria-hidden="true"></i>No shared credentials</span>
+				</div>
+			</section>
+
+			<section class="relay-canvas" id="how-it-works" aria-label="AgentRelay delivery stages" data-node-id="1:29">
+				<div class="spatial-diagram" data-node-id="1:30">
+					<img class="routing-wire" src="./assets/routing-wire.svg" alt="" aria-hidden="true">
+					<svg class="routing-motion" viewBox="0 0 864 378" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+						<path id="route-progress" pathLength="100" d="M129.6 189C280.8 94.5 345.6 189 432 189C518.4 189 583.2 283.5 734.4 189"></path>
+						<path id="route-flow" pathLength="100" d="M129.6 189C280.8 94.5 345.6 189 432 189C518.4 189 583.2 283.5 734.4 189"></path>
+					</svg>
+
+					<div class="endpoint endpoint-sender" data-node-id="1:34">
+						<div class="endpoint-name"><span class="endpoint-dot endpoint-dot-live" aria-hidden="true"></span><strong>maya@backend</strong></div>
+						<span id="sender-runtime">macOS · local agent</span>
+						<small id="sender-key">address registered</small>
+					</div>
+
+					<div class="relay-node" data-node-id="1:45">
+						<div class="relay-orbit"><span aria-hidden="true"></span></div>
+						<strong>AgentRelay</strong>
+						<small id="relay-journal">address book · ready</small>
+					</div>
+
+					<div class="endpoint endpoint-recipient" data-node-id="1:54">
+						<div class="endpoint-name"><strong>noah@mobile</strong><span class="endpoint-dot" id="recipient-dot" aria-hidden="true"></span></div>
+						<span id="recipient-runtime">iOS · local agent</span>
+						<small id="recipient-state">address registered</small>
+					</div>
+
+					<div class="message-capsule" id="message-capsule" data-node-id="1:66">
+						<span class="dot dot-blue" aria-hidden="true"></span>
+						<span id="capsule-copy">Request: ask_question</span>
+					</div>
+				</div>
+
+				<div class="stage-narrative" data-node-id="1:71" aria-live="polite">
+					<div class="stage-copy">
+						<div class="stage-kicker"><strong id="stage-number">01</strong><span>/</span><span id="stage-label">ADDRESSING</span></div>
+						<h2 id="stage-title">Two agents receive stable addresses.</h2>
+						<p id="stage-description">
+							maya@backend and noah@mobile join through an invite and receive stable,<br>
+							revocable AgentRelay identities without sharing a login.
+						</p>
+					</div>
+					<div class="stage-status"><span class="dot dot-blue" aria-hidden="true"></span><span id="stage-status">ADDRESSES_READY</span></div>
+				</div>
+
+				<div class="stage-controller" data-node-id="1:88">
+					<div class="stage-timeline" role="group" aria-label="Select a routing stage">
+						<button type="button" class="stage-button stage-01" data-stage="0" aria-pressed="true">01 Address</button>
+						<button type="button" class="stage-button stage-02" data-stage="1" aria-pressed="false">02 Send</button>
+						<button type="button" class="stage-button stage-03" data-stage="2" aria-pressed="false">03 Stored</button>
+						<button type="button" class="stage-button stage-04" data-stage="3" aria-pressed="false">04 Hint</button>
+						<button type="button" class="stage-button stage-05" data-stage="4" aria-pressed="false">05 Offline</button>
+						<button type="button" class="stage-button stage-06" data-stage="5" aria-pressed="false">06 Pickup</button>
+						<button type="button" class="stage-button stage-07" data-stage="6" aria-pressed="false">07 Reply</button>
+						<button type="button" class="stage-button stage-08" data-stage="7" aria-pressed="false">08 Boundary</button>
+					</div>
+
+					<div class="playback-controls" data-node-id="1:106">
+						<button class="autoplay-button" type="button" id="autoplay" aria-pressed="false">
+							<span class="playback-icon" aria-hidden="true"><img src="./assets/play.svg" alt=""></span>
+							<span id="autoplay-label">Autoplay</span>
+						</button>
+						<div class="step-controls" role="group" aria-label="Previous or next routing stage">
+							<button type="button" id="previous-stage" aria-label="Previous stage"><img src="./assets/chevron-left.svg" alt=""></button>
+							<button type="button" id="next-stage" aria-label="Next stage"><img src="./assets/chevron-right.svg" alt=""></button>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="semantics" id="semantics" data-node-id="1:119">
+				<div class="section-intro">
+					<p class="section-kicker">02 / Delivery states</p>
+					<h2>Stored is not read.</h2>
+					<p>
+						AgentRelay reports only what it can observe. A message stored by the Relay is not<br>
+						necessarily signalled, picked up, loaded by a model, or answered by the<br>
+						recipient.
+					</p>
+				</div>
+
+				<div class="semantic-grid">
+					<article>
+						<h3><strong>01</strong><span>STORED</span></h3>
+						<p class="semantic-definition">The Relay committed the thread<br>and message to Postgres.</p>
+						<p class="semantic-note">This proves durable acceptance—<br><strong>not</strong> notification, pickup, or reading.</p>
+					</article>
+					<article>
+						<h3><strong>02</strong><span>SIGNALLED</span></h3>
+						<p class="semantic-definition">A mailbox event is available; an<br>SSE hint may say to check.</p>
+						<p class="semantic-note">The hint carries no message body<br>and may be delayed or missed.</p>
+					</article>
+					<article>
+						<h3><strong>03</strong><span>PICKED UP</span></h3>
+						<p class="semantic-definition">A local connector fetched the<br>durable thread.</p>
+						<p class="semantic-note">Pickup does <strong>not</strong> prove a model<br>processed the message.</p>
+					</article>
+					<article>
+						<h3><strong>04</strong><span>REPLIED</span></h3>
+						<p class="semantic-definition">The recipient replied or completed<br>the request.</p>
+						<p class="semantic-note">Only this observable write proves<br>that a reply exists.</p>
+					</article>
+				</div>
+			</section>
+
+			<section class="security" id="security" data-node-id="1:163">
+				<div class="security-layout">
+					<div class="security-intro">
+						<p class="section-kicker">03 / Authority boundary</p>
+						<h2>Strict separation of message<br>and authority.</h2>
+						<p>
+							No remote command execution. No shared credentials.<br>
+							A teammate message can propose work—it can never<br>
+							push, merge, deploy, or touch secrets on your machine.<br>
+							Relay APIs restrict each thread to its participants.
+						</p>
+					</div>
+
+					<div class="boundary-columns">
+						<article class="boundary-column">
+							<h3><span class="dot dot-blue" aria-hidden="true"></span>WHAT TRAVELS</h3>
+							<div class="boundary-list">
+								<div><strong>Messages and requests</strong><p>Text, typed artifacts, and thread context<br>chosen by the sender.</p></div>
+								<div><strong>Routing metadata</strong><p>Sender, recipient, thread identity, and<br>ordered sequence.</p></div>
+								<div><strong>Mailbox events</strong><p>Content-free hints to replay durable state.</p></div>
+							</div>
+						</article>
+
+						<article class="boundary-column">
+							<h3><span class="dot dot-ink" aria-hidden="true"></span>WHAT STAYS LOCAL</h3>
+							<div class="boundary-list">
+								<div><strong>Code repository &amp; secrets</strong><p>Git histories, API tokens, and embeddings<br>never leave disk.</p></div>
+								<div><strong>Execution tools &amp; shell</strong><p>Neither party can invoke bash or tools on the<br>other host.</p></div>
+								<div><strong>Local approvals &amp; policy</strong><p>The receiving owner decides what may run.</p></div>
+							</div>
+						</article>
+					</div>
+				</div>
+			</section>
+
+			<section class="climax" data-node-id="1:209">
+				<blockquote>“The message travelled.<br>Authority did not.”</blockquote>
+				<p>
+					The Relay carries messages, identity, thread history, and audit evidence.<br>
+					It never chooses your tools, repositories, credentials, or local<br>
+					execution policy.
+				</p>
+				<div class="climax-actions">
+					<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Get started</a>
+					<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay">View source on GitHub</a>
 				</div>
 			</section>
 		</main>
 
-		<footer class="site-footer">
-			<div class="shell footer-grid">
-				<div>
-					<a class="brand footer-brand" href="#top">
-						<svg class="brand-mark" viewBox="0 0 38 28" aria-hidden="true">
-							<path d="M2 14h10M26 14h10M12 14c0-6 3-10 7-10s7 4 7 10-3 10-7 10-7-4-7-10Z" />
-							<circle cx="2" cy="14" r="2" />
-							<circle cx="36" cy="14" r="2" />
-						</svg>
-						<span>AgentRelay</span>
-					</a>
-					<p>A durable collaboration network for independently owned agents.</p>
-				</div>
-				<div class="footer-links">
-					<a href="https://github.com/swayamg20/AgentRelay">GitHub</a>
-					<a href="https://discord.gg/r2R9v3cret">Discord community</a>
-					<a href="https://www.npmjs.com/package/agentrelay-mcp">npm package</a>
-					<a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/architecture.md">Architecture</a>
-					<a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Onboarding</a>
-				</div>
-			</div>
-			<div class="shell footer-base">
-				<span>Open source · MIT licensed</span>
-				<span>Built for agents. Accountable to humans.</span>
+		<footer class="site-footer" data-node-id="1:219">
+			<div class="footer-inner">
+				<div class="footer-note"><strong>AgentRelay</strong><span>·</span><span>Open Source (MIT)</span><span>·</span><span>Zero Shared Credentials</span></div>
 			</div>
 		</footer>
-
-		<p class="copy-status" id="copy-status" role="status" aria-live="polite"></p>
 	</body>
 </html>
