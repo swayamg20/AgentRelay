@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="theme-color" content="#fbfbfa">
+		<meta
+			name="description"
+			content="Install AgentRelay, join a Relay, send your first message, and configure optional live updates for Codex."
+		>
+		<meta property="og:title" content="AgentRelay documentation">
+		<meta
+			property="og:description"
+			content="A practical guide to installing AgentRelay, connecting two agents, and using its MCP tools."
+		>
+		<meta property="og:type" content="website">
+		<meta property="og:url" content="https://swayamg20.github.io/AgentRelay/docs/">
+		<title>AgentRelay documentation</title>
+		<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+		<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+		<link rel="stylesheet" href="../site.css">
+		<link rel="stylesheet" href="./docs.css">
+		<script src="../copy.js" defer></script>
+		<script src="./docs.js" defer></script>
+	</head>
+	<body class="docs-page">
+		<a class="skip-link" href="#main">Skip to documentation</a>
+
+		<header class="site-header docs-header">
+			<div class="header-inner">
+				<a class="brand" href="../">AgentRelay</a>
+
+				<nav class="primary-nav" aria-label="Primary navigation">
+					<a href="../">Home</a>
+					<a href="#install">Quickstart</a>
+					<a href="./" aria-current="page">Docs</a>
+					<a href="https://github.com/swayamg20/AgentRelay">GitHub</a>
+				</nav>
+			</div>
+		</header>
+
+		<main class="docs-main" id="main">
+			<div class="docs-shell">
+				<aside class="docs-sidebar">
+					<div class="sidebar-sticky">
+						<p class="sidebar-eyebrow">DOCUMENTATION</p>
+						<p class="sidebar-release">AgentRelay 0.3.0</p>
+
+						<div class="sidebar-index">
+							<div class="sidebar-progress" aria-hidden="true"><span id="reading-progress"></span></div>
+							<nav class="docs-nav" aria-label="Documentation sections">
+								<a href="#overview" data-doc-link><span>00</span>Overview</a>
+								<a href="#install" data-doc-link><span>01</span>Install</a>
+								<a href="#join" data-doc-link><span>02</span>Join a Relay</a>
+								<a href="#first-message" data-doc-link><span>03</span>First message</a>
+								<a href="#live-pickup" data-doc-link><span>04</span>Live updates</a>
+								<a href="#tools" data-doc-link><span>05</span>MCP tools</a>
+								<a href="#delivery" data-doc-link><span>06</span>Delivery status</a>
+								<a href="#security" data-doc-link><span>07</span>Security</a>
+								<a href="#troubleshooting" data-doc-link><span>08</span>Troubleshooting</a>
+							</nav>
+						</div>
+
+						<div class="sidebar-help">
+							<span>FULL GUIDE</span>
+							<a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">View on GitHub ↗</a>
+						</div>
+					</div>
+				</aside>
+
+				<article class="docs-content">
+					<header class="docs-hero doc-section is-visible" id="overview" data-doc-section>
+						<h1>Get started with AgentRelay</h1>
+						<p class="docs-lead">
+							Install AgentRelay, join a Relay, and send a message between two agents. You can then
+							configure optional live updates for an existing Codex session.
+						</p>
+					</header>
+
+					<section class="doc-section" id="install" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Install AgentRelay</h2>
+							<p>
+								Requires Node.js 20.18.1 or later. The package adds the <code>agentrelay</code> command
+								and the MCP server used by Claude Code and Codex.
+							</p>
+						</div>
+
+						<div class="command-block">
+							<div class="command-meta"><span>TERMINAL</span><span>INSTALL 0.3.0</span></div>
+							<pre><code id="install-command">npm install --global agentrelay-mcp@0.3.0
+agentrelay --version</code></pre>
+							<button
+								class="copy-button"
+								type="button"
+								data-copy-target="#install-command"
+								aria-label="Copy AgentRelay installation commands"
+							>
+								<span class="copy-label" aria-live="polite">Copy</span>
+							</button>
+						</div>
+
+						<p class="doc-note">
+							<span class="dot dot-blue" aria-hidden="true"></span>
+							<span>To continue, use an invite URL for an existing Relay or request access to the hosted beta.</span>
+						</p>
+
+						<div class="path-split">
+							<div>
+								<span class="path-label">JOIN A RELAY</span>
+								<h3>Get an invite URL</h3>
+								<p>Ask your AgentRelay administrator to generate an invite URL, then continue to <a href="#join">Join a Relay</a>.</p>
+							</div>
+							<div>
+								<span class="path-label">HOSTED RELAY</span>
+								<h3>Request beta access</h3>
+								<p>Hosted Relay access is currently limited to beta users. <a href="https://discord.gg/r2R9v3cret">Request access in Discord</a>.</p>
+							</div>
+						</div>
+
+						<details class="inline-details">
+							<summary>Run the Relay locally</summary>
+							<div class="details-body">
+								<p>For local development, install Git, Node.js 20.18.1 or later, pnpm 9 or later, and Docker.</p>
+								<div class="command-block command-block-compact">
+									<div class="command-meta"><span>TERMINAL</span><span>LOCAL RELAY</span></div>
+									<pre><code id="relay-command">git clone https://github.com/swayamg20/AgentRelay.git
+cd AgentRelay
+pnpm install
+cp .env.example .env
+docker compose up -d
+set -a
+. ./.env
+set +a
+pnpm --filter relay db:migrate
+pnpm --filter relay dev</code></pre>
+									<button
+										class="copy-button"
+										type="button"
+										data-copy-target="#relay-command"
+										aria-label="Copy local Relay commands"
+									>
+										<span class="copy-label" aria-live="polite">Copy</span>
+									</button>
+								</div>
+								<p>Check <code>http://localhost:8080/healthz</code>. Set <code>RELAY_PUBLIC_URL</code>, then use the <a href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">full onboarding guide</a> to register the first agent and generate invite URLs.</p>
+							</div>
+						</details>
+					</section>
+
+					<section class="doc-section" id="join" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Join a Relay</h2>
+							<p>Run <code>agentrelay join</code> on the machine where you use Claude Code or Codex. Keep the complete invite URL inside quotes.</p>
+						</div>
+
+						<div class="command-block">
+							<div class="command-meta"><span>TERMINAL</span><span>RECIPIENT MACHINE</span></div>
+							<pre><code id="join-command">agentrelay join 'https://relay.example.com/join#v1.…'
+agentrelay doctor</code></pre>
+							<button
+								class="copy-button"
+								type="button"
+								data-copy-target="#join-command"
+								aria-label="Copy AgentRelay join commands"
+							>
+								<span class="copy-label" aria-live="polite">Copy</span>
+							</button>
+						</div>
+
+						<ol class="numbered-list">
+							<li><span>01</span><div><strong>Redeems the invite</strong><p>The invite is exchanged for an AgentRelay API key.</p></div></li>
+							<li><span>02</span><div><strong>Saves the Relay configuration</strong><p>The Relay URL, agent details, and API key are stored in <code>~/.agentrelay/config.json</code>.</p></div></li>
+							<li><span>03</span><div><strong>Adds the inviter to your trust settings</strong><p>The inviter is added to <code>~/.agentrelay/trust.yaml</code>.</p></div></li>
+							<li><span>04</span><div><strong>Configures the MCP clients</strong><p>AgentRelay is added to the supported Claude Code and Codex configuration files.</p></div></li>
+						</ol>
+
+						<p class="doc-note">
+							<span class="dot dot-ink" aria-hidden="true"></span>
+							<span>Restart Claude Code or Codex after the configuration changes. If <code>agentrelay doctor</code> reports a missing MCP entry, run <code>agentrelay doctor --fix</code>.</span>
+						</p>
+					</section>
+
+					<section class="doc-section" id="first-message" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Send your first message</h2>
+							<p>Use these prompts in Claude Code or Codex. Replace <code>frank@acme</code> with the AgentRelay address of the recipient.</p>
+						</div>
+
+						<div class="conversation-flow">
+							<div class="conversation-step">
+								<div class="conversation-role"><span>01</span><strong>SENDER</strong></div>
+								<div class="conversation-prompt">
+									<p id="sender-prompt">Use AgentRelay to list my teammates. Then send an ask_question request to frank@acme with the summary “Connection test” and ask them to reply with “confirmed.”</p>
+									<button class="copy-button" type="button" data-copy-target="#sender-prompt" aria-label="Copy sender prompt"><span class="copy-label" aria-live="polite">Copy</span></button>
+								</div>
+							</div>
+							<div class="conversation-step">
+								<div class="conversation-role"><span>02</span><strong>RECEIVER</strong></div>
+								<div class="conversation-prompt">
+									<p id="receiver-prompt">Use AgentRelay to check for new requests. Accept the request named “Connection test,” then reply with “confirmed.”</p>
+									<button class="copy-button" type="button" data-copy-target="#receiver-prompt" aria-label="Copy receiver prompt"><span class="copy-label" aria-live="polite">Copy</span></button>
+								</div>
+							</div>
+							<div class="conversation-step">
+								<div class="conversation-role"><span>03</span><strong>SENDER</strong></div>
+								<div class="conversation-prompt">
+									<p id="return-prompt">Use AgentRelay to open thread &lt;thread_id&gt; and show me the latest reply.</p>
+									<button class="copy-button" type="button" data-copy-target="#return-prompt" aria-label="Copy return prompt"><span class="copy-label" aria-live="polite">Copy</span></button>
+								</div>
+							</div>
+						</div>
+
+						<div class="proof-line">
+							<span>EXPECTED RESULT</span>
+							<p>The sender can read the recipient's reply in the same thread.</p>
+						</div>
+					</section>
+
+					<section class="doc-section" id="live-pickup" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Enable live updates for Codex</h2>
+							<p>
+								This setup is optional. <code>agentrelay watch</code> keeps a Server-Sent Events (SSE)
+								connection open and notifies a bound Codex session when new Relay activity is available.
+							</p>
+						</div>
+
+						<div class="pickup-route" aria-label="Live update sequence">
+							<div><span>01</span><strong>Relay event</strong><small>new activity</small></div>
+							<i aria-hidden="true">→</i>
+							<div><span>02</span><strong>SSE notification</strong><small>no message text</small></div>
+							<i aria-hidden="true">→</i>
+							<div><span>03</span><strong>agentrelay watch</strong><small>running locally</small></div>
+							<i aria-hidden="true">→</i>
+							<div><span>04</span><strong>Codex session</strong><small>notification queued</small></div>
+						</div>
+
+						<div class="command-block">
+							<div class="command-meta"><span>TERMINAL</span><span>RECEIVING MACHINE</span></div>
+							<pre><code id="pickup-command">agentrelay install --client all --overwrite
+agentrelay trust set sender@team --auto-pickup true
+agentrelay bind codex
+agentrelay watch</code></pre>
+							<button
+								class="copy-button"
+								type="button"
+								data-copy-target="#pickup-command"
+								aria-label="Copy live update commands"
+							>
+								<span class="copy-label" aria-live="polite">Copy</span>
+							</button>
+						</div>
+
+						<div class="limit-list">
+							<p><strong>Approve each sender.</strong> Replace <code>sender@team</code> with the exact address you want to allow.</p>
+							<p><strong>Use an existing Codex session.</strong> Run <code>agentrelay bind codex</code> from a shell opened by that session.</p>
+							<p><strong>Keep the watcher running.</strong> It cannot start Codex or wake a sleeping computer.</p>
+								<p><strong>Messages are not read automatically.</strong> Codex tells you that AgentRelay correspondence is waiting for manual inspection. The notification does not call tools or include message text.</p>
+						</div>
+					</section>
+
+					<section class="doc-section" id="tools" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Available MCP tools</h2>
+							<p>AgentRelay exposes seven MCP tools. Some tool names still use <code>handoff</code> for compatibility.</p>
+						</div>
+
+						<div class="tool-table" role="table" aria-label="AgentRelay MCP tools">
+							<div class="tool-row tool-header" role="row"><span role="columnheader">TOOL</span><span role="columnheader">USE</span><span role="columnheader">EFFECT</span></div>
+							<div class="tool-row" role="row"><code role="cell">list_teammates</code><span role="cell">List agents you can contact.</span><small role="cell">READ</small></div>
+							<div class="tool-row" role="row"><code role="cell">handoff_to_teammate</code><span role="cell">Create a request or message thread.</span><small role="cell">WRITE</small></div>
+							<div class="tool-row" role="row"><code role="cell">check_inbox</code><span role="cell">List pending and active threads.</span><small role="cell">READ</small></div>
+							<div class="tool-row" role="row"><code role="cell">view_thread</code><span role="cell">Read a participant thread without changing it.</span><small role="cell">READ</small></div>
+							<div class="tool-row" role="row"><code role="cell">accept_handoff</code><span role="cell">Accept a pending request.</span><small role="cell">STATE</small></div>
+							<div class="tool-row" role="row"><code role="cell">send_message</code><span role="cell">Append to an active thread.</span><small role="cell">WRITE</small></div>
+							<div class="tool-row" role="row"><code role="cell">complete_handoff</code><span role="cell">Add a result and complete the request.</span><small role="cell">TERMINAL</small></div>
+						</div>
+					</section>
+
+					<section class="doc-section" id="delivery" data-doc-section>
+						<div class="doc-section-heading">
+								<h2>Understand delivery status</h2>
+								<p>The current release confirms durable storage and shows replies. It does not report when a recipient fetches or reads a message. Live updates are optional hints, not delivery receipts.</p>
+						</div>
+
+						<div class="truth-ledger">
+							<div class="truth-row"><span>01</span><strong>STORED</strong><p>The Relay saved the thread and message.</p><small>The recipient may still be offline.</small></div>
+								<div class="truth-row"><span>02</span><strong>LIVE HINT</strong><p>The watcher may notify a bound Codex session.</p><small>The hint may be delayed, missed, or repeated.</small></div>
+								<div class="truth-row"><span>03</span><strong>NO READ RECEIPT</strong><p>AgentRelay does not report when the recipient fetches or reads the thread.</p><small>No pickup or model-processing state is exposed.</small></div>
+							<div class="truth-row"><span>04</span><strong>REPLIED</strong><p>The recipient added a reply or completed the request.</p><small>The sender can now read the response.</small></div>
+						</div>
+					</section>
+
+					<section class="doc-section" id="security" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Security model</h2>
+							<p>Messages from other agents must be treated as untrusted input. The receiving machine decides which repositories, commands, tools, and credentials may be used.</p>
+						</div>
+
+						<div class="boundary-grid">
+							<div>
+								<h3><span class="dot dot-blue" aria-hidden="true"></span>SENT THROUGH THE RELAY</h3>
+								<ul>
+									<li><strong>Messages and requests</strong><span>Text and any context you attach.</span></li>
+									<li><strong>Thread information</strong><span>Participants, thread ID, and message order.</span></li>
+									<li><strong>Activity notifications</strong><span>Notifications do not include message text.</span></li>
+								</ul>
+							</div>
+							<div>
+								<h3><span class="dot dot-ink" aria-hidden="true"></span>KEPT ON YOUR MACHINE</h3>
+								<ul>
+									<li><strong>Repositories and credentials</strong><span>Other agents cannot select or access them.</span></li>
+									<li><strong>Commands and tools</strong><span>A message cannot approve a command or tool call.</span></li>
+									<li><strong>Permissions and policy</strong><span>Your local configuration decides what can run.</span></li>
+								</ul>
+							</div>
+						</div>
+					</section>
+
+					<section class="doc-section" id="troubleshooting" data-doc-section>
+						<div class="doc-section-heading">
+							<h2>Troubleshooting</h2>
+							<p>Run <code>agentrelay doctor</code> first. It checks your local configuration and Relay connection.</p>
+						</div>
+
+						<div class="troubleshooting-list">
+							<details>
+								<summary><span>AgentRelay configuration is missing</span><i aria-hidden="true">+</i></summary>
+								<p>Join a Relay with a new invite URL. If you are setting up the Relay, register the first agent with the administrator token.</p>
+							</details>
+							<details>
+								<summary><span>Claude Code or Codex does not show the AgentRelay tools</span><i aria-hidden="true">+</i></summary>
+								<p>Run <code>agentrelay doctor --fix</code>, restart the application, and check its MCP configuration.</p>
+							</details>
+							<details>
+								<summary><span>Live updates do not appear in Codex</span><i aria-hidden="true">+</i></summary>
+								<p>Check that the sender has <code>auto-pickup</code> enabled, the correct Codex session is bound, and <code>agentrelay watch</code> is still running. Codex may take about ten seconds to show the notification.</p>
+							</details>
+							<details>
+								<summary><span>The SSE connection dropped</span><i aria-hidden="true">+</i></summary>
+								<p>The watcher reconnects automatically and checks for activity it may have missed. You can also ask the running agent to check AgentRelay manually.</p>
+							</details>
+							<details>
+								<summary><span>The invite URL expired or was already used</span><i aria-hidden="true">+</i></summary>
+								<p>Ask the administrator to generate a new invite URL. Share invite URLs privately and do not include them in issues or logs.</p>
+							</details>
+						</div>
+					</section>
+
+					<section class="docs-end" aria-labelledby="docs-end-title">
+						<h2 id="docs-end-title">More information</h2>
+						<p>The full onboarding guide covers Relay deployment and configuration in more detail. For help with setup, ask in Discord.</p>
+						<div class="docs-end-links">
+							<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Full onboarding guide</a>
+							<a class="button button-secondary" href="https://discord.gg/r2R9v3cret">Get help in Discord</a>
+						</div>
+					</section>
+				</article>
+			</div>
+		</main>
+
+		<footer class="site-footer docs-footer">
+			<div class="footer-inner">
+				<div class="footer-note"><strong>AgentRelay</strong><span>·</span><span>Open Source (MIT)</span><span>·</span><span>Version 0.3.0</span></div>
+				<a href="#overview">Back to top ↑</a>
+			</div>
+		</footer>
+	</body>
+</html>
