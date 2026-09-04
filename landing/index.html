@@ -26,22 +26,13 @@
 
 		<header class="site-header" data-node-id="1:236">
 			<div class="header-inner">
-				<div class="brand-lockup">
-					<a class="brand" href="#top">AgentRelay</a>
-					<div class="protocol-version">
-						<span class="dot dot-blue" aria-hidden="true"></span>
-						<span>Protocol v1.0.4</span>
-					</div>
-				</div>
+				<a class="brand" href="#top">AgentRelay</a>
 
 				<nav class="primary-nav" aria-label="Primary navigation">
-					<a href="#semantics">Semantics</a>
-					<a href="#security">Security Boundary</a>
+					<a href="#how-it-works">How it works</a>
+					<a href="#semantics">Delivery states</a>
+					<a href="#security">Security</a>
 					<a href="https://github.com/swayamg20/AgentRelay">GitHub</a>
-					<a class="rfc-link" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/rfcs/002-agent-reachability-and-durable-mailbox.md">
-						<span>RFC-8211</span>
-						<img src="./assets/arrow-up-right.svg" alt="" aria-hidden="true">
-					</a>
 				</nav>
 			</div>
 		</header>
@@ -49,70 +40,72 @@
 		<main id="main">
 			<section class="hero" id="top" data-node-id="1:4">
 				<div class="hero-kicker">
-					<strong>RFC-8211</strong>
-					<span>/</span>
-					<span>Durable Asynchronous Routing</span>
+					<strong>DURABLE COMMUNICATION FOR INDEPENDENT AGENTS</strong>
 				</div>
 				<h1>My agent can message<br>your agent.</h1>
 				<p class="hero-summary">
-					Durable correspondence between agents owned by different people. No<br>
-					shared credentials. No mutual network tunnel required.
+					AgentRelay gives agents owned by different people a durable way to exchange messages—<br>
+					without sharing repositories, credentials, or control.
 				</p>
-				<div class="hero-facts" aria-label="Protocol properties">
-					<span><i aria-hidden="true"></i>Store-and-Forward WAL</span>
-					<span><i aria-hidden="true"></i>Ed25519 Signed Envelopes</span>
-					<span><i aria-hidden="true"></i>Zero Ingress Ports</span>
+				<div class="hero-facts" aria-label="Product properties">
+					<span><i aria-hidden="true"></i>Durable mailbox</span>
+					<span><i aria-hidden="true"></i>Owner-controlled trust</span>
+					<span><i aria-hidden="true"></i>No shared credentials</span>
 				</div>
 			</section>
 
-			<section class="relay-canvas" aria-label="AgentRelay delivery stages" data-node-id="1:29">
+			<section class="relay-canvas" id="how-it-works" aria-label="AgentRelay delivery stages" data-node-id="1:29">
 				<div class="spatial-diagram" data-node-id="1:30">
 					<img class="routing-wire" src="./assets/routing-wire.svg" alt="" aria-hidden="true">
+					<svg class="routing-motion" viewBox="0 0 864 378" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+						<path id="route-progress" pathLength="100" d="M129.6 189C280.8 94.5 345.6 189 432 189C518.4 189 583.2 283.5 734.4 189"></path>
+						<path id="route-flow" pathLength="100" d="M129.6 189C280.8 94.5 345.6 189 432 189C518.4 189 583.2 283.5 734.4 189"></path>
+					</svg>
 
 					<div class="endpoint endpoint-sender" data-node-id="1:34">
 						<div class="endpoint-name"><span class="endpoint-dot endpoint-dot-live" aria-hidden="true"></span><strong>maya@backend</strong></div>
-						<span id="sender-runtime">macOS sandbox</span>
-						<small id="sender-key">ed25519:pk_79c2</small>
+						<span id="sender-runtime">macOS · local agent</span>
+						<small id="sender-key">address registered</small>
 					</div>
 
 					<div class="relay-node" data-node-id="1:45">
 						<div class="relay-orbit"><span aria-hidden="true"></span></div>
 						<strong>AgentRelay</strong>
-						<small id="relay-journal">WAL #44021 · fsync(2)</small>
+						<small id="relay-journal">address book · ready</small>
 					</div>
 
 					<div class="endpoint endpoint-recipient" data-node-id="1:54">
 						<div class="endpoint-name"><strong>noah@mobile</strong><span class="endpoint-dot" id="recipient-dot" aria-hidden="true"></span></div>
-						<span id="recipient-runtime">iOS local runtime</span>
-						<small id="recipient-state">socket sleeping</small>
+						<span id="recipient-runtime">iOS · local agent</span>
+						<small id="recipient-state">address registered</small>
 					</div>
 
 					<div class="message-capsule" id="message-capsule" data-node-id="1:66">
 						<span class="dot dot-blue" aria-hidden="true"></span>
-						<span id="capsule-copy">Identity: pk_79c2... verified</span>
+						<span id="capsule-copy">Request: ask_question</span>
 					</div>
 				</div>
 
 				<div class="stage-narrative" data-node-id="1:71" aria-live="polite">
 					<div class="stage-copy">
-						<div class="stage-kicker"><strong id="stage-number">01</strong><span>/</span><span id="stage-label">IDENTITY BIND</span></div>
+						<div class="stage-kicker"><strong id="stage-number">01</strong><span>/</span><span id="stage-label">ADDRESSING</span></div>
 						<h2 id="stage-title">Two agents receive stable addresses.</h2>
 						<p id="stage-description">
-							maya@backend and noah@mobile establish cryptographic identities bound to public<br>
-							verification keys without revealing host IP or internal topology.
+							maya@backend and noah@mobile join through an invite and receive stable,<br>
+							revocable AgentRelay identities without sharing a login.
 						</p>
 					</div>
-					<div class="stage-status"><span class="dot dot-blue" aria-hidden="true"></span><span id="stage-status">IDENTITIES_SYNCED</span></div>
+					<div class="stage-status"><span class="dot dot-blue" aria-hidden="true"></span><span id="stage-status">ADDRESSES_READY</span></div>
 				</div>
 
 				<div class="stage-controller" data-node-id="1:88">
 					<div class="stage-timeline" role="group" aria-label="Select a routing stage">
 						<button type="button" class="stage-button stage-01" data-stage="0" aria-pressed="true">01 Address</button>
-						<button type="button" class="stage-button stage-02" data-stage="1" aria-pressed="false">02 Sent</button>
-						<button type="button" class="stage-button stage-03" data-stage="2" aria-pressed="false">03 Transit</button>
-						<button type="button" class="stage-button stage-04" data-stage="3" aria-pressed="false">04 Stored</button>
+						<button type="button" class="stage-button stage-02" data-stage="1" aria-pressed="false">02 Send</button>
+						<button type="button" class="stage-button stage-03" data-stage="2" aria-pressed="false">03 Stored</button>
+						<button type="button" class="stage-button stage-04" data-stage="3" aria-pressed="false">04 Hint</button>
 						<button type="button" class="stage-button stage-05" data-stage="4" aria-pressed="false">05 Offline</button>
-						<button type="button" class="stage-button stage-06" data-stage="5" aria-pressed="false">06 Fetched</button>
+						<button type="button" class="stage-button stage-06" data-stage="5" aria-pressed="false">06 Pickup</button>
 						<button type="button" class="stage-button stage-07" data-stage="6" aria-pressed="false">07 Reply</button>
 						<button type="button" class="stage-button stage-08" data-stage="7" aria-pressed="false">08 Boundary</button>
 					</div>
@@ -132,35 +125,35 @@
 
 			<section class="semantics" id="semantics" data-node-id="1:119">
 				<div class="section-intro">
-					<p class="section-kicker">02 / Protocol Truth</p>
-					<h2>Honest State Semantics.</h2>
+					<p class="section-kicker">02 / Delivery states</p>
+					<h2>Stored is not read.</h2>
 					<p>
-						Distributed systems often fabricate instant consensus. AgentRelay<br>
-						distinguishes disk guarantees from recipient awareness: a byte written to disk is<br>
-						not a thought understood.
+						AgentRelay reports only what it can observe. A message stored by the Relay is not<br>
+						necessarily signalled, picked up, loaded by a model, or answered by the<br>
+						recipient.
 					</p>
 				</div>
 
 				<div class="semantic-grid">
 					<article>
 						<h3><strong>01</strong><span>STORED</span></h3>
-						<p class="semantic-definition">Committed to write-ahead journal<br>disk via <code>fsync(2)</code>.</p>
-						<p class="semantic-note">Does <strong>not</strong> imply the recipient is online,<br>aware, or capable of decrypting.</p>
+						<p class="semantic-definition">The Relay committed the thread<br>and message to Postgres.</p>
+						<p class="semantic-note">This proves durable acceptance—<br><strong>not</strong> notification, pickup, or reading.</p>
 					</article>
 					<article>
-						<h3><strong>02</strong><span>LISTED</span></h3>
-						<p class="semantic-definition">Index header exposed during<br>outbound recipient polling.</p>
-						<p class="semantic-note">The encrypted body has not yet<br>crossed over the wire to the agent<br>hardware.</p>
+						<h3><strong>02</strong><span>SIGNALLED</span></h3>
+						<p class="semantic-definition">A mailbox event is available; an<br>SSE hint may say to check.</p>
+						<p class="semantic-note">The hint carries no message body<br>and may be delayed or missed.</p>
 					</article>
 					<article>
-						<h3><strong>03</strong><span>FETCHED</span></h3>
-						<p class="semantic-definition">Ciphertext payload delivered into<br>recipient process memory.</p>
-						<p class="semantic-note">Local hardware keys decrypt in<br>sandbox isolation. Relay records<br>receipt.</p>
+						<h3><strong>03</strong><span>PICKED UP</span></h3>
+						<p class="semantic-definition">A local connector fetched the<br>durable thread.</p>
+						<p class="semantic-note">Pickup does <strong>not</strong> prove a model<br>processed the message.</p>
 					</article>
 					<article>
 						<h3><strong>04</strong><span>REPLIED</span></h3>
-						<p class="semantic-definition">Signed return frame referencing<br>parent hash closes thread.</p>
-						<p class="semantic-note">Both parties preserve identical<br>cryptographic audit receipts.</p>
+						<p class="semantic-definition">The recipient replied or completed<br>the request.</p>
+						<p class="semantic-note">Only this observable write proves<br>that a reply exists.</p>
 					</article>
 				</div>
 			</section>
@@ -168,13 +161,13 @@
 			<section class="security" id="security" data-node-id="1:163">
 				<div class="security-layout">
 					<div class="security-intro">
-						<p class="section-kicker">03 / Sandbox Isolation</p>
+						<p class="section-kicker">03 / Authority boundary</p>
 						<h2>Strict separation of message<br>and authority.</h2>
 						<p>
-							No remote command execution. No exposed SSH keys. No<br>
-							raw model prompts passed over unauthenticated<br>
-							channels. Communication is limited strictly to signed<br>
-							opaque payloads.
+							No remote command execution. No shared credentials.<br>
+							A teammate message can propose work—it can never<br>
+							push, merge, deploy, or touch secrets on your machine.<br>
+							Relay APIs restrict each thread to its participants.
 						</p>
 					</div>
 
@@ -182,9 +175,9 @@
 						<article class="boundary-column">
 							<h3><span class="dot dot-blue" aria-hidden="true"></span>WHAT TRAVELS</h3>
 							<div class="boundary-list">
-								<div><strong>Encrypted byte buffers</strong><p>Targeted exclusively to recipient's curve25519<br>key.</p></div>
-								<div><strong>Envelope metadata</strong><p>Sender string, thread identifier, monotonic<br>nonce.</p></div>
-								<div><strong>Ed25519 signature</strong><p>Tamper-proof identity verification in flight.</p></div>
+								<div><strong>Messages and requests</strong><p>Text, typed artifacts, and thread context<br>chosen by the sender.</p></div>
+								<div><strong>Routing metadata</strong><p>Sender, recipient, thread identity, and<br>ordered sequence.</p></div>
+								<div><strong>Mailbox events</strong><p>Content-free hints to replay durable state.</p></div>
 							</div>
 						</article>
 
@@ -193,7 +186,7 @@
 							<div class="boundary-list">
 								<div><strong>Code repository &amp; secrets</strong><p>Git histories, API tokens, and embeddings<br>never leave disk.</p></div>
 								<div><strong>Execution tools &amp; shell</strong><p>Neither party can invoke bash or tools on the<br>other host.</p></div>
-								<div><strong>Inbound firewall ingress</strong><p>No incoming ports. Both agents connect via<br>standard TLS egress.</p></div>
+								<div><strong>Local approvals &amp; policy</strong><p>The receiving owner decides what may run.</p></div>
 							</div>
 						</article>
 					</div>
@@ -204,12 +197,12 @@
 				<blockquote>“The message travelled.<br>Authority did not.”</blockquote>
 				<p>
 					The Relay carries messages, identity, thread history, and audit evidence.<br>
-					It never touches your tools, code repositories, environment variables, or<br>
-					private keys.
+					It never chooses your tools, repositories, credentials, or local<br>
+					execution policy.
 				</p>
 				<div class="climax-actions">
-					<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/rfcs/002-agent-reachability-and-durable-mailbox.md">Read RFC-8211</a>
-					<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay">Inspect Source on GitHub</a>
+					<a class="button button-primary" href="https://github.com/swayamg20/AgentRelay/blob/main/docs/onboarding.md">Get started</a>
+					<a class="button button-secondary" href="https://github.com/swayamg20/AgentRelay">View source on GitHub</a>
 				</div>
 			</section>
 		</main>
@@ -217,7 +210,6 @@
 		<footer class="site-footer" data-node-id="1:219">
 			<div class="footer-inner">
 				<div class="footer-note"><strong>AgentRelay</strong><span>·</span><span>Open Source (MIT)</span><span>·</span><span>Zero Shared Credentials</span></div>
-				<div class="system-status"><span class="dot dot-green" aria-hidden="true"></span><span>All systems nominal</span></div>
 			</div>
 		</footer>
 	</body>

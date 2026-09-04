@@ -130,12 +130,6 @@ a {
 	padding: 0 24px;
 }
 
-.brand-lockup {
-	display: flex;
-	align-items: center;
-	gap: 24px;
-}
-
 .brand {
 	font-family: var(--sans);
 	font-size: 15px;
@@ -144,20 +138,9 @@ a {
 	line-height: 22.5px;
 }
 
-.protocol-version,
-.primary-nav,
-.rfc-link {
+.primary-nav {
 	display: flex;
 	align-items: center;
-}
-
-.protocol-version {
-	gap: 8px;
-	color: var(--muted);
-	font-family: var(--mono);
-	font-size: 12px;
-	font-weight: 400;
-	line-height: 16px;
 }
 
 .primary-nav {
@@ -169,7 +152,7 @@ a {
 	line-height: 16px;
 }
 
-.primary-nav > a:not(.rfc-link) {
+.primary-nav > a {
 	color: var(--muted);
 }
 
@@ -179,17 +162,6 @@ a {
 
 .primary-nav a:hover {
 	color: var(--ink);
-}
-
-.rfc-link {
-	gap: 3.99px;
-	font-weight: 500;
-}
-
-.rfc-link img {
-	display: block;
-	width: 7.042px;
-	height: 7.042px;
 }
 
 main {
@@ -220,6 +192,7 @@ main {
 
 .hero-kicker strong {
 	font-weight: 600;
+	letter-spacing: 0.6px;
 }
 
 .hero-kicker span {
@@ -309,6 +282,47 @@ main {
 	display: block;
 	width: 100%;
 	height: 100%;
+}
+
+.routing-motion {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	pointer-events: none;
+}
+
+#route-progress,
+#route-flow {
+	fill: none;
+	vector-effect: non-scaling-stroke;
+}
+
+#route-progress {
+	stroke: var(--blue);
+	stroke-width: 2.2px;
+	stroke-dasharray: 0 100;
+	stroke-linecap: round;
+	transition: stroke-dasharray 640ms var(--ease);
+}
+
+#route-flow {
+	opacity: 0;
+	stroke: rgba(255, 255, 255, 0.9);
+	stroke-width: 1px;
+	stroke-dasharray: 1.2 4.8;
+	stroke-linecap: round;
+}
+
+.relay-canvas.is-flowing #route-flow {
+	opacity: 0.85;
+	animation: route-drift 700ms linear infinite;
+}
+
+.relay-canvas[data-stage="07"] #route-flow {
+	animation-direction: reverse;
 }
 
 .endpoint,
@@ -401,6 +415,24 @@ main {
 	box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
 }
 
+.relay-orbit::before,
+.relay-orbit::after {
+	position: absolute;
+	inset: -1px;
+	border: 1px solid rgba(37, 99, 235, 0.42);
+	border-radius: inherit;
+	content: "";
+	opacity: 0;
+}
+
+.relay-node.is-pulsing .relay-orbit::before {
+	animation: relay-pulse 820ms var(--ease);
+}
+
+.relay-node.is-pulsing .relay-orbit::after {
+	animation: relay-pulse 820ms 90ms var(--ease);
+}
+
 .relay-orbit span {
 	width: 12px;
 	height: 12px;
@@ -450,9 +482,15 @@ main {
 	font-weight: 400;
 	letter-spacing: -0.3px;
 	line-height: 16px;
-	transform: translate3d(var(--packet-x), var(--packet-y), 0);
+	opacity: 0;
+	transform: translate3d(var(--packet-x), var(--packet-y), 0) scale(0.96);
 	transition: transform 560ms var(--ease), width 280ms var(--ease), opacity 220ms ease;
 	white-space: nowrap;
+}
+
+.message-capsule.is-visible {
+	opacity: 1;
+	transform: translate3d(var(--packet-x), var(--packet-y), 0) scale(1);
 }
 
 .message-capsule .dot {
@@ -464,7 +502,7 @@ main {
 	display: block;
 	max-width: 200px;
 	overflow: hidden;
-	text-overflow: clip;
+	text-overflow: ellipsis;
 }
 
 .stage-narrative {
@@ -643,6 +681,7 @@ main {
 }
 
 .autoplay-button {
+	position: relative;
 	display: flex;
 	width: 86.485px;
 	height: 24px;
@@ -657,6 +696,24 @@ main {
 	font-size: 12px;
 	font-weight: 400;
 	line-height: 16px;
+}
+
+.autoplay-button::after {
+	position: absolute;
+	right: 8px;
+	bottom: 0;
+	left: 8px;
+	height: 1px;
+	background: var(--blue);
+	content: "";
+	opacity: 0;
+	transform: scaleX(0);
+	transform-origin: left center;
+}
+
+.autoplay-button[aria-pressed="true"]::after {
+	opacity: 1;
+	animation: autoplay-progress 2600ms linear infinite;
 }
 
 .playback-icon {
@@ -1057,8 +1114,7 @@ main {
 	line-height: 16px;
 }
 
-.footer-note,
-.system-status {
+.footer-note {
 	display: flex;
 	align-items: center;
 }
@@ -1073,9 +1129,48 @@ main {
 	font-weight: 500;
 }
 
-.system-status {
-	gap: 8px;
-	color: var(--muted);
+
+@keyframes route-drift {
+	to {
+		stroke-dashoffset: -12;
+	}
+}
+
+@keyframes relay-pulse {
+	0% {
+		opacity: 0.5;
+		transform: scale(0.96);
+	}
+
+	100% {
+		opacity: 0;
+		transform: scale(1.42);
+	}
+}
+
+@keyframes endpoint-receive {
+	0%,
+	100% {
+		transform: scale(1);
+	}
+
+	45% {
+		transform: scale(1.6);
+	}
+}
+
+@keyframes autoplay-progress {
+	from {
+		transform: scaleX(0);
+	}
+
+	to {
+		transform: scaleX(1);
+	}
+}
+
+.endpoint-dot.is-receiving {
+	animation: endpoint-receive 640ms var(--ease);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1087,6 +1182,8 @@ main {
 	*::before,
 	*::after {
 		scroll-behavior: auto !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
 	}
 }

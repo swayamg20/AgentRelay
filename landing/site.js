@@ -1,135 +1,162 @@
 const stages = [
 	{
 		number: "01",
-		label: "IDENTITY BIND",
+		label: "ADDRESSING",
 		title: "Two agents receive stable addresses.",
 		description: [
-			"maya@backend and noah@mobile establish cryptographic identities bound to public",
-			"verification keys without revealing host IP or internal topology.",
+			"maya@backend and noah@mobile join through an invite and receive stable,",
+			"revocable AgentRelay identities without sharing a login.",
 		],
-		status: "IDENTITIES_SYNCED",
-		capsule: "Identity: pk_79c2... verified",
+		status: "ADDRESSES_READY",
+		capsule: "",
+		capsuleVisible: false,
 		packetX: 0,
 		packetY: 0,
+		progress: 0,
+		flowing: false,
 		recipientActive: false,
-		recipientState: "socket sleeping",
-		relayJournal: "WAL #44021 · fsync(2)",
+		recipientState: "address registered",
+		relayJournal: "address book · ready",
 	},
 	{
 		number: "02",
-		label: "SIGNED ENVELOPE",
-		title: "The sender seals a targeted payload.",
+		label: "REQUEST SENT",
+		title: "The sender creates a durable request.",
 		description: [
-			"maya@backend encrypts for noah@mobile, signs the envelope, and attaches a",
-			"monotonic nonce before the message leaves its local sandbox.",
+			"The Relay authenticates the sender, checks the recipient and block state,",
+			"and validates the request. Supplied idempotency keys safely collapse retries.",
 		],
-		status: "ENVELOPE_SIGNED",
-		capsule: "Envelope: msg_044... signed",
+		status: "RELAY_ACCEPTED",
+		capsule: "ask_question · new thread",
+		capsuleVisible: true,
 		packetX: 148,
 		packetY: -49,
+		progress: 45,
+		flowing: true,
 		recipientActive: false,
-		recipientState: "socket sleeping",
-		relayJournal: "WAL #44021 · awaiting",
+		recipientState: "not yet notified",
+		relayJournal: "request · validating",
 	},
 	{
 		number: "03",
-		label: "TLS TRANSIT",
-		title: "Opaque bytes cross the public network.",
+		label: "DURABLE STORE",
+		title: "The Relay commits the thread and message.",
 		description: [
-			"Only the signed envelope and routing metadata travel over standard TLS egress.",
-			"The Relay cannot inherit either agent's tools, repository, or credentials.",
+			"The new handoff, first message, and audit event are written transactionally",
+			"to Postgres. This proves storage—not pickup, processing, or reply.",
 		],
-		status: "IN_TRANSIT",
-		capsule: "Ciphertext: 1.8kb in transit",
-		packetX: 283,
-		packetY: 7,
+		status: "STORED_BY_RELAY",
+		capsule: "thread #44021 · stored",
+		capsuleVisible: true,
+		packetX: 314,
+		packetY: -70,
+		progress: 54,
+		flowing: false,
 		recipientActive: false,
-		recipientState: "socket sleeping",
-		relayJournal: "WAL #44021 · receiving",
+		recipientState: "not yet notified",
+		relayJournal: "thread #44021 · stored",
 	},
 	{
 		number: "04",
-		label: "DURABLE STORE",
-		title: "The Relay commits the envelope to disk.",
+		label: "ADVISORY SIGNAL",
+		title: "A mailbox change becomes observable.",
 		description: [
-			"A successful fsync establishes durable storage and advances the thread cursor.",
-			"It does not claim recipient pickup, processing, understanding, or reply.",
+			"A content-free SSE event can tell noah@mobile to check its mailbox. The hint",
+			"may be delayed or missed; durable database state remains the source of truth.",
 		],
-		status: "STORED_DURABLY",
-		capsule: "Receipt: WAL #44021 stored",
-		packetX: 314,
-		packetY: 8,
+		status: "MAILBOX_CHANGED",
+		capsule: "mailbox.changed · cursor 918",
+		capsuleVisible: true,
+		packetX: 420,
+		packetY: 78,
+		progress: 76,
+		flowing: true,
 		recipientActive: false,
-		recipientState: "socket sleeping",
-		relayJournal: "WAL #44021 · fsync(2)",
+		recipientState: "signal available",
+		relayJournal: "cursor 918 · available",
 	},
 	{
 		number: "05",
 		label: "RECIPIENT OFFLINE",
-		title: "Delivery waits without losing history.",
+		title: "The thread waits without losing history.",
 		description: [
-			"noah@mobile may disconnect without breaking the thread. The durable mailbox",
-			"keeps the encrypted envelope available for cursor-based replay.",
+			"noah@mobile can be disconnected when the request arrives. AgentRelay keeps",
+			"the thread available; it does not claim to wake a powered-off device.",
 		],
-		status: "QUEUED_FOR_PICKUP",
-		capsule: "Mailbox: unread envelope queued",
-		packetX: 420,
-		packetY: 47,
+		status: "WAITING_FOR_PICKUP",
+		capsule: "durable thread · waiting",
+		capsuleVisible: true,
+		packetX: 470,
+		packetY: 78,
+		progress: 86,
+		flowing: false,
 		recipientActive: false,
-		recipientState: "socket sleeping",
-		relayJournal: "WAL #44021 · retained",
+		recipientState: "offline · thread waiting",
+		relayJournal: "thread #44021 · waiting",
 	},
 	{
 		number: "06",
-		label: "RECIPIENT FETCH",
-		title: "The recipient process fetches ciphertext.",
+		label: "LOCAL PICKUP",
+		title: "A local connector fetches the thread.",
 		description: [
-			"noah@mobile reconnects, advances its durable cursor, and receives the opaque",
-			"payload. Local hardware keys and policy govern everything after pickup.",
+			"The owner or a running connector checks the inbox and views the thread. Pickup",
+			"proves local receipt—not that a model understood or acted on the message.",
 		],
-		status: "PAYLOAD_FETCHED",
-		capsule: "Fetched: msg_044 at cursor 918",
-		packetX: 600,
-		packetY: 0,
+		status: "THREAD_FETCHED",
+		capsule: "check_inbox · cursor 918",
+		capsuleVisible: true,
+		packetX: 496,
+		packetY: 78,
+		progress: 100,
+		flowing: false,
 		recipientActive: true,
-		recipientState: "cursor 918 active",
-		relayJournal: "WAL #44021 · fetched",
+		recipientState: "cursor 918 · fetched",
+		relayJournal: "cursor 918 · replayed",
 	},
 	{
 		number: "07",
-		label: "SIGNED REPLY",
-		title: "A reply closes the cryptographic loop.",
+		label: "REPLY",
+		title: "The recipient explicitly answers.",
 		description: [
-			"The return envelope references the parent hash and is stored as a new durable",
-			"event. A reply is recorded only when that signed frame actually exists.",
+			"noah@mobile appends a message or completes the request. Only that observable",
+			"write proves a reply exists; silence remains silence.",
 		],
 		status: "REPLY_STORED",
-		capsule: "Reply: parent 8f2a... signed",
+		capsule: "reply · thread #44021",
+		capsuleVisible: true,
 		packetX: 405,
-		packetY: -47,
+		packetY: 78,
+		progress: 72,
+		flowing: true,
 		recipientActive: true,
-		recipientState: "reply signed locally",
-		relayJournal: "WAL #44022 · fsync(2)",
+		recipientState: "reply appended",
+		relayJournal: "thread #44021 · updated",
 	},
 	{
 		number: "08",
 		label: "AUTHORITY BOUNDARY",
 		title: "The message travels. Authority does not.",
 		description: [
-			"The shared thread contains identity, payloads, receipts, and audit evidence.",
-			"Execution tools, secrets, repositories, and permissions remain strictly local.",
+			"A remote agent can propose work, but it cannot choose commands, repositories,",
+			"secrets, or permissions. Approval and execution remain local.",
 		],
 		status: "BOUNDARY_INTACT",
-		capsule: "Audit: message only, no authority",
-		packetX: 313,
-		packetY: 8,
+		capsule: "message only · no authority",
+		capsuleVisible: true,
+		packetX: 314,
+		packetY: -70,
+		progress: 54,
+		flowing: false,
 		recipientActive: true,
-		recipientState: "local policy intact",
-		relayJournal: "WAL #44022 · verified",
+		recipientState: "local approval intact",
+		relayJournal: "authority · local",
 	},
 ];
 
 const elements = {
+	canvas: document.querySelector(".relay-canvas"),
+	stageCopy: document.querySelector(".stage-copy"),
+	stageStatus: document.querySelector(".stage-status"),
 	number: document.querySelector("#stage-number"),
 	label: document.querySelector("#stage-label"),
 	title: document.querySelector("#stage-title"),
@@ -139,7 +166,9 @@ const elements = {
 	capsuleCopy: document.querySelector("#capsule-copy"),
 	recipientDot: document.querySelector("#recipient-dot"),
 	recipientState: document.querySelector("#recipient-state"),
+	relayNode: document.querySelector(".relay-node"),
 	relayJournal: document.querySelector("#relay-journal"),
+	routeProgress: document.querySelector("#route-progress"),
 	autoplay: document.querySelector("#autoplay"),
 	autoplayLabel: document.querySelector("#autoplay-label"),
 	previous: document.querySelector("#previous-stage"),
@@ -147,6 +176,7 @@ const elements = {
 };
 
 const stageButtons = [...document.querySelectorAll("[data-stage]")];
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let currentStage = 0;
 let autoplayTimer;
 
@@ -158,7 +188,28 @@ function setMultilineText(element, lines) {
 	});
 }
 
-function renderStage(index) {
+function animateStageDetails() {
+	if (prefersReducedMotion.matches) return;
+
+	for (const element of [elements.stageCopy, elements.stageStatus]) {
+		element.animate(
+			[
+				{ opacity: 0.25, transform: "translateY(5px)" },
+				{ opacity: 1, transform: "translateY(0)" },
+			],
+			{ duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+		);
+	}
+}
+
+function pulseNode(element, className) {
+	if (prefersReducedMotion.matches) return;
+	element.classList.remove(className);
+	void element.offsetWidth;
+	element.classList.add(className);
+}
+
+function renderStage(index, animate = true) {
 	const normalizedIndex = (index + stages.length) % stages.length;
 	const stage = stages[normalizedIndex];
 	currentStage = normalizedIndex;
@@ -171,12 +222,23 @@ function renderStage(index) {
 	elements.capsuleCopy.textContent = stage.capsule;
 	elements.capsule.style.setProperty("--packet-x", `${stage.packetX}px`);
 	elements.capsule.style.setProperty("--packet-y", `${stage.packetY}px`);
+	elements.capsule.classList.toggle("is-visible", stage.capsuleVisible);
 	elements.recipientDot.classList.toggle("endpoint-dot-live", stage.recipientActive);
 	elements.recipientState.textContent = stage.recipientState;
 	elements.relayJournal.textContent = stage.relayJournal;
+	elements.routeProgress.style.strokeDasharray = `${stage.progress} 100`;
+	elements.canvas.classList.toggle("is-flowing", stage.flowing);
+	elements.canvas.dataset.stage = stage.number;
 
 	for (const button of stageButtons) {
 		button.setAttribute("aria-pressed", String(Number(button.dataset.stage) === normalizedIndex));
+	}
+
+	if (animate) {
+		animateStageDetails();
+		pulseNode(elements.relayNode, "is-pulsing");
+		if (stage.recipientActive) pulseNode(elements.recipientDot, "is-receiving");
+		else elements.recipientDot.classList.remove("is-receiving");
 	}
 }
 
@@ -190,6 +252,7 @@ function stopAutoplay() {
 function startAutoplay() {
 	elements.autoplay.setAttribute("aria-pressed", "true");
 	elements.autoplayLabel.textContent = "Pause";
+	renderStage(currentStage + 1);
 	autoplayTimer = window.setInterval(() => renderStage(currentStage + 1), 2600);
 }
 
@@ -222,4 +285,4 @@ document.addEventListener("visibilitychange", () => {
 	if (document.hidden && autoplayTimer) stopAutoplay();
 });
 
-renderStage(0);
+renderStage(0, false);
