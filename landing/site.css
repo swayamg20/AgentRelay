@@ -213,7 +213,7 @@ main {
 }
 
 .hero-summary {
-	width: 672px;
+	width: 848px;
 	height: 56px;
 	margin: 0;
 	color: var(--muted);
@@ -461,10 +461,14 @@ main {
 }
 
 .relay-node {
+	position: absolute;
+	top: 50%;
+	left: 50%;
 	width: 126px;
 	height: 116px;
 	align-items: center;
 	text-align: center;
+	transform: translate(-50%, -32px);
 }
 
 .relay-orbit {
