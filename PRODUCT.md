@@ -16,16 +16,15 @@ Slack, email, or issue trackers, or by granting one agent access to systems it s
 own.
 
 AgentRelay provides the communication line without centralizing either agent's local
-authority. A sender can say "ask Pranjal's agent," the Relay can durably retain the
-thread, and Pranjal remains in control of when and how his side reads or answers it.
+authority. A sender can address a teammate's agent, the Relay can durably retain the
+thread, and the teammate remains in control of when and how their side reads or answers
+it.
 
 ## Who it is for
 
-The first users are developers and collaborators who each operate their own agent and
-need to exchange questions, context, proposals, or results across machines. Initial
-validation should start with real same-team pairs. Cross-organization correspondence is
-a possible later wedge because neither side can assume shared repositories, credentials,
-or orchestration infrastructure.
+The current users are developers and collaborators who each operate their own agent and
+need to exchange questions, context, proposals, or results across machines without
+assuming shared repositories, credentials, or orchestration infrastructure.
 
 ## Product doctrine
 
@@ -84,40 +83,25 @@ already-running Claude Code and Codex sessions to a team-operated Relay and expo
 tools for discovering teammates, sending a handoff, checking the inbox, accepting a
 thread, replying, inspecting it, and completing it.
 
+An optional foreground watcher can queue a fixed, content-free attention turn into one
+owner-selected Codex thread after exact-sender consent. It does not read the message,
+run tools, prove model processing, or publish a reply automatically.
+
 The repository also contains a durable Mission control plane, an experimental local
 Node, fake-runtime recovery paths, and unactivated Codex runtime libraries. These are
 valuable technical work, but they do not yet produce a real autonomous coding turn and
 do not define AgentRelay's core product.
 
-Missions remain a Labs application in the same repository. Their technical design is
-preserved by [RFC 001](docs/rfcs/001-agentrelay-node-and-missions.md); their product
-priority is superseded by
-[RFC 002](docs/rfcs/002-agent-reachability-and-durable-mailbox.md).
-
-## Near-term direction
-
-Before adding more architecture, validate the mailbox with real pairs for 30 days:
-
-1. Observe concrete cross-machine questions and replies using the shipped product.
-2. Measure setup time, successful round trips, repeat use, missed pickup, founder
-   intervention, and fallback to existing channels.
-3. Simulate availability and faster notification before building a persistent receiver.
-4. Use the existing acceptance and completion flow to test whether explicit commitment
-   states solve a real problem.
-5. Unpark autonomous execution only after repeated demand justifies its local-service,
-   policy, security, and evaluation burden.
-
-The north-star metric is **successful cross-owner agent round trips per weekly connected
-pair**. Mission count, agent turns, and orchestration depth are not product success
-metrics.
+Missions remain a Labs application in the same repository. Public RFC 001 and RFC 002
+record historical design and product decisions that explain the code and its current
+security boundaries. They do not define current shipped behavior or authorize new work.
 
 ## User language
 
 Prefer `agent`, `contact`, `message`, `request`, `thread`, `reply`, `attachment`, and
 `availability` in the core experience. `Handoff` may remain in existing APIs for
 compatibility. `Mission`, `Node`, `Capsule`, `lease`, and `fence` are Labs or internal
-terms. If autonomous execution becomes user-facing, call it an **autonomous run** and
-label it experimental until the evidence gates pass.
+terms and must not be presented as shipped mailbox behavior.
 
 ## Non-goals
 
@@ -129,9 +113,8 @@ label it experimental until the evidence gates pass.
 - Inferring local authority from a peer message.
 - Automatic push, merge, publish, or deployment.
 - Presence as covert activity monitoring.
-- A2A conformance, federation, multi-tenancy, or broad client expansion before repeated
-  use demonstrates the need.
-- Autonomous coding as the product identity before a bounded real-world evaluation.
+- Claims of A2A conformance, federation, hosted multi-tenancy, or a public agent network.
+- Autonomous coding as the current product identity.
 
 ## Communication style
 
