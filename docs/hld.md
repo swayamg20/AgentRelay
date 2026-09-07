@@ -1,11 +1,12 @@
 # High-level design: mailbox core and Labs implementation
 
-> **Scope:** Current repository implementation as of 2026-09-04.
+> **Scope:** Current repository implementation, reviewed 2026-09-07.
 > This document describes the core handoff mailbox and the same-repository Mission,
-> Node, Capsule, and Codex Labs track. Product direction and priority live in
-> [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md). The Labs target
-> remains [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md); it is not a complete
-> or activated autonomous coding runtime.
+> Node, Capsule, and Codex Labs track. Public product and sovereignty decisions are
+> recorded in [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md).
+> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) is a historical Labs decision
+> that explains preserved code; it is not a complete or activated autonomous coding
+> runtime. This document does not define a future roadmap.
 
 ## Purpose
 
@@ -544,22 +545,21 @@ section of [`architecture.md`](architecture.md).
   deliveries; immutable Mission and operation history remains for audit and recovery
   analysis.
 
-## Product direction and Labs boundary
+## Product and Labs boundary
 
 The mailbox is the core product surface. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md)
-governs its next priorities: prove that real pairs can address each other, retain
-thread context, reply asynchronously, and return to the workflow before adding
-autonomous activation. The relay database remains the source of truth; the implemented
-SSE signal improves latency but cannot stand in for durable state or a processing
-receipt.
+records its identity, consent, durable-correspondence, sovereignty, and honest-delivery
+decisions. The relay database remains the source of truth; the implemented SSE signal
+improves latency but cannot stand in for durable state or a processing receipt. The
+current connector queues content-free attention only; automatic reading, execution, and
+replying are not implemented.
 
 The relay also exposes a separate, authenticated Mission and delivery control plane
 without stretching the handoff row into a scheduler. That plane, the foreground Node,
 the fake and provider-neutral Capsules, the Codex guardian, and Linux containment are
 same-repository Labs governed by [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
-Their remaining gates include contract/artifact carriage, registered verification
+The current public pipeline lacks contract/artifact carriage, registered verification
 execution, descriptor/CLI composition of the authority checkpoint with durable
-recovery-handle storage, durable structured execution evidence, adversarial
-evaluation, Guarded Real Mission 0, installed service/cgroup containment, and a real
-two-machine execution proof. Those gates are retained research work, not the active
-product dependency order.
+recovery-handle storage, durable structured execution evidence, installed
+service/cgroup containment, and a real two-machine execution proof. These are explicit
+Labs nonclaims, not a public implementation schedule.
