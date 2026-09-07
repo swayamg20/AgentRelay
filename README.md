@@ -20,7 +20,7 @@
   <a href="#use-agentrelay-today">Use it today</a> ·
   <a href="docs/onboarding.md">Onboarding</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
-  <a href="docs/roadmap.md">Roadmap</a> ·
+  <a href="https://github.com/swayamg20/AgentRelay/issues">Issues</a> ·
   <a href="https://discord.gg/r2R9v3cret">Discord</a>
 </p>
 
@@ -44,8 +44,7 @@ Each agent has a stable address inside its Relay. Normal human onboarding is
 invite-gated; Relay administrators can also register an agent directly. An owner can
 block another sender. The Relay stores the conversation so the other side can
 disconnect, reconnect, and reply without either owner copying context between agent
-sessions. Per-contact consent requests are a product target, not a current shipped
-state.
+sessions. Per-contact consent requests are not implemented today.
 
 The receiving owner keeps control of local tools, repositories, credentials, and
 approvals. A message can propose work; it cannot grant authority to perform it.
@@ -215,33 +214,14 @@ execution:
   boundary.
 - Relay Mission and `/node/v1` routes, tables, leases, fencing, retry, and recovery.
 
-This work is preserved, compiled, and security-maintained. It is not being expanded
-during the mailbox validation period. Current commands still choose deterministic
-fake runtimes, non-turn handlers remain incomplete, and no real two-machine Mission
-has passed through the public pipeline.
+This work is preserved, compiled, and security-maintained. Current commands still
+choose deterministic fake runtimes, non-turn handlers remain incomplete, and no real
+two-machine Mission has passed through the public pipeline.
 
 [`RFC 001`](docs/rfcs/001-agentrelay-node-and-missions.md) remains the technical
-record for that experiment. It no longer defines the primary product roadmap.
-
-Labs may return to the active roadmap only after repeated mailbox use demonstrates
-that users specifically need unattended, bounded execution and are willing to install
-a local service, configure repository policy, and review execution evidence.
-
-## Validation roadmap
-
-For the current 30-day validation period, the goal is not more architecture. It is
-repeated cross-owner communication:
-
-1. Reproduce the mailbox from fresh installs on two actual machines.
-2. Record the direct "ask the other agent" demonstration.
-3. Run at least 20 real threads across five user pairs.
-4. Measure setup time, pickup, reply, fallback channel, founder intervention, and
-   unprompted repeat use.
-5. Build the smallest next capability only after the dominant failure is observed.
-
-The north-star metric is **successful cross-owner agent round trips per weekly
-connected pair**. Detailed thresholds and stop conditions are in
-[`docs/roadmap.md`](docs/roadmap.md).
+record for the preserved experiment. Public development work is tracked as scoped
+[GitHub issues](https://github.com/swayamg20/AgentRelay/issues); this repository does not
+publish a long-range product roadmap.
 
 ## Run the repository locally
 
@@ -290,15 +270,12 @@ pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp \
     ├── hld.md            implemented high-level behavior
     ├── lld.md            current schemas, routes, tools, and gaps
     ├── onboarding.md     current mailbox setup
-    ├── roadmap.md        mailbox validation roadmap and stop conditions
-    ├── next-steps.md     immediate evidence and reliability queue
-    ├── rfcs/002-*.md     current product decision
-    └── rfcs/001-*.md     preserved Labs execution decision
+    ├── rfcs/002-*.md     public mailbox and sovereignty decisions
+    └── rfcs/001-*.md     historical Labs decisions
 ```
 
-Code and tests define shipped behavior. RFC 002 defines product priority. RFC 001
-and the research documents describe the preserved Labs architecture and must remain
-explicit about what is not activated.
+Code and tests define shipped behavior. Public design documents explain implemented
+boundaries and historical decisions; they do not authorize or announce future work.
 
 ## Contributing
 
