@@ -1,11 +1,12 @@
 # Low-level design: mailbox core and Labs contracts
 
-> **Scope:** Current repository implementation as of 2026-09-01.
+> **Scope:** Current repository implementation, reviewed 2026-09-07.
 > This is a compact source-oriented reference, not a promise that planned fields or
-> routes exist. Product direction and priority live in
+> routes exist. Public product and sovereignty decisions are recorded in
 > [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md). Mission, Node,
-> Capsule, and autonomous-execution contracts are same-repository Labs whose target
-> remains [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
+> Capsule, and broad autonomous-execution contracts are same-repository Labs;
+> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) is the historical decision that
+> explains them. This document does not define a future roadmap.
 
 ## Repository layout
 
@@ -544,9 +545,9 @@ action/resource, decision, and denial code. They exclude local paths, prompts, c
 arguments, environment values, output, provider IDs, and secrets. Both monitors write
 through an injected `RuntimeAuthorityEvidenceSink`; the selected Node/Capsule path uses
 a no-op sink today, so this checkpoint does not claim durable evidence. It also does
-not provide the registered verification handler (#93), artifact flow (#94), Codex
-descriptor/activation (#98), durable evidence store (#99), or adversarial activated-
-runtime proof (#104). Detailed evidence and nonclaims are in
+not provide a registered verification handler, artifact flow, Codex descriptor
+activation, durable evidence store, or adversarial activated-runtime proof. Detailed
+evidence and nonclaims are in
 [`research/008-local-runtime-authority.md`](research/008-local-runtime-authority.md).
 
 ### Unactivated Codex Capsule, provider guardian, and teardown-reaper libraries
@@ -619,7 +620,7 @@ authority checkpoint, installed service supervisor, or real model-turn evidence.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
 service restart/upgrade/rollback, cgroup containment, and descendants that escape the
-supervised process group remain #120.
+supervised process group are not covered.
 
 ### Unactivated Linux containment library
 
@@ -655,9 +656,9 @@ binds the workspace, read/deny roots, executable/helper identities and hashes, c
 path and hash, private paths, base commit, and supplied local-policy-grant digest. The
 returned recovery handle is exactly `{ manifestPath, instanceId, bindingSha256 }`.
 `recoverCodexSandboxContainment` reopens only that manifest and binding, reruns
-identity and canary checks, and never resets or deletes the dirty checkout. Future
-Mission lifecycle wiring must durably store this exact handle before provider start;
-no descriptor or CLI does so today. macOS and other platforms fail closed, no real
+identity and canary checks, and never resets or deletes the dirty checkout. No Mission
+lifecycle, descriptor, or CLI durably stores this handle today. macOS and other
+platforms fail closed, no real
 model turn uses this boundary, and the passing Linux process job is library-level
 boundary evidence rather than activation evidence.
 
@@ -808,16 +809,16 @@ RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agen
 `pnpm -r test` includes the E2E workspace and is not the database-free unit-test
 command.
 
-## Product direction and Labs boundary
+## Product and Labs boundary
 
-The mailbox API is the core product surface. Its active direction is
-[`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md): make address, consent,
-durable send, check, read, reply, and honest state work repeatedly for real pairs.
-Do not turn the four-state handoff table into a distributed runtime scheduler, and do
-not require a Node, Mission, or Capsule for mailbox communication. The implemented
-SSE stream reduces latency, but persisted mailbox and recipient-event state remains
-authoritative. The first connector is content-free attention, not automatic reading,
-work, or answering; the generated host policy asks before content-bearing mailbox reads.
+The mailbox API is the core product surface. It provides address, consent, durable send,
+check, read, reply, and honest state. Do not turn the four-state handoff table into a
+distributed runtime scheduler, and do not require a Node, Mission, or Capsule for
+mailbox communication. The implemented SSE stream reduces latency, but persisted
+mailbox and recipient-event state remains authoritative. The first connector is
+content-free attention, not automatic reading, work, or answering; the generated host
+policy asks before content-bearing mailbox reads. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md)
+records the public mailbox, sovereignty, and truthful-evidence decisions.
 
 Nodes, credentials, workspace bindings, Missions, events, and deliveries have a
 separate public control plane and same-repository Labs model. The local Node proves
@@ -827,8 +828,8 @@ guardian/reaper add an unactivated wire/process checkpoint; the Linux containmen
 library adds an unactivated workspace boundary with exact retained recovery identity
 and a passing Linux process proof. A bound reference monitor protects only the
 persistent fake-Capsule path. [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md)
-remains the Labs target; registered verification, artifact carriage, activated
-authority composition, durable execution evidence, Guarded Real Mission 0, the
+is the historical design record for this code. Registered verification, artifact
+carriage, activated authority composition, durable execution evidence, a real
 two-machine proof, installed service/cgroup containment, witness/all-owner loss,
-escaped descendants, and restart/upgrade/rollback remain Labs gates rather than
-product priorities.
+escaped descendants, and restart/upgrade/rollback are not implemented in the current
+public pipeline. These are Labs nonclaims, not a public implementation schedule.

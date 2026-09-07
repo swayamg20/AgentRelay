@@ -195,7 +195,7 @@ Container App creation reports a Key Vault authorization error, wait a few minut
 rerun the exact same `apply` command. The resource-group suffix and any already-created
 secrets are reused.
 
-## Pilot limits and next hardening step
+## Pilot limits and production constraints
 
 The current image runs database migrations in its entrypoint and then runs the Relay
 with the PostgreSQL administrator credential. That is acceptable for this controlled

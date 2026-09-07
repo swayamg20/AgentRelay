@@ -1,11 +1,12 @@
 # High-level design: mailbox core and Labs implementation
 
-> **Scope:** Current repository implementation as of 2026-09-04.
+> **Scope:** Current repository implementation, reviewed 2026-09-07.
 > This document describes the core handoff mailbox and the same-repository Mission,
-> Node, Capsule, and Codex Labs track. Product direction and priority live in
-> [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md). The Labs target
-> remains [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md); it is not a complete
-> or activated autonomous coding runtime.
+> Node, Capsule, and Codex Labs track. Public product and sovereignty decisions are
+> recorded in [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md).
+> [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) is a historical Labs decision
+> that explains preserved code; it is not a complete or activated autonomous coding
+> runtime. This document does not define a future roadmap.
 
 ## Purpose
 
@@ -123,9 +124,9 @@ The MCP process is not persistent when its host is closed. It does not subscribe
 the relay, start model turns, manage worktrees, or apply a dynamic runtime policy.
 The optional foreground `agentrelay watch` connector is separate from MCP stdio. It
 replays opaque events, rechecks local trust, coalesces duplicate attention, and calls
-a host adapter with relay-owned event/thread identifiers. The first adapter validates
-those references but queues a constant prompt containing neither reference nor peer
-content.
+the Codex attention adapter with relay-owned event/thread identifiers. That adapter
+validates those references but queues a constant prompt containing neither reference
+nor peer content.
 
 ### CLI
 
@@ -196,8 +197,8 @@ Detailed guardian mechanics live in
 The separate Linux containment library binds an owner-controlled standalone checkout
 to an explicit Bubblewrap policy, mandatory runtime canary, and private
 `retain_for_review` manifest. Recovery requires the exact manifest path, instance ID,
-and binding digest. Future Mission lifecycle wiring must store that handle durably;
-current commands do not. Detailed mechanics live in
+and binding digest. Current commands and Mission lifecycle state do not store that
+handle. Detailed mechanics live in
 [research 006](research/006-mission-workspace-containment.md).
 
 ## Data model
@@ -451,10 +452,10 @@ They are not yet one end-to-end enforcement system:
   commands or edits happened because of a handoff.
 - Outbound AgentRelay tools are not constrained by a Mission-specific data policy.
 
-Labs autonomous execution must still wait for the Node to activate this boundary
-around a real runtime and mediate every concrete command, network, path, and side
-effect outside the model. This is not a mailbox product gate. See the security
-section of [`architecture.md`](architecture.md).
+No current Labs path activates this boundary around a real runtime or mediates every
+concrete command, network, path, and side effect outside the model. This is a Labs
+nonclaim, not a mailbox product gate. See the security section of
+[`architecture.md`](architecture.md).
 
 ## Failure behavior
 
@@ -492,7 +493,8 @@ section of [`architecture.md`](architecture.md).
   inherited lock. The Capsule independently proves absence, waits for that matching
   record, and only then releases its lock. Capsule-plus-guardian death therefore
   converges while the witness survives. Witness loss or loss of every lifecycle owner
-  fails closed; installed service/cgroup recovery and escaped descendants remain #120.
+  fails closed; installed service/cgroup recovery and escaped-descendant recovery are
+  absent.
 - The runner resolves an uncertain `turn/start` in the guardian-owned fresh generation
   by an exact client-ID and text match or a bounded durable zero-match terminal result,
   never by resending. Schema-v1 development state is not migrated to schema v2. If
@@ -544,22 +546,21 @@ section of [`architecture.md`](architecture.md).
   deliveries; immutable Mission and operation history remains for audit and recovery
   analysis.
 
-## Product direction and Labs boundary
+## Product and Labs boundary
 
 The mailbox is the core product surface. [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md)
-governs its next priorities: prove that real pairs can address each other, retain
-thread context, reply asynchronously, and return to the workflow before adding
-autonomous activation. The relay database remains the source of truth; the implemented
-SSE signal improves latency but cannot stand in for durable state or a processing
-receipt.
+records its identity, consent, durable-correspondence, sovereignty, and honest-delivery
+decisions. The relay database remains the source of truth; the implemented SSE signal
+improves latency but cannot stand in for durable state or a processing receipt. The
+current connector queues content-free attention only; automatic reading, execution, and
+replying are not implemented.
 
 The relay also exposes a separate, authenticated Mission and delivery control plane
 without stretching the handoff row into a scheduler. That plane, the foreground Node,
 the fake and provider-neutral Capsules, the Codex guardian, and Linux containment are
 same-repository Labs governed by [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md).
-Their remaining gates include contract/artifact carriage, registered verification
+The current public pipeline lacks contract/artifact carriage, registered verification
 execution, descriptor/CLI composition of the authority checkpoint with durable
-recovery-handle storage, durable structured execution evidence, adversarial
-evaluation, Guarded Real Mission 0, installed service/cgroup containment, and a real
-two-machine execution proof. Those gates are retained research work, not the active
-product dependency order.
+recovery-handle storage, durable structured execution evidence, installed
+service/cgroup containment, and a real two-machine execution proof. These are explicit
+Labs nonclaims, not a public implementation schedule.

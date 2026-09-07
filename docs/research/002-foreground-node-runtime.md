@@ -85,9 +85,9 @@ operator recovery. The later Node-ownership checkpoint replaced that lifecycle w
 permanent stable kernel-held `run.lock`: `run.owner.json` is diagnostic, and process
 death releases ownership without deleting the lock file.
 
-SQLite would add a native dependency and migration surface without improving the
-first proof. The storage interface remains separate so a later scheduler can move to
-SQLite when it needs concurrent work, indexed evidence, or larger histories.
+SQLite would add a native dependency and migration surface without improving this
+single-writer checkpoint. The current implementation uses atomic JSON and has no
+concurrent scheduler or indexed evidence store.
 
 ## Evidence
 
@@ -125,10 +125,10 @@ adapter's host state remains in memory inside the test process.
 
 For this historical checkpoint, the following were deliberate non-claims. The later
 persistent fake-Capsule checkpoint closes the host-process item. Subsequent Relay
-reconciliation closes the Mission terminal-state item, while the partial issue #97
-checkpoint adds controls for turn time, tokens, expiry, revocation, streamed output,
-and final publication on the persistent fake path. The list below describes this first
-checkpoint, not the repository's current boundary; see
+reconciliation closes the Mission terminal-state item, while the current
+reference-monitor checkpoint adds controls for turn time, tokens, expiry, revocation,
+streamed output, and final publication on the persistent fake path. The list below
+describes this first checkpoint, not the repository's current boundary; see
 [`Local runtime authority`](008-local-runtime-authority.md).
 
 This checkpoint does not yet provide:
@@ -150,15 +150,15 @@ The Node therefore remains private and experimental. The public product claim is
 durable cross-device collaboration architecture with a tested fake-runtime
 checkpoint, not autonomous coding completion.
 
-## Follow-on gate
+## Subsequent implemented checkpoints
 
-The follow-on gate moved the fake host behind a separately persistent Capsule, killed
-and restarted the Node process after host acceptance, recovered the same turn and
-event history, and published one Relay completion. The subsequent kernel-lock
+The persistent-Capsule checkpoint moved the fake host behind a separately persistent
+process, killed and restarted the Node after host acceptance, recovered the same turn
+and event history, and published one Relay completion. The subsequent kernel-lock
 checkpoint removed the original operator cleanup while preserving that Capsule proof.
 The current boundary is recorded in
-[`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md). The next
-runtime gate is the first pinned coding-agent adapter.
+[`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md). No released
+path activates a real coding-agent adapter.
 
 This decision builds on the Relay lease contract in
 [`001-delivery-lease-control-plane.md`](001-delivery-lease-control-plane.md). It is an

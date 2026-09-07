@@ -98,8 +98,8 @@ delivery persistence, exact operation replay, fenced lease recovery, and revocat
 races. They still run inside a test process without invoking a local Node. Later Node
 checkpoints prove both in-process runner reconstruction and detached fake-Capsule
 recovery after the Node is killed. Those results do not expand this experiment's
-claim. The next evidence gates are Relay-process restart and then the pinned
-real-runtime two-machine pilot. The hidden check here measures only the scripted
-fixture result and never steers Mission completion. See
+claim. This experiment does not prove Relay-process restart or real-runtime
+two-machine behavior. The hidden check here measures only the scripted fixture result
+and never steers Mission completion. See
 [`Delivery lease control plane`](../research/001-delivery-lease-control-plane.md) and
 [`Persistent Mission Capsule`](../research/003-persistent-mission-capsule.md).

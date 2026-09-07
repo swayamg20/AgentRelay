@@ -12,19 +12,21 @@ need.
 - Inspect `git status`, the relevant implementation, its callers, and nearby tests.
 - Preserve unrelated work, including untracked files and stashes.
 - Read the relevant design source:
-  - `docs/architecture.md` for current and target component boundaries.
+  - `docs/architecture.md` for current component and ownership boundaries.
   - `docs/hld.md` for the implemented mailbox and Relay control-plane flow.
   - `docs/lld.md` for current schemas, routes, tools, and known gaps.
-  - `docs/rfcs/002-agent-reachability-and-durable-mailbox.md` for current product
-    priority and validation gates.
-  - `docs/rfcs/001-agentrelay-node-and-missions.md` for the preserved Labs
-    execution architecture.
+  - `docs/rfcs/002-agent-reachability-and-durable-mailbox.md` for the public product,
+    durable-mailbox, and sovereignty decisions.
+  - `docs/rfcs/001-agentrelay-node-and-missions.md` for historical Labs decisions that
+    explain the preserved implementation.
 - Trace cross-package behavior through `protocol/`, `relay/`, `mcp-server/`, and
   `node/` as applicable. A contract is not understood until its producer and consumer
   have both been checked.
-- Treat active code and tests as current behavior. RFC 002 defines product priority;
-  RFC 001 defines the parked Labs execution target. If code and a design source
-  disagree, state the discrepancy instead of silently choosing.
+- Treat active code and tests as current behavior. Public documentation explains
+  shipped behavior and existing boundaries; it is not a long-range product roadmap.
+  Take future implementation scope only from the owner's explicit task or a currently
+  scoped public issue. If code and a design source disagree, state the discrepancy
+  instead of silently choosing.
 
 ## Implementation style
 
@@ -58,9 +60,9 @@ need.
 - MCP is a local tool and context boundary, not a portable wake-up mechanism.
 - SSE or WebSocket can reduce delivery latency, but durable database state and
   replay cursors remain the source of truth.
-- Mission, Node, Capsule, and autonomous-runtime work is a preserved Labs application,
-  not the identity or active roadmap of the product. Keep it compiling and secure,
-  but do not expand or promote it without the evidence gates in RFC 002.
+- Mission, Node, Capsule, and broad autonomous-runtime work is a preserved Labs
+  application, not the identity of the product. Keep it compiling and secure, but do
+  not expand or promote it without an explicit owner-approved task.
 - A Relay receipt means durable storage, not device pickup, agent processing, or a
   reply. Do not conflate those states in code, documentation, metrics, or UI.
 - Presence and push transports are optional hints. They do not replace durable state

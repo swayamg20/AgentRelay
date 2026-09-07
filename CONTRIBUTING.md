@@ -89,17 +89,17 @@ mcp-server/     current mailbox product adapter and agentrelay CLI
 node/           Labs Node, local policy, journal, and fake Mission Capsules
 tests/e2e/      real relay, MCP, Node, and detached-Capsule process harnesses
 landing/        static GitHub Pages site
-docs/           current design, operations, roadmap, and RFCs
+docs/           current design, operations, and public decision records
 ```
 
 The Node package is preserved AgentRelay Labs work. It currently proves one
 fake-adapter turn with durable local journaling,
 in-process runner reconstruction, and recovery from a killed Node through a detached
 Mission Capsule. The Capsule is Unix-only and still hosts a deterministic fake; the
-real-runtime Labs target remains
+historical Labs design is recorded in
 [`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md).
-Do not expand or promote that lane while the mailbox validation gate in
-[`RFC 002`](docs/rfcs/002-agent-reachability-and-durable-mailbox.md) is active.
+Do not reactivate or promote the broader Node, Mission, or Capsule lane without an
+explicit owner-approved task.
 
 ## Understand the contract first
 
@@ -107,17 +107,20 @@ Before editing, trace the behavior through its producer, consumer, schema, and t
 For cross-package work, inspect `protocol/`, `relay/`, `mcp-server/`, and `node/`
 wherever the contract crosses those boundaries.
 
-- [`docs/architecture.md`](docs/architecture.md) defines current and target boundaries.
+- [`docs/architecture.md`](docs/architecture.md) defines current component and
+  ownership boundaries.
 - [`docs/hld.md`](docs/hld.md) describes the shipped mailbox and Relay control-plane
   flow.
 - [`docs/lld.md`](docs/lld.md) lists current routes, tables, tools, and known gaps.
-- [`RFC 002`](docs/rfcs/002-agent-reachability-and-durable-mailbox.md) defines current
-  product priority and validation gates.
-- [`RFC 001`](docs/rfcs/001-agentrelay-node-and-missions.md) defines the preserved
-  Labs execution target.
+- [`RFC 002`](docs/rfcs/002-agent-reachability-and-durable-mailbox.md) records the
+  public product, durable-mailbox, and sovereignty decisions.
+- [`RFC 001`](docs/rfcs/001-agentrelay-node-and-missions.md) records historical Labs
+  decisions that explain the preserved implementation.
 
-Code and tests are the source of truth for shipped behavior. If a document disagrees,
-fix or flag the documentation; do not silently build on an imaginary contract.
+Code and tests are the source of truth for shipped behavior. Public documentation is
+not a long-range roadmap. Future work requires an explicit owner-approved task or a
+currently scoped public issue. If a document disagrees, fix or flag the documentation;
+do not silently build on an imaginary contract.
 
 ## Implementation principles
 

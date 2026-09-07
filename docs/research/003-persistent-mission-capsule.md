@@ -3,8 +3,8 @@
 - **Date:** 2026-08-03
 - **Updated:** 2026-08-17
 - **Status:** Implemented for a detached deterministic fake runtime on Unix; a real
-  coding-agent adapter and two-machine Mission remain open. A later partial issue #97
-  checkpoint adds private runtime-authority enforcement on this fake path.
+  coding-agent adapter and two-machine Mission are absent. The current fake path also
+  has private runtime-authority enforcement.
 - **Decision:** Keep Relay authority and local policy in the foreground Node, while a
   Mission-scoped Capsule owns durable host-session and turn state across Node-process
   death.
@@ -202,21 +202,20 @@ This checkpoint does not provide:
 - Mission-wide expiry/dead-letter reconciliation; or
 - a real two-machine, two-repository autonomous completion proof.
 
-The later partial issue #97 checkpoint adds bound time/token/expiry/revocation, stream,
-and final-publication enforcement to this persistent fake path. It still does not
+The current reference-monitor checkpoint adds bound time/token/expiry/revocation,
+stream, and final-publication enforcement to this persistent fake path. It does not
 provide complete command, path, network, verification, or real-runtime mediation, and
-issue #97 remains open.
+no public descriptor activates a real runtime.
 
 The fake-runtime CLI continues to reject live Node credentials. The Capsule is a
 correctness scaffold for the runtime boundary, not a production agent worker.
 
-## Next gate
+## Current unimplemented boundary
 
-Replace the fake runtime behind the same Capsule-owned recovery boundary with one
-pinned Codex app-server adapter. The adapter must preserve exact-input correlation,
-one active turn, deterministic cancellation, strict version probing, and honest usage
-reporting. Then run the first two-machine Mission with each runtime limited to its own
-repository and with no human intervention after kickoff.
+No released path replaces the fake runtime with a pinned coding-agent adapter or runs a
+real two-machine Mission. Any implementation that uses this recovery boundary would
+still need exact-input correlation, one active turn, deterministic cancellation, strict
+version probing, and honest usage reporting.
 
 This checkpoint builds on
 [`001-delivery-lease-control-plane.md`](001-delivery-lease-control-plane.md) and

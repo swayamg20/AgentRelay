@@ -8,8 +8,8 @@ you to run them separately.
 
 This page covers only the shared relay, including its logical Node/workspace,
 Mission, and delivery records. The experimental AgentRelay Node, local
-alias-to-checkout mapping, processing journal, and future coding-agent runtime
-adapters stay on each developer's machine. See [`architecture.md`](architecture.md).
+alias-to-checkout mapping, processing journal, and unactivated coding-agent libraries
+are local-machine components. See [`architecture.md`](architecture.md).
 
 This doc is a quick survey of common options. Pricing and free-tier terms change;
 verify each platform before committing. The project does not endorse any specific

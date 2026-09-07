@@ -3,8 +3,8 @@
 Executable contracts for AgentRelay's bounded two-participant Mission loop.
 
 > **Product status:** AgentRelay Labs. These contracts remain useful, tested, and
-> preserved, but autonomous Missions are not the active product roadmap during the
-> mailbox validation period. See
+> preserved, but they are not part of the released mailbox product and do not authorize
+> future feature work. See
 > [`RFC 002`](../docs/rfcs/002-agent-reachability-and-durable-mailbox.md).
 
 The package contains:
@@ -101,6 +101,6 @@ Capsule and proves recovery after Node-process death. The repository still does 
 execute production local policy, start a real model runtime, prove a two-machine
 Mission, or claim A2A conformance.
 
-Version 0.1 is the TypeScript/Zod binding used to prove the first Node. Committed
-JSON Schema and OpenAPI bindings remain required before a non-TypeScript Node or
-public A2A gateway treats this package as a language-neutral wire specification.
+Version 0.1 is a TypeScript/Zod binding used by the current Labs code. The repository
+contains no committed JSON Schema or OpenAPI binding and does not claim a
+language-neutral wire specification or public A2A gateway.

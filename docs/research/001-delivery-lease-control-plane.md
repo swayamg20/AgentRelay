@@ -93,8 +93,8 @@ a stale timestamp.
 
 `SKIP LOCKED` is deliberately not part of the claim-by-ID operation. PostgreSQL calls
 out its inconsistent view and recommends it for queue-like multi-consumer selection.
-It may become useful for a future server-side `claim-next` operation, but the first
-Node polls durable identities and then claims one exact delivery.
+The current Node polls durable identities and then claims one exact delivery; no
+server-side `claim-next` operation exists.
 
 ## Idempotency replay is not lease authority
 

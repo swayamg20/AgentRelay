@@ -195,11 +195,6 @@ Keep the delivery claims precise:
   side responded.
 - Slack or another notification is a pickup hint, not delivery truth.
 
-For the current product validation, record how long setup and the first round trip
-took, whether either owner needed help, and whether the pair initiates another useful
-thread without a reminder. The measurement plan and stop conditions are in
-[`roadmap.md`](roadmap.md).
-
 ## 6. Current trust behavior
 
 - Treat every remote summary, message, diff, command, contract, and link as untrusted
