@@ -1,6 +1,6 @@
 # RFC 001: AgentRelay Node and Missions
 
-- **Status:** Accepted as an AgentRelay Labs technical design; product priority was
+- **Status:** Historical AgentRelay Labs technical design; product priority was
   superseded by
   [`RFC 002: Agent reachability and durable mailbox`](002-agent-reachability-and-durable-mailbox.md)
   on 2026-09-01. Relay control-plane steps 1-3, the foreground Node, the
@@ -10,12 +10,13 @@
   wired only to the persistent fake-Capsule path; descriptor/CLI activation and the
   two-machine proof remain unimplemented.
 - **Date:** 2026-08-01
-- **Scope:** Two agents, two machines, two repositories, one real runtime adapter
+- **Original scope:** Two agents, two machines, two repositories, one real runtime
+  adapter
 
-This RFC remains the implementation and security record for bounded autonomous
-execution. It no longer defines AgentRelay's active product roadmap. Preserve and
-security-maintain the implemented checkpoints, but do not expand or activate this
-path until RFC 002's evidence gates are met.
+This RFC explains the implementation and security boundaries of the preserved Labs
+code. Its unimplemented sections are historical design, not a public roadmap or an
+authorization to expand or activate the path. New scope requires an explicit
+owner-approved task or a currently scoped public issue.
 
 ## Decision
 
@@ -410,94 +411,30 @@ paths and secrets do not travel in peer messages or relay-visible run summaries.
 
 ## Protocol boundary
 
-The first slice keeps the current mailbox API for compatibility and uses an internal
-AgentRelay envelope for Node delivery. It does not add an A2A gateway yet.
+The mailbox API and the internal Mission/Node delivery envelope are separate. The
+repository does not implement an A2A gateway. Internal Mission states, delivery leases,
+Node cursors, runtime grants, fencing, workspace-resource identity, and effective local
+policy are not public A2A fields or peer-selectable authority.
 
-After the Mission loop is proved, map the public surface explicitly to current A2A
-Agent Cards, Messages, Tasks, Artifacts, and task states, then run a current
-compatibility suite. Internal `awaiting_acceptance`, `verifying`, delivery leases, and
-Node cursors remain AgentRelay implementation details. Runtime grants, fencing,
-workspace-resource identity, and effective local policy also remain on the private
-Node-to-Capsule control plane; they are not A2A fields or peer-selectable authority.
+## Current implementation status
 
-## Acceptance tests
+The repository implements:
 
-The slice is complete only when all of these pass:
+- Mission, shared-contract, event, delivery, Node, workspace-binding, and run schemas
+  with deterministic state-machine tests;
+- transactional Relay event/delivery append, Node cursor polling, leases,
+  acknowledgement, retry, exact replay, revocation, and recovery discovery;
+- a foreground Node with durable local journal, repository and local-profile preflight,
+  fake runtime execution, and exact receipt replay;
+- a detached deterministic fake Capsule with recovery after Node-process loss;
+- a pinned but unactivated Codex app-server client behind a provider-neutral Capsule
+  interface;
+- a provider guardian, teardown witness, Linux containment library, and a private
+  capability monitor on the persistent fake-Capsule path; and
+- tests for several duplicate, retry, stale-fence, cancellation, shutdown, and
+  ambiguous-response boundaries.
 
-1. Two real Nodes with different repositories complete one Mission without human
-   input after kickoff.
-2. One participant starts offline; queued work runs after its Node reconnects.
-3. Duplicate polling results do not create duplicate host turns or outputs.
-4. Kill a Node before claim, after claim, and after host acceptance; leases and
-   `lookupTurn`/`recoverTurn` converge correctly.
-5. A second delivery waits while the Mission's runtime session is busy.
-6. Repository URL, base commit, or clean-state mismatch prevents host invocation and
-   produces `blocked` evidence.
-7. Attempts to change local path, sandbox, approval policy, or external-effect
-   permissions are rejected.
-8. Turn limit, deadline, cancellation, and Node revocation prevent future execution.
-9. A contract revision pauses turns and subsequent work uses only the acknowledged
-   version.
-10. Every Mission event correlates to delivery, Node, host session/turn, and audit
-    evidence; terminal Missions reject delayed output.
-11. Backend, client, shared-contract, and public user-scenario checks pass.
-
-The evaluation harness then runs one hidden end-to-end check that agents did not see.
-
-## Build order
-
-1. **Complete:** fix payload-preservation, provenance, and block-state gaps.
-2. **Complete:** add Mission, shared-contract, event, delivery, Node,
-   workspace-binding, and run schemas with state-machine tests.
-3. **Implemented at the Relay boundary:** transactional event/delivery append, Node
-   cursor polling, leases, acknowledgement, retry, exact replay, and revocation.
-   A journaled client covers runner reconstruction, and a real Relay-process restart
-   proof converges public cursor polling, recovery discovery, and exact receipt replay.
-4. **In progress:** the foreground `node/` daemon now consumes a pre-issued device
-   credential, registers logical workspaces, journals cursor/operation/session/event
-   state, enforces repository and local-profile preflight, and drives the fake adapter
-   for turn deliveries. Contract acknowledgement and registered verification
-   deliveries remain.
-5. **In progress:** duplicate polling, runner reconstruction, an injected in-process
-   failure after host acceptance, lost Relay responses, stale fences, transient
-   retry, cancellation, shutdown, local-policy denial, and paginated assignment
-   starvation are covered. A detached fake Capsule now proves exact-turn recovery
-   after the Node is killed following host acceptance. The stable kernel-held Node
-   lock permits direct restart without file deletion and refuses a stopped live
-   contender. Pre-claim/after-claim process cuts, busy-session, and full adversarial
-   coverage remain.
-6. **In progress:** the Codex `0.146.0` app-server protocol/client is pinned. The
-   unactivated provider-neutral Capsule server, schema-v2 journal, injected runner,
-   provider guardian, and Linux containment boundary prove local at-most-once
-   barriers, ambiguous-start recovery without resend, exact-input replay, redacted
-   terminal normalization, cancellation intent, and provider teardown. One private,
-   crash-safe reference-monitor grant now protects the persistent fake-Capsule path.
-   Descriptor/CLI composition with Codex, registered verification, bounded artifact
-   carriage, durable evidence, adversarial evaluation, and a real model turn remain.
-7. Run the two-machine backend-and-client pilot and compare it with one strong
-   baseline using the same starting commits and budget.
-8. Decide whether to continue before adding SSE, Claude, A2A interoperability, or
-   broader product surfaces.
-
-## Stop/go gate
-
-Primary success is strict integrated completion with no human intervention after
-kickoff and no forbidden effect. Also record wall time, tokens, turns, clarification
-loops, contract revisions, replay behavior, and policy denials.
-
-Continue only if structured collaboration improves integrated completion or preserves
-a valuable repository-ownership boundary at an acceptable coordination cost. Stop or
-reshape if agents need pickup nudges, regularly finish with incompatible contracts,
-fail recovery, or introduce unauthorized writes, secret disclosure, or capability
-escalation.
-
-## Explicitly deferred
-
-- Automatic worktree creation and cleanup.
-- SSE/WebSocket live signaling.
-- Claude and other runtime adapters.
-- A2A gateway and public Agent Cards.
-- Multiple eligible Nodes, dynamic routing, group Missions, and parallel actors.
-- External artifact links and unrestricted fetch.
-- Auto-push, PR creation, merge, deploy, publish, and production access.
-- Relay-blind encryption, federation, multi-tenancy, billing, and desktop UI.
+The current public pipeline does not execute a real model through a Mission, complete a
+real two-machine Mission, expose a Claude adapter or A2A gateway, mediate every concrete
+side effect, or provide automatic push, merge, deployment, publication, or production
+access. These are current nonclaims, not a published implementation schedule.
