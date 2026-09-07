@@ -85,9 +85,9 @@ operator recovery. The later Node-ownership checkpoint replaced that lifecycle w
 permanent stable kernel-held `run.lock`: `run.owner.json` is diagnostic, and process
 death releases ownership without deleting the lock file.
 
-SQLite would add a native dependency and migration surface without improving the
-first proof. The storage interface remains separate so a later scheduler can move to
-SQLite when it needs concurrent work, indexed evidence, or larger histories.
+SQLite would add a native dependency and migration surface without improving this
+single-writer checkpoint. The current implementation uses atomic JSON and has no
+concurrent scheduler or indexed evidence store.
 
 ## Evidence
 
@@ -125,10 +125,10 @@ adapter's host state remains in memory inside the test process.
 
 For this historical checkpoint, the following were deliberate non-claims. The later
 persistent fake-Capsule checkpoint closes the host-process item. Subsequent Relay
-reconciliation closes the Mission terminal-state item, while the partial issue #97
-checkpoint adds controls for turn time, tokens, expiry, revocation, streamed output,
-and final publication on the persistent fake path. The list below describes this first
-checkpoint, not the repository's current boundary; see
+reconciliation closes the Mission terminal-state item, while the current
+reference-monitor checkpoint adds controls for turn time, tokens, expiry, revocation,
+streamed output, and final publication on the persistent fake path. The list below
+describes this first checkpoint, not the repository's current boundary; see
 [`Local runtime authority`](008-local-runtime-authority.md).
 
 This checkpoint does not yet provide:

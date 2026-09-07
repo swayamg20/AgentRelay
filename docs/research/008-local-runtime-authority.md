@@ -20,11 +20,9 @@ guards runtime lifecycle and streamed events. The Node monitor guards the final 
 completion request and supplies a continuous abort signal to that effect. A peer or
 model cannot create, widen, renew, or override either monitor.
 
-This implements the reference-monitor portion of issue #97 as an unactivated
-checkpoint. The currently selected runtime is still deterministic fake code. Issue
-#98 owns the descriptor and CLI composition that must carry the same authority into
-the guarded Codex and Linux containment path before a real model turn can run; the
-broader #97 acceptance boundary remains open across the linked follow-up issues.
+This is an unactivated reference-monitor checkpoint. The currently selected runtime is
+still deterministic fake code, and the descriptor and CLI do not compose this
+authority with the guarded Codex and Linux containment path. No real model turn runs.
 
 ## Private boundary
 
@@ -48,9 +46,9 @@ Relay delivery + lease/fence          trusted local Node inputs
 
 The grant and its install/renew/assert/revoke methods are a private Node-to-Capsule
 control plane. They are not exposed through peer messages, MCP tools, the public
-Relay API, or the future A2A surface. A2A remains the public interoperability boundary
-for agent, task, message, and artifact semantics. Mission leases, fencing, local
-workspace identity, policy digests, and effect authority remain AgentRelay-private.
+Relay API, or an A2A-conformant surface. The current JSON-RPC route does not claim A2A
+conformance. Mission leases, fencing, local workspace identity, policy digests, and
+effect authority remain AgentRelay-private.
 
 ## Grant derivation
 
@@ -114,12 +112,10 @@ write or verification execution.
 
 The local policy module can resolve a registered verification command ID to a frozen,
 shell-free executable/argv/cwd/timeout/environment descriptor. That resolver does not
-execute the command and no delivery handler calls it yet. Issue #93 owns the handler
-and the process boundary that must consume the authority signal and terminate the
-whole command process group on loss. Before activation, that work must also resolve a
-canonical absolute executable, reject unsafe or relative `PATH` entries, and bind the
-resolved executable identity into the accepted local authority rather than trusting a
-bare command name across restarts.
+execute the command and no delivery handler calls it. The current path also lacks a
+signal-aware command process boundary, canonical grant-bound executable identity, and
+unsafe or relative `PATH` rejection. A bare command name therefore carries no durable
+execution authority across restarts.
 
 ## Crash-safe grant and renewal
 
@@ -223,8 +219,7 @@ reduced to an `unknown` action/resource instead of being copied into evidence.
 Evidence emission is a fail-closed pre-effect boundary: an injected sink must accept
 an allow record before the effect starts. Denial-record failures do not replace the
 original denial. The selected Node and Capsule use no-op sinks today, so the
-implementation does not claim durable local authority evidence. Issue #99 owns that
-store and its retention/export contract.
+implementation does not claim durable local authority evidence, retention, or export.
 
 ## Failure matrix
 
@@ -266,19 +261,13 @@ not run. It still executes no model turn: this is process-boundary evidence, not
 of a model generating an attack or a production descriptor carrying authority into a
 real turn.
 
-## Current unimplemented activation boundary
+## Current activation state
 
-- **#93:** registered verification delivery/handler, canonical grant-bound executable
-  identity, and signal-aware process-group execution.
-- **#94:** bounded, provenance-preserving Mission artifact carriage.
-- **#98:** explicit Codex descriptor/CLI activation plus durable exact containment
-  recovery-handle storage.
-- **#99:** durable local authority, command, edit, test, and permission evidence.
-- **#104:** adversarial evaluation of the activated runtime, including attempts to
-  widen path, command, sandbox, permission, credential, and network authority.
-- **#120:** installed service/cgroup supervision and recovery when all local lifecycle
-  owners are lost.
+The public runtime path has no registered verification handler, bounded Mission
+artifact carriage, Codex descriptor selection, durable containment recovery-handle
+storage, complete local effect evidence, activated-runtime adversarial proof, or
+service-level process supervision. The reference monitor is wired only to the
+persistent fake-Capsule path.
 
-Until #98 and the later gates pass, describe #97 as a private reference-monitor
-checkpoint on the persistent fake-Capsule path, not an autonomous Mission runtime or
+This is a private reference-monitor checkpoint, not an autonomous Mission runtime or
 an official A2A enforcement mechanism.

@@ -100,10 +100,10 @@ The absolute deadline is part of initialization, so `ready` also acknowledges th
 both the guardian and surviving witness watchdogs are armed. Capsule heartbeats are
 forwarded to the witness; the witness therefore retains deadline and heartbeat
 authority if the guardian or Capsule disappears. A local `AbortSignal` can revoke a
-generation without a runner calling `terminate` directly. The issue #97 checkpoint
-now derives a private, fenced signal from verified Relay and local inputs on the
-persistent fake-Capsule path. Issue #98 must compose that same signal with this
-guardian and the retained Linux containment instance. See
+generation without a runner calling `terminate` directly. The current reference-monitor
+checkpoint derives a private, fenced signal from verified Relay and local inputs on the
+persistent fake-Capsule path. That signal is not composed with this guardian or the
+retained Linux containment instance. See
 [`Local runtime authority`](008-local-runtime-authority.md).
 
 ## Recovery behavior
@@ -146,8 +146,8 @@ a zombie-only group; the witness treats that as present but unsignalable, retain
 lock, and keeps polling instead of either inventing quiescence or failing permanently.
 
 The final row is intentionally not inferred from PIDs. Installed service/cgroup
-containment, restart/upgrade/rollback behavior, and descendants that escape the
-supervised process group remain issue #120.
+containment, restart/upgrade/rollback behavior, and escaped-descendant recovery are not
+implemented.
 
 ## Evidence
 
@@ -177,14 +177,11 @@ The database-free test suite covers:
 The process tests run on supported Node versions on Linux and macOS. The Linux-only
 guardian-death, joint-owner-death, and Bubblewrap proofs run in the containment job.
 
-## Current unimplemented activation boundary
+## Current activation state
 
-- **#98:** select the Codex descriptor in the Capsule/Node CLI, persist the exact
-  containment recovery handle before provider start, carry the private #97 authority
-  signal into this guardian, and run Guarded Real Mission 0.
-- **#120:** install the Node as an OS-supervised service, add cgroup/process containment,
-  and close witness/all-owner loss, escaped-descendant, restart, upgrade, and rollback
-  behavior.
+The public Capsule and Node CLI do not select this guardian with the Codex descriptor,
+persist a containment recovery handle, or carry runtime authority into a real turn.
+The Node is not installed as an OS-supervised service, and cgroup ownership plus
+all-owner-loss recovery are absent.
 
-Until those gates pass, describe this as a guardian library and process proof, not an
-autonomous Mission runtime.
+This is a guardian library and process proof, not an autonomous Mission runtime.

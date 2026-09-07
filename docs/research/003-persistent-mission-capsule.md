@@ -3,8 +3,8 @@
 - **Date:** 2026-08-03
 - **Updated:** 2026-08-17
 - **Status:** Implemented for a detached deterministic fake runtime on Unix; a real
-  coding-agent adapter and two-machine Mission remain open. A later partial issue #97
-  checkpoint adds private runtime-authority enforcement on this fake path.
+  coding-agent adapter and two-machine Mission are absent. The current fake path also
+  has private runtime-authority enforcement.
 - **Decision:** Keep Relay authority and local policy in the foreground Node, while a
   Mission-scoped Capsule owns durable host-session and turn state across Node-process
   death.
@@ -202,10 +202,10 @@ This checkpoint does not provide:
 - Mission-wide expiry/dead-letter reconciliation; or
 - a real two-machine, two-repository autonomous completion proof.
 
-The later partial issue #97 checkpoint adds bound time/token/expiry/revocation, stream,
-and final-publication enforcement to this persistent fake path. It still does not
+The current reference-monitor checkpoint adds bound time/token/expiry/revocation,
+stream, and final-publication enforcement to this persistent fake path. It does not
 provide complete command, path, network, verification, or real-runtime mediation, and
-issue #97 remains open.
+no public descriptor activates a real runtime.
 
 The fake-runtime CLI continues to reject live Node credentials. The Capsule is a
 correctness scaffold for the runtime boundary, not a production agent worker.

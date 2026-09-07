@@ -2,7 +2,7 @@
 
 - **Date:** 2026-08-03
 - **Status:** Implemented and tested as an unactivated Node library checkpoint; the
-  later provider guardian is recorded in
+  provider guardian is recorded in
   [`007-codex-provider-guardian.md`](007-codex-provider-guardian.md).
 - **Runtime under test:** Codex app-server `0.146.0`, read-only policy.
 - **Scope:** Capsule runtime injection, schema-v2 logical turns, exact start recovery,
@@ -13,8 +13,8 @@
 The persistent Capsule wire is no longer coupled to `FakeCapsuleStore`. A
 provider-neutral server accepts a locally constructed runtime, and the existing fake
 Capsule command reaches its old behavior through a compatibility wrapper. At this
-checkpoint, the wire, descriptor, and CLI contract did not change. The later partial
-issue #97 checkpoint adds private authority frames only to the selected fake-Capsule
+checkpoint, the wire, descriptor, and CLI contract did not change. The current
+reference-monitor checkpoint adds private authority frames only to the selected fake-Capsule
 path; the descriptor and CLI still do not activate Codex.
 
 An injected `CodexCapsuleRunner` now implements the runtime boundary and is exercised
@@ -175,7 +175,7 @@ This historical checkpoint did not provide:
 
 - production descriptor, runtime-factory, Node, or Capsule CLI wiring;
 - a real Codex model turn or two-machine Mission;
-- provider-generation ownership; research 007 records the later guardian plus detached
+- provider-generation ownership; research 007 records the guardian plus detached
   reaper, heartbeat, deadline/revocation, owner-death, and teardown proof;
 - OS-enforced workspace/read-root or secret containment in this runner checkpoint;
 - deadline and revocation race evidence for a real provider process;

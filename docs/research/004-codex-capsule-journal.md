@@ -66,7 +66,7 @@ Turn phases:
 | Phase | Durable facts |
 | --- | --- |
 | `prepared` | Exact `StartTurnInput`, canonical digest, stable local turn ID and `accepted` event, exact prompt/schema, hashes, and deterministic `clientUserMessageId` |
-| `start_maybe_sent` | The at-most-once barrier was persisted before a future provider call |
+| `start_maybe_sent` | The at-most-once barrier was persisted before a possible provider call |
 | `accepted` | Provider turn ID is durably bound to the already accepted logical turn |
 | `cancelling` | Local cancellation and interrupt-send barriers are durable |
 | `terminal` | Usage or explicit unavailability precedes one bounded terminal event |
@@ -149,24 +149,19 @@ model turn.
 The full Node suite remains the regression gate. An opt-in isolated live test proves the
 installed `0.146.0` app-server handshake; it does not execute a Mission turn.
 
-## Current unimplemented activation boundary
+## Current activation state
 
 The provider-generation guardian, detached teardown reaper, and their revocation,
-deadline, liveness, and teardown race proofs are now implemented in research 007. Do
-not wire this checkpoint to a real delivery until the remaining gates are true:
+deadline, liveness, and teardown race proofs are implemented as recorded in research
+007. The journal and runner remain disconnected from real Relay delivery and from the
+public Node and Capsule CLI.
 
-- the Linux containment library is composed into the selected descriptor/CLI path,
-  and the Mission lifecycle durably stores its exact recovery handle before provider
-  start;
-- a locally selected descriptor/runtime factory activates Codex without exposing Relay
-  or Node credentials;
-- the missing contract-acknowledgement and registered verification delivery handlers
-  exist for dispositions that depend on them;
-- bounded Mission artifacts, local capability enforcement, structured dispositions,
-  and execution evidence are implemented; and
-- Guarded Real Mission 0 passes before the two-machine Mission proof begins.
+The current public pipeline has no composed Codex descriptor, durable containment
+recovery handle in the Mission lifecycle, contract-acknowledgement handler, registered
+verification handler, bounded Mission artifact carriage, or complete execution-evidence
+path. Its tests execute no model turn and prove no two-machine Mission.
 
-The Linux containment process proof passes. Contract and artifact carriage,
-capability/descriptor composition, and a guarded real Mission remain unimplemented in
-the public pipeline. Research 005 records the injected runner, research 006 records
-containment, and research 007 records the guardian's current boundary.
+Research 005 records the injected runner, research 006 records the standalone Linux
+containment evidence, and research 007 records the guardian library boundary. These
+documents describe implemented checkpoints and current absences, not an activation
+sequence.
