@@ -1,11 +1,12 @@
 # Architecture
 
-> **Status:** Canonical system overview as of 2026-09-04.
+> **Status:** Canonical system overview as of 2026-09-07.
 > Current implementation details live in [`hld.md`](hld.md) and
-> [`lld.md`](lld.md). Product direction and priority live in
-> [`RFC 002: Agent reachability and durable mailbox`](rfcs/002-agent-reachability-and-durable-mailbox.md).
+> [`lld.md`](lld.md).
+> [`RFC 002: Agent reachability and durable mailbox`](rfcs/002-agent-reachability-and-durable-mailbox.md)
+> records the public product and sovereignty decisions.
 > Mission, Node, Capsule, and autonomous-execution work is a same-repository Labs
-> track whose target remains
+> track whose historical design is recorded in
 > [`RFC 001: AgentRelay Node and Missions`](rfcs/001-agentrelay-node-and-missions.md).
 > Its shipped lease design is recorded in
 > [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md). The
@@ -43,7 +44,7 @@ Best-effort notification and the live stream remain hints.
 
 Missions and autonomous repository execution are one possible application of this
 communication network. They remain valuable engineering research, but they are not
-the identity, prerequisite, or active product roadmap of AgentRelay.
+the identity, prerequisite, or released product behavior of AgentRelay.
 
 ## Current implementation
 
@@ -222,11 +223,11 @@ are A2A-inspired, but current A2A conformance is not claimed. A future standards
 federation layer must preserve the same durable-thread and consent semantics rather
 than replace them with an online-only signal.
 
-## Labs target: Missions and local execution
+## Labs implementation and design boundary
 
-The following architecture remains the target of the same-repository Labs track in
-[`RFC 001`](rfcs/001-agentrelay-node-and-missions.md). It is not a prerequisite for
-the mailbox product or the active product roadmap.
+The following diagram explains the experimental Mission and Node packages preserved in
+this repository. [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md) is their
+historical design record. This is not a commitment to activate or expand them.
 
 ```text
 Machine A                                              Machine B
@@ -288,14 +289,12 @@ The Node checkpoints the validated `StartTurnInput` before host lookup/start and
 reuses that object after restart, even if newer peer state exists. An adapter must
 reject recovery when the durable turn and this journaled input differ.
 
-RFC 001 proposes Codex app-server over local stdio or a Unix socket as the first
-adapter, with Claude later through its Agent SDK or headless CLI. Experimental remote
-transports are not part of the correctness boundary.
-
-The Codex adapter library now implements this interface behind the provider-neutral
-Capsule server. Its child environment is allowlisted, and its home is derived locally
-beneath the Capsule and revalidated as canonical, current-user-owned, and exactly mode
-0700. `CodexProviderGuardian.openGeneration()` atomically owns the kernel lock,
+The Codex adapter library implements this interface behind the provider-neutral Capsule
+server, but the current descriptor and CLI still select the deterministic fake. No
+Claude adapter is implemented. The Codex child environment is allowlisted, and its home
+is derived locally beneath the Capsule and revalidated as canonical,
+current-user-owned, and exactly mode 0700. `CodexProviderGuardian.openGeneration()`
+atomically owns the kernel lock,
 durable generation barrier, provider spawn, Capsule-owner heartbeat, deadline,
 revocation, and process-group teardown. A runner receives that owned generation only
 after the guardian has armed a detached teardown witness, written the barrier, and
@@ -303,9 +302,9 @@ started the provider.
 
 The separate Node-owned containment library can wrap both the pinned Codex version
 probe and app-server spawn on Linux. Its returned recovery handle is local authority,
-not Relay evidence: future lifecycle wiring must durably store the manifest path,
-instance ID, and binding digest before it can rely on crash recovery. The current
-Capsule descriptor and CLI never construct this composition.
+not Relay evidence. No current lifecycle durably stores the manifest path, instance ID,
+and binding digest, so crash recovery cannot rely on that composition. The current
+Capsule descriptor and CLI never construct it.
 
 ## Why mailbox storage, protocols, push, and activation stay separate
 
@@ -318,10 +317,10 @@ Capsule descriptor and CLI never construct this composition.
   semantics. It still does not launch a process on an offline developer machine or
   define the local sandbox.
 - **SSE** now signals that recipient state may have changed. It is one-way because
-  the connector sends no command or acknowledgement over the live channel. The
+  outgoing commands and replies use authenticated HTTP rather than the live channel. The
   connection may drop, restart, or duplicate a notification; durable mailbox rows
-  and replayable cursors remain the source of truth. WebSocket remains unnecessary
-  until a real bidirectional transport requirement exists.
+  and replayable cursors remain the source of truth. The current product does not use a
+  WebSocket.
 - **The Labs Node** investigates durable local activation and execution. It is not
   required for one already-running agent to message another through the mailbox.
 
@@ -584,10 +583,10 @@ CLI launches, and no Mission lifecycle stores the containment recovery handle ye
   overview.
 - [`hld.md`](hld.md): high-level reference for the current relay implementation.
 - [`lld.md`](lld.md): concrete current routes, tables, tools, and known gaps.
-- [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md): active product
-  direction and priority.
-- [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): retained Labs target for
-  Mission, Node, and autonomous-execution research.
+- [`RFC 002`](rfcs/002-agent-reachability-and-durable-mailbox.md): public product,
+  durable-mailbox, and owner-sovereignty decisions.
+- [`RFC 001`](rfcs/001-agentrelay-node-and-missions.md): historical Labs decisions
+  that explain the preserved Mission, Node, and autonomous-execution implementation.
 - [`Delivery lease control plane`](research/001-delivery-lease-control-plane.md):
   implemented lease, recovery, fencing, and receipt decisions.
 - [`Foreground Node runtime`](research/002-foreground-node-runtime.md): initial local
@@ -604,14 +603,10 @@ CLI launches, and no Mission lifecycle stores the containment recovery handle ye
   provider ownership, liveness, authority inputs, and teardown-witness proof.
 - [`Local runtime authority`](research/008-local-runtime-authority.md): private bound
   grants, Node/Capsule reference monitors, crash-safe renewal, and current nonclaims.
-- [`roadmap.md`](roadmap.md): active 30-day mailbox validation, decision thresholds,
-  and issue lanes; RFC 002 governs product priority.
-- [`auto-mode.md`](auto-mode.md) and [`ambient-agent.md`](ambient-agent.md):
-  superseded explorations retained as decision records.
-
-Code and tests define shipped behavior. RFC 002 defines product direction; RFC 001
-defines the retained Labs target. When code and a target disagree, document the gap;
-do not present planned behavior as already shipped.
+Code and tests define shipped behavior. Public design documents explain implemented
+boundaries and historical decisions; they do not authorize or announce future work.
+When code and documentation disagree, document the gap rather than presenting planned
+behavior as shipped.
 
 ## Glossary
 
@@ -620,8 +615,7 @@ do not present planned behavior as already shipped.
 - **Node:** a separately authenticated relay device identity plus an experimental
   foreground daemon that launches detached fake Mission Capsules. Its library also
   contains an unactivated provider-neutral Capsule/Codex path, provider guardian, and
-  Linux containment boundary; in the target, it is a supervised persistent per-device
-  execution boundary.
+  Linux containment boundary.
 - **Workspace binding:** a relay-visible logical alias and repository/base-ref
   constraint that the current Node maps locally to an approved checkout.
 - **Runtime adapter:** host-specific control of a coding-agent session.
