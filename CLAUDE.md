@@ -8,24 +8,27 @@ tool-neutral repository instruction file.
 AgentRelay is intended to let independently owned agents discover, communicate, and
 collaborate across devices, repositories, and runtimes.
 
-The repository currently implements a durable manual handoff mailbox and an
-authenticated Relay control plane for Node enrollment, logical workspace routing,
-Missions, cursor discovery, fenced delivery operations, exact replay, retry, audit,
-and revocation. The next target is a long-running local AgentRelay Node and real
-runtime activation. Do not present planned local execution behavior as shipped.
+The repository currently implements a durable manual handoff mailbox, a content-free
+foreground pickup preview for one bound Codex chat, and a separate authenticated Labs
+control plane for Node enrollment, logical workspace routing, Missions, fenced
+delivery, replay, retry, audit, and revocation. Do not present automatic reading,
+execution, or replying as shipped.
 
 Read the relevant source before making a non-trivial change:
 
-- [`docs/architecture.md`](docs/architecture.md): current and target boundaries.
+- [`docs/architecture.md`](docs/architecture.md): current component and ownership
+  boundaries.
 - [`docs/hld.md`](docs/hld.md): current mailbox and Relay control-plane flow.
 - [`docs/lld.md`](docs/lld.md): current tables, routes, tools, and known gaps.
+- [`docs/rfcs/002-agent-reachability-and-durable-mailbox.md`](docs/rfcs/002-agent-reachability-and-durable-mailbox.md):
+  public product, durable-mailbox, and sovereignty decisions.
 - [`docs/rfcs/001-agentrelay-node-and-missions.md`](docs/rfcs/001-agentrelay-node-and-missions.md):
-  next implementation contract.
-- [`docs/roadmap.md`](docs/roadmap.md): build order and evaluation gates.
+  historical Labs decisions that explain the preserved implementation.
 
-Code and tests define current behavior. Accepted RFCs define intended behavior. If
-they conflict, identify the gap instead of silently making the code match whichever
-document is more convenient.
+Code and tests define current behavior. Public documentation is not a long-range
+roadmap. Take future implementation scope only from the owner's explicit task or a
+currently scoped public issue. If code and documentation conflict, identify the gap
+instead of silently making the code match whichever source is more convenient.
 
 ## Claude-specific notes
 
