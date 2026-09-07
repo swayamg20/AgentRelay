@@ -7,8 +7,8 @@ fake paths while the guarded Codex and Linux-containment libraries remain
 unactivated.
 
 > **Product status:** AgentRelay Labs. Preserve, compile, test, and security-maintain
-> this package, but do not treat it as the active product roadmap during the mailbox
-> validation period. See
+> this package, but do not treat it as shipped mailbox behavior or infer future feature
+> scope from its experimental code. See
 > [`RFC 002`](../docs/rfcs/002-agent-reachability-and-durable-mailbox.md).
 
 ## What works
