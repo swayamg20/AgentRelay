@@ -28,21 +28,11 @@ assuming shared repositories, credentials, or orchestration infrastructure.
 
 ## Product doctrine
 
-Communication comes before coordination. Coordination comes before commitment.
-Commitment comes before delegation. Delegation comes before autonomy.
-
-AgentRelay grows through optional layers:
-
-| Layer | Capability | Product role |
-| --- | --- | --- |
-| L0 | Identity and consent | Core foundation |
-| L1 | Durable correspondence | Core product |
-| L2 | Advisory availability and pickup hints | Optional accelerator |
-| L3 | Explicit request commitment | Optional coordination |
-| L4 | Bounded autonomous execution | Labs application |
-
-Every higher layer must remain optional. A user must be able to use the durable mailbox
-without installing the autonomous runtime.
+AgentRelay's public product is identity, owner control, and durable correspondence.
+Advisory availability or pickup hints do not change mailbox truth and grant no local
+authority. Mission, Node, Capsule, and autonomous-runtime code is a separate Labs
+surface; using the durable mailbox does not require installing it. This scope statement
+is a current product boundary, not a sequence of promised capabilities.
 
 ## Core promise
 

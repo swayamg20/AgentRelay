@@ -101,6 +101,6 @@ Capsule and proves recovery after Node-process death. The repository still does 
 execute production local policy, start a real model runtime, prove a two-machine
 Mission, or claim A2A conformance.
 
-Version 0.1 is the TypeScript/Zod binding used to prove the first Node. Committed
-JSON Schema and OpenAPI bindings remain required before a non-TypeScript Node or
-public A2A gateway treats this package as a language-neutral wire specification.
+Version 0.1 is a TypeScript/Zod binding used by the current Labs code. The repository
+contains no committed JSON Schema or OpenAPI binding and does not claim a
+language-neutral wire specification or public A2A gateway.

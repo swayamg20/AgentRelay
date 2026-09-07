@@ -51,22 +51,10 @@ approvals. A message can propose work; it cannot grant authority to perform it.
 
 ## Product doctrine
 
-The product grows in this order:
-
-```text
-identity + consent
-        ↓
-durable correspondence
-        ↓
-availability + pickup hints
-        ↓
-explicit commitment
-        ↓
-locally authorized execution
-```
-
-The first two layers are the core product. Availability and commitment are earned
-extensions. Autonomous execution is an optional Labs application.
+The public product is stable identity, owner control, and durable correspondence.
+Availability and SSE notifications are advisory hints over that durable state. The
+Mission, Node, Capsule, and autonomous-runtime packages are preserved Labs experiments,
+not promises about product scope.
 
 Permanent boundaries:
 
@@ -75,9 +63,8 @@ Permanent boundaries:
 - Notifications and presence are advisory; durable database state is authoritative.
 - The receiving owner decides whether handling is manual, assisted, or autonomous.
 - The Relay is model-free.
-- MCP and future A2A, Channels, or host integrations are edge adapters, not the
-  product identity.
-- No advanced layer is promoted without repeated real-user demand.
+- MCP and other protocol or host integrations are edge adapters, not the product
+  identity.
 
 The concise product contract is [`PRODUCT.md`](PRODUCT.md). The product decision is
 recorded in

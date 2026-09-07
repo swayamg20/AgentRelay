@@ -48,8 +48,8 @@ unactivated.
   Journal schema 4 preserves that grant and any older-fence predecessor awaiting
   proven Capsule retirement. Independent Node and Capsule monitors enforce lifetime,
   cumulative output/usage/artifact limits, and final Relay publication outside the
-  model. This is a partial issue #97 checkpoint on the deterministic fake path, not
-  completion of the issue or real-runtime activation. See
+  model. This is an unactivated reference-monitor checkpoint on the deterministic fake
+  path, not real-runtime activation. See
   [`Local runtime authority`](../docs/research/008-local-runtime-authority.md).
 - An unactivated guarded Codex client, injected Capsule runner, and provider guardian,
   plus a Linux-only Codex `0.146.0` containment library. The guardian owns one
@@ -96,7 +96,7 @@ exist only as unactivated libraries; see
 a supported operator command or an activation path. Its internal `--reaper` mode is
 the persistent teardown witness, not another public command.
 The foreground Node's singleton ownership is crash-releasable, but an external
-service manager must still start a replacement process.
+service manager does not currently install or start a replacement process.
 
 ## Configuration
 
