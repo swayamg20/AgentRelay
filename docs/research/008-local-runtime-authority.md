@@ -266,7 +266,7 @@ not run. It still executes no model turn: this is process-boundary evidence, not
 of a model generating an attack or a production descriptor carrying authority into a
 real turn.
 
-## Remaining gates
+## Current unimplemented activation boundary
 
 - **#93:** registered verification delivery/handler, canonical grant-bound executable
   identity, and signal-aware process-group execution.

@@ -310,7 +310,7 @@ read/write escape, helper-selection ambiguity, or setup failure blocks activatio
 this snapshot the job is green. A direct AgentRelay-owned Bubblewrap backend remains
 the fallback if a future pinned wrapper can no longer satisfy the gate.
 
-## Evaluation plan
+## Evaluation contract and current gaps
 
 ### Process-level golden cases
 
@@ -398,7 +398,7 @@ above are still missing.
   passed the filesystem/network policy proof and pinned Codex version/app-server
   handshake on the supported Ubuntu host.
 
-## Open questions
+## Unresolved security questions
 
 - How will provider authentication reach the private Codex home without copying any
   Relay or Node credential and without widening readable roots?

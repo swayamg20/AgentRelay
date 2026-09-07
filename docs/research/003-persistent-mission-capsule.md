@@ -210,13 +210,12 @@ issue #97 remains open.
 The fake-runtime CLI continues to reject live Node credentials. The Capsule is a
 correctness scaffold for the runtime boundary, not a production agent worker.
 
-## Next gate
+## Current unimplemented boundary
 
-Replace the fake runtime behind the same Capsule-owned recovery boundary with one
-pinned Codex app-server adapter. The adapter must preserve exact-input correlation,
-one active turn, deterministic cancellation, strict version probing, and honest usage
-reporting. Then run the first two-machine Mission with each runtime limited to its own
-repository and with no human intervention after kickoff.
+No released path replaces the fake runtime with a pinned coding-agent adapter or runs a
+real two-machine Mission. Any implementation that uses this recovery boundary would
+still need exact-input correlation, one active turn, deterministic cancellation, strict
+version probing, and honest usage reporting.
 
 This checkpoint builds on
 [`001-delivery-lease-control-plane.md`](001-delivery-lease-control-plane.md) and

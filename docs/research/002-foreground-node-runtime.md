@@ -150,15 +150,15 @@ The Node therefore remains private and experimental. The public product claim is
 durable cross-device collaboration architecture with a tested fake-runtime
 checkpoint, not autonomous coding completion.
 
-## Follow-on gate
+## Subsequent implemented checkpoints
 
-The follow-on gate moved the fake host behind a separately persistent Capsule, killed
-and restarted the Node process after host acceptance, recovered the same turn and
-event history, and published one Relay completion. The subsequent kernel-lock
+The persistent-Capsule checkpoint moved the fake host behind a separately persistent
+process, killed and restarted the Node after host acceptance, recovered the same turn
+and event history, and published one Relay completion. The subsequent kernel-lock
 checkpoint removed the original operator cleanup while preserving that Capsule proof.
 The current boundary is recorded in
-[`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md). The next
-runtime gate is the first pinned coding-agent adapter.
+[`003-persistent-mission-capsule.md`](003-persistent-mission-capsule.md). No released
+path activates a real coding-agent adapter.
 
 This decision builds on the Relay lease contract in
 [`001-delivery-lease-control-plane.md`](001-delivery-lease-control-plane.md). It is an

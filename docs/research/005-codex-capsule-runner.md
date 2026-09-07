@@ -169,7 +169,7 @@ Focused tests cover:
 The full Node suite remains the regression gate. The isolated live app-server test is
 still handshake-only and opt-in; it does not run a Mission or a model turn.
 
-## Nonclaims and next gate
+## Current nonclaims
 
 This historical checkpoint did not provide:
 
@@ -183,8 +183,7 @@ This historical checkpoint did not provide:
   verification-command handling; or
 - the complete Node policy, evidence, and supervision boundary required by RFC 001.
 
-The Linux containment and provider-guardian process proofs now pass. Contract and
-artifact carriage, verified capability enforcement, descriptor composition with
-durable handle storage, structured execution evidence, and Guarded Real Mission 0
-remain in the [roadmap's dependency order](../roadmap.md). Only after that public
-pipeline gate should the two-machine proof begin.
+The Linux containment and provider-guardian process proofs pass. Contract and artifact
+carriage, verified capability enforcement, descriptor composition with durable handle
+storage, structured execution evidence, and a guarded real Mission are not implemented
+in the current public pipeline.

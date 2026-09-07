@@ -177,7 +177,7 @@ The database-free test suite covers:
 The process tests run on supported Node versions on Linux and macOS. The Linux-only
 guardian-death, joint-owner-death, and Bubblewrap proofs run in the containment job.
 
-## Remaining activation gates
+## Current unimplemented activation boundary
 
 - **#98:** select the Codex descriptor in the Capsule/Node CLI, persist the exact
   containment recovery handle before provider start, carry the private #97 authority

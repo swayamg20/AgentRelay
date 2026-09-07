@@ -149,7 +149,7 @@ model turn.
 The full Node suite remains the regression gate. An opt-in isolated live test proves the
 installed `0.146.0` app-server handshake; it does not execute a Mission turn.
 
-## Activation blockers
+## Current unimplemented activation boundary
 
 The provider-generation guardian, detached teardown reaper, and their revocation,
 deadline, liveness, and teardown race proofs are now implemented in research 007. Do
@@ -166,8 +166,7 @@ not wire this checkpoint to a real delivery until the remaining gates are true:
   and execution evidence are implemented; and
 - Guarded Real Mission 0 passes before the two-machine Mission proof begins.
 
-The Linux containment process gate now passes. The remaining dependency order,
-through contract/artifact carriage, capability/descriptor composition, and Guarded
-Real Mission 0, lives in the [roadmap](../roadmap.md). Research 005 records the
-injected runner, research 006 records containment, and research 007 records the
-guardian and its remaining activation gates.
+The Linux containment process proof passes. Contract and artifact carriage,
+capability/descriptor composition, and a guarded real Mission remain unimplemented in
+the public pipeline. Research 005 records the injected runner, research 006 records
+containment, and research 007 records the guardian's current boundary.
