@@ -124,9 +124,9 @@ The MCP process is not persistent when its host is closed. It does not subscribe
 the relay, start model turns, manage worktrees, or apply a dynamic runtime policy.
 The optional foreground `agentrelay watch` connector is separate from MCP stdio. It
 replays opaque events, rechecks local trust, coalesces duplicate attention, and calls
-a host adapter with relay-owned event/thread identifiers. The first adapter validates
-those references but queues a constant prompt containing neither reference nor peer
-content.
+the Codex attention adapter with relay-owned event/thread identifiers. That adapter
+validates those references but queues a constant prompt containing neither reference
+nor peer content.
 
 ### CLI
 
@@ -197,8 +197,8 @@ Detailed guardian mechanics live in
 The separate Linux containment library binds an owner-controlled standalone checkout
 to an explicit Bubblewrap policy, mandatory runtime canary, and private
 `retain_for_review` manifest. Recovery requires the exact manifest path, instance ID,
-and binding digest. Future Mission lifecycle wiring must store that handle durably;
-current commands do not. Detailed mechanics live in
+and binding digest. Current commands and Mission lifecycle state do not store that
+handle. Detailed mechanics live in
 [research 006](research/006-mission-workspace-containment.md).
 
 ## Data model
@@ -452,10 +452,10 @@ They are not yet one end-to-end enforcement system:
   commands or edits happened because of a handoff.
 - Outbound AgentRelay tools are not constrained by a Mission-specific data policy.
 
-Labs autonomous execution must still wait for the Node to activate this boundary
-around a real runtime and mediate every concrete command, network, path, and side
-effect outside the model. This is not a mailbox product gate. See the security
-section of [`architecture.md`](architecture.md).
+No current Labs path activates this boundary around a real runtime or mediates every
+concrete command, network, path, and side effect outside the model. This is a Labs
+nonclaim, not a mailbox product gate. See the security section of
+[`architecture.md`](architecture.md).
 
 ## Failure behavior
 
@@ -493,7 +493,8 @@ section of [`architecture.md`](architecture.md).
   inherited lock. The Capsule independently proves absence, waits for that matching
   record, and only then releases its lock. Capsule-plus-guardian death therefore
   converges while the witness survives. Witness loss or loss of every lifecycle owner
-  fails closed; installed service/cgroup recovery and escaped descendants remain #120.
+  fails closed; installed service/cgroup recovery and escaped-descendant recovery are
+  absent.
 - The runner resolves an uncertain `turn/start` in the guardian-owned fresh generation
   by an exact client-ID and text match or a bounded durable zero-match terminal result,
   never by resending. Schema-v1 development state is not migrated to schema v2. If

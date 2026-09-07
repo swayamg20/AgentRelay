@@ -219,9 +219,8 @@ must implement the same local adapter boundary; the Relay has no Codex- or
 Claude-specific routing state.
 
 The existing `/a2a` JSON-RPC route is the mailbox wire used by that client. Its names
-are A2A-inspired, but current A2A conformance is not claimed. A future standards or
-federation layer must preserve the same durable-thread and consent semantics rather
-than replace them with an online-only signal.
+are A2A-inspired, but current A2A conformance is not claimed. No standards or
+federation layer is implemented, and delivery correctness does not depend on one.
 
 ## Labs implementation and design boundary
 
@@ -258,25 +257,28 @@ The relay owns:
 The relay does not run a model, inspect a local checkout, choose a working directory,
 or decide which command a coding agent may execute.
 
-### Labs AgentRelay Node: local execution plane
+### Labs AgentRelay Node: foreground local boundary
 
-One long-running Node runs on each participating machine. It owns:
+The repository's foreground Node currently owns:
 
 - Device credentials and presence.
 - Local workspace aliases mapped to approved repository checkouts.
 - Durable event cursor and duplicate-processing journal.
 - Worktree creation and repository/base-commit validation.
-- Runtime-adapter lifecycle: start, resume, stream, cancel, and recover.
-- The effective local sandbox, permission, network, and hard local budget policy.
-- Local tool, edit, test, artifact, and policy-decision traces.
+- Deterministic fake-Capsule lifecycle: start, resume, cancel, and recover.
+- The local policy and evidence boundaries implemented by that fake path.
+
+It is not installed as a long-running OS service and does not activate a real model
+runtime. The Codex, guardian, and containment libraries described below remain outside
+the public descriptor and CLI path.
 
 All connections originate from the Node. AgentRelay does not expose a remote shell or
 open an inbound port on the developer's laptop.
 
-### Labs runtime adapter: host-specific activation
+### Labs runtime adapter libraries
 
-Runtime behavior is not portable across MCP, A2A, Codex, and Claude. A small adapter
-normalizes each host's actual lifecycle:
+Runtime behavior is not portable across MCP, A2A, Codex, and Claude. The Capsule
+adapter contract normalizes a host lifecycle as:
 
 - Probe capabilities and supported version.
 - Create or resume a dedicated session for a Mission.
@@ -471,7 +473,7 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   from agent credentials.
 - Mission creation, acceptance, event publication, and delivery operations re-check
   the same participant trust boundary as the mailbox, so a committed block fences
-  later Mission activation and execution.
+  any subsequent Mission activation or execution.
 - Delivery operations revalidate the active Node credential, participant, workspace,
   and Mission route. Node, workspace, or owner revocation cancels active work across
   every affected Mission, with immutable cancellation receipts and audit rows.
@@ -512,13 +514,13 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   write and a Codex queue receipt remain weaker facts than model pickup.
 - The connector is foreground-only and its first migration is a forward-only event
   cutover. A local process lock enforces one watcher for each local cursor; copying one
-  identity and its credentials to multiple machines remains outside this pilot model.
+  identity and its credentials to multiple machines is unsupported.
 - The saved Codex binding remains until explicit unbind. The adapter cannot prove a
   standalone TUI is still open or impose a narrower per-turn tool envelope. It queues
   a constant content-free turn, and the recommended host policy places mailbox reads
   and mutations behind approval rather than treating prompt text as enforcement.
 
-### Labs gaps before autonomous execution
+### Labs current nonclaims
 
 - The private reference-monitor checkpoint is not composed with the guarded Codex
   descriptor. Its redacted evidence goes only to injected sinks and is not durably
@@ -534,13 +536,9 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 The effective capability is the intersection of the Mission request and a local,
 pre-authorized policy. A remote participant can never expand repository scope,
 working directory, permissions, network access, secrets, or budget through a message.
-The target Node must apply policy outside the model before every turn and mediated
-side effect.
-
-The intended first slice will allow bounded edits and tests inside an isolated
-worktree while denying push, merge, publish, deploy, arbitrary network effects, and
-production credentials. Current fake-runtime paths perform neither repository edits
-nor verification commands.
+The current fake-runtime path applies its wired policy outside the model and performs
+neither repository edits nor verification commands. No public path claims broader
+execution authority.
 
 ## Data and trust boundaries
 
@@ -557,11 +555,11 @@ nor verification commands.
 ## Deployment topology
 
 The relay can run anywhere that supports the relay container image and Postgres. Teams
-may self-host it or use a future hosted service. Every developer machine can run its
-own MCP process for interactive tools and may separately run the foreground watch
-connector. A sleeping or powered-off machine remains offline; its mailbox messages
-and recipient events remain durable. When the connector later resumes, it replays
-from its local cursor. It never starts a closed agent host.
+can self-host it. Every developer machine can run its own MCP process for interactive
+tools and may separately run the foreground watch connector. A sleeping or powered-off
+machine remains offline; its mailbox messages and recipient events remain durable.
+When the connector resumes, it replays from its local cursor. It never starts a closed
+agent host.
 
 The Labs AgentRelay Node is a separate foreground process today. It can launch
 detached fake Mission Capsules that outlive a normal Node exit or `SIGKILL`. Its
@@ -571,8 +569,8 @@ currently installs, monitors, or automatically respawns that foreground process.
 detached provider guardian and its independent teardown witness handle
 Capsule-plus-guardian loss as long as the witness survives. Loss of the witness or
 every local lifecycle owner fails closed; an installed service/cgroup boundary is
-still needed for restart, upgrade, rollback, and descendants that escape the
-supervised process group (#120). The provider-neutral server, guardian, injected
+absent, so restart, upgrade, rollback, and descendants that escape the supervised
+process group are not covered. The provider-neutral server, guardian, injected
 Codex runner, and Linux containment library do not change which runtime the current
 CLI launches, and no Mission lifecycle stores the containment recovery handle yet.
 
@@ -598,7 +596,7 @@ CLI launches, and no Mission lifecycle stores the containment recovery handle ye
 - [`Injected Codex Capsule runner`](research/005-codex-capsule-runner.md):
   provider-neutral server, schema-v2 turn lifecycle, and wire-level fake-client proof.
 - [`Mission workspace containment`](research/006-mission-workspace-containment.md):
-  Linux-only workspace policy, retained recovery identity, and activation gates.
+  Linux-only workspace policy, retained recovery identity, evidence, and current gaps.
 - [`Codex provider guardian`](research/007-codex-provider-guardian.md): kernel-locked
   provider ownership, liveness, authority inputs, and teardown-witness proof.
 - [`Local runtime authority`](research/008-local-runtime-authority.md): private bound

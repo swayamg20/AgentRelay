@@ -545,9 +545,9 @@ action/resource, decision, and denial code. They exclude local paths, prompts, c
 arguments, environment values, output, provider IDs, and secrets. Both monitors write
 through an injected `RuntimeAuthorityEvidenceSink`; the selected Node/Capsule path uses
 a no-op sink today, so this checkpoint does not claim durable evidence. It also does
-not provide the registered verification handler (#93), artifact flow (#94), Codex
-descriptor/activation (#98), durable evidence store (#99), or adversarial activated-
-runtime proof (#104). Detailed evidence and nonclaims are in
+not provide a registered verification handler, artifact flow, Codex descriptor
+activation, durable evidence store, or adversarial activated-runtime proof. Detailed
+evidence and nonclaims are in
 [`research/008-local-runtime-authority.md`](research/008-local-runtime-authority.md).
 
 ### Unactivated Codex Capsule, provider guardian, and teardown-reaper libraries
@@ -620,7 +620,7 @@ authority checkpoint, installed service supervisor, or real model-turn evidence.
 Capsule-plus-guardian death converges if the witness survives. Loss of the witness or
 every local lifecycle owner,
 service restart/upgrade/rollback, cgroup containment, and descendants that escape the
-supervised process group remain #120.
+supervised process group are not covered.
 
 ### Unactivated Linux containment library
 
@@ -656,9 +656,9 @@ binds the workspace, read/deny roots, executable/helper identities and hashes, c
 path and hash, private paths, base commit, and supplied local-policy-grant digest. The
 returned recovery handle is exactly `{ manifestPath, instanceId, bindingSha256 }`.
 `recoverCodexSandboxContainment` reopens only that manifest and binding, reruns
-identity and canary checks, and never resets or deletes the dirty checkout. Future
-Mission lifecycle wiring must durably store this exact handle before provider start;
-no descriptor or CLI does so today. macOS and other platforms fail closed, no real
+identity and canary checks, and never resets or deletes the dirty checkout. No Mission
+lifecycle, descriptor, or CLI durably stores this handle today. macOS and other
+platforms fail closed, no real
 model turn uses this boundary, and the passing Linux process job is library-level
 boundary evidence rather than activation evidence.
 
