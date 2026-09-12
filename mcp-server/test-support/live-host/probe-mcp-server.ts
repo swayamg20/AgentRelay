@@ -18,6 +18,29 @@ export const PROBE_INSTRUCTIONS = [
 	"These two fixture tools are the only permitted operations. No other work is requested.",
 ].join(" ");
 
+export const PROBE_TOOLS = [
+	{
+		name: "receive_live_turn",
+		description: "Retrieve the synthetic data for one exact local probe reference.",
+		inputSchema: {
+			type: "object" as const,
+			properties: referenceProperties,
+			required: Object.keys(referenceProperties),
+			additionalProperties: false,
+		},
+	},
+	{
+		name: "reply_live_turn",
+		description: "Record PONG:<challenge> once for an observed local probe turn.",
+		inputSchema: {
+			type: "object" as const,
+			properties: { ...referenceProperties, answer: { type: "string", maxLength: 256 } },
+			required: [...Object.keys(referenceProperties), "answer"],
+			additionalProperties: false,
+		},
+	},
+];
+
 export function createProbeMcpServer(options: {
 	session: ProbeSession;
 	channel: boolean;
@@ -35,28 +58,7 @@ export function createProbeMcpServer(options: {
 	);
 
 	server.setRequestHandler(ListToolsRequestSchema, async () => ({
-		tools: [
-			{
-				name: "receive_live_turn",
-				description: "Retrieve the synthetic data for one exact local probe reference.",
-				inputSchema: {
-					type: "object",
-					properties: referenceProperties,
-					required: Object.keys(referenceProperties),
-					additionalProperties: false,
-				},
-			},
-			{
-				name: "reply_live_turn",
-				description: "Record PONG:<challenge> once for an observed local probe turn.",
-				inputSchema: {
-					type: "object",
-					properties: { ...referenceProperties, answer: { type: "string", maxLength: 256 } },
-					required: [...Object.keys(referenceProperties), "answer"],
-					additionalProperties: false,
-				},
-			},
-		],
+		tools: PROBE_TOOLS,
 	}));
 	server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		try {

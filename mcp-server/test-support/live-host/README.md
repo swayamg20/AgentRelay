@@ -2,7 +2,8 @@
 
 These development fixtures test whether an installed host accepts incoming session
 events and returns correlated tool replies. They use synthetic data and an in-memory
-session; they never connect to a Relay or read AgentRelay credentials.
+session; they never connect to a Relay or use AgentRelay credentials. Live runs reuse
+the selected host's authentication and may consume model usage.
 
 ## Claude Code Channel
 
@@ -38,3 +39,33 @@ pass: notifications can be written successfully but silently dropped by the host
 An authorized administrator must enable Channels before rerunning it; the fixture
 does not change managed policy. Folder trust and development-channel consent may
 both appear before the empty chat opens.
+
+## Codex managed turn
+
+With Codex CLI 0.154.0 installed and authenticated:
+
+```sh
+pnpm --filter agentrelay-mcp probe:codex-turn
+```
+
+This version-pinned probe starts its own stdio app-server and an ephemeral thread in
+a fresh temporary directory. It injects three reference-only inputs through
+`turn/start` and requires a receive/reply tool exchange plus `turn/completed` for each.
+It never resumes or queues input into an existing conversation.
+
+The thread uses a read-only sandbox. Shell tools, hooks, plugins, apps, browser tools,
+and other effectful integrations are disabled for this process. The runner checks
+that inherited MCP servers are disabled with empty tool/resource inventories before
+sending model input, and refuses unexpected host requests. The two synthetic fixture
+tools share the same schemas and session checks as the Claude probe.
+
+Configuration overrides are process/thread-local, not edits to the owner's Codex
+configuration. The runner retains only stage/identifier evidence, not model text or
+raw host diagnostics. A passing result proves a managed-session round trip, **not**
+injection into an already-open Codex terminal UI, cross-machine Relay delivery, or
+production containment for arbitrary tasks.
+
+The probes follow the host-specific interfaces documented in
+[Claude Channels](https://code.claude.com/docs/en/channels-reference) and
+[Codex app-server](https://learn.chatgpt.com/docs/app-server). These experimental
+surfaces require host-specific checks; ordinary MCP support alone is not equivalent.
