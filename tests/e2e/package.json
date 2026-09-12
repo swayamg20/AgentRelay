@@ -6,7 +6,7 @@
 	"scripts": {
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"pretypecheck": "pnpm --filter agentrelay-node build",
+		"pretypecheck": "pnpm --filter agentrelay-mcp build && pnpm --filter agentrelay-node build",
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {

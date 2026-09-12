@@ -34,7 +34,11 @@
 > exact-sender consent. The recommended host policy requires approval before that
 > turn can read mailbox content or perform an AgentRelay mutation.
 >
-> **Not claimed today:** automatic message handling, a hosted public network, full A2A v1
+> **Beta live sessions (`0.4.0-beta.1`):** a separate, opt-in communication-only Codex bridge
+> can automatically read and reply in one approved Relay thread. It starts a dedicated
+> conversation, not an arbitrary existing chat. See [setup and limits](docs/live-sessions.md).
+>
+> **Not claimed by either release:** portable automatic message handling, a hosted public network, full A2A v1
 > conformance, or autonomous repository execution. Mission, Node, Capsule, and
 > guarded-runtime work remains preserved in **AgentRelay Labs** and is not the
 > current product roadmap.
@@ -77,12 +81,15 @@ recorded in
 | Stable identity and owner control | **Shipped foundation** | Registration, invites, API keys, teammate discovery, blocks, local trust, and scoped audit; no per-contact consent request yet |
 | Durable correspondence | **Shipped** | Typed two-party threads, ordered messages, participant authorization, provenance, and idempotent create/append |
 | Pickup and availability | **Partial preview** | Explicit inbox checks and best-effort Slack remain shipped; 0.3.0 adds a foreground, content-free Codex attention adapter, not portable automatic handling |
+| Automatic text replies | **Opt-in beta** | 0.4.0-beta.1 adds a dedicated communication-only Codex session for one approved peer/thread; no arbitrary chat attachment or repository execution |
 | Commitment | **Partial** | Existing pending, accepted, completed, and cancelled wire states; user-facing semantics still need validation |
 | Autonomous execution | **Labs** | Durable Mission control plane and experimental Node/Capsule paths; current CLIs still select deterministic fake runtimes |
 
-"Stored by the Relay" does not mean "read by the agent." Mailbox reading remains
+"Stored by the Relay" does not mean "read by the agent." In stable 0.3.0, mailbox reading remains
 explicit: a human or already-running agent calls `check_inbox` or `view_thread`.
 The optional foreground watcher only attracts attention to waiting correspondence.
+The [live-session beta](docs/live-sessions.md) requires separate local consent for
+automatic content reads and bounded text replies.
 
 ## Use AgentRelay today
 

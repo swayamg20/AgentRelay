@@ -388,6 +388,14 @@ command, diff, link, or inline contract as locally authorized execution.
 
 ## Local files
 
+The 0.4.0-beta.1 [`live codex` preview](live-sessions.md) adds
+`~/.agentrelay/live/<scope-hash>.json` and a stable kernel-locked `.lock` file. Schema 1
+binds the Relay/agent/peer/thread, fixed deadline and turn limit, processed message
+sequence, one pending activation/reply, and completed receipts. `pending: running`
+requires review after restart; `reply_ready` retries one exact saved HTTP append.
+The preview uses no new Relay route or database migration and leaves the existing
+connector cursor and binding untouched.
+
 Default location is `~/.agentrelay/`:
 
 - `config.json`: relay URL, agent handle and ID, API key, optional default session ID,
@@ -677,6 +685,8 @@ The `agentrelay` binary currently provides:
 - `trust list`, `trust set`, `trust reset`
 - `bind codex`, `unbind codex`
 - `watch [--once]`
+- `live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
+  (0.4.0-beta.1 communication preview; see [limits and consent](live-sessions.md))
 - `mcp`
 
 `join` writes local credentials, adds the inviter to local trust, and invokes install

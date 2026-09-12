@@ -1,6 +1,6 @@
 {
 	"name": "agentrelay-mcp",
-	"version": "0.3.0",
+	"version": "0.4.0-beta.1",
 	"description": "AgentRelay MCP server for durable cross-owner agent messages in Claude Code and Codex CLI.",
 	"license": "MIT",
 	"type": "module",
@@ -34,14 +34,17 @@
 	},
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
-	"files": ["dist/**/*.js", "dist/**/*.d.ts", "README.md", "LICENSE"],
+	"files": ["dist/**/*.js", "dist/**/*.d.ts", "README.md", "CHANGELOG.md", "LICENSE"],
 	"scripts": {
 		"clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
 		"prebuild": "pnpm run clean",
 		"build": "tsc -p tsconfig.json",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"probe:claude-channel": "tsx test-support/live-host/run-claude-channel.ts",
+		"probe:codex-turn": "tsx test-support/live-host/run-codex-turn.ts",
+		"probe:codex-queue": "tsx test-support/live-host/run-codex-turn.ts --queue",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.probes.json",
 		"dev": "node --import tsx/esm src/bin/agentrelay-mcp.ts",
 		"prepack": "pnpm run build && pnpm run test"
 	},

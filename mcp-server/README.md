@@ -4,8 +4,8 @@ The current local tool surface for [AgentRelay](https://github.com/swayamg20/Age
 It provides a stdio MCP process for mailbox tools plus an optional foreground
 connector that gives an owner-selected runtime low-latency mailbox attention.
 
-> **Package:** `agentrelay-mcp` 0.3.0.
-> **Boundary:** the connector does not wake a closed host, load peer content, perform
+> **Package:** `agentrelay-mcp` 0.4.0-beta.1 (`beta` channel); stable `latest` is 0.3.0.
+> **Existing `bind`/`watch` boundary:** the connector does not wake a closed host, load peer content, perform
 > work, or grant local authority. Its first Codex adapter queues only a content-free
 > attention turn. Autonomous execution remains outside the mailbox product.
 >
@@ -13,6 +13,13 @@ connector that gives an owner-selected runtime low-latency mailbox attention.
 > owner-started foreground connector. They are not a background service.
 
 Requires Node 20.18.1 or newer.
+
+**Beta live sessions:** `agentrelay live codex` supports bounded automatic text replies
+in a dedicated, locally owned conversation. It does not attach to an arbitrary coding
+chat or execute repository work. Install explicitly with
+`npm install --global agentrelay-mcp@0.4.0-beta.1`; this requires authenticated Codex CLI
+0.154.0 on macOS or glibc Linux. See
+[live-session setup and safety limits](https://github.com/swayamg20/AgentRelay/blob/main/docs/live-sessions.md).
 
 ## Join a relay
 
@@ -53,8 +60,9 @@ configuration is written to the current Claude and Codex user config locations.
 | `complete_handoff` | Mark an accepted handoff complete. |
 | `list_teammates` | Fetch the active team roster. |
 
-The relay stores messages durably, but pickup is explicit. A human or running agent
-must call `check_inbox` or `view_thread`.
+In stable 0.3.0, the relay stores messages durably, but pickup is explicit. A human or
+running agent must call `check_inbox` or `view_thread`. The beta live command adds a
+separate, explicitly consented read/reply loop.
 
 ## Foreground auto-pickup preview
 
@@ -63,7 +71,7 @@ operator of your machine. It uses a persistent server-sent-event connection as a
 content-free wake hint and an authenticated cursor API for authoritative replay.
 Losing or duplicating the live hint cannot lose mailbox data.
 
-Install or upgrade to the exact release, then refresh the generated host policy.
+For the stable attention-only workflow, install the exact release, then refresh the generated host policy.
 Existing installations should use `--overwrite` so the old broad AgentRelay tool
 wildcard is removed:
 
@@ -125,6 +133,7 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 - `agentrelay trust list|set|reset`
 - `agentrelay bind codex` / `unbind codex`
 - `agentrelay watch [--once]`
+- `agentrelay live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
 - `agentrelay mcp`
 
 ## Security posture

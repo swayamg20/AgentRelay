@@ -42,6 +42,12 @@ not Codex activation.
 
 ## Components
 
+The 0.4.0-beta.1 [`live codex` preview](live-sessions.md) is a separate local bridge:
+SSE hint -> selected-thread sequence replay -> consent check -> journaled owned-host
+turn -> durable reply outbox -> idempotent HTTP append. It is communication-only and
+requires explicit local read/reply consent. The existing `watch` remains attention-only;
+neither the Relay nor the Labs Node is expanded by this preview.
+
 ```text
 Developer A                                             Developer B
 coding-agent host                                       coding-agent host

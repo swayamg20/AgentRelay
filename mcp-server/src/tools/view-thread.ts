@@ -68,6 +68,7 @@ const inputSchema = z.object({
 
 export interface ViewThreadDeps {
 	client: A2AClient;
+	signal?: AbortSignal;
 }
 
 export type ViewThreadResult = z.infer<typeof tasksGetResponseSchema>;
@@ -77,7 +78,11 @@ export async function viewThread(
 	rawInput: unknown,
 ): Promise<ViewThreadResult> {
 	const input = inputSchema.parse(rawInput);
-	const fetched = await deps.client.request<unknown>("tasks/get", { task_id: input.thread_id });
+	const fetched = await deps.client.request<unknown>(
+		"tasks/get",
+		{ task_id: input.thread_id },
+		{ signal: deps.signal },
+	);
 	const thread = tasksGetResponseSchema.parse(fetched);
 
 	// Wrap every author-not-self message with L1 provenance. The summary

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { constants, accessSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -38,6 +38,35 @@ try {
 		encoding: "utf8",
 	}).trim();
 	assert.equal(cliVersion.split(" ")[0], `agentrelay/${expectedVersion}`);
+
+	const liveHelp = execFileSync(process.execPath, [cliPath, "live", "codex", "--help"], {
+		cwd: consumerDir,
+		encoding: "utf8",
+	});
+	for (const flag of ["--peer", "--handoff", "--allow-replies", "--max-turns", "--ttl-seconds"]) {
+		assert.ok(liveHelp.includes(flag), `packed live command is missing ${flag}`);
+	}
+	// Exercise the installed live module without reading credentials or starting a host.
+	const withoutConsent = spawnSync(
+		process.execPath,
+		[
+			cliPath,
+			"live",
+			"codex",
+			"--peer",
+			"package-smoke@team",
+			"--handoff",
+			"11111111-1111-4111-8111-111111111111",
+		],
+		{
+			cwd: consumerDir,
+			encoding: "utf8",
+			env: { ...process.env, AGENTRELAY_HOME: join(consumerDir, "agentrelay-home") },
+		},
+	);
+	assert.ifError(withoutConsent.error);
+	assert.equal(withoutConsent.status, 1, withoutConsent.stderr);
+	assert.match(withoutConsent.stderr, /--allow-replies/);
 
 	const consumerRequire = createRequire(join(consumerDir, "package.json"));
 	const clientModule = await import(

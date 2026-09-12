@@ -28,6 +28,8 @@ import {
 import { listTrust } from "../cli/trust-mutate.js";
 import { bindCodex, unbindCodex } from "../connector/binding.js";
 import { watchConfiguredCodex } from "../connector/watch.js";
+import { runLiveCommand } from "../live/command.js";
+import { LiveSessionError } from "../live/contracts.js";
 import { FALLBACK_TRUST, loadTrust } from "../trust.js";
 import { PACKAGE_VERSION } from "../version.js";
 
@@ -338,6 +340,50 @@ cli
 				},
 			});
 			if (opts.once) process.stdout.write("AgentRelay mailbox replay complete\n");
+		} finally {
+			process.removeListener("SIGINT", stop);
+			process.removeListener("SIGTERM", stop);
+		}
+	});
+
+cli
+	.command(
+		"live <runtime>",
+		"Preview: automatically receive and reply in one communication-only session",
+	)
+	.option("--peer <handle>", "Exact locally approved teammate")
+	.option("--handoff <uuid>", "Existing Relay thread UUID (not a Codex chat UUID)")
+	.option(
+		"--allow-replies",
+		"Consent to bounded automatic reads and text replies for this peer/thread",
+	)
+	.option("--max-turns <n>", "Total received-turn limit, preserved across restarts (1..12)", {
+		default: 6,
+	})
+	.option(
+		"--ttl-seconds <n>",
+		"Consent lifetime on first start (30..1800); restarting does not renew it",
+		{ default: 900 },
+	)
+	.option("--show", "Show the dedicated Codex conversation; leave its input empty", {
+		default: false,
+	})
+	.option("--once", "Process the selected thread backlog and exit", { default: false })
+	.action(async (runtime: string, opts: Record<string, unknown>) => {
+		if (runtime !== "codex") throw new Error("Live preview currently supports codex only");
+		const controller = new AbortController();
+		const stop = () => controller.abort();
+		process.once("SIGINT", stop);
+		process.once("SIGTERM", stop);
+		try {
+			await runLiveCommand(opts, { signal: controller.signal });
+		} catch (error) {
+			// Transport/schema errors can contain peer bodies or configuration.
+			throw error instanceof LiveSessionError
+				? error
+				: new Error(
+						"Live session stopped; check local consent, Relay connectivity and the private journal. Upstream diagnostics were not logged.",
+					);
 		} finally {
 			process.removeListener("SIGINT", stop);
 			process.removeListener("SIGTERM", stop);

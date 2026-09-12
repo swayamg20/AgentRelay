@@ -77,6 +77,8 @@ export interface RequestOptions {
 	idempotencyKey?: string;
 	/** Per-call timeout override. */
 	timeoutMs?: number;
+	/** Stop this request and all retries when local authority ends. */
+	signal?: AbortSignal;
 }
 
 export interface A2AClient {
@@ -130,6 +132,7 @@ export function createA2AClient(opts: A2AClientOptions): A2AClient {
 
 		let lastErr: unknown;
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			options.signal?.throwIfAborted();
 			const controller = new AbortController();
 			const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? timeoutMs);
 			try {
@@ -141,7 +144,9 @@ export function createA2AClient(opts: A2AClientOptions): A2AClient {
 						"idempotency-key": idempotencyKey,
 					},
 					body,
-					signal: controller.signal,
+					signal: options.signal
+						? AbortSignal.any([controller.signal, options.signal])
+						: controller.signal,
 				});
 
 				if (res.status >= 500) {
@@ -166,6 +171,7 @@ export function createA2AClient(opts: A2AClientOptions): A2AClient {
 				}
 				return parsed.result as T;
 			} catch (err) {
+				options.signal?.throwIfAborted();
 				if (err instanceof A2ARpcError || err instanceof A2AHttpError) {
 					if (err instanceof A2AHttpError && err.status >= 500 && attempt < maxAttempts) {
 						lastErr = err;
