@@ -126,7 +126,7 @@ importers:
         version: link:../protocol
       '@hono/node-server':
         specifier: ^2.0.5
-        version: 2.1.0(hono@4.13.1)
+        version: 2.1.0(hono@4.13.5)
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -134,8 +134,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(postgres@3.4.9)
       hono:
-        specifier: ^4.12.34
-        version: 4.13.1
+        specifier: ^4.13.5
+        version: 4.13.5
       pino:
         specifier: ^9.5.0
         version: 9.14.0
@@ -1294,6 +1294,10 @@ packages:
     resolution: {integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==}
     engines: {node: '>=16.9.0'}
 
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
+    engines: {node: '>=16.9.0'}
+
   http-errors@2.0.1:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
     engines: {node: '>= 0.8'}
@@ -1999,6 +2003,10 @@ snapshots:
     dependencies:
       hono: 4.13.1
 
+  '@hono/node-server@2.1.0(hono@4.13.5)':
+    dependencies:
+      hono: 4.13.5
+
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@modelcontextprotocol/sdk@1.30.0(zod@3.25.76)':
@@ -2529,6 +2537,8 @@ snapshots:
       function-bind: 1.1.2
 
   hono@4.13.1: {}
+
+  hono@4.13.5: {}
 
   http-errors@2.0.1:
     dependencies:
