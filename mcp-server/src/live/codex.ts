@@ -25,13 +25,18 @@ export interface CodexLiveOptions {
 export function createCodexLiveRuntime(options: CodexLiveOptions = {}): LiveRuntime {
 	let opened: Promise<Awaited<ReturnType<typeof openHost>>> | undefined;
 	let closed = false;
+	const prepare = async (signal: AbortSignal) => {
+		if (closed) throw new LiveSessionError("closed", "Codex live session is closed");
+		signal.throwIfAborted();
+		opened ??= openHost(options);
+		await opened;
+		signal.throwIfAborted();
+	};
 	return {
+		prepare,
 		async runTurn(input, signal) {
-			if (closed) throw new LiveSessionError("closed", "Codex live session is closed");
-			signal.throwIfAborted();
-			opened ??= openHost(options);
-			const host = await opened;
-			signal.throwIfAborted();
+			await prepare(signal);
+			const host = await opened!;
 			return host.runTurn(input, signal);
 		},
 		async close() {

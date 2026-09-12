@@ -83,6 +83,7 @@ function fixture() {
 			}),
 		},
 		runtime: {
+			prepare: vi.fn(async () => {}),
 			runTurn: vi.fn(async () => ({
 				reply: "hello back",
 				host: { threadId: "owned-host", turnId: randomUUID() },
@@ -111,6 +112,10 @@ describe("live Relay bridge", () => {
 	it("persists intent before starting and replies only after runtime completion", async () => {
 		const { options } = fixture();
 		options.once = true;
+		options.runtime.prepare = vi.fn(async () => {
+			expect(options.store.read().pending).toBeNull();
+			expect(options.store.read().turnsStarted).toBe(0);
+		});
 		options.runtime.runTurn = vi.fn(async () => {
 			expect(options.store.read().pending?.phase).toBe("running");
 			expect(options.mailbox.reply).not.toHaveBeenCalled();
@@ -121,6 +126,32 @@ describe("live Relay bridge", () => {
 			disposition: "replied",
 			host: { threadId: "h", turnId: "t" },
 		});
+	});
+
+	it("keeps setup failures retryable without consuming a turn or recording uncertainty", async () => {
+		const { options } = fixture();
+		options.once = true;
+		options.runtime.prepare = vi
+			.fn(async () => {})
+			.mockRejectedValueOnce(new LiveSessionError("codex_version", "wrong Codex version"));
+		await expect(runLiveBridge(options)).rejects.toThrow("wrong Codex version");
+		expect(options.store.read()).toMatchObject({ pending: null, turnsStarted: 0, lastSequence: 0 });
+		expect(options.runtime.runTurn).not.toHaveBeenCalled();
+		await runLiveBridge(options);
+		expect(options.runtime.runTurn).toHaveBeenCalledOnce();
+		expect(options.mailbox.reply).toHaveBeenCalledOnce();
+	});
+
+	it("rechecks local authority after host preparation and before recording intent", async () => {
+		const { options } = fixture();
+		options.runtime.prepare = vi.fn(async () => {
+			options.assertAuthority = async () => {
+				throw new LiveSessionError("blocked", "locally blocked");
+			};
+		});
+		await expect(runLiveBridge(options)).rejects.toThrow("locally blocked");
+		expect(options.runtime.runTurn).not.toHaveBeenCalled();
+		expect(options.store.read()).toMatchObject({ pending: null, turnsStarted: 0 });
 	});
 
 	it("recovers a lost Relay response with the same outbox key, without rerunning the model", async () => {
@@ -134,7 +165,11 @@ describe("live Relay bridge", () => {
 		await expect(runLiveBridge(options)).rejects.toThrow("lost response");
 		expect(options.store.read().pending?.phase).toBe("reply_ready");
 		options.mailbox.reply = publish;
+		options.runtime.prepare = vi.fn(async () => {
+			throw new LiveSessionError("codex_missing", "host unavailable during reply recovery");
+		});
 		await runLiveBridge(options);
+		expect(options.runtime.prepare).not.toHaveBeenCalled();
 		expect(options.runtime.runTurn).toHaveBeenCalledOnce();
 		expect(keys).toHaveLength(2);
 		expect(keys[0]).toBe(keys[1]);

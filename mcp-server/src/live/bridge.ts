@@ -110,6 +110,9 @@ export async function runLiveBridge(options: LiveBridgeOptions): Promise<void> {
 			}
 			if (state.turnsStarted >= state.maxTurns) return;
 			const content = liveTurnContent(thread, message.sequence_no);
+			// Known setup failures must not become uncertain model executions on restart.
+			await options.runtime.prepare(signal);
+			await authorize();
 			const pending = {
 				phase: "running" as const,
 				messageId: message.id,

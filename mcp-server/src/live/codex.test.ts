@@ -100,6 +100,16 @@ beforeEach(() => {
 });
 
 describe("owned Codex live runtime", () => {
+	it("prepares an owned host without starting a model turn", async () => {
+		const onAccepted = vi.fn();
+		const runtime = createCodexLiveRuntime({ onAccepted });
+		await runtime.prepare(new AbortController().signal);
+		expect(harness.calls.some((call) => call.method === "thread/start")).toBe(true);
+		expect(harness.calls.some((call) => call.method === "turn/start")).toBe(false);
+		expect(onAccepted).not.toHaveBeenCalled();
+		await runtime.close();
+		expect(harness.stop).toHaveBeenCalledOnce();
+	});
 	it("starts only a new restricted thread and does not report normal shutdown as failure", async () => {
 		const onStop = vi.fn();
 		const onAccepted = vi.fn();
@@ -148,9 +158,7 @@ describe("owned Codex live runtime", () => {
 	it("refuses an untested host version before creating a thread", async () => {
 		harness.version = "codex-cli 0.999.0";
 		const runtime = createCodexLiveRuntime();
-		await expect(
-			runtime.runTurn({ messageId: randomUUID(), content: "data" }, new AbortController().signal),
-		).rejects.toThrow("tested Codex");
+		await expect(runtime.prepare(new AbortController().signal)).rejects.toThrow("tested Codex");
 		expect(harness.rpc).toBeUndefined();
 		await runtime.close();
 	});

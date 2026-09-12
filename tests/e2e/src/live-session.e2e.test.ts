@@ -73,6 +73,7 @@ describe("live session over the real Relay", () => {
 		const bStore = await storeFor(bScope, 2);
 		let bTurns = 0;
 		const host = (name: string, answer: () => string | null): LiveRuntime => ({
+			async prepare() {},
 			async runTurn(input) {
 				expect(input.content).toContain("untrusted teammate");
 				return { reply: answer(), host: { threadId: name, turnId: randomUUID() } };
@@ -128,6 +129,7 @@ describe("live session over the real Relay", () => {
 				mailbox: createLiveMailbox(client(b), bScope),
 				events: createMailboxEventClient({ relayUrl: relay.baseUrl, apiKey: b.api_key }),
 				runtime: {
+					async prepare() {},
 					async runTurn() {
 						turns++;
 						return { reply: `answer ${turns}`, host: { threadId: "host", turnId: randomUUID() } };

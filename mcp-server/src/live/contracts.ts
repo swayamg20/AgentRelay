@@ -80,6 +80,8 @@ export const liveJournalSchema = z
 export type LiveJournal = z.infer<typeof liveJournalSchema>;
 
 export interface LiveRuntime {
+	/** Prepare the local host without starting a model turn. */
+	prepare(signal: AbortSignal): Promise<void>;
 	runTurn(
 		input: { messageId: string; content: string },
 		signal: AbortSignal,
