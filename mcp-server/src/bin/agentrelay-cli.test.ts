@@ -36,6 +36,25 @@ describeIfBuilt("agentrelay CLI mcp subcommand", () => {
 		expect(result.status, result.stderr).toBe(0);
 		expect(result.stdout).toMatch(/mcp\s+Start the AgentRelay MCP server/);
 		expect(result.stdout).toMatch(/watch\s+Keep a live, replayable connection/);
+		expect(result.stdout).toContain("live <runtime>");
+	});
+
+	it("requires explicit live consent before reading local configuration", () => {
+		const result = spawnSync(
+			"node",
+			[
+				AGENTRELAY_BIN_PATH,
+				"live",
+				"codex",
+				"--peer",
+				"test@team",
+				"--handoff",
+				"11111111-1111-4111-8111-111111111111",
+			],
+			{ cwd: PACKAGE_ROOT, encoding: "utf8", stdio: "pipe" },
+		);
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("--allow-replies");
 	});
 
 	it("reports the package version", () => {

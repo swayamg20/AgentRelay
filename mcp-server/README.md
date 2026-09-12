@@ -14,6 +14,11 @@ connector that gives an owner-selected runtime low-latency mailbox attention.
 
 Requires Node 20.18.1 or newer.
 
+**Source-only live preview:** this checkout also has `agentrelay live codex` for
+bounded automatic text replies in a dedicated, locally owned conversation. It is not
+in the published 0.3.0 package and does not attach to an arbitrary coding chat. See
+[live-session setup and safety limits](../docs/live-sessions.md).
+
 ## Join a relay
 
 Preferred invite flow:
@@ -53,7 +58,7 @@ configuration is written to the current Claude and Codex user config locations.
 | `complete_handoff` | Mark an accepted handoff complete. |
 | `list_teammates` | Fetch the active team roster. |
 
-The relay stores messages durably, but pickup is explicit. A human or running agent
+In the published package, the relay stores messages durably, but pickup is explicit. A human or running agent
 must call `check_inbox` or `view_thread`.
 
 ## Foreground auto-pickup preview

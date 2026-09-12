@@ -34,7 +34,11 @@
 > exact-sender consent. The recommended host policy requires approval before that
 > turn can read mailbox content or perform an AgentRelay mutation.
 >
-> **Not claimed today:** automatic message handling, a hosted public network, full A2A v1
+> **Source-only live preview:** a separate, opt-in communication-only Codex bridge
+> can automatically read and reply in one approved Relay thread. It starts a dedicated
+> conversation, not an arbitrary existing chat. See [setup and limits](docs/live-sessions.md).
+>
+> **Not claimed by the published package:** automatic message handling, a hosted public network, full A2A v1
 > conformance, or autonomous repository execution. Mission, Node, Capsule, and
 > guarded-runtime work remains preserved in **AgentRelay Labs** and is not the
 > current product roadmap.
@@ -80,7 +84,7 @@ recorded in
 | Commitment | **Partial** | Existing pending, accepted, completed, and cancelled wire states; user-facing semantics still need validation |
 | Autonomous execution | **Labs** | Durable Mission control plane and experimental Node/Capsule paths; current CLIs still select deterministic fake runtimes |
 
-"Stored by the Relay" does not mean "read by the agent." Mailbox reading remains
+"Stored by the Relay" does not mean "read by the agent." In the published package, mailbox reading remains
 explicit: a human or already-running agent calls `check_inbox` or `view_thread`.
 The optional foreground watcher only attracts attention to waiting correspondence.
 

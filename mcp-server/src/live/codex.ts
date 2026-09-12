@@ -14,14 +14,15 @@ import { startCodexSocketHost } from "./codex-socket.js";
 import { LIVE_CODEX_INSTRUCTIONS, LIVE_CODEX_TOOLS, LiveCodexTurn } from "./codex-tools.js";
 import { type LiveRuntime, LiveSessionError } from "./contracts.js";
 
+export interface CodexLiveOptions {
+	show?: boolean;
+	onSession?: (threadId: string) => void;
+	onAccepted?: (messageId: string) => void;
+	onStop?: (error: Error) => void;
+}
+
 /** A new, owned communication-only host; never attaches to a pre-existing chat. */
-export function createCodexLiveRuntime(
-	options: {
-		show?: boolean;
-		onSession?: (threadId: string) => void;
-		onAccepted?: (messageId: string) => void;
-	} = {},
-): LiveRuntime {
+export function createCodexLiveRuntime(options: CodexLiveOptions = {}): LiveRuntime {
 	let opened: Promise<Awaited<ReturnType<typeof openHost>>> | undefined;
 	let closed = false;
 	return {
@@ -40,11 +41,7 @@ export function createCodexLiveRuntime(
 	};
 }
 
-async function openHost(options: {
-	show?: boolean;
-	onSession?: (threadId: string) => void;
-	onAccepted?: (messageId: string) => void;
-}) {
+async function openHost(options: CodexLiveOptions) {
 	if (options.show && !process.stdin.isTTY)
 		throw new LiveSessionError("terminal_required", "--show requires an interactive terminal");
 	const env = codexChildEnvironment();
@@ -81,22 +78,31 @@ async function openHost(options: {
 		  }
 		| undefined;
 	let threadId: string | undefined;
-	let closing: Promise<void> | undefined;
+	let closing = false;
+	let closePromise: Promise<void> | undefined;
 	const close = () => {
-		closing ??= (async () => {
+		closing = true;
+		closePromise ??= (async () => {
 			if (tui) {
 				tui.kill("SIGTERM");
 				const timer = setTimeout(() => tui?.kill("SIGKILL"), 3_000);
 				await tuiClosed;
 				clearTimeout(timer);
 			}
-			await rpc.close();
-			await processHost.stop();
+			try {
+				await rpc.close();
+			} finally {
+				await processHost.stop();
+			}
 		})();
-		return closing;
+		return closePromise;
 	};
 	rpc.onFailure = (error) => {
 		active?.reject(error);
+		if (!closing) {
+			options.onStop?.(error);
+			void close().catch(() => {});
+		}
 	};
 	rpc.onRequest = (method, params) => {
 		if (method !== "item/tool/call" || !active) throw new Error("No approved live tool call");
@@ -206,11 +212,11 @@ async function openHost(options: {
 			void completed.catch(() => {});
 			const abort = () => {
 				rpc.fail("stopped");
-				void close();
+				void close().catch(() => {});
 			};
 			const timeout = setTimeout(() => {
 				rpc.fail("turn_timeout");
-				void close();
+				void close().catch(() => {});
 			}, 90_000);
 			signal.addEventListener("abort", abort, { once: true });
 			try {
