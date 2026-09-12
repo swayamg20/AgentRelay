@@ -41,7 +41,8 @@
 		"build": "tsc -p tsconfig.json",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"probe:claude-channel": "tsx test-support/live-host/run-claude-channel.ts",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.probes.json",
 		"dev": "node --import tsx/esm src/bin/agentrelay-mcp.ts",
 		"prepack": "pnpm run build && pnpm run test"
 	},
