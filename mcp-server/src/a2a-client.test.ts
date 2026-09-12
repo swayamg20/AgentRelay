@@ -27,6 +27,38 @@ function makeClient(fetchImpl: NonNullable<FetchSig>, overrides: Record<string, 
 }
 
 describe("a2a-client.request", () => {
+	it("does not send or retry after the caller aborts", async () => {
+		const controller = new AbortController();
+		const fetchImpl = vi.fn(async () => {
+			controller.abort();
+			throw new TypeError("connection lost");
+		}) as NonNullable<FetchSig>;
+		const { client, sleep } = makeClient(fetchImpl);
+		await expect(
+			client.request("message/send", {}, { signal: controller.signal }),
+		).rejects.toThrow();
+		expect(fetchImpl).toHaveBeenCalledOnce();
+		expect(sleep).not.toHaveBeenCalled();
+		await expect(
+			client.request("message/send", {}, { signal: controller.signal }),
+		).rejects.toThrow();
+		expect(fetchImpl).toHaveBeenCalledOnce();
+	});
+
+	it("passes local cancellation through to an in-flight HTTP request", async () => {
+		const controller = new AbortController();
+		const fetchImpl = vi.fn(async (_url, init) => {
+			const signal = init?.signal;
+			expect(signal?.aborted).toBe(false);
+			controller.abort();
+			expect(signal?.aborted).toBe(true);
+			throw new DOMException("Aborted", "AbortError");
+		}) as NonNullable<FetchSig>;
+		const { client } = makeClient(fetchImpl);
+		await expect(client.request("tasks/get", {}, { signal: controller.signal })).rejects.toThrow();
+		expect(fetchImpl).toHaveBeenCalledOnce();
+	});
+
 	it("posts JSON-RPC envelope with bearer auth and idempotency key", async () => {
 		const fetchImpl = vi.fn(async (_url: unknown, init: any) => {
 			const parsed = JSON.parse(init.body as string);
