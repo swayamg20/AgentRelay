@@ -1,22 +1,33 @@
-import { execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { parseArgs, promisify } from "node:util";
 import { z } from "zod";
 import {
 	CODEX_PROBE_CONFIG,
 	answerCodexProbeTool,
 	assertNoActiveMcpServers,
 } from "./codex-probe-policy.js";
+import { startCodexSocketHost } from "./codex-socket-host.js";
 import { PROBE_INSTRUCTIONS, PROBE_TOOLS } from "./probe-mcp-server.js";
 import { ProbeSession } from "./probe-session.js";
 
+const { values } = parseArgs({
+	options: { queue: { type: "boolean", default: false } },
+	strict: true,
+});
+const queueMode = values.queue;
+if (queueMode && !process.stdin.isTTY) throw new Error("The queue/TUI probe requires a terminal");
 const version = execFileSync("codex", ["--version"], { encoding: "utf8", timeout: 10_000 }).trim();
 if (version !== "codex-cli 0.154.0") {
 	throw new Error("This experimental host probe is pinned to codex-cli 0.154.0");
 }
-const directory = realpathSync(mkdtempSync(join(tmpdir(), "agentrelay-codex-turn-")));
+const directory = realpathSync(
+	mkdtempSync(join(tmpdir(), queueMode ? "ar-cq-" : "agentrelay-codex-turn-")),
+);
 const eventsPath = join(directory, "events.jsonl");
 const stages: string[] = [];
 function record<T extends { stage: string }>(event: T) {
@@ -35,20 +46,27 @@ for (const name of [
 	"TMPDIR",
 	"LANG",
 	"LC_ALL",
+	"TERM",
 	"OPENAI_API_KEY",
 ]) {
 	if (process.env[name] !== undefined) env[name] = process.env[name];
 }
+const configArgs = Object.entries(CODEX_PROBE_CONFIG).flatMap(([key, value]) => [
+	"-c",
+	`${key}=${JSON.stringify(value)}`,
+]);
+const socketHost = queueMode ? await startCodexSocketHost(configArgs, directory, env) : undefined;
 const child = spawn(
-	"codex",
-	[
-		"app-server",
-		"--stdio",
-		...Object.entries(CODEX_PROBE_CONFIG).flatMap(([key, value]) => [
-			"-c",
-			`${key}=${JSON.stringify(value)}`,
-		]),
-	],
+	socketHost ? process.execPath : "codex",
+	socketHost
+		? [
+				"--import",
+				import.meta.resolve("tsx"),
+				fileURLToPath(new URL("codex-socket-proxy.ts", import.meta.url)),
+				"--socket",
+				socketHost.socketPath,
+			]
+		: ["app-server", "--stdio", ...configArgs],
 	{ cwd: directory, env, stdio: ["pipe", "pipe", "pipe"] },
 );
 // Host diagnostics can contain local configuration; only record that stderr occurred.
@@ -68,6 +86,8 @@ let nextId = 1;
 let failure: Error | undefined;
 let turnWaiter: { resolve: () => void; reject: (e: Error) => void } | undefined;
 let closing = false;
+let tui: ChildProcess | undefined;
+let tuiClosed: Promise<void> | undefined;
 const childClosed = new Promise<void>((resolve) => child.once("close", () => resolve()));
 function fail(message: string) {
 	failure ??= new Error(message);
@@ -196,7 +216,7 @@ try {
 		.parse(
 			await request("thread/start", {
 				cwd: directory,
-				ephemeral: true,
+				ephemeral: !queueMode,
 				approvalPolicy: "never",
 				approvalsReviewer: "user",
 				sandbox: "read-only",
@@ -212,22 +232,62 @@ try {
 	record({ stage: "host_session_created", host_thread_id: threadId });
 	assertNoActiveMcpServers(await request("mcpServerStatus/list", { threadId, limit: 100 }));
 	record({ stage: "inherited_integrations_disabled" });
+	if (socketHost) {
+		await request("thread/name/set", { threadId, name: "AgentRelay synthetic queue probe" });
+		// Remote resume preserves the server's read-only policy and rejects permission overrides.
+		const resumeConfigArgs = Object.entries({ ...CODEX_PROBE_CONFIG, ...disabledServers })
+			.filter(([key]) => !["approval_policy", "approvals_reviewer", "sandbox_mode"].includes(key))
+			.flatMap(([key, value]) => ["-c", `${key}=${JSON.stringify(value)}`]);
+		tui = spawn(
+			"codex",
+			["resume", "--remote", socketHost.endpoint, "--no-alt-screen", ...resumeConfigArgs, threadId],
+			{ cwd: directory, env, stdio: "inherit" },
+		);
+		tuiClosed = new Promise<void>((resolve) => tui!.once("close", () => resolve()));
+		tui.on("error", () => fail("Codex probe TUI could not start"));
+		tui.on("exit", () => {
+			if (!closing) fail("Codex probe TUI closed before completion");
+		});
+		record({ stage: "tui_launched", host_thread_id: threadId });
+		console.log("Leave this synthetic Codex chat empty. The probe will queue three inputs.");
+	}
 	for (let index = 0; index < 3; index++) {
 		const reference = session.nextReference();
 		if (reference === null) throw new Error("Missing probe turn");
-		const result = z.object({ turn: z.object({ id: z.string() }) }).parse(
-			await request("turn/start", {
-				threadId,
-				clientUserMessageId: reference.message_id,
-				input: [
-					{ type: "text", text: `Receive this local fixture turn: ${JSON.stringify(reference)}` },
-				],
-				effort: "low",
-			}),
-		);
+		const previousTurnId = turnId;
+		let acceptedTurnId: string | undefined;
+		const text = `Receive this local fixture turn: ${JSON.stringify(reference)}`;
+		if (socketHost) {
+			try {
+				await promisify(execFile)(
+					"codex",
+					["queue", "--remote", socketHost.endpoint, "--thread", threadId, "--message", text],
+					{
+						cwd: directory,
+						env,
+						timeout: 15_000,
+						maxBuffer: 256 * 1024,
+					},
+				);
+			} catch {
+				throw new Error("The scoped Codex queue command failed");
+			}
+			record({ stage: "host_queued", host_thread_id: threadId });
+		} else {
+			const result = z.object({ turn: z.object({ id: z.string() }) }).parse(
+				await request("turn/start", {
+					threadId,
+					clientUserMessageId: reference.message_id,
+					input: [{ type: "text", text }],
+					effort: "low",
+				}),
+			);
+			acceptedTurnId = result.turn.id;
+			record({ stage: "host_accepted", host_turn_id: acceptedTurnId });
+		}
 		session.markSignalWritten(reference);
-		record({ stage: "host_accepted", host_turn_id: result.turn.id });
-		if (!completed.has(result.turn.id)) {
+		const alreadyCompleted = turnId && turnId !== previousTurnId && completed.has(turnId);
+		if (!alreadyCompleted) {
 			await new Promise<void>((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error("Codex turn did not complete")), 60_000);
 				turnWaiter = {
@@ -245,7 +305,12 @@ try {
 			turnWaiter = undefined;
 		}
 		if (failure) throw failure;
-		if (completed.get(result.turn.id) !== "completed") throw new Error("Codex turn failed");
+		if (
+			!turnId ||
+			(acceptedTurnId && turnId !== acceptedTurnId) ||
+			completed.get(turnId) !== "completed"
+		)
+			throw new Error("Codex turn failed");
 		if (stages.filter((stage) => stage === "reply_recorded").length !== index + 1) {
 			throw new Error("Codex finished without the correlated fixture reply");
 		}
@@ -260,25 +325,33 @@ try {
 } finally {
 	session.stop();
 	closing = true;
+	if (tui) {
+		tui.kill("SIGTERM");
+		const timer = setTimeout(() => tui?.kill("SIGKILL"), 3_000);
+		await tuiClosed;
+		clearTimeout(timer);
+	}
 	lines.close();
 	child.stdin.end();
 	child.kill("SIGTERM");
 	const killTimer = setTimeout(() => child.kill("SIGKILL"), 3_000);
 	await childClosed;
 	clearTimeout(killTimer);
+	await socketHost?.stop();
 	process.removeListener("SIGINT", onSignal);
 	process.removeListener("SIGTERM", onSignal);
 	console.log(
 		JSON.stringify(
 			{
-				probe: "codex-managed-turn",
+				probe: queueMode ? "codex-queue-tui" : "codex-managed-turn",
 				version,
 				passed,
 				hadStderr,
 				stages,
 				eventsPath,
-				claim:
-					"Synthetic managed-session activation only; not existing-TUI injection or Relay delivery",
+				claim: queueMode
+					? "Synthetic queue input into the probe's own TUI; not Relay delivery"
+					: "Synthetic managed-session activation only; not existing-TUI injection or Relay delivery",
 			},
 			null,
 			2,

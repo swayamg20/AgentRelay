@@ -64,6 +64,7 @@ export const CODEX_PROBE_CONFIG: Record<string, unknown> = {
 	"features.skip_host_skill_discovery": true,
 	"features.workspace_dependencies": false,
 	web_search: "disabled",
+	model_reasoning_effort: "low",
 	project_doc_max_bytes: 0,
 	approval_policy: "never",
 	approvals_reviewer: "user",

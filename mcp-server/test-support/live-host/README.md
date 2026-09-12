@@ -65,6 +65,30 @@ raw host diagnostics. A passing result proves a managed-session round trip, **no
 injection into an already-open Codex terminal UI, cross-machine Relay delivery, or
 production containment for arbitrary tasks.
 
+## Codex queue with a visible terminal
+
+On macOS/Linux, from an interactive terminal:
+
+```sh
+pnpm --filter agentrelay-mcp probe:codex-queue
+```
+
+This variant starts a private Unix-socket app-server, creates a new synthetic thread,
+and opens the Codex TUI on that exact thread. Leave the chat empty. Three separate
+`codex queue --remote <private-socket> --thread <created-id>` commands must each
+produce the same receive/reply exchange and completed-turn evidence. The runner does
+not type into or scrape the terminal. It stops only its own processes afterward.
+
+The synthetic thread is named `AgentRelay synthetic queue probe` and retained in
+local Codex history for inspection. No pre-existing conversation is selected. Remote
+resume preserves the server's read-only permissions; the probe does not request a
+permission override. This tests a visible TUI attached to the probe-managed server,
+not arbitrary pre-existing sessions on the default Codex daemon.
+
+The local WebSocket bridge uses the existing `undici` dependency with an explicit
+Unix connector. It omits the optional compression extension, which Codex 0.154.0
+rejects during this handshake. No TCP port is exposed or permission policy changed.
+
 The probes follow the host-specific interfaces documented in
 [Claude Channels](https://code.claude.com/docs/en/channels-reference) and
 [Codex app-server](https://learn.chatgpt.com/docs/app-server). These experimental
