@@ -1,6 +1,6 @@
 {
 	"name": "agentrelay-mcp",
-	"version": "0.3.0",
+	"version": "0.4.0-beta.1",
 	"description": "AgentRelay MCP server for durable cross-owner agent messages in Claude Code and Codex CLI.",
 	"license": "MIT",
 	"type": "module",
@@ -34,7 +34,7 @@
 	},
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
-	"files": ["dist/**/*.js", "dist/**/*.d.ts", "README.md", "LICENSE"],
+	"files": ["dist/**/*.js", "dist/**/*.d.ts", "README.md", "CHANGELOG.md", "LICENSE"],
 	"scripts": {
 		"clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
 		"prebuild": "pnpm run clean",

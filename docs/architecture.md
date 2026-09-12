@@ -48,7 +48,7 @@ the identity, prerequisite, or released product behavior of AgentRelay.
 
 ## Current implementation
 
-Source-preview addition (2026-09-13): [`live-sessions.md`](live-sessions.md) describes
+Beta addition (0.4.0-beta.1, 2026-09-13): [`live-sessions.md`](live-sessions.md) describes
 the separately opted-in `agentrelay live codex` path. It creates an owned,
 communication-only host for one peer and Relay thread, uses the durable message
 sequence for replay, journals activation and replies, and fences concurrent local

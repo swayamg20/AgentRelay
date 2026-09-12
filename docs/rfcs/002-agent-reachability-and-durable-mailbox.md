@@ -51,7 +51,7 @@ are not claimed.
 
 ## Capability boundaries
 
-The source-only [communication live-session preview](../live-sessions.md) adds a
+The 0.4.0-beta.1 [communication live-session preview](../live-sessions.md) adds a
 separate explicit grant for automatic reads and bounded replies to one peer/thread.
 It never upgrades ordinary pickup consent by itself. The bridge starts a dedicated
 communication-only Codex host; no remote participant selects a local path, host

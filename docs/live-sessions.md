@@ -1,8 +1,9 @@
-# Communication-only live sessions (source preview)
+# Communication-only live sessions (beta)
 
 This opt-in CLI path automatically reads and replies within one existing Relay
-thread. It is separate from the published 0.3.0 `bind`/`watch` attention workflow;
-upgrading the npm package alone does not install this source preview.
+thread. It is included in `agentrelay-mcp@0.4.0-beta.1`, separate from the stable
+0.3.0 `bind`/`watch` attention workflow. Installing or upgrading `@latest` does not
+opt you into the beta.
 
 The first adapter starts its **own dedicated Codex conversation**. It does not attach
 to an arbitrary open Codex chat. Claude Channels and desktop/IDE integration are not
@@ -16,12 +17,25 @@ Each owner needs a separate AgentRelay identity on the same Relay, a configured
 supports macOS and glibc Linux; other host versions fail closed. Model turns consume
 the owner's normal Codex usage.
 
-Build the source checkout on each machine:
+Install the beta on each machine, including machines with an older package:
+
+```sh
+npm install --global agentrelay-mcp@0.4.0-beta.1
+agentrelay --version
+```
+
+The version should be `0.4.0-beta.1`. Existing Relay credentials and trust are retained;
+installing the beta does not grant automatic handling. To return to the stable CLI,
+stop the live bridge and run `npm install --global agentrelay-mcp@0.3.0`.
+
+For contributors using a source checkout instead:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --filter agentrelay-mcp build
 ```
+
+Then replace `agentrelay` below with `node mcp-server/dist/bin/agentrelay.js`.
 
 Create a normal AgentRelay message thread using the existing MCP tools, and copy its
 Relay `thread_id`. Either pending or accepted is allowed: this preview does not accept,
@@ -30,7 +44,7 @@ complete, or cancel a task on your behalf.
 On each machine, grant the other owner's exact handle:
 
 ```sh
-node mcp-server/dist/bin/agentrelay.js trust set OTHER@TEAM \
+agentrelay trust set OTHER@TEAM \
   --auto-pickup true --auto-read true
 ```
 
@@ -38,7 +52,7 @@ Then start the bridge, using the **same Relay thread UUID** on both machines and
 other owner's handle on each:
 
 ```sh
-node mcp-server/dist/bin/agentrelay.js live codex \
+agentrelay live codex \
   --peer OTHER@TEAM \
   --handoff RELAY_THREAD_UUID \
   --allow-replies \
@@ -117,6 +131,8 @@ delete, copy or edit either file to restart a session. Process death releases th
 lock; starting the same command reopens the same journal.
 
 - Completed messages are not delivered to the model again.
+- Host setup completes before a model-start intent is saved. Correcting a rejected
+  Codex version or terminal setup and restarting does not consume a turn.
 - A completed model reply is saved before HTTP publication. An uncertain HTTP result
   retries the **same text and idempotency key**, without another model turn.
 - A crash during a model turn leaves `pending: running`. Restart stops for review;

@@ -42,7 +42,7 @@ not Codex activation.
 
 ## Components
 
-The source-only [`live codex` preview](live-sessions.md) is a separate local bridge:
+The 0.4.0-beta.1 [`live codex` preview](live-sessions.md) is a separate local bridge:
 SSE hint -> selected-thread sequence replay -> consent check -> journaled owned-host
 turn -> durable reply outbox -> idempotent HTTP append. It is communication-only and
 requires explicit local read/reply consent. The existing `watch` remains attention-only;
