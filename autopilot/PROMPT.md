@@ -40,8 +40,12 @@ has changed it. Record that in the journal and replan.
   the canonical commands in `CONTRIBUTING.md`: `pnpm lint`, `pnpm -r typecheck`,
   `pnpm -r build`, the unit command
   `pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test`,
-  and `pnpm --filter relay test:integration` when relay code changes. Do not use
-  `pnpm -r test`, because it includes the e2e workspace. Commit only when the checks pass. If something is broken and you cannot fix it, revert it
+  and, when relay code changes,
+  `RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration`
+  against the job's Postgres service. Never set `RELAY_TEST_DATABASE_URL` or
+  `RELAY_DATABASE_URL` for the unit command, because they switch relay unit tests to
+  parallel database runs that collide. Do not use `pnpm -r test`, because it includes
+  the e2e workspace. Commit only when the checks pass. If something is broken and you cannot fix it, revert it
   rather than committing it.
 - Commit message format is Conventional Commits, lowercase and imperative, for example
   `fix(relay): reject expired invite tokens`. Never add `Co-authored-by` trailers,
