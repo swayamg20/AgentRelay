@@ -1,0 +1,270 @@
+name: Autopilot
+
+# Unattended Codex runs toward the goal in autopilot/GOALS.md. Work lands on the
+# `autopilot` branch behind a draft PR. Run reports and owner questions are posted
+# as GitHub comments and issues that mention the owner, so they arrive by email.
+on:
+  schedule:
+    - cron: '30 3 * * *' # 09:00 IST
+    - cron: '30 8 * * *' # 14:00 IST
+    - cron: '30 14 * * *' # 20:00 IST
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Primary model deployment
+        default: gpt-6.1-sol
+      minutes:
+        description: Agent time budget in minutes
+        default: '220'
+
+concurrency:
+  group: autopilot
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  BRANCH: autopilot
+  OWNER: ${{ github.repository_owner }}
+  NEEDS_YOU_LABEL: 'autopilot:needs-you'
+  LOG_ISSUE_TITLE: Autopilot run log
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 280
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentrelay
+          POSTGRES_PASSWORD: agentrelay-dev
+          POSTGRES_DB: agentrelay
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U agentrelay -d agentrelay"
+          --health-interval 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # The agent must not be able to push. The push step authenticates explicitly.
+          persist-credentials: false
+
+      - name: Check status in GOALS.md
+        id: gate
+        run: |
+          status="$(grep -m1 -E '^status:' autopilot/GOALS.md | awk '{print $2}')"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Autopilot status: ${status:-missing}"
+
+      - name: Prepare output directory
+        if: steps.gate.outputs.status == 'running'
+        run: |
+          out="$RUNNER_TEMP/autopilot"
+          mkdir -p "$out/questions"
+          cp autopilot/GOALS.md "$out/GOALS.md"
+          echo "AUTOPILOT_OUT=$out" >> "$GITHUB_ENV"
+          echo "AUTOPILOT_DEADLINE=$(( $(date +%s) + ${{ inputs.minutes || '220' }} * 60 ))" >> "$GITHUB_ENV"
+
+      - name: Prepare autopilot branch
+        id: branch
+        if: steps.gate.outputs.status == 'running'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "Swayam Gupta"
+          git config user.email "77153230+swayamg20@users.noreply.github.com"
+          open_pr="$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$open_pr" ]] && git fetch origin "$BRANCH"; then
+            # Continue the open PR and bring in anything merged to main since.
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            if ! git merge --no-edit origin/main; then
+              git merge --abort
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            # No open PR: the last batch was merged or discarded. Start fresh from main.
+            git fetch origin "$BRANCH" || true
+            git checkout -B "$BRANCH" origin/main
+          fi
+          echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies and tools
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          pnpm install --frozen-lockfile
+          npm install --global @openai/codex@0.154.0
+          pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts
+        env:
+          RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
+
+      - name: Collect owner replies
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create "$NEEDS_YOU_LABEL" --color B60205 --description "Autopilot is waiting on the owner" --force
+          gh label create autopilot --color 5319E7 --description "Autopilot runs" --force
+          # Only the owner's comments reach the agent. The repository is public.
+          gh issue list --label "$NEEDS_YOU_LABEL" --state open --limit 30 \
+            --json number,title,body,comments \
+            | jq -r --arg owner "$OWNER" '.[] |
+              "### Issue #\(.number): \(.title)\n\n\(.body)\n\n" +
+              ([.comments[] | select(.author.login == $owner) |
+                "**Owner reply (\(.createdAt)):**\n\n\(.body)\n"] | join("\n")) + "\n"' \
+            > "$AUTOPILOT_OUT/inbox.md"
+
+      - name: Run agent
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+        continue-on-error: true
+        env:
+          AZURE_FOUNDRY_API_KEY: ${{ secrets.AZURE_FOUNDRY_API_KEY }}
+          AZURE_FOUNDRY_BASE_URL: ${{ vars.AZURE_FOUNDRY_BASE_URL }}
+          AUTOPILOT_MODEL: ${{ inputs.model || 'gpt-6.1-sol' }}
+          AUTOPILOT_FALLBACK_MODEL: FW-GLM-5.3
+          AUTOPILOT_RUN_ID: ${{ github.run_id }}
+          RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
+          RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
+          RELAY_TEST_TRUNCATE_VIA_PSQL: '1'
+        run: bash autopilot/run.sh
+
+      - name: Save memory, discard leftovers, enforce commit identity
+        id: tidy
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+        env:
+          BASE: ${{ steps.branch.outputs.base }}
+        run: |
+          if [[ -n "$(git status --porcelain -- autopilot/STATE.md autopilot/JOURNAL.md)" ]]; then
+            git add autopilot/STATE.md autopilot/JOURNAL.md
+            git commit -m "chore(autopilot): update run memory"
+          fi
+          leftovers="$(git status --porcelain)"
+          if [[ -n "$leftovers" ]]; then
+            { echo '### Discarded uncommitted changes'; echo '```'; echo "$leftovers"; echo '```'; } >> "$AUTOPILOT_OUT/notes.md"
+            git reset --hard HEAD && git clean -fd
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$BASE" ]]; then
+            # Rewrite only this run's commits: owner identity, no AI attribution lines.
+            FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f \
+              --env-filter '
+                export GIT_AUTHOR_NAME="Swayam Gupta" GIT_COMMITTER_NAME="Swayam Gupta"
+                export GIT_AUTHOR_EMAIL="77153230+swayamg20@users.noreply.github.com"
+                export GIT_COMMITTER_EMAIL="77153230+swayamg20@users.noreply.github.com"' \
+              --msg-filter 'grep -viE "^(co-authored-by:|.*generated (with|by) .*(claude|codex|gpt|openai|anthropic|ai))" || true' \
+              "$BASE..HEAD"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify
+        id: verify
+        if: steps.tidy.outputs.changed == 'true'
+        env:
+          RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
+          RELAY_TEST_TRUNCATE_VIA_PSQL: '1'
+        run: |
+          # Pushes made with GITHUB_TOKEN do not trigger CI, so verify here.
+          : > "$AUTOPILOT_OUT/verify.md"
+          for cmd in "pnpm lint" "pnpm typecheck" "pnpm build" "pnpm test"; do
+            if $cmd > "$AUTOPILOT_OUT/verify.log" 2>&1; then
+              echo "- \`$cmd\`: pass" >> "$AUTOPILOT_OUT/verify.md"
+            else
+              echo "- \`$cmd\`: **FAIL**" >> "$AUTOPILOT_OUT/verify.md"
+              echo "failed=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Push and open draft PR
+        if: steps.tidy.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The lease names the remote value fetched earlier (empty means the branch must not exist yet).
+          expected="$(git rev-parse -q --verify "origin/$BRANCH" || true)"
+          git push --force-with-lease="refs/heads/$BRANCH:$expected" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" \
+            "HEAD:refs/heads/$BRANCH"
+          # Required checks on main come from CI; start it explicitly for this push.
+          gh workflow run ci.yml --ref "$BRANCH"
+          if [[ -z "$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')" ]]; then
+            body="$(printf '## Summary\n\nWork from scheduled autopilot runs toward the goal in `autopilot/GOALS.md`. Per-run detail is in `autopilot/JOURNAL.md` and the "%s" issue.\n\n## Testing\n\n- Each run executes `pnpm lint`, `pnpm typecheck`, `pnpm build` and `pnpm test`, reports results in the run log, and dispatches CI on this branch.\n\n## Scope\n\n- Merge to accept the batch. Close without merging to discard it; the next run starts fresh from main.\n' "$LOG_ISSUE_TITLE")"
+            gh pr create --draft --base main --head "$BRANCH" \
+              --title "chore(autopilot): scheduled autopilot work" --body "$body"
+          fi
+
+      - name: Open owner questions, close resolved ones, post run report
+        if: always() && steps.gate.outputs.status == 'running'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.branch.outputs.base }}
+          CONFLICT: ${{ steps.branch.outputs.conflict }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create "$NEEDS_YOU_LABEL" --color B60205 --description "Autopilot is waiting on the owner" --force
+          gh label create autopilot --color 5319E7 --description "Autopilot runs" --force
+          out="${AUTOPILOT_OUT:-$RUNNER_TEMP/autopilot}"
+          mkdir -p "$out/questions"
+
+          if [[ "$CONFLICT" == "true" ]]; then
+            printf '%s\n\n%s\n' "Merging main into the autopilot branch conflicts" \
+              "The open autopilot PR conflicts with main. Resolve the conflicts on the \`$BRANCH\` branch, or close the PR to discard it. Runs are skipped until then." \
+              > "$out/questions/merge-conflict.md"
+          fi
+
+          opened=""
+          for q in "$out"/questions/*.md; do
+            [[ -e "$q" ]] || continue
+            title="$(head -n1 "$q" | sed 's/^#* *//' | cut -c1-100)"
+            body="$(printf '@%s\n\n%s\n\n---\nReply here. The next run reads only comments from @%s. Run: %s\n' \
+              "$OWNER" "$(tail -n +2 "$q")" "$OWNER" "$RUN_URL")"
+            url="$(gh issue create --label "$NEEDS_YOU_LABEL" --label autopilot --title "Autopilot: $title" --body "$body")"
+            opened+="- $url"$'\n'
+          done
+
+          if [[ -s "$out/resolved.txt" ]]; then
+            grep -oE '^[0-9]+' "$out/resolved.txt" | sort -u | while read -r n; do
+              if gh issue view "$n" --json labels --jq '.labels[].name' | grep -qx "$NEEDS_YOU_LABEL"; then
+                gh issue close "$n" --comment "Resolved in autopilot run $RUN_URL"
+              fi
+            done
+          fi
+
+          {
+            echo "@$OWNER autopilot run finished: $RUN_URL"
+            echo
+            echo "**Sessions**"; echo '```'; cat "$out/sessions.log" 2>/dev/null || echo "none"; echo '```'
+            if [[ -n "$BASE" ]] && git rev-parse -q --verify "$BASE" >/dev/null; then
+              echo "**Commits**"; echo '```'; git log --oneline "$BASE..HEAD" 2>/dev/null | head -50; echo '```'
+            fi
+            [[ -s "$out/verify.md" ]] && { echo "**Verification**"; cat "$out/verify.md"; echo; }
+            [[ -n "$opened" ]] && { echo "**Questions for you**"; echo "$opened"; }
+            [[ -s "$out/summary.md" ]] && { echo "**Agent summary**"; cat "$out/summary.md"; echo; }
+            [[ -s "$out/notes.md" ]] && cat "$out/notes.md"
+            true
+          } > "$out/report.md"
+
+          log_issue="$(gh issue list --label autopilot --state open --json number,title \
+            | jq -r --arg t "$LOG_ISSUE_TITLE" 'map(select(.title == $t)) | .[0].number // empty')"
+          if [[ -z "$log_issue" ]]; then
+            log_issue="$(gh issue create --label autopilot --title "$LOG_ISSUE_TITLE" \
+              --body "One comment per autopilot run. Pause runs by setting \`status: paused\` in \`autopilot/GOALS.md\` on main.")"
+          fi
+          gh issue comment "$log_issue" --body-file "$out/report.md"
