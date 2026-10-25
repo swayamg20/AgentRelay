@@ -151,9 +151,8 @@ jobs:
           AUTOPILOT_MODEL: ${{ inputs.model || 'gpt-6.1-sol' }}
           AUTOPILOT_FALLBACK_MODEL: FW-GLM-5.3
           AUTOPILOT_RUN_ID: ${{ github.run_id }}
-          RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
-          RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
-          RELAY_TEST_TRUNCATE_VIA_PSQL: '1'
+        # No database variables here: they switch relay unit tests to parallel
+        # database runs. PROMPT.md gives the agent the integration command with them.
         run: bash autopilot/run.sh
 
       - name: Save memory, discard leftovers, enforce commit identity
@@ -186,17 +185,15 @@ jobs:
       - name: Verify
         id: verify
         if: steps.tidy.outputs.changed == 'true'
-        env:
-          RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
-          RELAY_TEST_TRUNCATE_VIA_PSQL: '1'
         run: |
           # A quick pre-push signal. The dispatched CI run on the branch is the merge gate.
           # Unit tests use the CONTRIBUTING.md command: `pnpm -r test` also runs the e2e
-          # workspace, which needs a live relay.
+          # workspace, which needs a live relay. Only the integration command gets the
+          # database variables, matching the CI unit and relay-integration jobs.
           : > "$AUTOPILOT_OUT/verify.md"
           for cmd in "pnpm lint" "pnpm -r typecheck" "pnpm -r build" \
             "pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test" \
-            "pnpm --filter relay test:integration"; do
+            "env RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration"; do
             if $cmd > "$AUTOPILOT_OUT/verify.log" 2>&1; then
               echo "- \`$cmd\`: pass" >> "$AUTOPILOT_OUT/verify.md"
             else
