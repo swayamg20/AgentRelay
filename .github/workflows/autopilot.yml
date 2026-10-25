@@ -117,11 +117,20 @@ jobs:
         env:
           RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
 
-      - name: Collect owner replies
+      - name: Collect owner replies and open-issue snapshot
         if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The agent cannot call GitHub, so give it a read-only snapshot of the open
+          # issues the owner wrote. Issues from anyone else are left out.
+          gh issue list --state open --limit 100 --json number,title,labels,author,body \
+            | jq -r --arg owner "$OWNER" '.[]
+              | select(.author.login == $owner)
+              | select([.labels[].name] | index("autopilot") | not)
+              | "### #\(.number) \(.title)\n\nLabels: \([.labels[].name] | join(", "))\n\n\(.body[0:6000])\n"' \
+            > "$AUTOPILOT_OUT/issues.md"
+          echo "Issue snapshot: $(grep -c '^### #' "$AUTOPILOT_OUT/issues.md") issues"
           gh label create "$NEEDS_YOU_LABEL" --color B60205 --description "Autopilot is waiting on the owner" --force
           gh label create autopilot --color 5319E7 --description "Autopilot runs" --force
           # Only the owner's comments reach the agent. The repository is public.
@@ -181,13 +190,23 @@ jobs:
           RELAY_TEST_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
           RELAY_TEST_TRUNCATE_VIA_PSQL: '1'
         run: |
-          # Pushes made with GITHUB_TOKEN do not trigger CI, so verify here.
+          # A quick pre-push signal. The dispatched CI run on the branch is the merge gate.
+          # Unit tests use the CONTRIBUTING.md command: `pnpm -r test` also runs the e2e
+          # workspace, which needs a live relay.
           : > "$AUTOPILOT_OUT/verify.md"
-          for cmd in "pnpm lint" "pnpm typecheck" "pnpm build" "pnpm test"; do
+          for cmd in "pnpm lint" "pnpm -r typecheck" "pnpm -r build" \
+            "pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test" \
+            "pnpm --filter relay test:integration"; do
             if $cmd > "$AUTOPILOT_OUT/verify.log" 2>&1; then
               echo "- \`$cmd\`: pass" >> "$AUTOPILOT_OUT/verify.md"
             else
-              echo "- \`$cmd\`: **FAIL**" >> "$AUTOPILOT_OUT/verify.md"
+              cat "$AUTOPILOT_OUT/verify.log"
+              {
+                echo "- \`$cmd\`: **FAIL**"
+                echo; echo '  <details><summary>Last 40 lines</summary>'; echo; echo '  ```'
+                tail -n 40 "$AUTOPILOT_OUT/verify.log" | sed 's/^/  /'
+                echo '  ```'; echo; echo '  </details>'
+              } >> "$AUTOPILOT_OUT/verify.md"
               echo "failed=true" >> "$GITHUB_OUTPUT"
             fi
           done
