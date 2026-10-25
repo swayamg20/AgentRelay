@@ -689,6 +689,13 @@ The `agentrelay` binary currently provides:
   (0.4.0-beta.1 communication preview; see [limits and consent](live-sessions.md))
 - `mcp`
 
+`doctor` and `doctor --json` print their report and exit with status `1` when
+`doctorHasMissing(report)` is true, otherwise `0`. The predicate includes missing
+configuration, client MCP entries, permission overlays, broken trust parsing,
+unreachable Relay, and rejected API keys. `--json` retains the existing
+`DoctorReport` structure. `doctor --fix` keeps its existing exit behavior based on
+the after-report; `--fix --json` retains `{ before, after, fixed, skippedManual }`.
+
 `join` writes local credentials, adds the inviter to local trust, and invokes install
 for both clients. `install` writes the Claude MCP entry to `~/.claude.json`, the
 Claude permission overlay to `~/.claude/settings.json`, and Codex configuration to

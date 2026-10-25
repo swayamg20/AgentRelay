@@ -136,6 +136,13 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 - `agentrelay live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
 - `agentrelay mcp`
 
+`agentrelay doctor` and `agentrelay doctor --json` exit with status `0` when no
+checks fail, or `1` when configuration, client MCP entries, permission overlays,
+trust parsing, Relay connectivity, or API-key validation fail. Both modes print
+the report before exiting; `--json` preserves the existing `DoctorReport` fields.
+With `--fix`, the exit status reflects the report after remediation, and `--fix
+--json` retains its `{ before, after, fixed, skippedManual }` result.
+
 ## Security posture
 
 Peer content is untrusted data.
