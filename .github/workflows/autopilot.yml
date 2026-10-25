@@ -48,19 +48,9 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 280
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: agentrelay
-          POSTGRES_PASSWORD: agentrelay-dev
-          POSTGRES_DB: agentrelay
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U agentrelay -d agentrelay"
-          --health-interval 5s
-          --health-retries 5
+    # Postgres runs natively (see the install step), not as a service container. A
+    # running container adds an nsfs network-namespace entry to /proc/self/mountinfo,
+    # which the Node containment parser rejects, failing the Node unit tests.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -121,7 +111,14 @@ jobs:
       - name: Install dependencies and tools
         if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client
+          sudo apt-get update && sudo apt-get install -y postgresql postgresql-client
+          # Native Postgres on 5433 so the URLs match CI and CONTRIBUTING.md.
+          sudo sed -i -E 's/^#?port = [0-9]+/port = 5433/' /etc/postgresql/*/main/postgresql.conf
+          sudo systemctl restart postgresql.service
+          for _ in $(seq 1 30); do pg_isready -h localhost -p 5433 && break; sleep 1; done
+          sudo -u postgres psql -p 5433 -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE agentrelay LOGIN SUPERUSER PASSWORD 'agentrelay-dev'" \
+            -c "CREATE DATABASE agentrelay OWNER agentrelay"
           pnpm install --frozen-lockfile
           npm install --global @openai/codex@0.154.0
           pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts
