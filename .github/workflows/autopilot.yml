@@ -16,10 +16,9 @@ on:
       minutes:
         description: Agent time budget in minutes
         default: '220'
-
-concurrency:
-  group: autopilot
-  cancel-in-progress: false
+  # The owner's reply on an open question starts a run without waiting for the schedule.
+  issue_comment:
+    types: [created]
 
 permissions:
   actions: write
@@ -35,6 +34,18 @@ env:
 
 jobs:
   run:
+    # Comments start a run only when the owner replies on an open autopilot question.
+    # Anyone can comment on this public repository, so every other comment is skipped.
+    if: >-
+      github.event_name != 'issue_comment' || (
+        github.event.comment.user.login == github.repository_owner &&
+        !github.event.issue.pull_request &&
+        github.event.issue.state == 'open' &&
+        contains(github.event.issue.labels.*.name, 'autopilot:needs-you'))
+    # Job-level concurrency, so skipped comment runs never displace a queued real run.
+    concurrency:
+      group: autopilot
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 280
     services:
@@ -249,7 +260,7 @@ jobs:
           for q in "$out"/questions/*.md; do
             [[ -e "$q" ]] || continue
             title="$(head -n1 "$q" | sed 's/^#* *//' | cut -c1-100)"
-            body="$(printf '@%s\n\n%s\n\n---\nReply here. The next run reads only comments from @%s. Run: %s\n' \
+            body="$(printf '@%s\n\n%s\n\n---\nReply here. A reply from @%s starts a run immediately; comments from anyone else are ignored. Run: %s\n' \
               "$OWNER" "$(tail -n +2 "$q")" "$OWNER" "$RUN_URL")"
             url="$(gh issue create --label "$NEEDS_YOU_LABEL" --label autopilot --title "Autopilot: $title" --body "$body")"
             opened+="- $url"$'\n'
