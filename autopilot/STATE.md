@@ -13,44 +13,76 @@ the owner chooses; then implement the chosen issue with passing checks.
 ## Plan
 
 - [x] Read the goal, recent history, repository instructions, and validation guidance.
-- [x] Check whether the permitted local inputs include the open issue inventory.
-- [x] Request the missing issue inventory through the workflow question output.
-- [ ] Obtain issue numbers, titles, labels, bodies, and relevant owner scope replies.
-- [ ] Exclude Labs, demand-gated work, and epics; inspect candidate code, callers,
+- [x] Obtain the workflow's read-only issue snapshot; the previous input blocker is resolved.
+- [x] Exclude Labs, demand-gated work, and epics; inspect candidate code, callers,
       consumers, and nearby tests against the relevant design sources.
-- [ ] Propose the three best one-run candidates with plans, files, checks, and a
+- [x] Propose the three best one-run candidates with plans, files, checks, and a
       recommendation through the workflow question output.
+- [x] Run baseline static, unit, focused MCP, and sequential Relay integration checks;
+      document the existing Node host-mount failures without changing product code.
 - [ ] Wait for the owner's selection, then implement and verify only that issue.
+- [ ] Recheck the Node baseline in the selected implementation's runner; obtain an
+      owner decision if unrelated failures still prevent the required full unit gate.
 - [ ] Commit the implementation and refresh run memory.
 
 ## Next step
 
-Read the owner inbox for the issue inventory requested in
-`questions/core-mailbox-issue-input.md` in the run output. Do not call GitHub or
-infer approved issue scope from documentation gaps. Once the inventory is available,
-inspect the corresponding implementation and tests and prepare the three candidates.
+Read the owner inbox for a selection on
+`questions/choose-first-core-mailbox-issue.md` in the run output. The candidates are
+#11 (recommended: doctor exit codes), #40 (safe Markdown thread export), and #34
+(tested Compose backup/restore runbook). The question contains inspected contracts,
+plans, files, exact verification commands, exclusions, and the baseline caveat.
+Do not implement before selection, call GitHub, or infer new scope from design gaps.
+
+After selection, inspect fresh status/history and applicable instructions. Recheck
+the Node test baseline in that runner. If it still fails, ask the owner how to
+resolve the environment or separately scope the baseline problem; do not weaken
+Labs security or skip tests to obtain an implementation commit. This run stops
+because the next product action depends on owner selection.
 
 ## Waiting on owner
 
-- Provide a snapshot of open `core-mailbox` issues with numbers, titles, labels,
-  bodies, and relevant owner scope replies. No snapshot is present in the repository
-  or run inputs. The session explicitly forbids calling GitHub, including read-only
-  issue retrieval. The question output explains this conflict and recommends
-  supplying the snapshot in an owner reply without changing access rules.
-- After the candidate proposal, the owner must select an issue before implementation.
+- Choose #11, #40, or #34 through the generated workflow question. No owner reply
+  or selection is present in this session.
+- The proposal flags the full unit gate's existing Node host-mount failure. A
+  selected implementation needs a runner where the baseline passes or a separate
+  owner-approved resolution; no Labs changes are authorized by this mailbox goal.
 
 ## Learned about this repository
 
-- Relay integration tests need Postgres. The autopilot job provides it at
-  `localhost:5433` and exports `RELAY_TEST_DATABASE_URL`.
-- The initial state had no goal recorded; this session initializes the plan from
-  the current owner-controlled goal rather than replacing a previous goal.
-- History at session start ends at `d87bffe`; the current branch is `autopilot`, and
-  the working tree was clean.
-- The workflow collects only open owner-question issues and owner comments into
-  the inbox. It does not supply a `core-mailbox` issue inventory. The inbox is empty.
-- Public design sources describe current behavior, not approved future issue scope;
-  they cannot substitute for the missing issue inventory.
-- `CONTRIBUTING.md` requires `git diff --check` and local-link checks for docs-only
-  changes. No product code, workflow, or dependency changes are needed for this
-  blocked intake session.
+- The owner goal has not changed. History at session start ends at `1f0120f`;
+  `e6afe6a` supplies issue snapshots and aligns documented CI commands. This supersedes
+  the prior memory's missing-inventory assumption. The branch is `autopilot`, and
+  the initial working tree was clean. No implementation changed in this session.
+- Eligible scoped small issues are #11, #40, and #34, all `help wanted`. #111 is a
+  larger filter/pagination contract. #103 needs a coverage audit; #10 and #39 are
+  ideas with policy/contract questions; #44 is broad with a demand-gated metrics
+  dependency; #8 needs real two-owner evidence. Labs, demand-gated, and epics are excluded.
+- Doctor's ordinary CLI branch never checks `doctorHasMissing`; `--fix` already
+  does. `commands.test.ts` covers the predicate but not ordinary CLI exit wiring.
+  `agentrelay-cli.test.ts` runs a built binary and self-skips without a build.
+- `viewThread` preserves teammate provenance and strips Relay-owned metadata.
+  Relay `tasks/get` returns `created_at`, but that field is absent from the validated
+  MCP result. Export should retain that existing field, not add a Relay route.
+  `writeSecretFile` overwrites via rename; export needs exclusive creation instead.
+- Compose's services are `postgres` and `relay`, its database/user are `agentrelay`,
+  and its volume is `postgres-data`. Fixed container names/ports need isolation for
+  disposable selfhost validation. Docker's daemon and Postgres dump/restore tools
+  are available; no restore was attempted before issue selection.
+- Relay roster dispatch ignores params, although the MCP client already sends
+  filters. Its filter-support comment disagrees with code; `docs/lld.md` is truthful.
+- Baseline `pnpm lint`, `pnpm -r typecheck`, and `pnpm -r build` pass. Lint has four
+  existing unused-suppression warnings in Relay tests. Focused MCP CLI/tool tests
+  pass (64 tests); sequential Relay integration passes (180 tests).
+- The job exports database connection variables. Run the canonical database-free
+  unit command with `env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL` in that
+  subprocess only. Otherwise Relay Vitest runs database files concurrently against
+  shared tables; the initial baseline had 97 collision/deadlock failures. The proper
+  sequential integration runner passes with the original job environment.
+- The database-free unit rerun passes protocol, MCP, and Relay but fails 16 existing
+  Node tests in `containment-read-tree.test.ts` and `mission-workspace.test.ts` with
+  `Linux mount metadata was malformed` / `workspace_mounts_unsupported`. This is
+  an unchanged runner/baseline issue, not authority to modify Labs containment.
+- Only `STATE.md` and `JOURNAL.md` change in the repository. The proposal, summary,
+  and STOP output stay outside it. Docs-only memory checks are lint, diff whitespace,
+  and local links; no product failure was introduced or retained by this change.
