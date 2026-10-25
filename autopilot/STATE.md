@@ -4,84 +4,64 @@ Working memory. Rewrite this file at the end of each session.
 
 ## Goal as understood
 
-The original goal is unchanged: propose three eligible small core-mailbox issues,
-then implement only the owner's selection with passing checks. The proposal is
-complete. On October 25, 2026 at 22:44:52 UTC, the owner selected **#11: doctor
-failure exit codes** in the reply to #154. That authorizes #11 only, not a Node
-security fix or an exception to mandatory checks.
+The owner-controlled goal is unchanged and complete: propose three eligible small
+core-mailbox issues, then implement the owner's selection with passing checks.
+The proposal listed #11, #40, and #34. The owner selected **#11: doctor failure
+exit codes** on October 25, 2026 at 22:44:52 UTC. Commit `119d756` implements only
+that selection, with regression tests and exit-status documentation.
 
 ## Plan
 
-- [x] Inspect the eligible issue snapshot, code, tests, design sources, and history.
-- [x] Submit three candidates (#11, #40, #34), recommending #11.
-- [x] Accept the owner's #11 selection; record #154 as resolved in workflow output.
-- [x] Reinspect current status, implementation, callers, and validation guidance.
-- [x] Recheck the database-free full unit baseline before making product changes.
-- [x] Ask the owner to unblock the still-failing Node baseline through a corrected
-      runner or separately scoped resolution; do not alter security or skip tests.
-- [ ] Obtain a passing unchanged full unit baseline or an approved prerequisite fix.
-- [ ] Implement #11, add built-CLI regression coverage, and document exit statuses.
-- [ ] Run the focused CLI tests and all mandatory static/build/unit gates.
-- [ ] Commit the verified implementation, then refresh run memory.
+- [x] Inspect the issue snapshot, implementation, callers, tests, and design sources.
+- [x] Propose three candidates and obtain the owner's #11 selection (#154).
+- [x] Ask for correction of the pre-existing mandatory unit baseline (#157).
+- [x] Confirm the corrected runner passes the unchanged database-free unit gate.
+- [x] Implement #11 using the existing doctorHasMissing predicate after output.
+- [x] Add built-CLI regressions for human and JSON modes, including preserved fix behavior.
+- [x] Document the exit contract wherever doctor --json is documented.
+- [x] Run focused tests and all mandatory lint/typecheck/build/unit gates successfully.
+- [x] Commit the verified implementation and refresh run memory.
 
 ## Next step
 
-Read the owner inbox for the response to
-`questions/doctor-unit-baseline-blocker.md`. Resume #11 only when the mandatory
-full unit gate can pass without weakening unrelated security or hiding failures.
-Do not ask the owner to select an issue again: #11 is already approved.
-
-The small implementation is clear: after the ordinary doctor action prints its
-human or JSON report, set `process.exitCode = 1` when `doctorHasMissing(report)`
-is true. Preserve `DoctorReport` and the existing `--fix` behavior. Add built-CLI
-tests using an isolated temporary home and asynchronous child execution against a
-local HTTP fixture for missing config, unavailable Relay, rejected key, and healthy
-setup in both modes, plus existing fix success/failure behavior. Build first so
-`describeIfBuilt` cannot silently skip the tests. Document the exit contract in
-`mcp-server/README.md` and `docs/lld.md`, the public JSON-option documentation sites.
+Stop this run. The current goal is complete; wait for the owner to review the draft
+pull request and set a new goal. Do not implement #40, #34, or other backlog issues
+without a new owner-controlled goal or explicit selection.
 
 ## Waiting on owner
 
-- Unblock the pre-existing full unit failure through a baseline-green execution
-  environment or a separately scoped Node mount-metadata resolution. The question
-  explains both options and recommends correcting the runner first. This run stops
-  because committing #11 requires checks that the unchanged checkout cannot pass.
-- No issue-selection decision remains outstanding. #154 is resolved by the reply.
+None for this goal. Selection question #154 was resolved in the previous run.
+The reply to #157 chose the recommended corrected-runner path. Native Postgres
+setup landed in `75b478f` / #158 before this session; the unchanged full unit gate
+now passes. Marked #157 resolved in workflow output. No security waiver or Node
+change was needed.
 
 ## Learned about this repository
 
-- Session 40241657270 started on clean `autopilot` at `cf293e1`. History includes
-  `de00e37` / #155, which scopes database variables to integration runs. The owner
-  fixed the Relay collision problem, not the independent Node mount failure.
-- Before any edits, the canonical unit command with both database variables unset
-  passed protocol (125 tests), MCP (248 tests), and Relay (77 tests). Node failed
-  16 tests, passed 422, and skipped 3. Eight failures are in
-  `containment-read-tree.test.ts`, eight in `mission-workspace.test.ts`.
-- Their cause is `Linux mount metadata was malformed` from
-  `node/src/linux-mounts.ts:42`; workspace admission maps it to
-  `workspace_mounts_unsupported`. These reproduce the previous run's failures.
-  No Node, workflow, product, or test files changed. Do not bypass the fail-closed
-  mount/storage checks or infer Node-fix scope from the selected mailbox issue.
-- Doctor's ordinary action prints its report without evaluating
-  `doctorHasMissing`; the fix branch already evaluates the after-report. The
-  existing predicate includes missing config, MCP entries, overlays, trust,
-  unreachable Relay, and rejected credentials. No new diagnostic is needed.
-- The whoami consumer uses authenticated `GET /agents/me`; any 2xx is success.
-  The Relay producer supplies the self-agent JSON response. No Relay or protocol
-  contract, schema, or database mutation is needed for #11.
-- Client configuration paths use `HOME`; credential/trust paths also have
-  AgentRelay overrides. CLI fixtures must isolate both rather than reading or
-  installing into the runner's real home. A synchronous child would block a local
-  HTTP fixture on the test process's event loop; use asynchronous execution.
-- Unit invocations must not set either database URL. Use
-  `env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL` in that subprocess only
-  if inherited variables exist. Use the separate sequential integration runner
-  only for applicable Relay changes; never `pnpm -r test`.
-- This run's `pnpm lint`, `pnpm -r typecheck`, and `pnpm -r build` passed.
-  Lint retains four existing Relay unused-suppression warnings. After building,
-  the focused existing MCP CLI/command suite passed all 44 tests. These are baseline
-  results, not evidence of an implemented #11 fix. No Relay integration rerun was
-  needed because no Relay or other product code changed.
-- Only this memory file and `JOURNAL.md` change in the repository. The owner
-  question, resolution marker, logs, summary, and STOP stay in workflow output.
-  No implementation was attempted or retained while the required gate was red.
+- Session 40243414124 began on clean autopilot at `6660759`, which includes the
+  owner's native-Postgres runner correction. Baseline Node now passes all 438
+  enabled tests, including the 16 previously failing host-mount cases.
+- Ordinary doctor now sets process.exitCode to 1 after printing when
+  doctorHasMissing(report) is true. Healthy reports still exit 0. The predicate,
+  DoctorReport fields, remediation behavior, and fix branch are unchanged.
+- The whoami consumer uses authenticated GET /agents/me; any 2xx is success.
+  Tests use a local HTTP fixture and verify the request path and bearer header.
+  No Relay, protocol, Node, database, or workflow contract changed.
+- The new doctor CLI suite has 14 cases: both output modes cover missing config,
+  unavailable Relay, rejected key, healthy setup, missing client registration,
+  successful repair, and manual-remediation failure. Tests isolate HOME and all
+  relevant AgentRelay credential/trust paths and execute children asynchronously.
+- Built-CLI tests follow the existing describeIfBuilt convention. Build before
+  running them to avoid silent skips. Final full units passed protocol 125,
+  MCP 266 (including all CLI cases), Relay 77, and Node 438 tests.
+- Unit commands must not inherit either Relay database URL. Use env -u for those
+  two variables in the unit subprocess only. Relay's 180 integration tests and
+  Node's three opt-in tests skip normally in this tier. Integration reruns are
+  required when Relay code changes; none changed for #11.
+- pnpm lint passes with four pre-existing Relay unused-suppression warnings.
+  Recursive typecheck and build pass. Both public doctor JSON documentation sites
+  are mcp-server/README.md and docs/lld.md; their 13 local links resolve.
+- The implementation commit is `119d756` (fix(cli): return failure status for
+  failed doctor checks). The separate memory commit uses the required
+  chore(autopilot): update run memory subject. No push, external mutation, release,
+  or unrelated Labs work was performed.
