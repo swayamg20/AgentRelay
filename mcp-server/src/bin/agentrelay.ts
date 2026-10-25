@@ -196,6 +196,7 @@ cli
 		} else {
 			process.stdout.write(`${formatDoctor(report)}\n`);
 		}
+		if (doctorHasMissing(report)) process.exitCode = 1;
 	});
 
 cli
