@@ -21,9 +21,15 @@ jobs:
     cache-mode: none
     permissions:
       actions: write
+      issues: write
     steps:
-      - name: Dispatch an autopilot run
+      - name: Dispatch an autopilot run and acknowledge the reply
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh workflow run autopilot.yml --ref main
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh workflow run autopilot.yml --ref main
+          # A thumbs-up on the owner's comment shows the reply was picked up.
+          gh api -X POST "repos/$GH_REPO/issues/comments/$COMMENT_ID/reactions" -f content='+1' >/dev/null \
+            || echo "::warning::Could not react to the comment"
