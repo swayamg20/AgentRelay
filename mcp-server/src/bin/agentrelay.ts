@@ -12,6 +12,7 @@ import {
 	doctorFix,
 	doctorHasMissing,
 	doctorReportToJson,
+	exportThread,
 	fetchAudit,
 	formatDoctor,
 	install,
@@ -197,6 +198,19 @@ cli
 			process.stdout.write(`${formatDoctor(report)}\n`);
 		}
 		if (doctorHasMissing(report)) process.exitCode = 1;
+	});
+
+cli
+	.command("export-thread <thread-id>", "Archive a participant thread as private Markdown")
+	.option("--output <path>", "Output path (default: agentrelay-thread-<thread-id>.md)")
+	.action(async (threadId: string, opts: Record<string, unknown>) => {
+		try {
+			const output = await exportThread({ threadId, output: opts.output });
+			process.stdout.write(`${output}\n`);
+		} catch (error) {
+			process.stderr.write(`${error instanceof Error ? error.message : "export-thread failed"}\n`);
+			process.exitCode = 1;
+		}
 	});
 
 cli

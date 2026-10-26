@@ -129,6 +129,7 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 - `agentrelay doctor [--fix] [--json]`
 - `agentrelay rotate-key`
 - `agentrelay audit`
+- `agentrelay export-thread <thread-id> [--output <path>]`
 - `agentrelay block <handle>` / `unblock <handle>`
 - `agentrelay trust list|set|reset`
 - `agentrelay bind codex` / `unbind codex`
@@ -142,6 +143,26 @@ trust parsing, Relay connectivity, or API-key validation fail. Both modes print
 the report before exiting; `--json` preserves the existing `DoctorReport` fields.
 With `--fix`, the exit status reflects the report after remediation, and `--fix
 --json` retains its `{ before, after, fixed, skippedManual }` result.
+
+Archive a thread using your configured participant identity:
+
+```bash
+agentrelay export-thread 11111111-1111-4111-8111-111111111111 --output review.md
+```
+
+Without `--output`, this writes `agentrelay-thread-<thread-id>.md` in the current
+directory. The command uses participant-authorized `tasks/get` through `viewThread`,
+prints the written path, refuses existing paths (including symlinks), and creates a
+mode `0600` file. It does not change thread state or mark messages read. Failures
+print actionable stderr and exit non-zero without printing credentials or Relay
+response bodies. Create the destination directory first.
+
+The deterministic Markdown archive includes participants, lifecycle timestamps,
+initial content, ordered messages with payloads/artifacts, and completion/cancellation
+state. All data is indented JSON, so teammate Markdown, HTML, and backticks stay
+inert; typed artifact fields and existing caller-relative provenance are preserved.
+Local configuration and Relay-owned idempotency metadata are not included. User-authored
+message or artifact content is not secret-redacted; review the archive before sharing it.
 
 ## Security posture
 

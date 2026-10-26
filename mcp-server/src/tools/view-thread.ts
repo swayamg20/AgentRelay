@@ -53,6 +53,7 @@ const tasksGetResponseSchema = z.object({
 	completion_artifacts: z.array(storedArtifactSchema).default([]),
 	proposed_action: proposedActionSchema.nullable().optional(),
 	messages: z.array(messageSchema).default([]),
+	created_at: z.string().optional(),
 	// Lifecycle timestamps so the agent can reason about thread state
 	// without re-fetching.
 	accepted_at: z.string().nullable().optional(),

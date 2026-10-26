@@ -222,6 +222,7 @@ publish, expose secrets, or execute an arbitrary command.
 | Repair safe config gaps | `npx -y -p agentrelay-mcp agentrelay doctor --fix` |
 | Rotate local API key | `npx -y -p agentrelay-mcp agentrelay rotate-key` |
 | Read relay audit | `npx -y -p agentrelay-mcp agentrelay audit --limit 20` |
+| Archive a participant thread | `npx -y -p agentrelay-mcp agentrelay export-thread <thread-id> --output review.md` |
 | Block a teammate | `npx -y -p agentrelay-mcp agentrelay block <handle>` |
 | Unblock a teammate | `npx -y -p agentrelay-mcp agentrelay unblock <handle>` |
 | Inspect trust entries | `npx -y -p agentrelay-mcp agentrelay trust list` |
@@ -232,6 +233,16 @@ relay before clearing local denial. A partial failure therefore stays fail-safe 
 this machine, and the command explains which side succeeded; retry it to converge the
 two stores. A running MCP process reloads trust before accepting work, so it does not
 need a restart to observe a new local block.
+
+For example, `npx -y -p agentrelay-mcp agentrelay export-thread
+11111111-1111-4111-8111-111111111111 --output review.md` writes a private Markdown
+archive using your configured identity. Only the sender or recipient can export it.
+Without `--output`, the filename is `agentrelay-thread-<thread-id>.md` in the current
+directory. Existing paths are never overwritten; create the destination directory
+first. Exporting preserves teammate provenance and renders all content as indented
+JSON data without changing thread state or marking messages read. Local credentials
+and Relay-owned idempotency metadata are omitted, but secrets a participant put in
+message or artifact content are not redacted. Review the archive before sharing it.
 
 ## 8. Common failures
 

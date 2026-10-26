@@ -8,9 +8,12 @@ import { readFile, stat } from "node:fs/promises";
 import yaml from "js-yaml";
 import { request as undiciRequest } from "undici";
 import { z } from "zod";
+import { type A2AClient, A2AHttpError, A2ARpcError, createA2AClient } from "../a2a-client.js";
 import { type AgentRelayConfig, loadConfig } from "../config.js";
 import { logger } from "../logger.js";
+import { type ViewThreadResult, viewThread } from "../tools/view-thread.js";
 import { FALLBACK_TRUST, type TrustFile, loadTrust } from "../trust.js";
+import { renderThreadArchive } from "./export-thread.js";
 import {
 	CODEX_AUTO_APPROVED_AGENTRELAY_TOOLS,
 	CODEX_DEFAULT_AGENTRELAY_APPROVAL_MODE,
@@ -28,7 +31,7 @@ import {
 	mergeClaudeOverlay,
 	renderMergeReport,
 } from "./install.js";
-import { writeSecretFile } from "./io.js";
+import { writePrivateArchive, writeSecretFile } from "./io.js";
 import { type SupportedClient, clientPaths, configPath, mcpPath, trustPath } from "./paths.js";
 import {
 	type TrustSetUpdate,
@@ -857,6 +860,87 @@ export async function rotateKey(deps: RotateKeyDeps = {}): Promise<RotateKeyResu
 	}
 	logger.info({ path, key_id: parsed.key_id }, "rotated api key");
 	return { agent_id: parsed.agent_id, key_id: parsed.key_id, configPath: path };
+}
+
+const exportThreadInput = z
+	.object({
+		threadId: z.string().uuid().toLowerCase(),
+		output: z
+			.string()
+			.min(1)
+			.regex(/^[^\0]+$/)
+			.optional(),
+	})
+	.strict();
+
+export interface ExportThreadDeps {
+	loadConfig?: () => Promise<AgentRelayConfig>;
+	client?: A2AClient;
+	writeArchive?: typeof writePrivateArchive;
+}
+
+export async function exportThread(
+	rawInput: unknown,
+	deps: ExportThreadDeps = {},
+): Promise<string> {
+	const parsed = exportThreadInput.safeParse(rawInput);
+	if (!parsed.success) {
+		throw new Error("export-thread: supply a thread UUID and, optionally, --output <path>.");
+	}
+	const cfg = deps.loadConfig ? await deps.loadConfig() : await loadConfigOrThrow(configPath());
+	const client = deps.client ?? createA2AClient({ relayUrl: cfg.relay_url, apiKey: cfg.api_key });
+	let thread: ViewThreadResult;
+	try {
+		thread = await viewThread(
+			{ client },
+			{ thread_id: parsed.data.threadId, caller_handle: cfg.agent_handle },
+		);
+	} catch (error) {
+		throw new Error(exportFetchError(error));
+	}
+	if (thread.thread_id !== parsed.data.threadId || !thread.created_at || !thread.recipient) {
+		throw new Error(
+			"export-thread: invalid thread response; check Relay compatibility before retrying.",
+		);
+	}
+	const output = parsed.data.output ?? `agentrelay-thread-${parsed.data.threadId}.md`;
+	const archive = renderThreadArchive(thread);
+	try {
+		await (deps.writeArchive ?? writePrivateArchive)(output, archive);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "EEXIST") {
+			throw new Error(
+				"export-thread: output already exists; choose a new --output path. Nothing was overwritten.",
+			);
+		}
+		if (code === "ENOENT" || code === "ENOTDIR") {
+			throw new Error(
+				"export-thread: output directory does not exist; create it or choose another --output path.",
+			);
+		}
+		throw new Error(
+			"export-thread: could not write archive; check output permissions and available disk space.",
+		);
+	}
+	return output;
+}
+
+function exportFetchError(error: unknown): string {
+	if (error instanceof z.ZodError || error instanceof SyntaxError) {
+		return "export-thread: invalid thread response; check Relay compatibility before retrying.";
+	}
+	if (error instanceof A2ARpcError) {
+		if (error.rpc.code === -32005) {
+			return "export-thread: not_a_participant; only the thread's sender or recipient may export it.";
+		}
+		if (error.rpc.code === -32006) return "export-thread: thread_not_found; check the thread UUID.";
+		return `export-thread: Relay rejected tasks/get (RPC ${error.rpc.code}); check the thread UUID and run agentrelay doctor.`;
+	}
+	if (error instanceof A2AHttpError) {
+		return `export-thread: Relay returned HTTP ${error.status}; check access and connectivity with agentrelay doctor.`;
+	}
+	return "export-thread: could not fetch thread; check network connectivity and run agentrelay doctor before retrying.";
 }
 
 // ---------- audit ----------
