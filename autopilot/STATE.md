@@ -4,64 +4,79 @@ Working memory. Rewrite this file at the end of each session.
 
 ## Goal as understood
 
-The owner-controlled goal is unchanged and complete: propose three eligible small
-core-mailbox issues, then implement the owner's selection with passing checks.
-The proposal listed #11, #40, and #34. The owner selected **#11: doctor failure
-exit codes** on October 25, 2026 at 22:44:52 UTC. Commit `119d756` implements only
-that selection, with regression tests and exit-status documentation.
+The owner changed the goal to ship core-mailbox issues one at a time, proposing
+the next three candidates whenever no selected issue remains in progress. The
+previous selection, #11 (doctor failure exit codes), is complete in `119d756` and
+already merged into main through `d4cea26` / #150. This is a new selection cycle,
+not permission to implement another issue automatically.
+
+Run 40286683512 proposes **#40 (recommended), #10, and #111**. No product files
+changed. Wait for the owner's explicit selection before implementation.
 
 ## Plan
 
-- [x] Inspect the issue snapshot, implementation, callers, tests, and design sources.
-- [x] Propose three candidates and obtain the owner's #11 selection (#154).
-- [x] Ask for correction of the pre-existing mandatory unit baseline (#157).
-- [x] Confirm the corrected runner passes the unchanged database-free unit gate.
-- [x] Implement #11 using the existing doctorHasMissing predicate after output.
-- [x] Add built-CLI regressions for human and JSON modes, including preserved fix behavior.
-- [x] Document the exit contract wherever doctor --json is documented.
-- [x] Run focused tests and all mandatory lint/typecheck/build/unit gates successfully.
-- [x] Commit the verified implementation and refresh run memory.
+- [x] Read memory, history, updated goal, open issue snapshot, and design sources.
+- [x] Confirm #11 is on main and no selected issue is in progress.
+- [x] Inspect candidate implementations, consumers, nearby tests, and feasibility.
+- [x] Write the external three-candidate question with plans, paths, and checks.
+- [ ] Receive the owner's selection and any necessary scope clarification.
+- [ ] Implement only that selection with focused regression tests and truthful docs.
+- [ ] Run all canonical static/build/unit gates, and Relay integration if applicable.
+- [ ] Commit the verified selection, describe it with Closes #N, and propose the next three.
 
 ## Next step
 
-Stop this run. The current goal is complete; wait for the owner to review the draft
-pull request and set a new goal. Do not implement #40, #34, or other backlog issues
-without a new owner-controlled goal or explicit selection.
+Read the owner inbox for the choice requested in
+`questions/select-next-mailbox-issue.md` (external workflow output). Inspect the
+chosen contract again against the current main and snapshot before editing. If
+#10 is chosen, confirm approval for strict top-level validation rather than a
+warning-only mode. Do not broaden nested policy schemas or trust semantics.
+
+Stop this run while waiting: no remaining product work is authorized without a
+selection. No need to ask again unless the question is missing or the goal changes.
 
 ## Waiting on owner
 
-None for this goal. Selection question #154 was resolved in the previous run.
-The reply to #157 chose the recommended corrected-runner path. Native Postgres
-setup landed in `75b478f` / #158 before this session; the unchanged full unit gate
-now passes. Marked #157 resolved in workflow output. No security waiver or Node
-change was needed.
+Choose #40, #10, or #111. The external question recommends #40 and includes the
+implementation plan, likely files, verification commands, and compatibility
+choices for each. The workflow will assign its issue number; none is known yet.
+#10 carries the ideas label, so its selection must approve the stated strict-root
+scope. No issue is newly completed or resolved in this run.
 
 ## Learned about this repository
 
-- Session 40243414124 began on clean autopilot at `6660759`, which includes the
-  owner's native-Postgres runner correction. Baseline Node now passes all 438
-  enabled tests, including the 16 previously failing host-mount cases.
-- Ordinary doctor now sets process.exitCode to 1 after printing when
-  doctorHasMissing(report) is true. Healthy reports still exit 0. The predicate,
-  DoctorReport fields, remediation behavior, and fix branch are unchanged.
-- The whoami consumer uses authenticated GET /agents/me; any 2xx is success.
-  Tests use a local HTTP fixture and verify the request path and bearer header.
-  No Relay, protocol, Node, database, or workflow contract changed.
-- The new doctor CLI suite has 14 cases: both output modes cover missing config,
-  unavailable Relay, rejected key, healthy setup, missing client registration,
-  successful repair, and manual-remediation failure. Tests isolate HOME and all
-  relevant AgentRelay credential/trust paths and execute children asynchronously.
-- Built-CLI tests follow the existing describeIfBuilt convention. Build before
-  running them to avoid silent skips. Final full units passed protocol 125,
-  MCP 266 (including all CLI cases), Relay 77, and Node 438 tests.
-- Unit commands must not inherit either Relay database URL. Use env -u for those
-  two variables in the unit subprocess only. Relay's 180 integration tests and
-  Node's three opt-in tests skip normally in this tier. Integration reruns are
-  required when Relay code changes; none changed for #11.
-- pnpm lint passes with four pre-existing Relay unused-suppression warnings.
-  Recursive typecheck and build pass. Both public doctor JSON documentation sites
-  are mcp-server/README.md and docs/lld.md; their 13 local links resolve.
-- The implementation commit is `119d756` (fix(cli): return failure status for
-  failed doctor checks). The separate memory commit uses the required
-  chore(autopilot): update run memory subject. No push, external mutation, release,
-  or unrelated Labs work was performed.
+- This session starts clean on autopilot at `4f3369a`, matching origin/main.
+  History overrides old memory's instruction to wait for a completely new goal.
+  #11 no longer appears in the open-issue snapshot.
+- #40 has scoped help-wanted acceptance criteria. The existing viewThread helper
+  already marks peer participants, summaries, metadata, proposed actions,
+  messages/payloads/artifacts, and completion content, stripping Relay idempotency
+  metadata. Relay tasks/get includes created_at, but viewThread's schema drops it;
+  preserve that field if exporting lifecycle timestamps. CLI writeSecretFile uses
+  rename and can overwrite, so it is not suitable unchanged for archive creation.
+- #10 is a small ideas-labelled compatibility change requiring explicit approval.
+  Root trustFileSchema and inherited entries currently use passthrough; one test
+  explicitly accepts extra root keys despite its misleading warning title. A
+  strict-root plan should leave nested schemas and overlay precedence untouched.
+  Invalid loaded policy already falls back safely in MCP and blocks watcher pickup;
+  doctor detects invalid policy. CLI-generated files must remain parseable.
+- #111 is scoped help-wanted work with a wider MCP/Relay boundary. MCP already
+  forwards role/skill/repo, but Relay dispatch calls handleAgentsList(ctx), ignoring
+  all params. Both JSON-RPC and REST rosters currently select active agents without
+  block-list filtering. Preserve current behavior rather than inventing a discovery
+  policy. New paginated opt-in must preserve legacy no-filter/no-pagination callers;
+  validate cursors, keep provenance, inspect query plans before adding indexes.
+- #34 is not currently finishable as specified: Docker Compose is installed but
+  docker info fails with socket permission denied; sudo -n docker info requires a
+  password. Native database testing is not the required disposable Compose proof.
+  Do not alter runner/security/Compose files or ask for unrelated setup before the
+  owner chooses an issue. #103 is a broader mailbox fault/evidence matrix; #39
+  overlaps existing watch behavior, and #44 proposes a larger notification redesign.
+- Build before built-CLI tests to avoid describeIfBuilt skips. Never let the unit
+  command inherit RELAY_DATABASE_URL or RELAY_TEST_DATABASE_URL: unset both in that
+  subprocess. Use the sequential canonical Relay integration command with its
+  database URL only when Relay code changes. No Relay code changed this session.
+- Session verification outcomes and exact commands are recorded in the newest
+  journal entry. Only STATE.md and JOURNAL.md are committed; selection question,
+  summary, PR description, and STOP are external workflow outputs. Do not push,
+  call GitHub, or implement unchosen backlog work.
