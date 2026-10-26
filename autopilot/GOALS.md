@@ -14,21 +14,26 @@ fine). Every scheduled run reads the latest version from `main` before it starts
   starts fresh from `main`.
 - Runs start at 09:00, 14:00, and 20:00 IST, and immediately when the owner replies
   on an open `autopilot:needs-you` issue.
+- Reply `merge` to a run-report email (or comment `merge` on the autopilot PR) to
+  merge the exact commit that report names, once main's required checks pass.
+  Changes to `.github/`, `autopilot/` control files, `infra/`, Dockerfiles, or
+  package manifests must be reviewed and merged on GitHub instead.
 -->
 
 ## Current goal
 
-Pick the first implementation goal. Read the open issues labelled `core-mailbox`
-(skip `labs`, `demand-gated`, and epics) together with the code they touch, and
-propose the three best candidates that one run can finish and verify. Do not
-implement anything until the owner chooses. After the owner replies, implement the
-chosen issue.
+Ship `core-mailbox` issues one at a time. When no owner-chosen issue is in progress,
+read the open issues labelled `core-mailbox` (skip `labs`, `demand-gated`, epics,
+and anything already done on `main`) together with the code they touch, and ask the
+owner to choose among the three best candidates that one run can finish and verify.
+Implement only the chosen issue. When it is complete and verified, say so in the PR
+description with `Closes #N`, then propose the next three candidates.
 
 ## Done when
 
-- A question issue lists three candidates, each with a short plan, the files it
+- Each candidate question lists three issues, each with a short plan, the files it
   touches, how it will be verified, and a recommendation.
-- After the owner picks one, it is implemented with passing checks and tests.
+- Each chosen issue lands on the autopilot PR with passing checks and tests.
 
 ## Priorities and constraints
 

@@ -1,0 +1,29 @@
+name: Autopilot reply
+
+# The owner's reply on an open autopilot question starts an autopilot run instead of
+# waiting for the schedule. Kept separate from autopilot.yml so comment events, which
+# anyone can create on this public repository, never enter its concurrency group.
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  start-run:
+    if: >-
+      github.event.comment.user.login == github.repository_owner &&
+      !github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
+      contains(github.event.issue.labels.*.name, 'autopilot:needs-you')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    cache-mode: none
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch an autopilot run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run autopilot.yml --ref main

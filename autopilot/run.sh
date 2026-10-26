@@ -2,29 +2,33 @@
 # Runs repeated Codex sessions until the run deadline, the session cap, or a STOP file.
 # Each session starts with a fresh context and resumes from autopilot/STATE.md.
 #
-# Required env: AUTOPILOT_OUT, AUTOPILOT_DEADLINE (epoch seconds),
-#               AZURE_FOUNDRY_API_KEY, AZURE_FOUNDRY_BASE_URL
+# The harness (this script, PROMPT.md, codex-config.toml, GOALS.md) is read from
+# AUTOPILOT_HARNESS, a root-owned copy taken from main, so the agent cannot change its
+# own instructions. The model is reached through a key-injecting proxy at
+# AUTOPILOT_MODEL_URL that runs as another user; no API key is in this environment.
+#
+# Required env: AUTOPILOT_OUT, AUTOPILOT_DEADLINE (epoch seconds), AUTOPILOT_HARNESS,
+#               AUTOPILOT_MODEL_URL (for example http://127.0.0.1:18080/v1)
 # Optional env: AUTOPILOT_MODEL, AUTOPILOT_FALLBACK_MODEL, AUTOPILOT_MAX_SESSIONS,
 #               AUTOPILOT_RUN_ID
 set -uo pipefail
 
-: "${AUTOPILOT_OUT:?}" "${AUTOPILOT_DEADLINE:?}" "${AZURE_FOUNDRY_API_KEY:?}" "${AZURE_FOUNDRY_BASE_URL:?}"
+: "${AUTOPILOT_OUT:?}" "${AUTOPILOT_DEADLINE:?}" "${AUTOPILOT_HARNESS:?}" "${AUTOPILOT_MODEL_URL:?}"
 model="${AUTOPILOT_MODEL:-gpt-6.1-sol}"
 fallback="${AUTOPILOT_FALLBACK_MODEL:-FW-GLM-5.3}"
 max_sessions="${AUTOPILOT_MAX_SESSIONS:-8}"
 run_id="${AUTOPILOT_RUN_ID:-local}"
 
-repo_root="$(git rev-parse --show-toplevel)"
 export CODEX_HOME="$AUTOPILOT_OUT/codex-home"
 mkdir -p "$CODEX_HOME" "$AUTOPILOT_OUT/questions"
-cp "$repo_root/autopilot/codex-config.toml" "$CODEX_HOME/config.toml"
+cp "$AUTOPILOT_HARNESS/codex-config.toml" "$CODEX_HOME/config.toml"
 touch "$AUTOPILOT_OUT/inbox.md" "$AUTOPILOT_OUT/sessions.log"
 
 build_prompt() {
 	local session="$1" minutes_left="$2" active_model="$3"
-	cat "$repo_root/autopilot/PROMPT.md"
+	cat "$AUTOPILOT_HARNESS/PROMPT.md"
 	printf '\n## Goals (from main, owner-controlled)\n\n'
-	cat "$AUTOPILOT_OUT/GOALS.md"
+	cat "$AUTOPILOT_HARNESS/GOALS.md"
 	printf '\n## Owner inbox\n\n'
 	if [[ -s "$AUTOPILOT_OUT/inbox.md" ]]; then cat "$AUTOPILOT_OUT/inbox.md"; else echo "No open questions."; fi
 	printf '\n## This session\n\n'
@@ -44,7 +48,7 @@ for ((session = 1; session <= max_sessions; session++)); do
 		build_prompt "$session" "$minutes_left" "$active_model" |
 			timeout "${budget}m" codex exec \
 				--model "$active_model" \
-				-c "model_providers.azure.base_url=\"$AZURE_FOUNDRY_BASE_URL\"" \
+				-c "model_providers.keyproxy.base_url=\"$AUTOPILOT_MODEL_URL\"" \
 				--dangerously-bypass-approvals-and-sandbox \
 				--output-last-message "$AUTOPILOT_OUT/session-$session.md" \
 				-

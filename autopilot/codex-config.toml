@@ -1,15 +1,17 @@
 # Codex CLI configuration for the autopilot workflow. `autopilot/run.sh` copies this
-# into a throwaway CODEX_HOME and supplies the endpoint with
-# `-c model_providers.azure.base_url=...` from the AZURE_FOUNDRY_BASE_URL variable.
-model_provider = "azure"
+# into a throwaway CODEX_HOME and points the provider at the local key proxy with
+# `-c model_providers.keyproxy.base_url=...`.
+model_provider = "keyproxy"
 model = "gpt-6.1-sol"
 
-[model_providers.azure]
-name = "Azure AI Foundry"
-env_key = "AZURE_FOUNDRY_API_KEY"
+# `codex responses-api-proxy` runs as a separate user, holds the Azure AI Foundry key
+# (read from stdin), and adds it to each request. This process and the commands the
+# agent runs never have the key.
+[model_providers.keyproxy]
+name = "Azure AI Foundry via local key proxy"
 wire_api = "responses"
 
-# Commands the agent runs never see the model key or any GitHub credentials.
+# Keep GitHub and runner credentials out of the commands the agent runs.
 [shell_environment_policy]
 inherit = "all"
 exclude = ["AZURE_*", "GH_*", "GITHUB_TOKEN", "ACTIONS_*"]
