@@ -83,11 +83,19 @@ jobs:
       THREAD: ${{ github.event.issue.number }}
       COMMENT_PR: ${{ github.event.issue.pull_request && github.event.issue.number || '' }}
       COMMENT_AT: ${{ github.event.comment.created_at }}
+      COMMENT_ID: ${{ github.event.comment.id }}
       REPLY_COMMENT_ID: ${{ needs.parse.outputs.comment_id }}
       QUOTED: ${{ needs.parse.outputs.quoted }}
       GIT_NAME: Swayam Gupta
       GIT_EMAIL: 77153230+swayamg20@users.noreply.github.com
     steps:
+      # Reactions on the owner's comment: thumbs-up when picked up, then a rocket when
+      # merged or a confused face when not (the reply comment explains why).
+      - name: Acknowledge the command
+        run: |
+          gh api -X POST "repos/$GH_REPO/issues/comments/$COMMENT_ID/reactions" -f content='+1' >/dev/null \
+            || echo "::warning::Could not react to the comment"
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
@@ -372,3 +380,6 @@ jobs:
           [[ -n "$message" ]] || message="The merge attempt ended without a result; see the run."
           gh api "repos/$GH_REPO/issues/$THREAD/comments" \
             -f body="@$OWNER $message"$'\n\n'"Run: $RUN_URL" >/dev/null
+          if [[ "$message" == "Merged #"* ]]; then reaction=rocket; else reaction=confused; fi
+          gh api -X POST "repos/$GH_REPO/issues/comments/$COMMENT_ID/reactions" -f content="$reaction" >/dev/null \
+            || echo "::warning::Could not react to the comment"
