@@ -19,6 +19,8 @@ fine). Every scheduled run reads the latest version from `main` before it starts
   A reply can merge only source, test, and documentation changes; anything else
   (CI, `autopilot/` control files, `AGENTS.md`, infrastructure, deploy or runtime
   config, dependencies, migrations) must be reviewed and merged on GitHub.
+- Reactions on your comment show progress: 👍 when a reply or `merge` is picked up,
+  then 🚀 when the merge lands or 😕 when it does not (a reply explains why).
 -->
 
 ## Current goal
