@@ -76,6 +76,21 @@ outside the repository. Never commit it.
   the issue number on its own line to `$AUTOPILOT_OUT/resolved.txt`.
 - **Run summary.** Append a short section to `$AUTOPILOT_OUT/summary.md` saying what
   you built, what you verified, and what is next. The owner gets this by email.
+- **Pull request description.** Before you finish, write `$AUTOPILOT_OUT/pr.md`
+  describing everything on this branch that is not on `main`
+  (`git log --oneline origin/main..HEAD` and `git diff --stat origin/main...HEAD`), not
+  just this session. Line 1 is the PR title in Conventional Commits form, lowercase and
+  imperative, naming the main product change, for example
+  `fix(cli): return failure status for failed doctor checks`. Use
+  `chore(autopilot): update run memory` if only memory files changed. The rest is the
+  body: `## Summary` with one to three short sentences on the behavior change, then a
+  `Closes #N` line for each issue fully completed on the branch, then `## Testing`
+  listing the exact commands you ran, then an optional `## Scope` for what is
+  deliberately excluded. No emojis, no marketing tone, and no mention of AI or tools.
+  The owner merges this PR into `main` by replying `merge`, so the description must be
+  accurate. A reply cannot merge changes to `.github/`, `autopilot/` control files,
+  `infra/`, Dockerfiles, or package manifests, and the publish step rejects any
+  change under `.github/`.
 - **Stopping early.** If the goal is done, or everything left is blocked on the
   owner, create the file `$AUTOPILOT_OUT/STOP` and end the session. Further sessions
   in this run are skipped.

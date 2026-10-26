@@ -5,8 +5,8 @@ on:
     branches:
       - main
   pull_request:
-  # The autopilot workflow dispatches CI on its branch, because pushes made with
-  # GITHUB_TOKEN do not trigger push or pull_request runs.
+  # autopilot-merge.yml dispatches CI on main after a reply merge, because pushes
+  # made with GITHUB_TOKEN do not trigger push runs.
   workflow_dispatch:
 
 concurrency:
