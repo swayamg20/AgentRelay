@@ -5,6 +5,13 @@ Long-term memory. Append-only. Each session adds one entry directly under
 
 ## Entries
 
+### 2026-10-26 09:33 UTC · run 40297811021 · gpt-6.1-sol
+- **Goal:** Continue the unchanged one-at-a-time core-mailbox goal, implementing only the owner's next selection.
+- **Built:** No product changes. Identified the existing candidate question as #165, refreshed working memory and external full-branch PR/summary outputs, and prepared STOP while awaiting selection. Commit subject: `chore(autopilot): update run memory`. #40 remains complete on this branch in `b95dc2b` (`feat(cli): add safe markdown thread export`), not on origin/main.
+- **Verified:** `pnpm install --frozen-lockfile` passed with expected unbuilt Node bin warnings. `RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts` passed. `pnpm lint` passed with four existing Relay unused-suppression warnings. `git diff --check`, `git diff --cached --check`, and `node --input-type=module` with an inline local Markdown-link checker for the two memory files passed. Product typecheck/build/unit/integration/e2e were not rerun for memory-only changes; the previous entry records #40's passing implementation gates.
+- **Decisions:** The inbox includes #165's question body but no owner selection reply. The previous affirmative reply approved #40, not the next recommended #111. Do not duplicate #165, resolve an unanswered issue, or implement another product issue without approval. Main updates merged into autopilot do not change the goal or this approval boundary. Keep `Closes #40` and distinguish prior product verification from this session's memory checks in the full-branch PR description.
+- **Next:** Read the owner reply to #165, recheck main and the issue snapshot, and implement only #111, #10, or #103 as selected. Require strict-root rejection approval for #10 and map existing evidence before implementing #103.
+
 ### 2026-10-26 09:23 UTC · run 40297266338 · gpt-6.1-sol
 - **Goal:** Complete the recommended #40 safe thread-export plan approved by the owner's “okay, go ahead” reply on #161, then propose three next core-mailbox candidates.
 - **Built:** Commit `b95dc2b` (`feat(cli): add safe markdown thread export`) adds participant-authorized export-thread, sorted-key indented JSON Markdown, complete ordered thread/resolution content with shared provenance, creation timestamp preservation, exclusive mode-0600 writes, sanitized failures, 49 focused regressions, and usage documentation. Prepared the external next-choice question (#111 recommended, #10, #103) and resolved #161. Updated memory for commit subject `chore(autopilot): update run memory`; no other issue was implemented.
