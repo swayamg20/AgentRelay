@@ -12,7 +12,8 @@ fine). Every scheduled run reads the latest version from `main` before it starts
   `autopilot/STATE.md` when the goal changes.
 - Close the autopilot draft PR without merging to discard its work. The next run
   starts fresh from `main`.
-- Runs start at 09:00, 14:00, and 20:00 IST, and immediately when the owner replies
+- Runs start at 09:00, 14:00, and 20:00 IST (skipped while a question waits on the
+  owner), and immediately when the owner replies
   on an open `autopilot:needs-you` issue.
 - Reply `merge` to a run-report email (or comment `merge` on the autopilot PR) to
   merge the exact commit that report names, once main's required checks pass.
