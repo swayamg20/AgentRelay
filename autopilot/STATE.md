@@ -10,8 +10,9 @@ previous selection, #11 (doctor failure exit codes), is complete in `119d756` an
 already merged into main through `d4cea26` / #150. This is a new selection cycle,
 not permission to implement another issue automatically.
 
-Run 40286683512 proposes **#40 (recommended), #10, and #111**. No product files
-changed. Wait for the owner's explicit selection before implementation.
+Run 40286683512 proposed **#40 (recommended), #10, and #111** in issue **#161**.
+Run 40291157370 supplies that question in the inbox but no owner selection. The
+goal is unchanged, and no product files changed. Wait for an explicit choice.
 
 ## Plan
 
@@ -26,8 +27,7 @@ changed. Wait for the owner's explicit selection before implementation.
 
 ## Next step
 
-Read the owner inbox for the choice requested in
-`questions/select-next-mailbox-issue.md` (external workflow output). Inspect the
+Read the owner inbox for the choice requested in issue #161. Inspect the
 chosen contract again against the current main and snapshot before editing. If
 #10 is chosen, confirm approval for strict top-level validation rather than a
 warning-only mode. Do not broaden nested policy schemas or trust semantics.
@@ -37,17 +37,18 @@ selection. No need to ask again unless the question is missing or the goal chang
 
 ## Waiting on owner
 
-Choose #40, #10, or #111. The external question recommends #40 and includes the
+Choose #40, #10, or #111 in issue #161. The question recommends #40 and includes the
 implementation plan, likely files, verification commands, and compatibility
-choices for each. The workflow will assign its issue number; none is known yet.
+choices for each. This run's inbox reproduces the question, not a choice; do not
+treat a recommendation or the owner's mention as approval. Do not duplicate it.
 #10 carries the ideas label, so its selection must approve the stated strict-root
 scope. No issue is newly completed or resolved in this run.
 
 ## Learned about this repository
 
-- This session starts clean on autopilot at `4f3369a`, matching origin/main.
-  History overrides old memory's instruction to wait for a completely new goal.
-  #11 no longer appears in the open-issue snapshot.
+- Run 40291157370 starts clean on autopilot at `ec6ef7c`, matching origin/main.
+  The previous proposal memory is on main through `4164dba` / #160. #11 remains
+  complete on main; the current snapshot still includes #40, #10, and #111.
 - #40 has scoped help-wanted acceptance criteria. The existing viewThread helper
   already marks peer participants, summaries, metadata, proposed actions,
   messages/payloads/artifacts, and completion content, stripping Relay idempotency
@@ -66,9 +67,10 @@ scope. No issue is newly completed or resolved in this run.
   block-list filtering. Preserve current behavior rather than inventing a discovery
   policy. New paginated opt-in must preserve legacy no-filter/no-pagination callers;
   validate cursors, keep provenance, inspect query plans before adding indexes.
-- #34 is not currently finishable as specified: Docker Compose is installed but
-  docker info fails with socket permission denied; sudo -n docker info requires a
-  password. Native database testing is not the required disposable Compose proof.
+- #34 was excluded by the previous run: Docker Compose was installed but
+  docker info failed with socket permission denied; sudo -n docker info required a
+  password. Docker access was not retested this run. Native database testing is
+  not the required disposable Compose proof.
   Do not alter runner/security/Compose files or ask for unrelated setup before the
   owner chooses an issue. #103 is a broader mailbox fault/evidence matrix; #39
   overlaps existing watch behavior, and #44 proposes a larger notification redesign.

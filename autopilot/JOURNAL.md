@@ -5,6 +5,13 @@ Long-term memory. Append-only. Each session adds one entry directly under
 
 ## Entries
 
+### 2026-10-26 08:20 UTC · run 40291157370 · gpt-6.1-sol
+- **Goal:** Continue the unchanged one-at-a-time core-mailbox goal; implement only an explicitly owner-chosen issue.
+- **Built:** No product changes. Updated STATE.md to identify the existing candidate question as #161, record that the inbox contains no selection, and preserve the approved-selection prerequisite. Commit subject: `chore(autopilot): update run memory`.
+- **Verified:** `pnpm install --frozen-lockfile` passed with expected missing unbuilt Node binary warnings. `pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts` passed with the prescribed local database URL scoped to that command. `pnpm lint` passed with four existing Relay unused-suppression warnings; `pnpm -r typecheck` passed; `pnpm -r build` passed; `env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test` passed (protocol 125, MCP 266, Relay 77, Node 438; Relay 180 database tests and Node three opt-in tests skipped normally). `git diff --check` and `git diff --cached --check` passed. `node --input-type=module` with an inline local Markdown-link checker passed for STATE.md and JOURNAL.md (no local links). No Relay integration rerun was required because no Relay code changed.
+- **Decisions:** The branch starts clean at `ec6ef7c`, matching origin/main; prior proposal memory is merged through `4164dba` / #160. The owner-controlled goal is unchanged. Issue #161's supplied body repeats the three-candidate question, not an owner choice. Do not interpret the recommendation or owner mention as authorization, duplicate the question, or mark it resolved. Stop because all remaining product work requires that choice; leave source, tests, dependencies, workflows, and other control files unchanged.
+- **Next:** Read the owner's reply to #161 choosing #40, #10, or #111; if #10, require approval of the strict-root scope. Reinspect the chosen contract against current main, then implement only that issue with focused tests and passing canonical gates.
+
 ### 2026-10-26 07:40 UTC · run 40286683512 · gpt-6.1-sol
 - **Goal:** Follow the changed owner goal: ship core-mailbox issues one at a time and request a new selection now that #11 is merged into main.
 - **Built:** No product changes. Prepared the external question `questions/select-next-mailbox-issue.md` proposing #40 (recommended), #10, and #111 with scoped plans, likely files, compatibility decisions, and exact verification commands. Refreshed STATE.md and added this journal entry for commit subject `chore(autopilot): update run memory`.
