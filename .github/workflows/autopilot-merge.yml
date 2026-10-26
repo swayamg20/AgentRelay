@@ -2,9 +2,10 @@ name: Autopilot merge
 
 # The owner merges the autopilot PR by replying `merge` to a run-report email (which
 # posts on the "Autopilot run log" issue) or by commenting `merge` on the PR. The merge
-# is tied to the exact commit named in the report replied to, refused for control and
-# infrastructure paths, brought up to date with main, gated on main's required checks
-# from the PR's own CI (failed jobs are retried once), and reported in the same thread.
+# is tied to the exact commit named in the message replied to (or, for a typed comment,
+# to what existed when the owner commented), allowed only for source, test, and doc
+# paths, brought up to date with main, gated on main's required checks from the PR's
+# own CI (failed jobs are retried once), and reported in the same thread.
 on:
   issue_comment:
     types: [created]
@@ -28,7 +29,6 @@ jobs:
     outputs:
       merge: ${{ steps.cmd.outputs.merge }}
       comment_id: ${{ steps.cmd.outputs.comment_id }}
-      sha: ${{ steps.cmd.outputs.sha }}
       quoted: ${{ steps.cmd.outputs.quoted }}
     steps:
       - name: Read the command
@@ -37,13 +37,12 @@ jobs:
           BODY: ${{ github.event.comment.body }}
           THREAD: ${{ github.event.issue.number }}
         run: |
-          body="$(printf '%s\n' "$BODY" | tr -d '\r')"
+          body="$(tr -d '\r' <<<"$BODY")"
           # Email replies quote the report below the reply, so only the first non-empty
           # line is the command. It must be a short, unambiguous request to merge:
           # "merge", "/merge", "yes, merge it", "cool, merge it to main", "merge now".
-          first="$(printf '%s\n' "$body" | grep -m1 -v '^[[:space:]]*$' || true)"
-          first="$(printf '%s' "$first" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' \
-            | sed -E 's/^ +//; s/ +$//')"
+          first="$(grep -m1 -v '^[[:space:]]*$' <<<"$body" || true)"
+          first="$(tr '[:upper:]' '[:lower:]' <<<"$first" | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//')"
           echo "First line: $first"
           command='^((yes|ok|okay|cool|great|nice|lgtm|looks good|approved|go ahead)[ ,!.]+)?(please )?/?merge( it| this| the pr)?( (in)?to main)?( now| please)?[.!]*$'
           if [[ "$first" =~ $command ]]; then
@@ -51,18 +50,16 @@ jobs:
           else
             echo "Not a merge command."
           fi
-          # Which report was replied to: GitHub's email footer links the comment, and it
-          # comes after everything else in the quoted message.
-          cid="$(printf '%s\n' "$body" | grep -oE "/issues/${THREAD}#issuecomment-[0-9]+" | tail -n1 | grep -oE '[0-9]+$' || true)"
-          sha="$(printf '%s\n' "$body" | grep -oE 'Head commit:[^0-9a-f]{0,12}[0-9a-f]{40}' | tail -n1 | grep -oE '[0-9a-f]{40}' || true)"
+          # Which message was replied to: GitHub's email footer links the comment, and
+          # it comes after everything else in the quoted message.
+          cid="$(grep -oE "/(issues|pull)/${THREAD}#issuecomment-[0-9]+" <<<"$body" | tail -n1 | grep -oE '[0-9]+$' || true)"
           quoted=false
-          if printf '%s\n' "$body" | grep -qE '^>|wrote:$'; then quoted=true; fi
+          if grep -qE '^>|wrote:$' <<<"$body"; then quoted=true; fi
           {
             echo "comment_id=$cid"
-            echo "sha=$sha"
             echo "quoted=$quoted"
           } >> "$GITHUB_OUTPUT"
-          echo "Replied-to comment: ${cid:-none}; quoted head: ${sha:-none}; quoted: $quoted"
+          echo "Replied-to comment: ${cid:-none}; quoted: $quoted"
 
   merge:
     needs: parse
@@ -85,8 +82,8 @@ jobs:
       OWNER: ${{ github.repository_owner }}
       THREAD: ${{ github.event.issue.number }}
       COMMENT_PR: ${{ github.event.issue.pull_request && github.event.issue.number || '' }}
+      COMMENT_AT: ${{ github.event.comment.created_at }}
       REPLY_COMMENT_ID: ${{ needs.parse.outputs.comment_id }}
-      REPLY_SHA: ${{ needs.parse.outputs.sha }}
       QUOTED: ${{ needs.parse.outputs.quoted }}
       GIT_NAME: Swayam Gupta
       GIT_EMAIL: 77153230+swayamg20@users.noreply.github.com
@@ -100,60 +97,71 @@ jobs:
       - name: Check, update, wait, and merge
         run: |
           api="repos/$GH_REPO"
-          own_head=""
-          head=""
-          # When this job moved the head itself, name it so a `merge` reply to this
-          # message can merge it.
+          own_head="" bound_head="" head=""
+          neutralize() { sed -E 's/[Hh][Ee][Aa][Dd][[:space:]]*[Cc][Oo][Mm][Mm][Ii][Tt]/head-commit/g'; }
+          # Messages can embed agent-chosen text (file names), so the marker is
+          # neutralized in them; only a retry message names the commit to merge.
           say() {
-            printf '%s\n' "$1" > "$RUNNER_TEMP/message.md"
-            if [[ -n "$own_head" && "$own_head" == "$head" ]]; then
+            neutralize <<<"$1" > "$RUNNER_TEMP/message.md"
+            if [[ "${2:-}" == retry && -n "$head" && ( "$head" == "$own_head" || "$head" == "$bound_head" ) ]]; then
               printf '\nHead commit: `%s`\n\nReply `merge` to this message to merge that commit.\n' "$head" >> "$RUNNER_TEMP/message.md"
             fi
           }
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
 
-          pr="$(gh pr list --head "$BRANCH" --base main --state open --json number,isCrossRepository \
-            --jq '[.[] | select(.isCrossRepository == false)][0].number // empty')"
-          if [[ -z "$pr" ]]; then say "There is no open autopilot PR to merge."; exit 0; fi
+          pr_json="$(gh api "$api/pulls?head=$OWNER:$BRANCH&base=main&state=open&per_page=100" \
+            --jq '[.[] | select(.head.repo.full_name == env.GH_REPO)][0] // empty')" \
+            || { say "Could not look up the autopilot PR; nothing merged."; exit 0; }
+          if [[ -z "$pr_json" ]]; then say "There is no open autopilot PR to merge."; exit 0; fi
+          pr="$(jq -r .number <<<"$pr_json")"
+          head="$(jq -r .head.sha <<<"$pr_json")"
           if [[ -n "$COMMENT_PR" && "$COMMENT_PR" != "$pr" ]]; then
             say "#$COMMENT_PR is not the open autopilot PR (#$pr); nothing merged."; exit 0
           fi
-          head="$(gh pr view "$pr" --json headRefOid --jq .headRefOid)"
 
-          # Merge exactly what the owner reviewed.
+          # Merge exactly what the owner saw.
           head_marker() { grep -oE 'Head commit:[^0-9a-f]{0,12}[0-9a-f]{40}' | tail -n1 | grep -oE '[0-9a-f]{40}' || true; }
           expected=""
           if [[ -n "$REPLY_COMMENT_ID" ]]; then
-            # The report (or merge reply) the email answered, fetched from GitHub.
+            # An email reply: the bot message it answered, fetched from GitHub.
             expected="$(gh api "$api/issues/comments/$REPLY_COMMENT_ID" \
               --jq 'select(.user.login == "github-actions[bot]" and (.issue_url | endswith("/issues/" + env.THREAD))) | .body' \
               2>/dev/null | head_marker)"
             if [[ -z "$expected" ]]; then
               say "The message you replied to does not name a commit to merge. Reply \`merge\` to a run report email."; exit 0
             fi
-          elif [[ -n "$REPLY_SHA" ]]; then
-            expected="$REPLY_SHA"
           elif [[ "$QUOTED" == "true" ]]; then
-            say "Could not tell which report you replied to, so nothing was merged. Reply \`merge\` to the run report email again."; exit 0
+            say "Could not tell which message you replied to, so nothing was merged. Reply \`merge\` to the run report email again."; exit 0
           elif [[ -z "$COMMENT_PR" ]]; then
-            # Typed on the run log without quoting: the newest report's commit.
+            # Typed on the run log: the newest report that existed when the owner commented.
             expected="$(gh api "$api/issues/$THREAD/comments" --paginate \
-              --jq '.[] | select(.user.login == "github-actions[bot]") | .body' 2>/dev/null | head_marker)"
+              --jq '.[] | select(.user.login == "github-actions[bot]" and .created_at <= env.COMMENT_AT) | .body' \
+              2>/dev/null | head_marker)"
             if [[ -z "$expected" ]]; then
               say "Could not find a report naming a commit to merge. Reply \`merge\` to a run report email."; exit 0
             fi
+          else
+            # Typed on the PR page: its head, provided it was there when the owner commented.
+            # A push to the branch creates the PR's CI run, so its earliest run dates the push.
+            pushed_at="$(gh api "$api/actions/runs?head_sha=$head&event=pull_request&per_page=100" \
+              --jq '[.workflow_runs[] | select(.head_repository.full_name == env.GH_REPO and .head_branch == env.BRANCH) | .created_at] | min // empty' 2>/dev/null || true)"
+            if [[ -z "$pushed_at" || "$pushed_at" > "$COMMENT_AT" ]]; then
+              say "#$pr changed after your comment, so nothing was merged. Comment \`merge\` again to merge what it shows now."; exit 0
+            fi
+            expected="$head"
           fi
-          # A comment on the PR page itself merges the head shown there.
-          if [[ -n "$expected" && "$expected" != "$head" ]]; then
+          if [[ "$expected" != "$head" ]]; then
             say "Did not merge #$pr: it now points at ${head:0:7}, not ${expected:0:7} from the message you replied to. Reply \`merge\` to the newest report to merge the current commits."
             exit 0
           fi
+          bound_head="$head"
 
-          # Control, CI, infrastructure, image, and dependency changes need a review on
-          # GitHub, not an email reply. The list comes from git, so it has no size cap.
+          # Only source, test, and documentation changes can be merged by a reply; anything
+          # else (CI, control files, infrastructure, deploy and runtime config, dependencies,
+          # migrations) needs a review on GitHub. The list comes from git and fails closed.
           if ! git fetch -q origin "+refs/heads/main:refs/remotes/origin/main" "$head" \
-            || ! git diff -z --name-only --no-renames "origin/main...$head" > "$RUNNER_TEMP/changed"; then
+            || ! git diff -z --name-only --no-renames "refs/remotes/origin/main...$head" > "$RUNNER_TEMP/changed"; then
             say "Could not list the files changed by #$pr; nothing merged."; exit 0
           fi
           mapfile -d '' -t changed < "$RUNNER_TEMP/changed"
@@ -161,13 +169,16 @@ jobs:
           blocked=()
           for f in "${changed[@]}"; do
             case "$f" in
+              .github/* | */.github/* | AGENTS.md | */AGENTS.md | CLAUDE.md | */CLAUDE.md) blocked+=("$f") ;;
               autopilot/STATE.md | autopilot/JOURNAL.md) ;;
-              .github/* | autopilot/* | infra/* | *Dockerfile* | *.dockerignore | package.json | */package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .gitmodules | */.gitmodules | .gitattributes)
-                blocked+=("$f") ;;
+              autopilot/*) blocked+=("$f") ;;
+              */drizzle/* | */migrations/*) blocked+=("$f") ;;
+              */src/* | */test/* | */tests/* | tests/* | docs/* | landing/* | *.md) ;;
+              *) blocked+=("$f") ;;
             esac
           done
           if ((${#blocked[@]} > 0)); then
-            say "Did not merge #$pr: it changes paths that a reply cannot merge (${blocked[*]:0:10}). Review https://github.com/$GH_REPO/pull/$pr/files and merge it on GitHub."
+            say "Did not merge #$pr: a reply can only merge source, test, and documentation changes, and it also changes: ${blocked[*]:0:10}. Review https://github.com/$GH_REPO/pull/$pr/files and merge it on GitHub."
             exit 0
           fi
 
@@ -203,9 +214,9 @@ jobs:
             behind="$(gh api "$api/compare/main...$head" --jq .behind_by)" || return 1
             ((behind == 0)) && return 0
             git fetch -q origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || return 1
-            [[ "$(git rev-parse "origin/$BRANCH")" == "$head" ]] || return 2
+            [[ "$(git rev-parse "refs/remotes/origin/$BRANCH")" == "$head" ]] || return 2
             git checkout -q -B "$BRANCH" "$head"
-            if ! git merge -q --no-edit origin/main; then git merge --abort; return 3; fi
+            if ! git merge -q --no-edit refs/remotes/origin/main; then git merge --abort; return 3; fi
             git -c core.hooksPath=/dev/null push -q --force-with-lease="refs/heads/$BRANCH:$head" \
               "https://x-access-token:${GH_TOKEN}@github.com/$GH_REPO.git" "HEAD:refs/heads/$BRANCH" || return 2
             head="$(git rev-parse HEAD)"
@@ -222,8 +233,8 @@ jobs:
             case "$1" in
               2) say "Did not merge #$pr: the autopilot pushed to it while I was bringing it up to date with main. Reply \`merge\` to the newest report." ;;
               3) say "Did not merge #$pr: it is behind main and merging main into it conflicts. Resolve the conflict on the \`$BRANCH\` branch." ;;
-              4) say "Did not merge #$pr: GitHub did not pick up the update from main in time. Reply \`merge\` to this message to try again." ;;
-              *) say "Did not merge #$pr: could not compare it with main. Reply \`merge\` again." ;;
+              4) say "Did not merge #$pr: GitHub did not pick up the update from main in time." retry ;;
+              *) say "Did not merge #$pr: could not compare it with main." retry ;;
             esac
           }
 
@@ -245,12 +256,12 @@ jobs:
           view_errors=0
           while :; do
             if ((SECONDS > deadline)); then
-              say "Did not merge #$pr: required checks were still pending after 80 minutes.${approve_note:+ $approve_note} Reply \`merge\` again later."
+              say "Did not merge #$pr: required checks were still pending after 80 minutes.${approve_note:+ $approve_note}" retry
               exit 0
             fi
             approve_pending
             if ! current="$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null)"; then
-              if ((++view_errors >= 10)); then say "Did not merge #$pr: GitHub did not answer for five minutes. Reply \`merge\` again later."; exit 0; fi
+              if ((++view_errors >= 10)); then say "Did not merge #$pr: GitHub did not answer for five minutes." retry; exit 0; fi
               sleep 30
               continue
             fi
@@ -325,7 +336,7 @@ jobs:
             # Pages when the landing site changed) explicitly.
             ci_msg=" CI on main has been started."
             gh workflow run ci.yml --ref main || ci_msg=" Could not start CI on main; start it from the Actions tab."
-            if printf '%s\n' "${changed[@]}" | grep -q '^landing/'; then
+            if grep -qz '^landing/' "$RUNNER_TEMP/changed"; then
               gh workflow run deploy-pages.yml --ref main || echo "::warning::Could not start the Pages deploy"
             fi
             # Remove the branch only if nothing new reached it after the merge, so a
@@ -336,7 +347,6 @@ jobs:
             msg="Merged #$pr into main${sha:+ as $sha}."
             [[ -n "$closes" ]] && msg+=" Closed $closes."
             msg+="$ci_msg Reply merges do not publish the relay container image; a merge or push you make yourself does."
-            own_head=""
             say "$msg"
             exit 0
           fi
@@ -346,11 +356,11 @@ jobs:
             --jq '"\(.mergeStateStatus) \(.reviewDecision // "NONE")"' 2>/dev/null || echo "UNKNOWN")"
           case "$state" in
             *REVIEW_REQUIRED* | *CHANGES_REQUESTED*)
-              say "Did not merge #$pr: main's rules need an approving review ($state). Approve https://github.com/$GH_REPO/pull/$pr, then reply \`merge\` again." ;;
+              say "Did not merge #$pr: main's rules need an approving review ($state). Approve https://github.com/$GH_REPO/pull/$pr first." retry ;;
             BEHIND*)
-              say "Did not merge #$pr: main moved at the last moment. Reply \`merge\` again." ;;
+              say "Did not merge #$pr: main moved at the last moment." retry ;;
             *)
-              say "Did not merge #$pr (state: $state): $(tail -n1 "$RUNNER_TEMP/merge.err")" ;;
+              say "Did not merge #$pr (state: $state): $(tail -n1 "$RUNNER_TEMP/merge.err")" retry ;;
           esac
 
       - name: Reply

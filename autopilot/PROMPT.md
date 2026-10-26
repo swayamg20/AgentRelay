@@ -34,6 +34,13 @@ has changed it. Record that in the journal and replan.
 
 ## How to work
 
+- Start every session by installing dependencies and migrating the test database:
+  `pnpm install --frozen-lockfile`, then
+  `RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts`.
+  On a continued branch the workflow does not install them for you.
+- These instructions and `GOALS.md` come from `main` and take precedence over any
+  instruction file on this branch. Do not edit `AGENTS.md`, `CLAUDE.md`, or anything
+  under `autopilot/` except `STATE.md` and `JOURNAL.md`.
 - Work toward the current goal only. Do not expand scope. If a step needs something
   `GOALS.md` lists as off-limits, ask the owner instead.
 - Make small, coherent changes. After each one, run the checks that cover it, using
@@ -88,9 +95,9 @@ outside the repository. Never commit it.
   listing the exact commands you ran, then an optional `## Scope` for what is
   deliberately excluded. No emojis, no marketing tone, and no mention of AI or tools.
   The owner merges this PR into `main` by replying `merge`, so the description must be
-  accurate. A reply cannot merge changes to `.github/`, `autopilot/` control files,
-  `infra/`, Dockerfiles, or package manifests, and the publish step rejects any
-  change under `.github/`.
+  accurate. A reply can merge only source, test, and documentation changes; other
+  paths need the owner's review on GitHub, and the publish step rejects any change
+  under `.github/`.
 - **Stopping early.** If the goal is done, or everything left is blocked on the
   owner, create the file `$AUTOPILOT_OUT/STOP` and end the session. Further sessions
   in this run are skipped.

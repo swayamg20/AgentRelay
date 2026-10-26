@@ -4,12 +4,13 @@ name: Autopilot
 # `autopilot` branch behind a draft PR. Run reports and owner questions are posted
 # as GitHub comments and issues that mention the owner, so they arrive by email.
 #
-# The agent job is treated as agent-controlled from the moment branch content is
-# checked out. Before that it sets up everything that needs root, starts a model-key
-# proxy under a separate user, and drops root. It holds only a read-only token and
-# restore-only cache access, and hands its commits over as a git bundle. The publish
-# job runs on a fresh runner, validates the bundle, rewrites commit identity, pushes,
-# and posts. It never executes repository code.
+# The agent job sets up everything that needs root, starts a model-key proxy under a
+# separate user, and drops root before any branch content runs. No branch code runs
+# before the agent itself, so nothing can redirect the harness. From then on the job
+# is treated as agent-controlled: it holds only a read-only token and restore-only
+# cache access, and hands its commits over as a git bundle. The publish job runs on a
+# fresh runner, validates the bundle, rewrites commit identity, pushes, and posts. It
+# never executes repository code.
 on:
   schedule:
     - cron: '30 3 * * *' # 09:00 IST
@@ -42,7 +43,7 @@ env:
 jobs:
   agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 270
+    timeout-minutes: 300
     # Restore-only: the cache service refuses saves from this job's token, so nothing
     # the agent controls can plant entries in main's cache scope.
     cache-mode: read
@@ -75,21 +76,17 @@ jobs:
           echo "Autopilot status: ${status:-missing}"
 
       - name: Prepare output directory and harness
+        id: prep
         if: steps.gate.outputs.status == 'running'
         run: |
-          out="$RUNNER_TEMP/autopilot"
-          mkdir -p "$out/questions"
+          mkdir -p "$RUNNER_TEMP/autopilot/questions"
           # Root-owned copy of the harness from main. The agent cannot change its own
           # script, instructions, model configuration, or goals, even on its branch.
           h=/opt/autopilot-harness
           sudo install -d -o root -g root -m 755 "$h"
           sudo install -o root -g root -m 644 \
             autopilot/run.sh autopilot/PROMPT.md autopilot/codex-config.toml autopilot/GOALS.md "$h/"
-          {
-            echo "AUTOPILOT_OUT=$out"
-            echo "AUTOPILOT_HARNESS=$h"
-            echo "AUTOPILOT_DEADLINE=$(( $(date +%s) + ${{ inputs.minutes || '220' }} * 60 ))"
-          } >> "$GITHUB_ENV"
+          echo "deadline=$(( $(date +%s) + ${{ inputs.minutes || '220' }} * 60 ))" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         if: steps.gate.outputs.status == 'running'
@@ -129,13 +126,12 @@ jobs:
           for _ in $(seq 1 60); do [[ -s "$proxy_home/info.json" ]] && break; sleep 0.5; done
           port="$(jq -r .port "$proxy_home/info.json" 2>/dev/null || true)"
           if ! [[ "$port" =~ ^[0-9]+$ ]]; then echo "::error::The model key proxy did not start."; exit 1; fi
-          echo "AUTOPILOT_MODEL_URL=http://127.0.0.1:$port/v1" >> "$GITHUB_ENV"
+          echo "Key proxy on port $port"
 
       - name: Drop root
         if: steps.gate.outputs.status == 'running'
         run: |
-          # Keep this before any step that checks out or runs branch content: the
-          # agent's earlier commits (install scripts, migrations) run after it.
+          # Keep this before any step that checks out or runs branch content.
           sudo chmod 600 /var/run/docker.sock 2>/dev/null || true
           sudo sh -c 'rm -f /etc/sudoers.d/*'
           if sudo -n true 2>/dev/null; then
@@ -149,19 +145,29 @@ jobs:
         if: steps.gate.outputs.status == 'running'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
-          git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
-          remote="$(git rev-parse -q --verify "origin/$BRANCH" || true)"
-          # Only a same-repository PR whose head is the branch tip counts; a fork branch
-          # with the same name never does.
-          pr_head="$(gh pr list --head "$BRANCH" --base main --state open --json isCrossRepository,headRefOid \
-            --jq '[.[] | select(.isCrossRepository == false)][0].headRefOid // empty')"
-          if [[ -n "$pr_head" && "$pr_head" == "$remote" ]]; then
+          # Exact same-repository head lookup; fork PRs from branches with the same name
+          # never count. The PR head and the branch tip must agree before continuing.
+          pr_head="" remote=""
+          for _ in $(seq 1 12); do
+            git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+            remote="$(git rev-parse -q --verify "refs/remotes/origin/$BRANCH" || true)"
+            pr_head="$(gh api "repos/$GH_REPO/pulls?head=$OWNER:$BRANCH&base=main&state=open&per_page=100" \
+              --jq '[.[] | select(.head.repo.full_name == env.GH_REPO)][0].head.sha // empty')"
+            [[ -z "$pr_head" || "$pr_head" == "$remote" ]] && break
+            sleep 5
+          done
+          if [[ -n "$pr_head" && "$pr_head" != "$remote" ]]; then
+            echo "::error::The autopilot PR head and branch tip disagree; skipping this run."
+            exit 1
+          fi
+          if [[ -n "$pr_head" ]]; then
             # Continue the open PR and bring in anything merged to main since.
             git checkout -B "$BRANCH" "$remote"
-            if ! git merge --no-edit origin/main; then
+            if ! git merge --no-edit refs/remotes/origin/main; then
               git merge --abort
               echo "conflict=true" >> "$GITHUB_OUTPUT"
               exit 0
@@ -170,13 +176,15 @@ jobs:
             echo "remote=$remote" >> "$GITHUB_OUTPUT"
           else
             # No open PR: the last batch was merged or discarded. Start fresh from main.
-            git checkout -B "$BRANCH" origin/main
+            git checkout -B "$BRANCH" refs/remotes/origin/main
             echo "mode=fresh" >> "$GITHUB_OUTPUT"
           fi
           echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
+      - name: Install dependencies from main
+        # Fresh mode only: the checkout is main. On a continued branch the agent installs
+        # dependencies itself, so no branch code runs before the agent step.
+        if: steps.gate.outputs.status == 'running' && steps.branch.outputs.mode == 'fresh'
         env:
           RELAY_DATABASE_URL: postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
         run: |
@@ -188,6 +196,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          out="$RUNNER_TEMP/autopilot"
           # The agent cannot call GitHub, so give it a read-only snapshot of the open
           # issues the owner wrote. Issues from anyone else are left out.
           gh issue list --state open --limit 100 --json number,title,labels,author,body \
@@ -195,8 +204,8 @@ jobs:
               | select(.author.login == $owner)
               | select([.labels[].name] | index("autopilot") | not)
               | "### #\(.number) \(.title)\n\nLabels: \([.labels[].name] | join(", "))\n\n\(.body[0:6000])\n"' \
-            > "$AUTOPILOT_OUT/issues.md"
-          echo "Issue snapshot: $(grep -c '^### #' "$AUTOPILOT_OUT/issues.md" || true) issues"
+            > "$out/issues.md"
+          echo "Issue snapshot: $(grep -c '^### #' "$out/issues.md" || true) issues"
           # Only the owner's comments reach the agent. The repository is public.
           gh issue list --label "$NEEDS_YOU_LABEL" --state open --limit 30 \
             --json number,title,body,comments \
@@ -204,24 +213,35 @@ jobs:
               "### Issue #\(.number): \(.title)\n\n\(.body)\n\n" +
               ([.comments[] | select(.author.login == $owner) |
                 "**Owner reply (\(.createdAt)):**\n\n\(.body)\n"] | join("\n")) + "\n"' \
-            > "$AUTOPILOT_OUT/inbox.md"
+            > "$out/inbox.md"
 
       - name: Run agent
         if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
         continue-on-error: true
+        # Literal values and an absolute shell, so nothing written to GITHUB_ENV or
+        # GITHUB_PATH earlier can point the agent at another harness or model endpoint.
+        shell: /usr/bin/bash --noprofile --norc -eo pipefail {0}
         env:
+          AUTOPILOT_HARNESS: /opt/autopilot-harness
+          AUTOPILOT_OUT: ${{ runner.temp }}/autopilot
+          AUTOPILOT_DEADLINE: ${{ steps.prep.outputs.deadline }}
           AUTOPILOT_MODEL: ${{ inputs.model || 'gpt-6.1-sol' }}
           AUTOPILOT_FALLBACK_MODEL: FW-GLM-5.3
           AUTOPILOT_RUN_ID: ${{ github.run_id }}
+          AUTOPILOT_MODE: ${{ steps.branch.outputs.mode }}
         # No database variables here: they switch relay unit tests to parallel
         # database runs. PROMPT.md gives the agent the integration command with them.
-        run: bash "$AUTOPILOT_HARNESS/run.sh"
+        run: |
+          port="$(jq -r .port /run/autopilot-keyproxy/info.json)"
+          [[ "$port" =~ ^[0-9]+$ ]] || { echo "::error::Key proxy port unavailable"; exit 1; }
+          AUTOPILOT_MODEL_URL="http://127.0.0.1:$port/v1" /usr/bin/bash "$AUTOPILOT_HARNESS/run.sh"
 
       - name: Save memory and discard leftovers
         id: tidy
         if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
         env:
           BASE: ${{ steps.branch.outputs.base }}
+          AUTOPILOT_OUT: ${{ runner.temp }}/autopilot
         run: |
           # Unstage everything and drop merge or cherry-pick state, so only the memory
           # files can be committed here; the rest is discarded below.
@@ -234,48 +254,51 @@ jobs:
           fi
           leftovers="$(git status --porcelain)"
           if [[ -n "$leftovers" ]]; then
-            { echo '### Discarded uncommitted changes'; echo '```'; echo "$leftovers" | head -n 50; echo '```'; } >> "$AUTOPILOT_OUT/notes.md"
+            { echo '### Discarded uncommitted changes'; echo '```'; sed -n '1,50p' <<<"$leftovers"; echo '```'; } >> "$AUTOPILOT_OUT/notes.md"
             git reset -q --hard HEAD && git clean -fdq
           fi
           if [[ "$(git rev-parse HEAD)" != "$BASE" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Bundle new commits
+        id: bundle
+        if: steps.tidy.outputs.changed == 'true'
+        env:
+          REMOTE: ${{ steps.branch.outputs.remote }}
+          AUTOPILOT_OUT: ${{ runner.temp }}/autopilot
+        run: |
+          # Everything already on the remote is excluded; publish verifies the rest.
+          excludes=(refs/remotes/origin/main)
+          if [[ -n "$REMOTE" ]]; then excludes+=("$REMOTE"); fi
+          git bundle create "$AUTOPILOT_OUT/branch.bundle" HEAD --not "${excludes[@]}"
+          echo "bundle=true" >> "$GITHUB_OUTPUT"
+
       - name: Verify
         if: steps.tidy.outputs.changed == 'true'
+        timeout-minutes: 30
+        continue-on-error: true
+        env:
+          AUTOPILOT_OUT: ${{ runner.temp }}/autopilot
         run: |
           # A quick pre-push signal. The PR's own CI is the merge gate.
           # Unit tests use the CONTRIBUTING.md command: `pnpm -r test` also runs the e2e
           # workspace, which needs a live relay. Only the integration command gets the
           # database variables, matching the CI unit and relay-integration jobs.
           : > "$AUTOPILOT_OUT/verify.md"
-          for cmd in "pnpm lint" "pnpm -r typecheck" "pnpm -r build" \
+          for cmd in "pnpm install --frozen-lockfile" "pnpm lint" "pnpm -r typecheck" "pnpm -r build" \
             "pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test" \
             "env RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration"; do
-            if $cmd > "$AUTOPILOT_OUT/verify.log" 2>&1; then
+            if timeout -k 1m 10m $cmd > "$AUTOPILOT_OUT/verify.log" 2>&1; then
               echo "- \`$cmd\`: pass" >> "$AUTOPILOT_OUT/verify.md"
             else
               cat "$AUTOPILOT_OUT/verify.log"
               {
-                echo "- \`$cmd\`: **FAIL**"
-                echo; echo '  <details><summary>Last 40 lines</summary>'; echo; echo '  ```'
-                tail -n 40 "$AUTOPILOT_OUT/verify.log" | sed 's/^/  /'
-                echo '  ```'; echo; echo '  </details>'
+                echo "- \`$cmd\`: FAIL"
+                tail -n 40 "$AUTOPILOT_OUT/verify.log" | sed 's/^/    /'
               } >> "$AUTOPILOT_OUT/verify.md"
             fi
           done
-
-      - name: Bundle new commits
-        id: bundle
-        if: steps.tidy.outputs.changed == 'true'
-        env:
-          REMOTE: ${{ steps.branch.outputs.remote }}
-        run: |
-          # Everything already on the remote is excluded; publish verifies the rest.
-          excludes=(origin/main)
-          if [[ -n "$REMOTE" ]]; then excludes+=("$REMOTE"); fi
-          git bundle create "$AUTOPILOT_OUT/branch.bundle" HEAD --not "${excludes[@]}"
-          echo "bundle=true" >> "$GITHUB_OUTPUT"
 
       - name: Hand results to the publish job
         if: always() && steps.gate.outputs.status == 'running'
@@ -290,7 +313,8 @@ jobs:
 
   publish:
     needs: agent
-    if: always() && needs.agent.outputs.status == 'running'
+    # Not on cancel: cancelling a run means nothing from it is published.
+    if: ${{ !cancelled() && needs.agent.outputs.status == 'running' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     cache-mode: none
@@ -309,7 +333,8 @@ jobs:
       HAS_BUNDLE: ${{ needs.agent.outputs.bundle }}
       AGENT_RESULT: ${{ needs.agent.result }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    # Everything from the agent job is untrusted. This job runs no repository code.
+    # Everything from the agent job is untrusted. This job runs no repository code, and
+    # its own notes live outside the downloaded artifact.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -328,51 +353,63 @@ jobs:
         if: env.HAS_BUNDLE == 'true'
         run: |
           out="$RUNNER_TEMP/autopilot"
-          mkdir -p "$out"
+          mkdir -p "$out" "$RUNNER_TEMP/publish"
+          notes="$RUNNER_TEMP/publish/notes.md"
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
           reject() {
-            printf '### Not published\n\n%s\n\n' "$1" >> "$out/notes.md"
+            printf '**Not published.** %s\n\n' "$1" >> "$notes"
             echo "::error::$1"
             exit 0
           }
           open_pr() {
-            gh pr list --head "$BRANCH" --base main --state open --json number,isCrossRepository \
-              --jq '[.[] | select(.isCrossRepository == false)][0].number // empty'
+            gh api "repos/$GH_REPO/pulls?head=$OWNER:$BRANCH&base=main&state=open&per_page=100" \
+              --jq '[.[] | select(.head.repo.full_name == env.GH_REPO)][0].number // empty'
           }
+          # Captured before anything from the bundle is fetched; later checks use SHAs
+          # and fully qualified refs only.
           git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
-          current="$(git rev-parse -q --verify "origin/$BRANCH" || true)"
+          current="$(git rev-parse -q --verify "refs/remotes/origin/$BRANCH" || true)"
 
-          git bundle verify -q "$out/branch.bundle" || reject "The commit bundle from the agent job did not verify."
-          git fetch -q "$out/branch.bundle" "HEAD:refs/autopilot/candidate" || reject "The commit bundle could not be fetched."
+          heads="$(git bundle list-heads "$out/branch.bundle" 2>/dev/null | awk '{print $2}')" \
+            || reject "The commit bundle could not be read."
+          [[ "$heads" == "HEAD" ]] || reject "The commit bundle names refs other than HEAD."
+          git bundle verify -q "$out/branch.bundle" || reject "The commit bundle did not verify."
+          git fetch -q --no-tags "$out/branch.bundle" "HEAD:refs/autopilot/candidate" || reject "The commit bundle could not be fetched."
           candidate="$(git rev-parse refs/autopilot/candidate)"
 
           # BASE was recorded before the agent ran: main's tip, or the open PR's head
           # with main merged in. The agent's commits must sit on top of it.
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
           git cat-file -e "$BASE^{commit}" 2>/dev/null || reject "The run's base commit is missing."
           git merge-base --is-ancestor "$BASE" "$candidate" || reject "The agent's commits do not build on the run's base commit."
           if [[ "$MODE" == continue ]]; then
-            if [[ "$BASE" != "$REMOTE" ]] && ! git merge-base --is-ancestor "$BASE" origin/main; then
+            if [[ "$BASE" != "$REMOTE" ]] && ! git merge-base --is-ancestor "$BASE" "$main_sha"; then
               read -r _ p1 p2 extra < <(git rev-list --parents -n1 "$BASE")
-              if [[ -n "$extra" || "$p1" != "$REMOTE" || -z "$p2" ]] || ! git merge-base --is-ancestor "$p2" origin/main; then
+              if [[ -n "$extra" || "$p1" != "$REMOTE" || -z "$p2" ]] || ! git merge-base --is-ancestor "$p2" "$main_sha"; then
                 reject "The run's base is not a merge of main into the PR head."
               fi
             fi
           else
-            git merge-base --is-ancestor "$BASE" origin/main || reject "The run's base is not on main."
+            git merge-base --is-ancestor "$BASE" "$main_sha" || reject "The run's base is not on main."
           fi
           [[ -z "$(git rev-list --merges "$BASE..$candidate")" ]] || reject "The agent created merge commits."
           # Additions, edits, deletions, and moves under .github/ are all refused.
           git diff --quiet --no-renames "$BASE" "$candidate" -- .github \
             || reject "The agent changed files under .github/, which autopilot never publishes."
 
-          # Closing the PR discards its work, including work that was running when it closed.
-          if [[ "$MODE" == continue ]] && ! git merge-base --is-ancestor "$REMOTE" origin/main; then
-            pr="$(open_pr)" || reject "Could not check whether the autopilot PR is still open; nothing was published."
-            [[ -n "$pr" ]] || reject "The autopilot PR was closed during this run, so its work stays discarded. The next run starts fresh from main."
-          fi
-          if [[ "$MODE" == fresh ]]; then
-            pr="$(open_pr)" || reject "Could not check for an open autopilot PR; nothing was published."
+          # Closing the PR discards its work, including work that was running when it
+          # closed. The PR is queried before main is refetched, so a merge that lands in
+          # between still shows up as merged rather than closed.
+          if [[ "$MODE" == continue ]]; then
+            pr="$(open_pr)" || reject "Could not check whether the autopilot PR is still open."
+            git fetch -q origin "+refs/heads/main:refs/remotes/origin/main" || reject "Could not fetch main."
+            main_sha="$(git rev-parse refs/remotes/origin/main)"
+            if [[ -z "$pr" ]] && ! git merge-base --is-ancestor "$REMOTE" "$main_sha"; then
+              reject "The autopilot PR was closed during this run, so its work stays discarded. The next run starts fresh from main."
+            fi
+          else
+            pr="$(open_pr)" || reject "Could not check for an open autopilot PR."
             [[ -z "$pr" ]] || reject "An autopilot PR (#$pr) opened during this run; this run's commits were not published over it."
           fi
 
@@ -390,7 +427,7 @@ jobs:
           if [[ "$MODE" == continue && -n "$current" && "$current" != "$REMOTE" ]]; then
             git merge-base --is-ancestor "$REMOTE" "$current" \
               || reject "The autopilot branch was rewritten during the run; this run's commits were not published."
-            git merge --no-edit "origin/$BRANCH" || { git merge --abort; reject "The autopilot branch moved during the run and merging it conflicts."; }
+            git merge --no-edit "$current" || { git merge --abort; reject "The autopilot branch moved during the run and merging it conflicts."; }
           fi
 
           git -c core.hooksPath=/dev/null push -q --force-with-lease="refs/heads/$BRANCH:$current" \
@@ -403,24 +440,31 @@ jobs:
         if: steps.publish.outputs.published == 'true'
         run: |
           out="$RUNNER_TEMP/autopilot"
+          notes="$RUNNER_TEMP/publish/notes.md"
           # The agent describes the whole branch in pr.md: a title line, then the body.
           default_title="chore(autopilot): scheduled autopilot work"
           title=""
-          printf '## Summary\n\nWork from scheduled autopilot runs toward the goal in `autopilot/GOALS.md`. Per-run detail is in `autopilot/JOURNAL.md`.\n' \
-            > "$out/pr-body.md"
+          body="$RUNNER_TEMP/publish/pr-body.md"
+          printf '## Summary\n\nWork from scheduled autopilot runs toward the goal in `autopilot/GOALS.md`. Per-run detail is in `autopilot/JOURNAL.md`.\n' > "$body"
           if [[ -s "$out/pr.md" ]]; then
             title="$(head -n1 "$out/pr.md" | sed -E 's/^#+ *//; s/^[[:space:]]+//; s/[[:space:]]+$//' | cut -c1-120)"
             tail -n +2 "$out/pr.md" | head -c 60000 \
+              | sed -E 's/[Hh][Ee][Aa][Dd][[:space:]]*[Cc][Oo][Mm][Mm][Ii][Tt]/head-commit/g' \
               | grep -viE '^(co-authored-by:|.*generated (with|by) .*(claude|codex|gpt|openai|anthropic|ai))' \
-              > "$out/pr-body.md" || true
-            [[ -s "$out/pr-body.md" ]] || printf '## Summary\n\nSee `autopilot/JOURNAL.md`.\n' > "$out/pr-body.md"
+              > "$body" || true
+            [[ -s "$body" ]] || printf '## Summary\n\nSee `autopilot/JOURNAL.md`.\n' > "$body"
           fi
-          pr="$(gh pr list --head "$BRANCH" --base main --state open --json number,isCrossRepository \
-            --jq '[.[] | select(.isCrossRepository == false)][0].number // empty')"
+          pr="$(gh api "repos/$GH_REPO/pulls?head=$OWNER:$BRANCH&base=main&state=open&per_page=100" \
+            --jq '[.[] | select(.head.repo.full_name == env.GH_REPO)][0].number // empty')"
           if [[ -z "$pr" ]]; then
-            gh pr create --draft --base main --head "$BRANCH" --title "${title:-$default_title}" --body-file "$out/pr-body.md"
+            if [[ "$MODE" == continue ]] && ! git merge-base --is-ancestor "$REMOTE" refs/remotes/origin/main; then
+              # Closed between the publish check and the push: do not reopen it.
+              printf '**The autopilot PR was closed while this run published, so no PR was reopened.** The next run starts fresh from main.\n\n' >> "$notes"
+              exit 0
+            fi
+            gh pr create --draft --base main --head "$BRANCH" --title "${title:-$default_title}" --body-file "$body"
           elif [[ -n "$title" ]]; then
-            gh pr edit "$pr" --title "$title" --body-file "$out/pr-body.md"
+            gh pr edit "$pr" --title "$title" --body-file "$body"
           fi
 
           # CI on a PR opened by github-actions waits for approval, and main only counts
@@ -436,13 +480,13 @@ jobs:
             sleep 5
           done
           if [[ -z "$ids" ]]; then
-            printf '### CI not approved\n\nNo pending CI run appeared for %s; a `merge` reply approves it later.\n\n' "${head:0:7}" >> "$out/notes.md"
+            printf '**CI not approved yet.** No pending CI run appeared for %s; a `merge` reply approves it.\n\n' "${head:0:7}" >> "$notes"
           fi
           for id in $ids; do
             if gh api -X POST "repos/$GH_REPO/actions/runs/$id/approve" >/dev/null; then
               echo "Approved pending CI run $id"
             else
-              printf '### CI not approved\n\nCould not approve CI run %s; a `merge` reply retries.\n\n' "$id" >> "$out/notes.md"
+              printf '**CI not approved yet.** Could not approve CI run %s; a `merge` reply retries.\n\n' "$id" >> "$notes"
             fi
           done
 
@@ -456,10 +500,21 @@ jobs:
           gh label create "$NEEDS_YOU_LABEL" --color B60205 --description "Autopilot is waiting on the owner" --force || true
           gh label create autopilot --color 5319E7 --description "Autopilot runs" --force || true
           out="$RUNNER_TEMP/autopilot"
-          mkdir -p "$out/questions"
-          # Agent-written text is shown as-is but cannot impersonate the head-commit line
-          # the merge workflow reads, and is size-bounded.
-          agent_text() { head -c "$2" "$1" | sed -E 's/[Hh][Ee][Aa][Dd][[:space:]]*[Cc][Oo][Mm][Mm][Ii][Tt]/head-commit/g'; }
+          notes="$RUNNER_TEMP/publish/notes.md"
+          mkdir -p "$out/questions" "$RUNNER_TEMP/publish"
+
+          # Agent-controlled text (including commit subjects and file names) is shown
+          # only as literal, size-bounded, fenced text that cannot hide or impersonate
+          # the trusted sections, and cannot contain the head-commit marker.
+          neutralize() { sed -E 's/[Hh][Ee][Aa][Dd][[:space:]]*[Cc][Oo][Mm][Mm][Ii][Tt]/head-commit/g'; }
+          literal() {
+            local text n fence
+            text="$(head -c "$1" | neutralize)"
+            n="$( { grep -oE '`+' <<<"$text" || true; } | awk '{ if (length($0) > m) m = length($0) } END { print m + 1 }')"
+            ((n < 3)) && n=3
+            fence="$(printf '%*s' "$n" '' | tr ' ' '`')"
+            printf '%s\n%s\n%s\n' "$fence" "$text" "$fence"
+          }
 
           opened=""
           if [[ "$CONFLICT" == "true" ]]; then
@@ -471,74 +526,93 @@ jobs:
               gh issue comment "$n" --body "Still conflicting with main as of $RUN_URL. Runs are skipped until it is resolved." || true
               opened+="- $url (still open)"$'\n'
             else
-              printf '%s\n\n%s\n' "Merging main into the autopilot branch conflicts" \
-                "The open autopilot PR conflicts with main. Resolve the conflicts on the \`$BRANCH\` branch, or close the PR to discard it. Runs are skipped until then." \
-                > "$out/questions/merge-conflict.md"
+              url="$(gh issue create --label "$NEEDS_YOU_LABEL" --label autopilot --title "$conflict_title" \
+                --body "@$OWNER The open autopilot PR conflicts with main. Resolve the conflicts on the \`$BRANCH\` branch, or close the PR to discard it. Runs are skipped until then. Run: $RUN_URL" || true)"
+              [[ -n "$url" ]] && opened+="- $url"$'\n'
             fi
           fi
 
+          max_q=5 asked=0 skipped=0
           for q in "$out"/questions/*.md; do
             [[ -f "$q" ]] || continue
+            if ((asked >= max_q)); then skipped=$((skipped + 1)); continue; fi
+            asked=$((asked + 1))
             title="$(head -n1 "$q" | sed 's/^#* *//' | cut -c1-100)"
             [[ -n "$title" ]] || title="Question from the autopilot"
             body="$(printf '@%s\n\n%s\n\n---\nReply here. A reply from @%s starts a run immediately; comments from anyone else are ignored. Run: %s\n' \
-              "$OWNER" "$(tail -n +2 "$q" | agent_text /dev/stdin 20000)" "$OWNER" "$RUN_URL")"
+              "$OWNER" "$(tail -n +2 "$q" | head -c 20000 | neutralize)" "$OWNER" "$RUN_URL")"
             if url="$(gh issue create --label "$NEEDS_YOU_LABEL" --label autopilot --title "Autopilot: $title" --body "$body")"; then
               opened+="- $url"$'\n'
             else
               echo "::warning::Could not open question $(basename "$q")"
             fi
           done
+          ((skipped == 0)) || opened+="- $skipped more questions were not opened; see the autopilot-out artifact."$'\n'
 
           if [[ -s "$out/resolved.txt" ]]; then
-            sed -nE 's/^#?([0-9]+).*/\1/p' "$out/resolved.txt" | sort -u | while read -r n; do
+            sed -nE 's/^#?([0-9]+).*/\1/p' "$out/resolved.txt" | sort -u | head -n 20 | while read -r n; do
               if gh issue view "$n" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "$NEEDS_YOU_LABEL"; then
                 gh issue close "$n" --comment "Resolved in autopilot run $RUN_URL" || echo "::warning::Could not close #$n"
               fi
-            done
+            done || true
           fi
 
-          pr_json="$(gh pr list --head "$BRANCH" --base main --state open --json number,url,headRefOid,isCrossRepository \
-            --jq '[.[] | select(.isCrossRepository == false)][0] // empty' || true)"
+          pr_json="$(gh api "repos/$GH_REPO/pulls?head=$OWNER:$BRANCH&base=main&state=open&per_page=100" \
+            --jq '[.[] | select(.head.repo.full_name == env.GH_REPO)][0] // empty' || true)"
+
+          # Trusted sections first, agent text after, head marker last.
           {
             echo "@$OWNER autopilot run finished: $RUN_URL"
             echo
             if [[ "$AGENT_RESULT" != "success" ]]; then
-              echo "**The agent job ended with: $AGENT_RESULT.** See the run for details."
-              echo
+              echo "**The agent job ended with: $AGENT_RESULT.** See the run for details."; echo
             fi
-            if [[ "$HAS_BUNDLE" == "true" && "$PUBLISHED" != "true" ]] && ! grep -q '^### Not published' "$out/notes.md" 2>/dev/null; then
-              echo "**Not published.** The publish step ended with: $PUBLISH_OUTCOME. This run's commits are only in the autopilot-out artifact of the run (kept 7 days)."
-              echo
+            if [[ "$HAS_BUNDLE" == "true" && "$PUBLISHED" != "true" ]] && ! [[ -s "$notes" ]]; then
+              echo "**Not published.** The publish step ended with: $PUBLISH_OUTCOME. The commits are only in the autopilot-out artifact of the run (kept 7 days)."; echo
             fi
             if [[ "$PUBLISHED" == "true" && "$PR_OUTCOME" != "success" ]]; then
-              echo "**The commits were pushed, but updating the PR ended with: $PR_OUTCOME.**"
-              echo
+              echo "**The commits were pushed, but updating the PR ended with: $PR_OUTCOME.**"; echo
             fi
-            echo "**Sessions**"; echo '```'; agent_text "$out/sessions.log" 4000 2>/dev/null || echo "none"; echo '```'
+            [[ -s "$notes" ]] && { cat "$notes"; echo; }
             if [[ "$PUBLISHED" == "true" ]]; then
-              echo "**Commits pushed**"; echo '```'; git log --oneline --no-merges "$BASE..HEAD" | head -n 50 || true; echo '```'
+              echo "**Commits pushed**"
+              git log --no-merges --format='%h %s' "$BASE..HEAD" | head -n 50 | cut -c1-120 | literal 8000
             fi
-            [[ -s "$out/verify.md" ]] && { echo "**Agent job checks**"; agent_text "$out/verify.md" 8000; echo; }
-            [[ -n "$opened" ]] && { echo "**Questions for you**"; echo "$opened"; }
-            [[ -s "$out/summary.md" ]] && { echo "**Agent summary**"; agent_text "$out/summary.md" 20000; echo; }
-            [[ -s "$out/notes.md" ]] && agent_text "$out/notes.md" 15000
             if [[ -n "$pr_json" ]]; then
-              pr_url="$(jq -r .url <<<"$pr_json")"
-              pr_head="$(jq -r .headRefOid <<<"$pr_json")"
+              pr_head="$(jq -r .head.sha <<<"$pr_json")"
               git fetch -q origin "$pr_head" 2>/dev/null || true
+              echo "**Files changed vs main** (from git)"
+              git diff --name-status --no-renames "refs/remotes/origin/main...$pr_head" 2>/dev/null | head -n 200 | literal 12000
+              echo "**Review:** $(jq -r .html_url <<<"$pr_json")"
               echo
-              echo "**Files changed vs main** (from git, not the agent)"
-              echo '```'; git diff --stat "origin/main...$pr_head" 2>/dev/null | tail -n 40 || true; echo '```'
-              echo "**Review:** $pr_url"
+            fi
+            [[ -n "$opened" ]] && { echo "**Questions for you**"; echo "$opened"; }
+            true
+          } > "$RUNNER_TEMP/publish/report-head.md"
+          {
+            echo "**Sessions** (from the agent job)"
+            literal 4000 < "$out/sessions.log" 2>/dev/null || echo "none"
+            if [[ -s "$out/verify.md" ]]; then echo "**Agent job checks** (from the agent job)"; literal 8000 < "$out/verify.md"; fi
+            if [[ -s "$out/summary.md" ]]; then echo "**Agent summary** (written by the agent)"; literal 20000 < "$out/summary.md"; fi
+            if [[ -s "$out/notes.md" ]]; then echo "**Agent notes** (written by the agent)"; literal 8000 < "$out/notes.md"; fi
+          } > "$RUNNER_TEMP/publish/report-agent.md"
+          : > "$RUNNER_TEMP/publish/report-tail.md"
+          if [[ -n "$pr_json" ]]; then
+            {
               echo
               # Must stay the last head-commit line: autopilot-merge.yml binds a reply to it.
-              echo "Head commit: \`$pr_head\`"
+              echo "Head commit: \`$(jq -r .head.sha <<<"$pr_json")\`"
               echo
               echo "Reply \`merge\` to this email to merge exactly that commit into main once its checks pass."
-            fi
-            true
-          } > "$out/report.md"
+            } > "$RUNNER_TEMP/publish/report-tail.md"
+          fi
+          # GitHub comments are capped at 65,536 characters; the agent section yields.
+          budget=$((60000 - $(wc -c < "$RUNNER_TEMP/publish/report-head.md") - $(wc -c < "$RUNNER_TEMP/publish/report-tail.md")))
+          {
+            cat "$RUNNER_TEMP/publish/report-head.md"
+            if ((budget > 0)); then head -c "$budget" "$RUNNER_TEMP/publish/report-agent.md"; echo; fi
+            cat "$RUNNER_TEMP/publish/report-tail.md"
+          } > "$RUNNER_TEMP/publish/report.md"
 
           log_issue="$(gh issue list --label autopilot --state open --json number,title \
             | jq -r --arg t "$LOG_ISSUE_TITLE" 'map(select(.title == $t)) | .[0].number // empty')"
@@ -546,4 +620,4 @@ jobs:
             log_issue="$(gh issue create --label autopilot --title "$LOG_ISSUE_TITLE" \
               --body "One comment per autopilot run. Reply \`merge\` to a run's email to merge its PR. Pause runs by setting \`status: paused\` in \`autopilot/GOALS.md\` on main.")"
           fi
-          gh issue comment "$log_issue" --body-file "$out/report.md"
+          gh issue comment "$log_issue" --body-file "$RUNNER_TEMP/publish/report.md"

@@ -16,8 +16,9 @@ fine). Every scheduled run reads the latest version from `main` before it starts
   on an open `autopilot:needs-you` issue.
 - Reply `merge` to a run-report email (or comment `merge` on the autopilot PR) to
   merge the exact commit that report names, once main's required checks pass.
-  Changes to `.github/`, `autopilot/` control files, `infra/`, Dockerfiles, or
-  package manifests must be reviewed and merged on GitHub instead.
+  A reply can merge only source, test, and documentation changes; anything else
+  (CI, `autopilot/` control files, `AGENTS.md`, infrastructure, deploy or runtime
+  config, dependencies, migrations) must be reviewed and merged on GitHub.
 -->
 
 ## Current goal

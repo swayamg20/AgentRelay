@@ -40,13 +40,16 @@ for ((session = 1; session <= max_sessions; session++)); do
 	[[ -e "$AUTOPILOT_OUT/STOP" ]] && { echo "STOP file present; ending run."; break; }
 	minutes_left=$(((AUTOPILOT_DEADLINE - $(date +%s)) / 60))
 	((minutes_left < 15)) && { echo "Less than 15 minutes left; ending run."; break; }
-	budget=$((minutes_left < 75 ? minutes_left - 5 : 70))
 
 	ok=false
 	for active_model in "$model" "$fallback"; do
+		# Recomputed per attempt, so a fallback never runs past the deadline.
+		minutes_left=$(((AUTOPILOT_DEADLINE - $(date +%s)) / 60))
+		((minutes_left < 10)) && { echo "Too little time left for $active_model."; break; }
+		budget=$((minutes_left < 75 ? minutes_left - 5 : 70))
 		echo "::group::session $session · $active_model · ${budget}m budget"
 		build_prompt "$session" "$minutes_left" "$active_model" |
-			timeout "${budget}m" codex exec \
+			timeout -k 2m "${budget}m" codex exec \
 				--model "$active_model" \
 				-c "model_providers.keyproxy.base_url=\"$AUTOPILOT_MODEL_URL\"" \
 				--dangerously-bypass-approvals-and-sandbox \
