@@ -344,6 +344,7 @@ describe("viewThread provenance", () => {
 			"tasks/get": [
 				{
 					thread_id: "t1",
+					created_at: "2026-04-25T09:00:00Z",
 					intent: "inform",
 					sender: { handle: "alice@acme", name: "Alice", role: "frontend" },
 					recipient: { handle: "bob@acme", name: "Bob", role: "backend" },
@@ -380,6 +381,7 @@ describe("viewThread provenance", () => {
 		});
 
 		const result = await viewThread({ client }, { thread_id: "t1", caller_handle: "alice@acme" });
+		expect(result.created_at).toBe("2026-04-25T09:00:00Z");
 		expect(result.artifacts[0]).not.toHaveProperty("agentrelay_provenance");
 		expect(result.metadata).toEqual({ question: "self question" });
 		expect(result.sender).not.toHaveProperty("agentrelay_provenance");

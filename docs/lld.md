@@ -309,7 +309,8 @@ MCP client's metadata-embedded append payload when no top-level payload is prese
 
 ### `tasks/get`
 
-Returns one full handoff thread. Only sender or recipient may read it.
+Returns one full handoff thread. Only sender or recipient may read it. `view_thread`
+preserves its `created_at` timestamp alongside the existing lifecycle timestamps.
 
 ### `tasks/list`
 
@@ -681,6 +682,7 @@ The `agentrelay` binary currently provides:
 - `rotate-key`
 - `doctor [--fix] [--json]`
 - `audit`
+- `export-thread <thread-id> [--output <path>]`
 - `block`, `unblock`
 - `trust list`, `trust set`, `trust reset`
 - `bind codex`, `unbind codex`
@@ -695,6 +697,19 @@ configuration, client MCP entries, permission overlays, broken trust parsing,
 unreachable Relay, and rejected API keys. `--json` retains the existing
 `DoctorReport` structure. `doctor --fix` keeps its existing exit behavior based on
 the after-report; `--fix --json` retains `{ before, after, fixed, skippedManual }`.
+
+`export-thread` uses local credentials and `viewThread`'s participant-authorized
+`tasks/get` read and provenance handling. It writes deterministic Markdown with
+indented JSON data sections for identity, lifecycle timestamps, initial content,
+messages ordered by `sequence_no`, payloads/artifacts, and completion/cancellation.
+Free-form Markdown, HTML, and backticks remain data; typed artifact structure and
+caller-relative teammate provenance are retained. It excludes local configuration
+and Relay-owned idempotency metadata, not arbitrary secrets in authored content.
+The default is `agentrelay-thread-<thread-id>.md` in the current directory. Exclusive
+creation refuses existing files, directories, and symlinks; the new file is mode
+`0600`, even with a restrictive umask. The parent directory must already exist.
+Success prints the path; failures print safe guidance and exit non-zero. Exporting
+does not change lifecycle state or mark messages read, and no new Relay route is used.
 
 `join` writes local credentials, adds the inviter to local trust, and invokes install
 for both clients. `install` writes the Claude MCP entry to `~/.claude.json`, the
