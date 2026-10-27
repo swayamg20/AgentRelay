@@ -31,6 +31,10 @@ build_prompt() {
 	cat "$AUTOPILOT_HARNESS/GOALS.md"
 	printf '\n## Owner inbox\n\n'
 	if [[ -s "$AUTOPILOT_OUT/inbox.md" ]]; then cat "$AUTOPILOT_OUT/inbox.md"; else echo "No open questions."; fi
+	if [[ -s "$AUTOPILOT_OUT/pr-feedback.md" ]]; then
+		printf '\n## Pull request feedback\n\n'
+		cat "$AUTOPILOT_OUT/pr-feedback.md"
+	fi
 	printf '\n## This session\n\n'
 	printf -- '- Run id: %s\n- Model: %s\n- Session %s of at most %s\n- About %s minutes remain in this run. Leave time to commit and update memory.\n' \
 		"$run_id" "$active_model" "$session" "$max_sessions" "$minutes_left"

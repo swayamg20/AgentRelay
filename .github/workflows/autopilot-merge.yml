@@ -391,6 +391,19 @@ jobs:
           cat "$RUNNER_TEMP/merge.err"
           state="$(gh pr view "$pr" --json mergeStateStatus,reviewDecision \
             --jq '"\(.mergeStateStatus) \(.reviewDecision // "NONE")"' 2>/dev/null || echo "UNKNOWN")"
+          # main requires every review conversation to be resolved, including code
+          # scanning findings, so name them instead of reporting a bare BLOCKED.
+          # shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
+          unresolved="$(gh api graphql -F number="$pr" -f owner="${GH_REPO%/*}" -f name="${GH_REPO#*/}" -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+                reviewThreads(first: 100) { nodes { isResolved path line comments(first: 1) { nodes { author { login } } } } } } } }' \
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)
+              | "`\(.path):\(.line // "?")` (\(.comments.nodes[0].author.login))"] | .[0:10] | join(", ")' 2>/dev/null || true)"
+          if [[ -n "$unresolved" ]]; then
+            say "Did not merge #$pr: it has unresolved review conversations, which main requires to be resolved: $unresolved. Code scanning findings resolve themselves once fixed; the next autopilot run sees them and fixes them. Resolve any others on https://github.com/$GH_REPO/pull/$pr." retry
+            exit 0
+          fi
           case "$state" in
             *REVIEW_REQUIRED* | *CHANGES_REQUESTED*)
               say "Did not merge #$pr: main's rules need an approving review ($state). Approve https://github.com/$GH_REPO/pull/$pr first." retry ;;

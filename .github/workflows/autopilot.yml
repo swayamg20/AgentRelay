@@ -83,7 +83,10 @@ jobs:
             waiting="$(gh issue list --label "$NEEDS_YOU_LABEL" --state open --limit 50 --json number,comments \
               --jq '[.[] | select([.comments[] | select(.author.login == env.OWNER)] | length == 0) | "#\(.number)"] | join(" ")' \
               || true)"
-            if [[ -n "$waiting" ]]; then
+            # Review findings or failing checks on the open PR are work the agent can do
+            # without the owner, so they keep the run going.
+            feedback="$(bash autopilot/pr-feedback.sh count 2>/dev/null || echo 0)"
+            if [[ -n "$waiting" && "$feedback" == 0 ]]; then
               echo "::notice::Waiting on the owner's answer to $waiting; skipping this scheduled run."
               status=waiting
             fi
@@ -101,7 +104,7 @@ jobs:
           h=/opt/autopilot-harness
           sudo install -d -o root -g root -m 755 "$h"
           sudo install -o root -g root -m 644 \
-            autopilot/run.sh autopilot/PROMPT.md autopilot/codex-config.toml autopilot/GOALS.md "$h/"
+            autopilot/run.sh autopilot/PROMPT.md autopilot/codex-config.toml autopilot/GOALS.md autopilot/pr-feedback.sh "$h/"
           echo "deadline=$(( $(date +%s) + ${{ inputs.minutes || '220' }} * 60 ))" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -211,6 +214,7 @@ jobs:
         if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           out="$RUNNER_TEMP/autopilot"
           # The agent cannot call GitHub, so give it a read-only snapshot of the open
@@ -230,6 +234,9 @@ jobs:
               ([.comments[] | select(.author.login == $owner) |
                 "**Owner reply (\(.createdAt)):**\n\n\(.body)\n"] | join("\n")) + "\n"' \
             > "$out/inbox.md"
+          # Unresolved review findings and failing checks on the open PR, so the agent
+          # can fix what blocks the merge. Only the owner's and CodeQL's threads count.
+          bash /opt/autopilot-harness/pr-feedback.sh report > "$out/pr-feedback.md" || : > "$out/pr-feedback.md"
 
       - name: Run agent
         if: steps.gate.outputs.status == 'running' && steps.branch.outputs.conflict != 'true'
