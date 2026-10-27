@@ -367,8 +367,15 @@ jobs:
           if gh pr merge "$pr" --merge --match-head-commit "$head" 2> "$RUNNER_TEMP/merge.err"; then
             say "Merged #$pr into main."
             sha="$(gh pr view "$pr" --json mergeCommit --jq '.mergeCommit.oid[0:7] // empty' 2>/dev/null || true)"
-            closes="$(gh pr view "$pr" --json closingIssuesReferences \
-              --jq '[.closingIssuesReferences[].number | "#\(.)"] | join(", ")' 2>/dev/null || true)"
+            # GitHub does not auto-close linked issues for merges made with GITHUB_TOKEN,
+            # so close the PR's `Closes #N` issues here and report only those it closed.
+            closes=""
+            for n in $(gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[].number' 2>/dev/null || true); do
+              if [[ "$(gh issue view "$n" --json state --jq .state 2>/dev/null)" == OPEN ]] \
+                && gh issue close "$n" --reason completed --comment "Fixed by #$pr${sha:+ ($sha)}." >/dev/null; then
+                closes+="${closes:+, }#$n"
+              fi
+            done
             # Pushes made with GITHUB_TOKEN start no workflows, so start main's CI (and
             # Pages when the landing site changed) explicitly.
             ci_msg=" CI on main has been started."
