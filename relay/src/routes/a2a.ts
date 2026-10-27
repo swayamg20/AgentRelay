@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { bearerAuth } from "../auth/middleware.js";
@@ -86,6 +86,31 @@ const tasksUpdateParams = z
 	});
 
 const tasksCancelParams = z.object({ task_id: z.string().uuid() });
+
+const agentsListParams = z
+	.object({
+		role: z.string().trim().min(1).max(60).optional(),
+		skill: z.string().trim().min(1).max(60).optional(),
+		repo: z.string().trim().min(1).max(200).optional(),
+		page: z
+			.object({
+				limit: z.number().int().min(1).max(200).default(50),
+				cursor: z
+					.object({
+						after_handle: z
+							.string()
+							.min(1)
+							.max(120)
+							.regex(/^[a-z0-9._-]+@[a-z0-9.-]+$/),
+					})
+					.strict()
+					.nullable()
+					.default(null),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
 
 // ─── JSON-RPC envelope ──────────────────────────────────────────────────────
 
@@ -257,7 +282,7 @@ async function dispatch(method: string, params: unknown, ctx: DispatchCtx): Prom
 		case "tasks/cancel":
 			return handleTasksCancel(params, ctx);
 		case "agents/list":
-			return handleAgentsList(ctx);
+			return handleAgentsList(params, ctx);
 		default:
 			throw new RelayError("method_not_found", `Unknown method: ${method}`);
 	}
@@ -518,11 +543,26 @@ async function handleTasksCancel(params: unknown, ctx: DispatchCtx): Promise<unk
 	};
 }
 
-async function handleAgentsList(ctx: DispatchCtx): Promise<unknown> {
-	// JSON-RPC equivalent of REST `GET /agents` — surfaced via /a2a so MCP
-	// tools (lld §4.6) can reach the team roster through the same transport
-	// they use for handoffs. Returns active agents only.
-	const rows = await ctx.db
+async function handleAgentsList(params: unknown, ctx: DispatchCtx): Promise<unknown> {
+	const parsed = agentsListParams.safeParse(params ?? {});
+	if (!parsed.success) {
+		throw new RelayError("invalid_params", "Invalid agents/list params", {
+			issues: parsed.error.issues,
+		});
+	}
+	const input = parsed.data;
+	const conditions = [eq(agents.status, "active")];
+	if (input.role !== undefined) conditions.push(eq(agents.role, input.role));
+	if (input.skill !== undefined) {
+		conditions.push(sql`${agentCards.skills} @> ARRAY[${input.skill}]::text[]`);
+	}
+	if (input.repo !== undefined) {
+		conditions.push(sql`${agentCards.reposOwned} @> ARRAY[${input.repo}]::text[]`);
+	}
+	if (input.page?.cursor) {
+		conditions.push(gt(agents.handle, input.page.cursor.after_handle));
+	}
+	const query = ctx.db
 		.select({
 			handle: agents.handle,
 			displayName: agents.displayName,
@@ -532,15 +572,25 @@ async function handleAgentsList(ctx: DispatchCtx): Promise<unknown> {
 		})
 		.from(agents)
 		.leftJoin(agentCards, eq(agentCards.agentId, agents.id))
-		.where(eq(agents.status, "active"));
+		.where(and(...conditions))
+		.orderBy(asc(agents.handle));
+	const rows = await (input.page ? query.limit(input.page.limit + 1) : query);
+	const pageRows = input.page ? rows.slice(0, input.page.limit) : rows;
+	const lastRow = pageRows.at(-1);
 	return {
-		teammates: rows.map((r) => ({
+		teammates: pageRows.map((r) => ({
 			handle: r.handle,
 			name: r.displayName,
 			role: r.role,
 			skills: r.skills ?? [],
 			repos_owned: r.reposOwned ?? [],
 		})),
+		...(input.page
+			? {
+					next_cursor:
+						rows.length > input.page.limit && lastRow ? { after_handle: lastRow.handle } : null,
+				}
+			: {}),
 	};
 }
 

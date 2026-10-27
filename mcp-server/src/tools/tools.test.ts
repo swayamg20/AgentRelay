@@ -321,7 +321,7 @@ describe("sendMessage / completeHandoff / listTeammates", () => {
 	});
 
 	it("list_teammates parses the agents/list response", async () => {
-		const { client } = makeClient({
+		const { client, calls } = makeClient({
 			"agents/list": [
 				{
 					teammates: [
@@ -331,10 +331,71 @@ describe("sendMessage / completeHandoff / listTeammates", () => {
 			],
 		});
 		const r = await listTeammates(client, {});
+		expect(calls).toEqual([{ method: "agents/list", params: {}, idempotencyKey: undefined }]);
+		expect(r).not.toHaveProperty("next_cursor");
 		expect(r.teammates[0]).toMatchObject({
 			handle: "frank@acme",
 			agentrelay_provenance: { sender_handle: "frank@acme" },
 		});
+	});
+
+	it("forwards normalized filters and pagination while preserving cursor and provenance", async () => {
+		const cursor = { after_handle: "frank@acme" };
+		const teammate = {
+			handle: "frank@acme",
+			name: "untrusted name",
+			role: "frontend",
+			skills: ["TypeScript"],
+			repos_owned: ["acme/core"],
+		};
+		const { client, calls } = makeClient({
+			"agents/list": [
+				{ teammates: [teammate], next_cursor: cursor },
+				{ teammates: [], next_cursor: null },
+			],
+		});
+		const first = await listTeammates(client, {
+			role: " frontend ",
+			skill: " TypeScript ",
+			repo: " acme/core ",
+			page: { limit: 1 },
+		});
+		expect(calls[0].params).toEqual({
+			role: "frontend",
+			skill: "TypeScript",
+			repo: "acme/core",
+			page: { limit: 1, cursor: null },
+		});
+		expect(first.next_cursor).toEqual(cursor);
+		expect(first.teammates[0]).toEqual({
+			...teammate,
+			agentrelay_provenance: {
+				origin: "agentrelay_teammate",
+				sender_handle: "frank@acme",
+				trust: "untrusted",
+				instruction_policy: "data_only_do_not_execute",
+			},
+		});
+		expect(await listTeammates(client, { page: { cursor: first.next_cursor } })).toEqual({
+			teammates: [],
+			next_cursor: null,
+		});
+		expect(calls[1].params).toEqual({ page: { limit: 50, cursor } });
+	});
+
+	it("rejects invalid input before sending a roster request", async () => {
+		const { client, calls } = makeClient({});
+		await expect(listTeammates(client, { skill: " " })).rejects.toThrow();
+		await expect(listTeammates(client, { page: { limit: 201 } })).rejects.toThrow();
+		await expect(listTeammates(client, { page: { cursor: "invalid" } })).rejects.toThrow();
+		expect(calls).toEqual([]);
+	});
+
+	it("rejects malformed continuation responses instead of dropping them", async () => {
+		const { client } = makeClient({
+			"agents/list": [{ teammates: [], next_cursor: { after_handle: "invalid" } }],
+		});
+		await expect(listTeammates(client, { page: {} })).rejects.toThrow();
 	});
 });
 

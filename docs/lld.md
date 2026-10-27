@@ -340,8 +340,46 @@ completion summary/artifact content back to the sender.
 
 ### `agents/list`
 
-Returns every active teammate. The MCP tool sends optional role, skill, and repository
-filters, but the relay currently ignores those filters.
+Authenticated internal roster discovery, also used by MCP `list_teammates`. Optional
+`role`, `skill`, and `repo` strings are trimmed and matched case-sensitively: role
+equals the agent's role; skill/repo must equal a whole element of the card's
+`skills`/`repos_owned` array. Multiple filters combine with AND. Stored values are
+not trimmed or split; neither whitespace nor commas tokenize a filter. Unknown
+filter values return no matches. Empty/whitespace-only filters, non-string values,
+unknown parameter keys, and filters longer than 60/60/200 characters respectively
+return `invalid_params` (`-32602`).
+
+Results contain only active agents, ordered by unique handle ascending under the
+database's text ordering. Missing cards yield empty skills/repositories. Discovery
+continues to include the caller and blocked agents; a roster entry is not consent
+to message or execute anything. Bearer authentication and disabled-caller rejection
+remain in force. REST `GET /agents` is unchanged.
+
+Without `page`, the response remains `{ teammates: [...] }`, with no limit or
+`next_cursor`. Supplying `page` opts into bounded keyset pagination: `limit` is an
+integer from 1 to 200 (default 50), and `cursor` is null (default) or the validated
+object `{ "after_handle": "name@team" }`. The handle follows registration's
+lowercase handle syntax and 120-character bound; extra page/cursor keys are invalid.
+The response adds `next_cursor`, a cursor object when more matching rows exist or
+null at the end. Pass it back with the same filters. It is only an exclusive handle
+position, not an authorization capability or a snapshot. Pages do not duplicate
+entries in an unchanged roster; concurrent roster/card changes can change results.
+
+Filtered MCP input:
+
+```json
+{ "role": "backend", "skill": "TypeScript", "repo": "acme/core" }
+```
+
+Paginated MCP input (use the response's actual `next_cursor` for continuation):
+
+```json
+{ "skill": "TypeScript", "page": { "limit": 2 } }
+```
+
+```json
+{ "skill": "TypeScript", "page": { "limit": 2, "cursor": { "after_handle": "bob@acme" } } }
+```
 
 ## Core MCP tool surface
 
@@ -355,7 +393,7 @@ Source of truth: [`mcp-server/src/tools/index.ts`](../mcp-server/src/tools/index
 | `view_thread` | Read a participant thread without changing lifecycle state; only teammate-authored fields are marked. |
 | `send_message` | Append a message and preserve its generic payload separately from typed artifacts. |
 | `complete_handoff` | Transition an accepted handoff to completed and persist result artifacts. |
-| `list_teammates` | Fetch the active roster. |
+| `list_teammates` | Discover active teammates with exact role/skill/repo filters and optional bounded keyset pages. |
 
 There is no `draft_proposed_action`, pair, listen, wait, runtime-start, or Mission
 tool today.

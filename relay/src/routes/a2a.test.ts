@@ -2,7 +2,14 @@ import { asc, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
-import { agentBlocks, agents, auditLog, handoffs, mailboxEvents } from "../db/schema.js";
+import {
+	agentBlocks,
+	agentCards,
+	agents,
+	auditLog,
+	handoffs,
+	mailboxEvents,
+} from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
 import { createLogger } from "../logger.js";
 import { createServer } from "../server.js";
@@ -87,6 +94,231 @@ d("a2a JSON-RPC + state machine", () => {
 		});
 		return { status: res.status, body: (await res.json()) as any };
 	}
+
+	describe("agents/list roster", () => {
+		let caller: { id: string; key: string };
+		let bob: { id: string; key: string };
+
+		beforeEach(async () => {
+			caller = await register("dora@acme");
+			bob = await register("bob@acme");
+			const alice = await register("alice@acme");
+			const claire = await register("claire@acme");
+			const disabled = await register("disabled@acme");
+			for (const profile of [
+				{
+					id: alice.id,
+					role: "backend",
+					skills: ["TypeScript", "Type Script"],
+					repos: ["acme/core"],
+				},
+				{ id: bob.id, role: "backend", skills: ["Go", "TypeScript"], repos: ["acme/api"] },
+				{ id: claire.id, role: "frontend", skills: ["TypeScript"], repos: ["acme/core"] },
+				{ id: disabled.id, role: "backend", skills: ["TypeScript"], repos: ["acme/core"] },
+			]) {
+				await handle.db.update(agents).set({ role: profile.role }).where(eq(agents.id, profile.id));
+				await handle.db.insert(agentCards).values({
+					agentId: profile.id,
+					card: {},
+					skills: profile.skills,
+					reposOwned: profile.repos,
+				});
+			}
+			await handle.db.update(agents).set({ status: "disabled" }).where(eq(agents.id, disabled.id));
+			await handle.db.delete(agentCards).where(eq(agentCards.agentId, caller.id));
+		});
+
+		it.each([undefined, null, {}])("preserves the legacy shape for %j", async (params) => {
+			const result = await rpc(caller.key, "agents/list", params);
+			expect(result.status).toBe(200);
+			expect(result.body.result).toEqual({
+				teammates: [
+					{
+						handle: "alice@acme",
+						name: "alice@acme",
+						role: "backend",
+						skills: ["TypeScript", "Type Script"],
+						repos_owned: ["acme/core"],
+					},
+					{
+						handle: "bob@acme",
+						name: "bob@acme",
+						role: "backend",
+						skills: ["Go", "TypeScript"],
+						repos_owned: ["acme/api"],
+					},
+					{
+						handle: "claire@acme",
+						name: "claire@acme",
+						role: "frontend",
+						skills: ["TypeScript"],
+						repos_owned: ["acme/core"],
+					},
+					{ handle: "dora@acme", name: "dora@acme", role: "engineer", skills: [], repos_owned: [] },
+				],
+			});
+		});
+
+		it.each([
+			[{ role: " backend " }, ["alice@acme", "bob@acme"]],
+			[{ skill: " TypeScript " }, ["alice@acme", "bob@acme", "claire@acme"]],
+			[{ repo: " acme/core " }, ["alice@acme", "claire@acme"]],
+			[{ role: "backend", skill: "TypeScript", repo: "acme/core" }, ["alice@acme"]],
+			[{ role: "frontend", skill: "Go" }, []],
+			[{ skill: "Type Script" }, ["alice@acme"]],
+			[{ skill: "Type" }, []],
+			[{ role: "Backend" }, []],
+			[{ skill: "typescript" }, []],
+			[{ repo: "ACME/core" }, []],
+			[{ repo: "core" }, []],
+			[{ role: "unknown" }, []],
+			[{ skill: "TypeScript,Go" }, []],
+			[{ skill: "' OR true --" }, []],
+		])("matches exact AND-combined filters %j", async (params, expected) => {
+			const result = await rpc(caller.key, "agents/list", params);
+			expect(result.status).toBe(200);
+			expect(
+				result.body.result.teammates.map((teammate: { handle: string }) => teammate.handle),
+			).toEqual(expected);
+			expect(result.body.result).not.toHaveProperty("next_cursor");
+		});
+
+		it.each([
+			[],
+			"backend",
+			false,
+			{ team: "acme" },
+			{ filter: { role: "backend" } },
+			{ role: "" },
+			{ skill: " \t " },
+			{ repo: "" },
+			{ role: 3 },
+			{ skill: ["TypeScript"] },
+			{ repo: null },
+			{ role: "x".repeat(61) },
+			{ skill: "x".repeat(61) },
+			{ repo: "x".repeat(201) },
+			{ page: null },
+			{ page: [] },
+			{ page: { limit: 0 } },
+			{ page: { limit: -1 } },
+			{ page: { limit: 201 } },
+			{ page: { limit: 1.5 } },
+			{ page: { limit: "2" } },
+			{ page: { offset: 0 } },
+			{ page: { cursor: "bob@acme" } },
+			{ page: { cursor: {} } },
+			{ page: { cursor: { after_handle: "" } } },
+			{ page: { cursor: { after_handle: "not a handle" } } },
+			{ page: { cursor: { after_handle: "bob@acme", extra: true } } },
+			{ page: { cursor: { after_handle: `${"x".repeat(116)}@acme` } } },
+		])("rejects malformed filters/pages %j", async (params) => {
+			const result = await rpc(caller.key, "agents/list", params);
+			expect(result.status).toBe(400);
+			expect(result.body.error.code).toBe(-32602);
+			expect(result.body.error.data.code).toBe("invalid_params");
+		});
+
+		it("continues filtered pages without duplicates and ends with a null cursor", async () => {
+			const first = await rpc(caller.key, "agents/list", {
+				skill: "TypeScript",
+				page: { limit: 2 },
+			});
+			expect(
+				first.body.result.teammates.map((teammate: { handle: string }) => teammate.handle),
+			).toEqual(["alice@acme", "bob@acme"]);
+			expect(first.body.result.next_cursor).toEqual({ after_handle: "bob@acme" });
+			const second = await rpc(caller.key, "agents/list", {
+				skill: "TypeScript",
+				page: { limit: 2, cursor: first.body.result.next_cursor },
+			});
+			expect(
+				second.body.result.teammates.map((teammate: { handle: string }) => teammate.handle),
+			).toEqual(["claire@acme"]);
+			expect(second.body.result.next_cursor).toBeNull();
+			const empty = await rpc(caller.key, "agents/list", {
+				skill: "TypeScript",
+				page: { cursor: { after_handle: "claire@acme" } },
+			});
+			expect(empty.body.result).toEqual({ teammates: [], next_cursor: null });
+		});
+
+		it("returns null for empty and exactly-full final pages", async () => {
+			const empty = await rpc(caller.key, "agents/list", { role: "unknown", page: {} });
+			expect(empty.body.result).toEqual({ teammates: [], next_cursor: null });
+			const full = await rpc(caller.key, "agents/list", {
+				role: "backend",
+				page: { limit: 2, cursor: null },
+			});
+			expect(full.body.result.teammates).toHaveLength(2);
+			expect(full.body.result.next_cursor).toBeNull();
+		});
+
+		it("bounds opted-in pages but leaves the legacy roster unbounded", async () => {
+			await handle.db.insert(agents).values(
+				Array.from({ length: 205 }, (_, index) => ({
+					handle: `member${String(index).padStart(3, "0")}@acme`,
+					email: `member${index}@acme.com`,
+					displayName: "Member",
+					role: "engineer",
+				})),
+			);
+			const defaults = await rpc(caller.key, "agents/list", { page: {} });
+			expect(defaults.body.result.teammates).toHaveLength(50);
+			expect(defaults.body.result.next_cursor).toEqual({ after_handle: "member045@acme" });
+			const maximum = await rpc(caller.key, "agents/list", { page: { limit: 200 } });
+			expect(maximum.body.result.teammates).toHaveLength(200);
+			const continuation = await rpc(caller.key, "agents/list", {
+				page: { limit: 200, cursor: maximum.body.result.next_cursor },
+			});
+			expect(continuation.body.result.teammates).toHaveLength(9);
+			expect(continuation.body.result.next_cursor).toBeNull();
+			const combined = [
+				...maximum.body.result.teammates,
+				...continuation.body.result.teammates,
+			].map((teammate: { handle: string }) => teammate.handle);
+			expect(new Set(combined).size).toBe(209);
+			const legacy = await rpc(caller.key, "agents/list", {});
+			expect(
+				legacy.body.result.teammates.map((teammate: { handle: string }) => teammate.handle),
+			).toEqual(combined);
+			expect(legacy.body.result).not.toHaveProperty("next_cursor");
+		});
+
+		it("preserves block-list discovery behavior and leaves REST GET /agents unchanged", async () => {
+			await handle.db.insert(agentBlocks).values([
+				{ blockerId: caller.id, blockedId: bob.id },
+				{ blockerId: bob.id, blockedId: caller.id },
+			]);
+			const result = await rpc(caller.key, "agents/list", { role: "backend", page: {} });
+			expect(
+				result.body.result.teammates.map((teammate: { handle: string }) => teammate.handle),
+			).toEqual(["alice@acme", "bob@acme"]);
+			const rest = await app.request("/agents?role=unknown&page=invalid", {
+				headers: bearer(caller.key),
+			});
+			expect(rest.status).toBe(200);
+			expect(await rest.json()).not.toHaveProperty("next_cursor");
+		});
+
+		it("requires an active authenticated caller even with invalid filters", async () => {
+			const unauthenticated = await app.request("/a2a", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: "roster",
+					method: "agents/list",
+					params: { page: {} },
+				}),
+			});
+			expect(unauthenticated.status).toBe(401);
+			await handle.db.update(agents).set({ status: "disabled" }).where(eq(agents.id, caller.id));
+			const disabled = await rpc(caller.key, "agents/list", { skill: "" });
+			expect(disabled.status).toBe(403);
+			expect(disabled.body.result).toBeUndefined();
+		});
+	});
 
 	it("rejects unauthenticated POST /a2a", async () => {
 		const res = await app.request("/a2a", {
