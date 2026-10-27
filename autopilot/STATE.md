@@ -1,91 +1,112 @@
 # Autopilot state
 
-Working memory. Rewrite this file at the end of each session.
+Working memory. Rewrite this file at the end of every session.
 
 ## Goal as understood
 
 Ship core-mailbox issues one at a time. Implement only the owner's chosen issue,
 then propose three next candidates. The goal is unchanged.
 
-**#40 is complete and previously verified on this branch in `b95dc2b`
-(`feat(cli): add safe markdown thread export`).** It is not on origin/main.
-Keep `Closes #40` in the full-branch PR description. The owner's earlier
-“okay, go ahead” on #161 approved #40 only; #161 is already resolved.
+The owner's “go with 111” reply on #165 approved #111. It is now complete and
+verified in `46b6e68` (`fix(roster): honor filters and add bounded pagination`).
+The next-choice question proposes #10 (recommended, strict-root rejection), #103,
+and #39 (explicitly passive stdout metadata mode). No other issue was implemented.
 
-The supplied owner inbox contains the candidate question **#165**, but no owner
-reply selecting #111, #10, or #103. Its recommendation is not approval. No new
-product issue was implemented in run 40297811021.
+History supersedes the previous memory: #40's safe thread export was merged into
+main by #163 (`4acf32d`) before this session. #11 is also already on main.
+The current branch's new product change is #111 only; use `Closes #111`, not
+`Closes #40`, in its PR description.
 
 ## Plan
 
-- [x] Read working memory, newest journal entries, branch history, and issue snapshot.
-- [x] Install locked dependencies and migrate the local test database.
-- [x] Confirm #40 remains the only product change ahead of origin/main.
-- [x] Identify the existing pending candidate question as #165.
-- [x] Preserve its proposal without creating a duplicate question.
-- [x] Validate memory-only changes and refresh external summary/PR description.
-- [ ] Receive the owner's selection on #165 and implement only that issue.
+- [x] Read memory, recent journal/history, design sources, and the issue snapshot.
+- [x] Install locked dependencies and migrate the disposable test database.
+- [x] Trace roster schemas, MCP forwarding/provenance, Relay dispatch/query, card
+  writers, registration, bearer authentication, and existing REST discovery.
+- [x] Implement exact AND-combined filters and opt-in bounded keyset pagination.
+- [x] Add focused MCP/Relay contract tests and truthful documentation examples.
+- [x] Inspect filtered and continuation query plans before considering indexes.
+- [x] Run focused tests, shared lint/typecheck/build/unit gates, sequential Relay
+  integration, diff checks, and local Markdown-link checks; commit #111.
+- [x] Prepare the external next-choice question; resolve the answered #165.
+- [x] Update memory and full-branch summary/PR outputs; stop awaiting selection.
+- [ ] Receive the next explicit owner selection and implement only that issue.
 
 ## Next step
 
-Read the owner inbox for a selection on #165. Recheck origin/main and the current
-issue snapshot before implementing. If #10 is selected, require approval of
-strict-root rejection rather than warning-only validation. If #103 is selected,
-first map its nine required cases to existing tests and add only missing proof.
-The full plans, touched files, exclusions, and exact checks are in #165.
-
-Stop this run while awaiting selection. The owner may review and merge #40
-independently of selecting the next issue.
+Read the owner inbox and current issue snapshot for a reply to this run's
+next-choice question. The workflow assigns its issue number; do not duplicate
+the question or treat its recommendation as approval. Recheck origin/main to
+avoid stale closure claims. If #10 is selected, require explicit strict-root
+rejection approval. If #103 is selected, first map all nine required cases to
+existing evidence. If #39 is selected, require approval of the passive stdout
+metadata mode and its replay contract, preserving the existing attention watcher.
 
 ## Waiting on owner
 
-Choose **#111 (recommended), #10, or #103** on **#165**. Do not duplicate the
-question or treat the issue body as a selection. #10 and #103 lack help-wanted
-labels; choosing them must approve the narrow plans described in the question.
+Choose #10 (strict-root rejection, recommended), #103 (mailbox reliability proof),
+or #39 (passive stdout metadata observer). The question is in this run's external
+`questions/next-core-mailbox-issue.md`, ready for the workflow to publish.
+All three include plans, file scopes, verification, and scope-approval conditions.
+#165 is answered and recorded for resolution; it is no longer a blocker.
 
 ## Learned about this repository
 
-- This session started clean on `autopilot` at `6b32a2e`. Main updates have been
-  merged into the branch; the diff against origin/main contains only #40's source,
-  tests, public documentation, and run memory. #11 is already on main.
-- Export fetches tasks/get through the shared viewThread provenance boundary.
-  Relay getHandoff authorizes participants and does not mutate lifecycle/read
-  state. Its implementation does not support the pre-existing viewThread comment's
-  access-audit claim; no new audit claim was introduced.
-- created_at remains optional in the shared response schema for compatibility;
-  export requires it, a recipient, and a matching thread ID. Archives preserve
-  typed artifacts/provenance and include lifecycle, ordered messages, and
-  completion/cancellation content as sorted-key indented JSON, not instructions.
-- Archive writes use exclusive creation and mode 0600, refuse existing paths and
-  symlinks, do not create parent directories, and sanitize failures. Authored
-  message/artifact secrets are deliberately not redacted.
-- #111's forwarded-but-ignored roster filters remain the recommended candidate.
-  Preserve legacy calls, active-only selection, current lack of block-list
-  discovery filtering, and REST GET /agents. Inspect query plans before indexes.
-- #10 uses root passthrough and accepts unknown keys without warning. Strict root
-  rejection changes config acceptance; nested schemas and trust behavior must not
-  broaden incidentally.
-- #103 needs actual mailbox process restart and notification-loss/retrieval proof.
-  Existing Relay/MCP tests cover many replay, authorization, lifecycle, block, and
-  provenance cases. TestRelay.restart() preserves database/secrets. Labs tests do
-  not prove the mailbox acceptance scope.
-- #34 needs a disposable Compose restore; previous Docker socket access failed.
-  #39 needs a distinct watch contract; #44 is broader architecture; #8 needs two
-  people/two machines. Do not silently substitute them for the current proposal.
+- This session started clean on `autopilot` at `4acf32d`, with no commits or diff
+  ahead of origin/main. Previous #40 work and run memory are already on main.
+- Roster discovery is internal mailbox functionality, not A2A v1 discovery.
+  It requires an active agent bearer identity and intentionally still includes
+  the caller and blocked agents. No tenant or block-list discovery policy was added.
+- Registration creates agents/keys, not cards. Missing cards must retain empty
+  skills/repositories. Card updates write role to agents.role and skill/repo arrays
+  to agent_cards. The new query uses those canonical columns.
+- role/skill/repo filters trim the query input, preserve case, match exactly,
+  combine with AND, and do not tokenize. Stored card values are not normalized.
+  Their bounds are 60/60/200 characters; unknown keys, empty or malformed inputs fail.
+- Pagination is opt-in via page: limit 1–200 (default 50), cursor null or a strict
+  validated after_handle object. Unique ascending database handle ordering and an
+  exclusive greater-than predicate form the keyset. Fetch limit+1 rows to determine
+  next_cursor; final/empty pages return null. Without page, retain the full matching
+  roster and omit next_cursor. Cursors are positions, not snapshots or permissions;
+  reuse the same filters. MCP preserves the cursor and existing roster provenance.
+- The 10,000-row rolled-back EXPLAIN fixture used the existing skills GIN index
+  for combined filtering and idx_agents_handle for continuation, with card primary
+  key lookups. No new index, migration, dependency, or REST change was needed.
+  These local query plans are not a production capacity claim.
+- #10 still accepts unknown root trust keys without warning; nested acceptance
+  and trust decisions must remain unchanged if strict-root rejection is approved.
+- #103 has a reusable Relay restart harness. Existing mailbox tests establish many
+  retry/authorization/block/lifecycle/provenance cases; process restart and lost
+  notification followed by retrieval still need explicit evidence.
+- #39's existing watch command is an attention-only Codex connector. A new stdout
+  observer must be separately approved, read-only, content-free, and must not write
+  its shared connector checkpoints or weaken binding/exact-sender consent.
+- #34 remains blocked on Docker socket access: Compose is installed, docker info
+  returns permission denied. Native Postgres is not a Compose restore proof.
+  #44 is broader architecture; #8/#101 need actual people/machines.
 
 ## Verification this session
 
-- `pnpm install --frozen-lockfile` passed with expected unbuilt Node bin warnings.
-- `RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts` passed.
-- `pnpm lint` passed with four existing Relay unused-suppression warnings;
-  `git diff --check` and the local Markdown-link check passed.
-  Product typecheck/build/unit/integration/e2e were not rerun
-  this session because no product code changed. The previous journal entry records
-  #40's passing shared gates, 180 Relay integration tests, and handoff process test.
+- Install and migration passed (expected unbuilt Node bin warnings during install).
+- Focused MCP schema/tool tests passed: 64 tests. Focused Relay a2a tests passed:
+  73 tests. Initial Relay runs exposed missing protocol build output and a fixture
+  that updated nonexistent cards; both were corrected before final verification.
+- pnpm lint passed with four pre-existing unused-suppression warnings;
+  pnpm -r typecheck and pnpm -r build passed. The initial typecheck exposed an
+  unchecked final-row access, corrected with a typed last-row guard. Formatting
+  differences were corrected and the final focused/full checks passed.
+- The canonical database-unset protocol/Relay/MCP/Node unit command passed.
+  Relay's 230 database tests skipped there, as intended; Node's three opt-in tests
+  also skipped. Canonical sequential Relay integration passed all 230 tests.
+- EXPLAIN (ANALYZE, BUFFERS) on disposable fixture data passed and rolled back.
+  git diff --check, git diff --cached --check, and local Markdown-link checks passed.
+- No e2e, publish, deployment, workflow, dependency, or migration changes were made.
+  Exact validation commands and corrected initial failures are in the journal.
 
 ## End-of-session outputs
 
-- Refresh the external summary and full-branch PR description with `Closes #40`.
-- Create the external STOP file because further product work requires selection.
-- Commit only STATE.md and the new JOURNAL.md entry as
-  `chore(autopilot): update run memory`; leave the working tree clean.
+- External summary and PR description cover #111 and use Closes #111 only.
+- External resolved.txt records #165; the next-choice question awaits publication.
+- External STOP ends this run because another product issue requires selection.
+- Commit STATE.md/JOURNAL.md as chore(autopilot): update run memory and leave
+  the working tree clean. Do not push or call GitHub.
