@@ -147,7 +147,7 @@ describe("thread archive renderer", () => {
 		expect(archive).toContain("\\r\\n");
 		expect(archive).not.toMatch(/^# injected/m);
 		expect(archive).not.toMatch(/^(?:`|~){3}/m);
-		expect(archive).not.toMatch(/^\[link\]|^<script>/m);
+		expect(archive).not.toMatch(/^\[link\]|^<script>/im);
 		const unindented = archive.split("\n").filter((line) => line && !line.startsWith("    "));
 		expect(unindented).toEqual([
 			"# AgentRelay thread archive",
