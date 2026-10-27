@@ -28,6 +28,7 @@ jobs:
     permissions: {}
     outputs:
       merge: ${{ steps.cmd.outputs.merge }}
+      mentions: ${{ steps.cmd.outputs.mentions }}
       comment_id: ${{ steps.cmd.outputs.comment_id }}
       quoted: ${{ steps.cmd.outputs.quoted }}
     steps:
@@ -39,16 +40,22 @@ jobs:
         run: |
           body="$(tr -d '\r' <<<"$BODY")"
           # Email replies quote the report below the reply, so only the first non-empty
-          # line is the command. It must be a short, unambiguous request to merge:
-          # "merge", "/merge", "yes, merge it", "cool, merge it to main", "merge now".
+          # line is the command. It must be a request to merge built only from known
+          # words: "merge", "/merge", "yes, merge it", "cool, merge it to main",
+          # "ok merge it bro", "merge it pls". Anything else, including negations and
+          # questions, is not a command.
           first="$(grep -m1 -v '^[[:space:]]*$' <<<"$body" || true)"
           first="$(tr '[:upper:]' '[:lower:]' <<<"$first" | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//')"
           echo "First line: $first"
-          command='^((yes|ok|okay|cool|great|nice|lgtm|looks good|approved|go ahead)[ ,!.]+)?(please )?/?merge( it| this| the pr)?( (in)?to main)?( now| please)?[.!]*$'
+          lead='(yes|yeah|yep|sure|ok|okay|alright|cool|great|nice|perfect|lgtm|looks good|sounds good|approved|go ahead|so)'
+          tail='(now|please|pls|plz|bro|bruh|man|dude|thanks|thank you|thx|asap)'
+          command="^(${lead}[ ,!.]+)*((please|pls|plz) )?/?merge( it| this| the pr)?( (in)?to main)?([ ,!.]+${tail})*[ .!]*$"
           if [[ "$first" =~ $command ]]; then
             echo "merge=true" >> "$GITHUB_OUTPUT"
           else
             echo "Not a merge command."
+            # Mentions merging without being a command: say so instead of staying silent.
+            if [[ "$first" =~ (^|[^a-z])merge ]]; then echo "mentions=true" >> "$GITHUB_OUTPUT"; fi
           fi
           # Which message was replied to: GitHub's email footer links the comment, and
           # it comes after everything else in the quoted message.
@@ -60,6 +67,28 @@ jobs:
             echo "quoted=$quoted"
           } >> "$GITHUB_OUTPUT"
           echo "Replied-to comment: ${cid:-none}; quoted: $quoted"
+
+  not-a-command:
+    needs: parse
+    if: needs.parse.outputs.merge != 'true' && needs.parse.outputs.mentions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    cache-mode: none
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Explain that nothing was merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          THREAD: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api -X POST "repos/$GH_REPO/issues/comments/$COMMENT_ID/reactions" -f content=confused >/dev/null || true
+          gh api "repos/$GH_REPO/issues/$THREAD/comments" \
+            -f body="@$OWNER I did not treat that as a merge command, so nothing was merged. To merge, reply to the run report with \`merge\` (or \`merge it\`) on the first line." >/dev/null
 
   merge:
     needs: parse
@@ -362,6 +391,19 @@ jobs:
           cat "$RUNNER_TEMP/merge.err"
           state="$(gh pr view "$pr" --json mergeStateStatus,reviewDecision \
             --jq '"\(.mergeStateStatus) \(.reviewDecision // "NONE")"' 2>/dev/null || echo "UNKNOWN")"
+          # main requires every review conversation to be resolved, including code
+          # scanning findings, so name them instead of reporting a bare BLOCKED.
+          # shellcheck disable=SC2016 # GraphQL variables, not shell expansions.
+          unresolved="$(gh api graphql -F number="$pr" -f owner="${GH_REPO%/*}" -f name="${GH_REPO#*/}" -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+                reviewThreads(first: 100) { nodes { isResolved path line comments(first: 1) { nodes { author { login } } } } } } } }' \
+            --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)
+              | "`\(.path):\(.line // "?")` (\(.comments.nodes[0].author.login))"] | .[0:10] | join(", ")' 2>/dev/null || true)"
+          if [[ -n "$unresolved" ]]; then
+            say "Did not merge #$pr: it has unresolved review conversations, which main requires to be resolved: $unresolved. Code scanning findings resolve themselves once fixed; the next autopilot run sees them and fixes them. Resolve any others on https://github.com/$GH_REPO/pull/$pr." retry
+            exit 0
+          fi
           case "$state" in
             *REVIEW_REQUIRED* | *CHANGES_REQUESTED*)
               say "Did not merge #$pr: main's rules need an approving review ($state). Approve https://github.com/$GH_REPO/pull/$pr first." retry ;;
