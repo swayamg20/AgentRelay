@@ -70,8 +70,24 @@ jobs:
 
       - name: Check status in GOALS.md
         id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
         run: |
           status="$(grep -m1 -E '^status:' autopilot/GOALS.md | awk '{print $2}')"
+          # A scheduled run has nothing to do while a question waits on the owner, and its
+          # memory-only commit would move the PR past the report the owner is reading.
+          # The owner's reply starts a run immediately; a manual dispatch always runs.
+          if [[ "$status" == running && "$EVENT" == schedule ]]; then
+            waiting="$(gh issue list --label "$NEEDS_YOU_LABEL" --state open --limit 50 --json number,comments \
+              --jq '[.[] | select([.comments[] | select(.author.login == env.OWNER)] | length == 0) | "#\(.number)"] | join(" ")' \
+              || true)"
+            if [[ -n "$waiting" ]]; then
+              echo "::notice::Waiting on the owner's answer to $waiting; skipping this scheduled run."
+              status=waiting
+            fi
+          fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "Autopilot status: ${status:-missing}"
 
@@ -576,7 +592,8 @@ jobs:
             [[ -s "$notes" ]] && { cat "$notes"; echo; }
             if [[ "$PUBLISHED" == "true" ]]; then
               echo "**Commits pushed**"
-              git log --no-merges --format='%h %s' "$BASE..HEAD" | head -n 50 | cut -c1-120 | literal 8000
+              # This run's own commits only, not ones brought in from main.
+              git log --no-merges --format='%h %s' HEAD --not "$BASE" refs/remotes/origin/main | head -n 50 | cut -c1-120 | literal 8000
             fi
             if [[ -n "$pr_json" ]]; then
               pr_head="$(jq -r .head.sha <<<"$pr_json")"
