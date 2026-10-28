@@ -474,6 +474,22 @@ cursor unchanged; successful enqueue persists the cursor and pickup dedupe toget
 Delivery is at-least-once across an ambiguous runtime failure, so the constant prompt is
 safe to repeat.
 
+The separate `watch --stdout` path reads authenticated recipient event references
+without loading trust, selecting a runtime, or writing connector state. It prints
+only `thread.created` and `message.appended` as NDJSON metadata (`event_id`, `cursor`,
+`thread_id`, `actor_handle`, `kind`, `created_at`); lifecycle events silently advance
+its in-memory cursor. It uses 100-event replay pages, replays after SSE readiness
+on reconnection, suppresses repeated cursors within one process, and fails permanent
+client/authentication errors instead of polling around them. Output failures stop
+the observer. Diagnostics go to stderr, not the NDJSON stream. No message body is
+fetched or runtime attention enqueued.
+
+Its optional `--after-cursor` is an exclusive positive decimal Postgres bigint.
+Without it, replay starts from the beginning; `--once` drains and exits. The observer
+does not persist a cursor, so restarting without an externally saved cursor repeats
+references. It neither consumes nor updates the attention watcher's checkpoints,
+binding, or lock. The existing attention-mode consent boundary is unchanged.
+
 ## Labs Node and Capsule process surface
 
 The private `agentrelay-node` binary has two fake-runtime commands:
@@ -729,6 +745,7 @@ The `agentrelay` binary currently provides:
 - `trust list`, `trust set`, `trust reset`
 - `bind codex`, `unbind codex`
 - `watch [--once]`
+- `watch --stdout [--after-cursor <cursor>] [--once]`
 - `live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
   (0.4.0-beta.1 communication preview; see [limits and consent](live-sessions.md))
 - `mcp`

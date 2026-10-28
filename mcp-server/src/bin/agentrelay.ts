@@ -28,6 +28,7 @@ import {
 } from "../cli/commands.js";
 import { listTrust } from "../cli/trust-mutate.js";
 import { bindCodex, unbindCodex } from "../connector/binding.js";
+import { parseStdoutWatchCursor, watchConfiguredStdout } from "../connector/stdout-watch.js";
 import { watchConfiguredCodex } from "../connector/watch.js";
 import { runLiveCommand } from "../live/command.js";
 import { LiveSessionError } from "../live/contracts.js";
@@ -325,12 +326,47 @@ cli
 cli
 	.command("watch", "Keep a live, replayable connection for locally consented attention")
 	.option("--once", "Drain currently queued mailbox events and exit", { default: false })
+	.option("--stdout", "Observe mailbox event references as NDJSON without runtime attention", {
+		default: false,
+	})
+	.option("--after-cursor <cursor>", "Replay exclusively after this cursor (requires --stdout)")
 	.action(async (opts: Record<string, unknown>) => {
+		if (opts.afterCursor !== undefined && !opts.stdout) {
+			throw new Error(
+				"--after-cursor requires --stdout; attention watch uses its own saved cursor",
+			);
+		}
+		const afterCursor = opts.stdout ? parseWatchCursor(cli.rawArgs.slice(2)) : null;
 		const controller = new AbortController();
 		const stop = () => controller.abort();
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);
 		try {
+			if (opts.stdout) {
+				await watchConfiguredStdout({
+					signal: controller.signal,
+					once: Boolean(opts.once),
+					afterCursor,
+					onEvent: (event) =>
+						new Promise<void>((resolve, reject) => {
+							process.stdout.write(`${JSON.stringify(event)}\n`, (error) => {
+								if (error) reject(error);
+								else resolve();
+							});
+						}),
+					onStatus: (status) => {
+						process.stderr.write(
+							status.type === "connected"
+								? "AgentRelay passive mailbox connection ready\n"
+								: `AgentRelay passive mailbox connection interrupted; retrying in ${status.delayMs}ms\n`,
+						);
+					},
+				});
+				if (opts.once && !controller.signal.aborted) {
+					process.stderr.write("AgentRelay passive mailbox replay complete\n");
+				}
+				return;
+			}
 			await watchConfiguredCodex({
 				signal: controller.signal,
 				once: Boolean(opts.once),
@@ -356,6 +392,7 @@ cli
 			});
 			if (opts.once) process.stdout.write("AgentRelay mailbox replay complete\n");
 		} finally {
+			if (opts.stdout) controller.abort();
 			process.removeListener("SIGINT", stop);
 			process.removeListener("SIGTERM", stop);
 		}
@@ -440,6 +477,28 @@ function parseTrustSetOptions(opts: Record<string, unknown>): {
 	if (opts.autoWritePaths !== undefined) out.auto_write_paths = parseList(opts.autoWritePaths);
 	if (opts.requireApproval !== undefined) out.require_approval = parseList(opts.requireApproval);
 	return out;
+}
+
+function parseWatchCursor(args: string[]): string | null {
+	let cursor: string | undefined;
+	let provided = false;
+	for (let index = 0; index < args.length; index += 1) {
+		const argument = args[index]!;
+		if (argument === "--") break;
+		let value: string | undefined;
+		if (argument === "--after-cursor" || argument === "--afterCursor") {
+			value = args[index + 1] ?? "";
+			index += 1;
+		} else if (argument.startsWith("--after-cursor=") || argument.startsWith("--afterCursor=")) {
+			value = argument.slice(argument.indexOf("=") + 1);
+		} else {
+			continue;
+		}
+		if (provided) throw new Error("--after-cursor may only be specified once");
+		provided = true;
+		cursor = value;
+	}
+	return parseStdoutWatchCursor(cursor);
 }
 
 function parseBool(v: unknown): boolean {

@@ -166,6 +166,43 @@ delivery, acceptance, completion, or reply receipt.
 The stdio server caps each MCP JSON-RPC request at 10 MiB. For larger code artifacts,
 send a `file_ref` instead of putting a huge diff or other content inline.
 
+## Passive terminal observer (source builds)
+
+With a CLI built from this checkout, `agentrelay watch --stdout` is a separate,
+read-only observer for your authenticated mailbox. It does not require a Codex
+binding or pickup consent and does not change the existing attention watcher.
+
+```bash
+# Print existing event references, then keep listening for durable replay hints.
+agentrelay watch --stdout
+
+# Drain references already stored and exit.
+agentrelay watch --stdout --once
+
+# Resume exclusively after a cursor you saved from earlier output.
+agentrelay watch --stdout --after-cursor 123 --once
+```
+
+Stdout contains one NDJSON record for each `thread.created` or `message.appended`
+event, with only `event_id`, `cursor`, `thread_id`, `actor_handle`, `kind`, and
+`created_at`. Lifecycle-only events advance the in-memory cursor without printing.
+Connection/retry/completion diagnostics go to stderr. The observer never fetches
+message bodies, calls an MCP tool, accepts/replies, invokes a runtime, or writes
+configuration, trust, bindings, locks, or shared attention checkpoints.
+
+Replay uses bounded 100-event pages and an exclusive positive decimal Postgres
+bigint cursor. Without `--after-cursor`, it starts at the beginning. Duplicate
+references are suppressed within the process; no cursor is saved automatically.
+Restarting without your own saved cursor repeats output. If you persist a cursor,
+use it with the same Relay and mailbox identity; it is a position, not a receipt
+that an agent read or processed correspondence.
+
+SSE is only a hint to replay durable state. Reconnection replays after the stream
+is ready, so lost or duplicated hints do not replace the database. Permanent
+authentication/client errors fail rather than falling back to polling. SIGINT or
+SIGTERM stops the foreground observer. `--after-cursor` is accepted only with
+`--stdout`; default attention mode retains its binding, consent, and saved cursor.
+
 ## CLI
 
 - `agentrelay register`
@@ -180,6 +217,7 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 - `agentrelay trust list|set|reset`
 - `agentrelay bind codex` / `unbind codex`
 - `agentrelay watch [--once]`
+- `agentrelay watch --stdout [--after-cursor <cursor>] [--once]` (source builds)
 - `agentrelay live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
 - `agentrelay mcp`
 
