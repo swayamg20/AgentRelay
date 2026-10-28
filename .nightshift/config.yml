@@ -1,0 +1,77 @@
+# Nightshift configuration for AgentRelay (https://github.com/swayamg20/nightshift).
+# AgentRelay is a pnpm monorepo whose relay tests need
+# Postgres on port 5433, matching its CI and CONTRIBUTING.md.
+
+agent:
+  # Set by the NIGHTSHIFT_MODEL_BASE_URL repository variable, so the endpoint stays
+  # out of this public repository.
+  base_url: ''
+  model: gpt-6.1-sol
+  fallback_model: FW-GLM-5.3
+  minutes: 220
+  max_sessions: 8
+  # Only what AGENTS.md and CONTRIBUTING.md do not already tell the agent: which
+  # commands are safe in this job and which environment variables to avoid.
+  instructions: |
+    - Use the canonical commands in `CONTRIBUTING.md`. The unit command is
+      `pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test`.
+    - When relay code changes, also run
+      `RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration`
+      against the job's Postgres on port 5433.
+    - Never set `RELAY_TEST_DATABASE_URL` or `RELAY_DATABASE_URL` for the unit
+      command, because they switch relay unit tests to parallel database runs that
+      collide.
+    - Do not use `pnpm -r test`, because it includes the e2e workspace, which needs a
+      live relay.
+
+identity:
+  name: Swayam Gupta
+  email: 77153230+swayamg20@users.noreply.github.com
+
+branch: nightshift
+
+setup:
+  node: '22'
+  # pnpm comes from corepack, at the version in package.json's packageManager field.
+  pnpm: true
+  # Native Postgres rather than a service container: a running container adds an nsfs
+  # network-namespace entry to /proc/self/mountinfo, which AgentRelay's Node
+  # containment parser rejects, failing its unit tests.
+  root: |
+    apt-get update
+    apt-get install -y postgresql postgresql-client
+    sed -i -E 's/^#?port = [0-9]+/port = 5433/' /etc/postgresql/*/main/postgresql.conf
+    systemctl restart postgresql.service
+    for _ in $(seq 1 30); do pg_isready -h localhost -p 5433 && break; sleep 1; done
+    sudo -u postgres psql -p 5433 -v ON_ERROR_STOP=1 \
+      -c "CREATE ROLE agentrelay LOGIN SUPERUSER PASSWORD 'agentrelay-dev'" \
+      -c "CREATE DATABASE agentrelay OWNER agentrelay"
+  # Also run by the agent at the start of every session, so it must be safe to
+  # repeat: both commands are idempotent.
+  install: |
+    pnpm install --frozen-lockfile
+    RELAY_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay \
+      pnpm --filter relay exec node --import tsx/esm src/db/migrate.ts
+
+# Only the integration command gets the database variables, matching CI's unit and
+# relay-integration jobs.
+checks:
+  - pnpm install --frozen-lockfile
+  - pnpm lint
+  - pnpm -r typecheck
+  - pnpm -r build
+  - pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test
+  - RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration
+
+merge:
+  ci_workflow: .github/workflows/ci.yml
+  # ci.yml has a workflow_dispatch trigger for this. The reference also started
+  # deploy-pages.yml when a merge changed landing/; dispatch_on_main has no path
+  # condition, so add it here only if a Pages deploy after every reply merge is fine.
+  dispatch_on_main: [ci.yml]
+  # The reference merge job's path guard: source, tests, docs, and the landing site.
+  allow: ['*/src/*', '*/test/*', '*/tests/*', 'tests/*', 'docs/*', 'landing/*', '*.md']
+  # CI and agent instruction files, as in the defaults, plus database migrations.
+  # Everything not allowed above (dependencies, infra/, deploy configuration) is
+  # blocked too, because a path matching neither list is blocked.
+  deny: ['.github/*', '*/.github/*', '.nightshift/*', 'AGENTS.md', '*/AGENTS.md', 'CLAUDE.md', '*/CLAUDE.md', '*/drizzle/*', '*/migrations/*']

@@ -1,0 +1,14 @@
+name: Nightshift merge
+
+# The owner merges the Nightshift PR by replying `merge` to a run-report email or by
+# commenting `merge` on the PR. Comments from anyone else are ignored.
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  merge:
+    uses: swayamg20/nightshift/.github/workflows/merge.yml@v1
+    permissions: { actions: write, checks: read, contents: write, issues: write, pull-requests: write, statuses: read }

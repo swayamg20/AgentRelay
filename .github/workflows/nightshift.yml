@@ -1,0 +1,36 @@
+name: Nightshift
+
+# Unattended agent runs toward the goal in .nightshift/GOALS.md. Work lands on the
+# working branch behind a draft PR; run reports and questions arrive as GitHub email.
+# The agent and publish jobs live in swayamg20/nightshift; this file only schedules
+# them and passes the model key.
+on:
+  schedule:
+    # UTC. Each run takes up to agent.minutes from .nightshift/config.yml.
+    - cron: '30 3 * * *'
+    - cron: '30 8 * * *'
+    - cron: '30 14 * * *'
+  # Also dispatched by nightshift-reply.yml when the owner answers a question.
+  workflow_dispatch:
+    inputs:
+      model: { description: Primary model override, default: '' }
+      minutes: { description: Agent time budget override, default: '' }
+
+concurrency:
+  group: nightshift
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  nightshift:
+    uses: swayamg20/nightshift/.github/workflows/agent.yml@v1
+    permissions: { actions: write, checks: read, contents: write, issues: write, pull-requests: write, statuses: read }
+    with:
+      model: ${{ inputs.model }}
+      minutes: ${{ inputs.minutes }}
+      # Optional: keep the endpoint out of a public repository by setting this variable
+      # instead of agent.base_url. Empty uses the config.
+      base-url: ${{ vars.NIGHTSHIFT_MODEL_BASE_URL }}
+    secrets:
+      model-api-key: ${{ secrets.NIGHTSHIFT_MODEL_API_KEY }}

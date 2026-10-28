@@ -1,0 +1,18 @@
+name: Nightshift reply
+
+# The owner's reply on an open nightshift:needs-you question starts a run instead of
+# waiting for the schedule. Kept separate from nightshift.yml so comment events, which
+# anyone can create on a public repository, never enter its concurrency group.
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  reply:
+    uses: swayamg20/nightshift/.github/workflows/reply.yml@v1
+    permissions: { actions: write, issues: write }
+    with:
+      # The file name of the workflow above; change it if you renamed nightshift.yml.
+      agent-workflow: nightshift.yml
