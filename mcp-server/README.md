@@ -151,6 +151,13 @@ Consent is fail-closed and separable:
 - `agentrelay trust set alice@team --auto-pickup false` revokes attention, while
   `agentrelay block alice@team` also fences new Relay content.
 
+The root of `trust.yaml` accepts only `version`, `teammates`, `unknown_teammates`,
+`blocked`, and `defaults`. Unknown or misspelled root keys make the policy invalid;
+`agentrelay doctor` reports it as broken, MCP uses safe defaults, and the attention
+watcher refuses pickup until it is fixed. Missing files still use safe defaults.
+Nested schemas retain their existing acceptance behavior; this is not nested-key
+validation or enforcement of a model's tool permissions.
+
 The saved cursor advances after an event is intentionally rejected by local policy,
 coalesced, or durably accepted by the runtime queue. It does not advance after a
 runtime enqueue failure. Runtime queue acceptance is not a read, processing,

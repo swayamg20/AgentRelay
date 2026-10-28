@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { serializeTrust } from "./cli/trust-mutate.js";
 import {
 	FALLBACK_TRUST,
 	type TrustFile,
@@ -240,10 +241,51 @@ defaults:
 		}
 	});
 
-	it("ignores unknown top-level keys (warning, not error)", async () => {
+	it.each(["future_field", "trusted_teammates", "default", "auto_pickup"])(
+		"rejects the unknown top-level key %s as invalid policy",
+		async (key) => {
+			const path = join(dir, "trust.yaml");
+			await writeFile(path, `version: 1\n${key}: true\n`, "utf8");
+			const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path });
+			expect(out).toMatchObject({ ok: false, reason: "invalid", path });
+			if (!out.ok) expect(out.detail).toContain(key);
+		},
+	);
+
+	it.each([FALLBACK_TRUST, fullTrust])("loads CLI-generated trust files", async (trust) => {
 		const path = join(dir, "trust.yaml");
-		await writeFile(path, "version: 1\nfuture_field: hello\n", "utf8");
-		const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path } as NodeJS.ProcessEnv);
+		await writeFile(path, serializeTrust(trust), "utf8");
+		const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path });
+		expect(out).toEqual({ ok: true, trust, path, source: "file" });
+	});
+
+	it("preserves nested unknown-key acceptance without granting inherited pickup", async () => {
+		const path = join(dir, "trust.yaml");
+		await writeFile(
+			path,
+			`version: 1
+teammates:
+  bob@acme:
+    future_field: hello
+unknown_teammates:
+  policy: allow_with_default_trust
+  future_field: hello
+defaults:
+  auto_pickup: true
+  future_field: hello
+`,
+			"utf8",
+		);
+		const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path });
 		expect(out.ok).toBe(true);
+		if (out.ok) {
+			expect(out.trust.teammates["bob@acme"]?.future_field).toBe("hello");
+			expect(out.trust.defaults.future_field).toBe("hello");
+			for (const handle of ["bob@acme", "stranger@elsewhere"]) {
+				const decision = computeOverlay(out.trust, handle);
+				expect(decision.decision).toBe("allow");
+				if (decision.decision === "allow") expect(decision.overlay.auto_pickup).toBe(false);
+			}
+		}
 	});
 });

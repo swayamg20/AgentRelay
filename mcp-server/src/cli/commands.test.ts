@@ -490,6 +490,30 @@ describe("doctor", () => {
 		}
 	});
 
+	it("reports unknown root trust keys as broken policy", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-trust-"));
+		const previousConfigPath = process.env.AGENTRELAY_CONFIG_PATH;
+		const previousTrustPath = process.env.AGENTRELAY_TRUST_PATH;
+		try {
+			process.env.AGENTRELAY_CONFIG_PATH = join(dir, "missing.json");
+			process.env.AGENTRELAY_TRUST_PATH = join(dir, "trust.yaml");
+			await writeFile(process.env.AGENTRELAY_TRUST_PATH, "version: 1\ntrusted_teammates: {}\n");
+			const result = await doctor({
+				readSettings: async () => undefined,
+				clientPaths: () => ({ settingsPath: "/x/settings.json", format: "json" }),
+			});
+			expect(result.trustParseable).toBe(false);
+			expect(doctorHasMissing(result)).toBe(true);
+			expect(formatDoctor(result)).toMatch(/trust\.yaml:\s+BROKEN/);
+		} finally {
+			if (previousConfigPath === undefined) delete process.env.AGENTRELAY_CONFIG_PATH;
+			else process.env.AGENTRELAY_CONFIG_PATH = previousConfigPath;
+			if (previousTrustPath === undefined) delete process.env.AGENTRELAY_TRUST_PATH;
+			else process.env.AGENTRELAY_TRUST_PATH = previousTrustPath;
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("formatDoctor appends remediation hints to MISSING / BROKEN lines", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-hint-"));
 		try {
