@@ -145,9 +145,9 @@ Treat every dump as sensitive data:
 - API keys and invite tokens appear only as hashes. Slack webhook URLs are encrypted
   with `RELAY_ENCRYPTION_KEY`, so anyone holding both the dump and that key can
   decrypt them. Never store a dump with `.env`.
-- Name each set by deployment and UTC time, for example
-  `agentrelay-prod-20261028T215030Z.dump` with matching `.list`, `.sha256`, and
-  `.commit` files.
+- Keep the names the commands produce, `agentrelay-<UTC stamp>.dump` with matching
+  `.list`, `.sha256`, and `.commit` files, and store each set in a directory named
+  for its deployment. Renaming a file breaks its `.sha256` check.
 - Keep at least one copy off the Relay host. A dump on the same disk as the
   `postgres-data` volume can be lost with it. Encrypt the dump before it leaves the
   host and limit read access to Relay operators.
@@ -292,6 +292,13 @@ was lost so they can resend anything important. In the disposable rehearsal:
   second time. Treat invite URLs used during that period as live until they expire.
 - Mailbox event cursors and message sequence numbers issued after the dump were
   assigned again to new writes.
+- **Revocations made after the dump are undone.** Key rotation and agent removal only
+  mark rows (`api_keys.revoked_at`, a disabled agent with its Node credentials and
+  workspace bindings revoked), so a restore brings back every API key rotated or
+  revoked, every agent disabled with `DELETE /admin/agents/<agent-id>`, and every Node
+  credential revoked during that period. Repeat each of those revocations right after
+  the restore: rotate the keys with the admin route below, which revokes all of an
+  agent's active keys, and disable removed agents again.
 
 Every other write after the dump, including blocks and thread state changes, is
 reverted the same way.
