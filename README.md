@@ -91,6 +91,10 @@ The optional foreground watcher only attracts attention to waiting correspondenc
 The [live-session beta](docs/live-sessions.md) requires separate local consent for
 automatic content reads and bounded text replies.
 
+[Mailbox reliability evidence](docs/mailbox-reliability.md) maps the local retry,
+restart, offline retrieval/reply, authorization, lifecycle, provenance, and
+notification-loss tests to their precise limits.
+
 ## Use AgentRelay today
 
 The package connects already-running Claude Code and Codex hosts to a Relay your team

@@ -1,5 +1,5 @@
 import { asc, eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
 import {
@@ -750,6 +750,129 @@ d("a2a JSON-RPC + state machine", () => {
 		const taskId = create.body.result.task_id;
 		const peek = await rpc(eve.key, "tasks/get", { task_id: taskId });
 		expect(peek.body.error.data.code).toBe("not_a_participant");
+		expect(peek.body).not.toHaveProperty("result");
+		expect(JSON.stringify(peek.body)).not.toContain("private");
+		const denied = await rpc(eve.key, "message/send", {
+			task_id: taskId,
+			message: { parts: [{ type: "text", text: "unauthorized append" }] },
+		});
+		expect(denied.body.error.data.code).toBe("not_a_participant");
+		expect(denied.body).not.toHaveProperty("result");
+		expect(JSON.stringify(denied.body)).not.toContain("private");
+		const unchanged = await rpc(bob.key, "tasks/get", { task_id: taskId });
+		expect(unchanged.body.result.history).toHaveLength(1);
+		const audit = await handle.db.select({ action: auditLog.action }).from(auditLog);
+		expect(audit.filter((row) => row.action === "message.append")).toHaveLength(0);
+	});
+
+	it.each(["completed", "cancelled"] as const)(
+		"rejects new mutations in a %s thread while preserving transition ownership",
+		async (terminalState) => {
+			const bob = await register("bob@acme");
+			const frank = await register("frank@acme");
+			const created = await rpc(bob.key, "message/send", {
+				recipient: "frank@acme",
+				intent: "inform",
+				message: { parts: [{ type: "text", text: "terminal fixture" }] },
+			});
+			const taskId = created.body.result.task_id;
+			if (terminalState === "completed") {
+				await rpc(frank.key, "tasks/update", { task_id: taskId, transition: "accept" });
+				const wrongOwner = await rpc(bob.key, "tasks/update", {
+					task_id: taskId,
+					transition: "complete",
+				});
+				expect(wrongOwner.body.error.data.code).toBe("not_authorized_transition");
+				const tooLate = await rpc(bob.key, "tasks/cancel", { task_id: taskId });
+				expect(tooLate.body.error.data.code).toBe("invalid_transition");
+				await rpc(frank.key, "tasks/update", { task_id: taskId, transition: "complete" });
+			} else {
+				await rpc(bob.key, "tasks/cancel", { task_id: taskId });
+			}
+			const before = await rpc(bob.key, "tasks/get", { task_id: taskId });
+			expect(before.body.result.status.state).toBe(terminalState);
+			const auditBefore = await handle.db.select().from(auditLog).orderBy(asc(auditLog.id));
+			const eventsBefore = await handle.db
+				.select()
+				.from(mailboxEvents)
+				.orderBy(asc(mailboxEvents.cursor));
+			for (const participant of [bob, frank]) {
+				const append = await rpc(participant.key, "message/send", {
+					task_id: taskId,
+					message: { parts: [{ type: "text", text: "must not commit" }] },
+				});
+				expect(append.body.error.data.code).toBe("thread_terminal");
+				for (const transition of ["accept", "complete", "cancel"] as const) {
+					const denied = await rpc(
+						participant.key,
+						transition === "cancel" ? "tasks/cancel" : "tasks/update",
+						{ task_id: taskId, ...(transition === "cancel" ? {} : { transition }) },
+					);
+					const ownsTransition =
+						transition === "cancel" ? participant === bob : participant === frank;
+					expect(denied.body.error.data.code).toBe(
+						ownsTransition ? "invalid_transition" : "not_authorized_transition",
+					);
+				}
+			}
+			expect((await rpc(bob.key, "tasks/get", { task_id: taskId })).body.result).toEqual(
+				before.body.result,
+			);
+			expect(await handle.db.select().from(auditLog).orderBy(asc(auditLog.id))).toEqual(
+				auditBefore,
+			);
+			expect(
+				await handle.db.select().from(mailboxEvents).orderBy(asc(mailboxEvents.cursor)),
+			).toEqual(eventsBefore);
+		},
+	);
+
+	it("retrieves committed content when best-effort notification jobs are lost", async () => {
+		const config = loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv);
+		const droppedNotification = vi.fn(() => undefined);
+		app = createServer({
+			config,
+			logger: createLogger(config),
+			db: handle.db,
+			notify: droppedNotification,
+		});
+		const bob = await register("bob@acme");
+		const frank = await register("frank@acme");
+		const created = await rpc(bob.key, "message/send", {
+			recipient: "frank@acme",
+			intent: "inform",
+			message: { parts: [{ type: "text", text: "stored without notification" }] },
+		});
+		const taskId = created.body.result.task_id;
+		const appended = await rpc(bob.key, "message/send", {
+			task_id: taskId,
+			message: { parts: [{ type: "text", text: "follow-up without notification" }] },
+		});
+		expect(appended.body.result.sequence_no).toBe(2);
+		expect(droppedNotification.mock.calls).toHaveLength(2);
+		expect(droppedNotification).toHaveBeenNthCalledWith(
+			1,
+			expect.objectContaining({ kind: "notify.handoff.created", threadId: taskId }),
+		);
+		expect(droppedNotification).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({ kind: "notify.message.appended", threadId: taskId }),
+		);
+		app = createServer({ config, logger: createLogger(config), db: handle.db });
+		const inbox = await rpc(frank.key, "tasks/list", {});
+		expect(inbox.body.result.items.map((item: { thread_id: string }) => item.thread_id)).toContain(
+			taskId,
+		);
+		const stored = await rpc(frank.key, "tasks/get", { task_id: taskId });
+		expect(stored.body.result.messages.map((message: { body: string }) => message.body)).toEqual([
+			"stored without notification",
+			"follow-up without notification",
+		]);
+		const events = await handle.db
+			.select({ kind: mailboxEvents.kind })
+			.from(mailboxEvents)
+			.orderBy(asc(mailboxEvents.cursor));
+		expect(events.map((event) => event.kind)).toEqual(["thread.created", "message.appended"]);
 	});
 
 	it("intent=propose_action requires proposed_action; mismatch → -32012", async () => {
