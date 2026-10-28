@@ -5,139 +5,115 @@ precedence over notes.
 
 ## Goal as understood
 
-Ship owner-chosen `core-mailbox` issues, with small concern-specific commits and
-passing checks, then request the next selection. The goal is unchanged. The owner's
-October 28, 2026, 16:30:54 UTC reply on #176, “agreed with these 3,” endorses the
-conditional #34/#44/#8 plans. It does not supply Docker access, real two-owner
-evidence, or a decision on the explicitly excluded #30 metrics dependency.
-Do not repeat the candidate-selection question or treat missing prerequisites as
-waived. Work may resume on an endorsed issue when its prerequisite is resolved.
+Ship owner-chosen `core-mailbox` issues with passing checks and concern-specific
+commits. The goal is unchanged. The owner's October 28, 2026, 21:41:13 UTC reply on
+#176 explicitly selects #44 now, defers its #30 metrics requirement to a follow-up,
+assigns #34 outside Nightshift, and holds #8 until the #101 two-machine proof exists.
+This supersedes the prerequisite interpretation recorded in the previous session.
 
-The previous three selected issues are now complete on `origin/main`:
+#44 is complete on this branch in `ce0b06e` —
+`feat(notifications): add a transactional outbox worker`. It is ready for owner
+review, not yet claimed as merged into main. The PR description closes #44 under
+the owner's explicitly approved metrics deferral. No other product issue is closed.
 
-- #10: `46bea8d` — `fix(trust): reject unknown root policy keys`.
-- #103: `e34465a` — `test(mailbox): prove retry and restart reliability`.
-- #39: `be91a0f` — `feat(cli): add passive stdout mailbox observation`.
-
-This session started clean at `cc61e09`, the merge of PR #175. Both `HEAD` and
-`origin/main` included that merge; the initial branch comparison was empty.
-Do not reuse `Closes #10`, `Closes #103`, or `Closes #39` in this run's PR.
-#111, #40, and #11 also remain prior main work, not new branch changes.
+The previous #10/#103/#39 changes already merged through PR #175 (`cc61e09`).
+#111/#40/#11 are also prior main work, not new branch product changes. This session
+started clean on `nightshift` at `f0ac5bd`, a memory-only commit above `origin/main`.
 
 ## Plan
 
-- [x] Read state, recent journal/history, repository instructions, relevant design
-  sources, issue snapshot, and the owner's conditional plan endorsement on #176.
-- [x] Run harness setup/locked installation and prepare the disposable database.
-- [x] Confirm previous product work is merged and there are no PR findings.
-- [x] Recheck #34 Docker access without changing daemon permissions; still denied.
-- [x] Inspect #44's dispatcher/callers/tests and current design: no durable outbox
-  or metrics endpoint exists, and #30 remains demand-gated.
-- [x] Check #8/#101 evidence requirements against the available local proof record;
-  no actual two-owner/two-machine recording or redacted transcripts were supplied.
-- [x] Finish all required shared gates and prepare the memory-only commit/outputs.
-- [ ] Resume an endorsed issue after its required access/evidence/scope is supplied.
+- [x] Read state, recent journal, history, repository instructions, design sources,
+  issue inventory, and the owner's substantive #176 scope resolution.
+- [x] Run harness setup and locked installation; use native job Postgres on 5433.
+- [x] Trace mailbox transactions, A2A producers, notification destinations, the
+  dispatcher and startup/shutdown, MCP receipts, and existing reliability tests.
+- [x] Add the encrypted outbox migration/schema and transactional intent for
+  creation, append, and completion without changing public mailbox contracts.
+- [x] Replace the volatile queue with token-fenced, skip-locked shared claims,
+  persisted retries/429 budget/outcomes, lease recovery, and terminal retention.
+- [x] Verify rollback, idempotency, concurrency, expired/stale holders, lost
+  responses, timeout, poison jobs, backlog, destination validation, and redaction.
+- [x] Prove SIGKILL recovery with real 30-second leases in separate worker
+  processes and committed pending-job replay across a production Relay restart.
+- [x] Update truthful architecture/HLD/LLD/hosting/notification operations docs;
+  check 56 local Markdown links and execute all four documented SQL diagnostics.
+- [x] Pass all six shared gates and the focused/mailbox process checks; commit #44
+  and prepare run memory, owner-resolution record, summary, and branch-wide PR text.
+- [ ] Resume only after owner feedback, new eligible scoped work, or actual #101
+  evidence supplies another unblocked issue. Stop this run after memory is committed.
 
 ## Next step
 
-Read the owner inbox for a substantive prerequisite resolution on #176 and the
-refreshed issue snapshot. The three conditional plans are endorsed; do not ask the
-owner to choose the same candidates again. First check whether Docker access is
-available for #34, whether #44's metrics scope has been explicitly resolved, or
-whether actual #101 proof evidence is supplied for #8. Implement only an unblocked
-endorsed scope. Recheck origin/main/history before making closure claims.
+Handle any PR findings first. Recheck `origin/main` and branch history before
+making closure claims or repeating implementation. If #44 is already merged,
+exclude it from candidate selection. Read the refreshed inventory and owner inbox.
 
-The eligible non-epic backlog still contains only #34, #44, and #8. #176 already
-lists their plans, files, checks, prerequisites, and the recommendation to unblock
-#34. Do not create a duplicate question. Epics, Labs, demand-gated work,
-non-mailbox-labelled interop issues, and completed main work stay excluded.
+There are not three remaining unconditional, one-run-ready eligible candidates:
+#34 is explicitly being done outside Nightshift, #8 still requires real #101
+evidence, and #44 is now complete. Do not manufacture a third candidate from an
+epic, Labs, interop, or demand-gated #30. Do not repeat the answered #176 selection
+question. Propose three candidates only if a refreshed eligible backlog supplies
+them; otherwise wait for new small owner-scoped mailbox work or the proof evidence.
 
 ## Waiting on owner
 
-- #171 is historical and answered; the prior product branch is merged.
-- #176 remains open: its reply endorses the plans but does not fully resolve the
-  prerequisite request. Do not record 176 in `resolved.txt` yet.
-  - #34 requires a disposable Docker-capable environment/approved daemon access.
-    `docker version --format '{{.Server.Version}}'` still fails with permission
-    denied; `sudo -n true` still requires a password. Do not change socket
-    permissions, protected workflows, or deployment configuration. Native job
-    Postgres is usable, but is not the required Compose backup/restore proof.
-  - #44's conditional outbox plan is endorsed, but its requirement to expose
-    metrics through #30 still conflicts with the goal's demand-gated exclusion.
-    The owner must explicitly defer that requirement for this issue or authorize
-    a bounded notification-metrics exception. Do not implement all of #30,
-    silently omit criteria, or close the full issue for a partial outbox.
-  - #8 needs actual redacted #101 prerequisite evidence and two owners/machines;
-    none was supplied in the reply or available records. Local process tests
-    cannot certify that proof. Do not fabricate participants or recordings.
+- #176 is fully resolved by the October 28, 2026, 21:41:13 UTC reply. Record 176 in
+  the external `resolved.txt`; no duplicate prerequisite question is needed.
+- #44 is ready for review/merge. Queue age/depth/outcome metrics through #30 are
+  explicitly deferred, not implemented or required for this scoped closure.
+- #34 is assigned outside Nightshift; do not probe or change Docker permissions,
+  touch protected workflows, or attempt its backup/restore runbook here.
+- #8 stays on hold until actual sanitized #101 two-owner/two-machine evidence
+  exists. Local worker and mailbox process proofs are not that evidence.
+- No additional unblocked eligible three-issue shortlist exists in this snapshot.
 
 ## Learned about the repository
 
-- Trust root keys are now exactly `version`, `teammates`, `unknown_teammates`,
-  `blocked`, and `defaults`. Unknown roots return existing `invalid` policy,
-  doctor reports broken trust, MCP retains safe fallback, and attention watch
-  refuses pickup without checkpointing. Nested schemas and trust precedence are
-  unchanged; pickup is still exact-sender consent, never inherited.
-- #103's real-process proof preserves Postgres and Relay secrets through
-  `TestRelay.restart()`. It retries creation after restart, starts receiver MCP
-  only after three messages commit offline, observes ordered provenance-marked
-  retrieval, and proves a same-thread reply as sequence 4.
-- The lost-append-response transport consumes the real committed HTTP response,
-  independently observes the message through MCP, withholds the response, and
-  verifies identical serialized automatic retries plus stable receipt/data/event
-  count after another restart. Its fault flag prevents retry logic from hiding
-  failed assertions inside the injected transport.
-- Notification evidence discards actual handoff/append enqueue jobs and replaces
-  the HTTP app before retrieval. This is local loss-boundary proof, not a killed
-  Slack worker, remote-provider outage, durable outbox, power-loss, or capacity
-  claim. Slack remains process-local best effort.
-- Non-participant read/append disclose no result/private content and leave no
-  mutation audit. Completed/cancelled tests cover both participants' append and
-  all transitions, preserving ownership and unchanged thread/audit/event state.
-  Existing block-fence/provenance tests remain the evidence for those rules.
-- `watch --stdout` uses only configured bearer metadata replay/SSE reads and emits
-  six-field `thread.created`/`message.appended` NDJSON. No body fetch, binding,
-  trust read/mutation, runtime enqueue, connector lock, or shared state access
-  occurs. Default attention-mode code remains intact apart from CLI option parsing.
-- Passive cursors are exclusive positive decimal strings within Postgres bigint
-  range. CAC numerically coerces option values, so the CLI preserves the original
-  cursor token before Zod validation; max-bigint, exponential/hex/leading-zero,
-  duplicate-flag, and `--` separator regressions cover that boundary.
-- Replay asks for 100 events per page, advances over filtered lifecycle events
-  only in memory, suppresses duplicate cursors, and rejects unordered new events
-  before printing. SSE ready/change/resync triggers replay; heartbeat does not
-  poll. Reconnect waits for ready before replay, permanent 4xx other than 408/429
-  fail, and output/schema failures stop rather than printing unsafe diagnostics.
-- Source docs explicitly do not claim the new flag is in published 0.3.0.
-  A printed ledger reference is not pickup, model processing, or a reply receipt.
-- Run database-mutating integration/e2e/smoke commands serially. Keep both Relay
-  database variables unset for unit tests; avoid simultaneous dist writers during
-  process tests. Do not use recursive `pnpm -r test`.
-- No dependencies, versions, release notes, migrations, workflows, infra, runtime
-  activation, or notification architecture changes were made.
+- `relay/src/services/handoff.ts` now receives notification encryption/public-URL
+  context from A2A. Creation, append, and completion insert intent alongside their
+  authoritative mutation, mailbox event, and audit in the same transaction.
+  Creation/append replays do not enqueue again. Acceptance remains silent;
+  cancellation remains pending-only and silent, preserving the lifecycle contract.
+- `0011_notification_outbox` stores recipient/thread/kind/source identity and an
+  AES-GCM encrypted 240-character preview with sender metadata. Recipient/kind/source
+  is unique. Partial indexes cover due jobs, expired leases, and terminal cleanup.
+  There is no historical backfill or recovery of the old queue's already-lost jobs.
+- Each process polls idle work once per second and claims one job using
+  `FOR UPDATE SKIP LOCKED`. Claims have fresh UUID tokens and 30-second leases.
+  Attempts count claims (including ambiguous/dead claims), with a maximum of four.
+  A dead fourth holder settles terminally without a fifth provider post.
+- Five-second posting bounds and token/deadline predicates protect settlement.
+  Provider and database failures have separate boundaries: failed settlement leaves
+  leased work for recovery, not a false provider classification. A pause beyond a
+  lease or lost provider response can still duplicate external attempts; database
+  fencing does not promise exactly-once Slack delivery or recipient pickup.
+- Network/5xx retry due times persist at 1s/4s/16s. One 429 retry budget survives
+  reconstruction; numeric Retry-After is capped at one day, invalid/missing values
+  use one second. Other 4xx and poison payloads are terminal. Destinations are read
+  from the current encrypted card, validated at send time, and cannot redirect.
+  Removed webhooks/disabled recipients skip; unmarked plaintext fails closed.
+- No old 10,000-entry overflow drop remains. Worker memory/concurrency are bounded,
+  not total PostgreSQL backlog. Active work is never silently evicted. Terminal
+  previews are erased immediately and up to 100 terminal rows older than seven
+  days are cleaned per worker per minute. Preserve the encryption key on replicas.
+- No notification body, ciphertext, webhook, provider error text, or response body
+  is logged. No metrics endpoint, new dependency, Labs activation, release,
+  workflow, Compose, version, deployment, or public HTTP/MCP/config change was added.
+- Shared checks passed: 125 protocol, 393 MCP, 79 database-free Relay, and 438 Node
+  unit tests (expected 274 Relay database and three Node opt-in skips); 274 Relay
+  integration tests; four mailbox process tests across three e2e files. Lint has
+  three existing unused-suppression warnings. Keep database URLs unset for unit
+  tests and run database test files serially through the canonical integration runner.
 
-## Verification this session
+## Verification commands
 
-- Harness setup passed locked installation and migration preparation on the job's
-  native disposable Postgres. Explicit frozen-lockfile installation passed;
-  expected initial unbuilt Node-bin warnings disappeared on the post-build install.
-- All six shared gates passed: frozen-lockfile install, lint, recursive typecheck,
-  recursive build, database-unset package unit tests, and sequential Relay
-  integration. Unit results: 125 protocol, 393 MCP, 77 Relay, and 438 Node passed;
-  233 Relay DB and three Node opt-in tests skipped normally. Integration: 233
-  passed, zero failed.
-- Lint retains four pre-existing unused-suppression warnings. `git diff --check`
-  passed. No public Markdown links, source, or tests changed; no new e2e or
-  Compose proof was run or claimed. Previous proof commands remain in the journal.
-- Docker server access and noninteractive sudo both failed as expected access
-  probes, not failing repository gates. No permission/deployment changes were made.
-- Exact validation commands and outcomes are in the newest journal entry.
-
-## End-of-session outputs
-
-- External summary explains the endorsed plans and still-missing prerequisites.
-- External PR description covers only memory changes against `origin/main`;
-  previous product work is merged and no new issue closure is claimed.
-- No duplicate question or resolution record is created: #176 remains open until
-  its prerequisite request is fully answered. `STOP` ends this blocked run.
-- Memory commit: `chore(nightshift): update run memory`. No push or GitHub calls.
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm -r typecheck
+pnpm -r build
+env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter relay exec vitest run src/notifications/dispatcher-process.test.ts
+pnpm --filter agentrelay-e2e exec vitest run src/notification-reliability.e2e.test.ts src/mailbox-reliability.e2e.test.ts src/handoff-roundtrip.e2e.test.ts
+```
