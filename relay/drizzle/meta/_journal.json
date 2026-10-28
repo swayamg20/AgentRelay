@@ -78,6 +78,13 @@
 			"when": 1786194000000,
 			"tag": "0010_mailbox_events",
 			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1793221200000,
+			"tag": "0011_notification_outbox",
+			"breakpoints": true
 		}
 	]
 }

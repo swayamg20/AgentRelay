@@ -48,7 +48,7 @@ Whichever platform you pick, the relay needs:
 
 - `RELAY_PEPPER` is **sticky** — rotating it invalidates every existing agent and
   Node bearer credential. Pick a stable value at launch and keep it.
-- `RELAY_ENCRYPTION_KEY` is sticky for any encrypted-at-rest fields (Slack webhook URLs today). Rotate only with a re-encrypt step.
+- `RELAY_ENCRYPTION_KEY` is sticky for encrypted Slack webhook URLs and active notification previews. Rotate only with a re-encrypt step.
 - `RELAY_ADMIN_TOKEN` is rotatable freely; existing teammates aren't affected.
 - `RELAY_INVITE_SECRET` is rotatable but invalidates any minted-but-unredeemed invite URLs.
 - Migration `0004_mailbox_integrity` backfills legacy message artifacts. Because SQL
@@ -57,6 +57,9 @@ Whichever platform you pick, the relay needs:
   the upgrade so the relay can encrypt it. The one-time message rewrite takes a
   transaction advisory lock and uses the new column as its completion marker, so a
   concurrent migration runner cannot reinterpret payloads written by the upgraded app.
+- Migration `0011_notification_outbox` adds durable notification intent and shared
+  worker leases. Apply migrations before starting upgraded Relay processes. Preserve
+  the same encryption key on every replica; see [notification operations](notifications.md).
 
 ## Worked examples
 

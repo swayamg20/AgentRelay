@@ -79,7 +79,7 @@ Column-level truth lives in [`relay/src/db/schema.ts`](../relay/src/db/schema.ts
 the committed Drizzle migrations.
 
 `agents`, `agent_cards`, `api_keys`, `handoffs`, `messages`, `mailbox_events`,
-`audit_log`, `agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
+`notification_outbox`, `audit_log`, `agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
 workspace, Mission, delivery, and receipt tables are the same-schema Labs extension;
 they remain mounted and migrated for current compatibility but are not prerequisites
 for mailbox use.
@@ -92,6 +92,7 @@ for mailbox use.
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
 | `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
 | `mailbox_events` | Opaque recipient event ID, bigint cursor, recipient/actor/thread references, finite kind, internal source ID, and timestamp. It contains no message body, summary, payload, artifact, runtime, session, path, or authority. A recipient-scoped transaction lock serializes cursor allocation before commit. |
+| `notification_outbox` | Recipient/thread/source identity, notification kind, AES-GCM encrypted preview, pending/leased/terminal status, claim count, due time, lease token/deadline, persisted rate-limit retry budget, safe outcome, and timestamps. Source identity is unique per recipient/kind. Active work and terminal retention have partial indexes. |
 | `audit_log` | Invite, handoff/message, block, Agent-disable, Node/workspace, Mission, and delivery mutation records: actor kind, nullable Agent actor ID, action, resource, metadata, request ID, timestamp. Admin and relay-system actors never borrow an Agent ID. |
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
@@ -794,20 +795,51 @@ an active session.
 
 ## Notification dispatcher
 
-The relay process owns a bounded in-memory FIFO queue and a Slack webhook worker.
-Notifications are enqueued after the domain transaction commits. Dispatch retries
-selected failures with backoff and does not roll back the persisted handoff.
+Mailbox creation, message append, and completion insert notification intent in the
+same transaction as the domain mutation, mailbox event, and audit. Idempotent
+creation/append replay does not add another job. Acceptance stays silent; cancellation
+remains pending-only and silent, as in the existing lifecycle contract.
+
+Each Relay process polls the shared outbox once per second when idle and claims one
+due job with `FOR UPDATE SKIP LOCKED`. Claiming increments a persisted count and
+assigns a fresh token with a 30-second lease. Posting is bounded to five seconds;
+settlement and retry writes require that token and an unexpired lease. Expired work
+can be reclaimed by another process. Four claims exhaust a job, including claims
+whose outcome was lost to worker death.
+
+Retries use persisted due times with 1s, 4s, and 16s backoff for network/5xx failures.
+Slack 429 gets one persisted Retry-After retry, bounded to one day; invalid or missing
+values default to one second. Other 4xx failures are terminal. Corrupt payloads or
+unusable webhooks fail closed without blocking later jobs. Webhook removal or a
+disabled recipient skips the attempt. The current encrypted card destination is
+resolved at send time, not copied into a stale plaintext queue entry.
 
 Important limits:
 
-- Queue entries do not survive relay restart.
-- New jobs are dropped when the queue is full.
+- Active jobs survive restart and are not dropped by the old 10,000-entry local
+  queue limit. Worker memory and concurrency are bounded, but database backlog and
+  disk capacity still require operations monitoring; active jobs are never silently
+  evicted. Multiple workers do not guarantee FIFO external delivery.
+- An external Slack attempt is at least once. A lost response, crash, or pause beyond
+  a lease can duplicate an external attempt; fencing protects database ownership,
+  not Slack's acceptance of an already-issued request.
+- Terminal jobs clear their encrypted previews immediately. Every minute each worker
+  removes at most 100 terminal rows older than seven days. This is operational
+  retention, not an immutable notification audit history.
+- A database failure rolls back mailbox mutation and intent together. Slack failure
+  after commit does not undo a mailbox receipt or affect Mission delivery state.
 - There is no delivery acknowledgement from the receiving agent.
 - Card updates encrypt submitted webhook URLs into the authenticated `enc:v1:` form
   expected by the dispatcher. Existing plaintext rows from an older deployment must
   be resubmitted; the dispatcher continues to fail closed on unmarked values.
 - Both card update and dispatch restrict targets to exact HTTPS
   `hooks.slack.com/services/...` URLs, and the HTTP poster refuses redirects.
+- Logs contain only job IDs and safe attempt/outcome metadata, never webhook URLs,
+  previews, ciphertext, provider error text, or response bodies. Queue age/depth/outcome
+  metrics through #30 are explicitly deferred, not exposed by this change.
+
+See [notification operations](notifications.md) for migration, retention, and safe
+database diagnostics.
 
 ## Audit and revocation
 

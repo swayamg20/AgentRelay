@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { type Handoff, agentBlocks, agents, handoffs, messages } from "../db/schema.js";
 import { RelayError } from "../errors.js";
+import { type NotificationContext, appendNotification } from "../notifications/outbox.js";
 import { lockAgentBlockPair } from "./agent-block-lock.js";
 import { writeAudit } from "./audit.js";
 import { appendMailboxEvent } from "./mailbox-events.js";
@@ -111,6 +112,7 @@ async function isSenderBlocked(
 export async function createHandoff(
 	db: Database,
 	input: CreateHandoffInput,
+	notifications: NotificationContext,
 ): Promise<{ handoff: Handoff; replayed: boolean }> {
 	validateIntentInvariant(input.intent, input.proposedAction);
 	return await db.transaction(async (tx) => {
@@ -209,6 +211,14 @@ export async function createHandoff(
 			sourceId: handoff.id,
 		});
 
+		await appendNotification(tx, notifications, {
+			kind: "notify.handoff.created",
+			recipientAgentId: recipient.id,
+			actorAgentId: input.senderId,
+			threadId: handoff.id,
+			sourceId: handoff.id,
+			summary: input.summary,
+		});
 		return { handoff, replayed: false };
 	});
 }
@@ -216,6 +226,7 @@ export async function createHandoff(
 export async function appendMessage(
 	db: Database,
 	input: AppendMessageInput,
+	notifications: NotificationContext,
 ): Promise<{ messageId: string; sequenceNo: number; createdAt: Date; replayed: boolean }> {
 	return await db.transaction(async (tx) => {
 		if (input.idempotencyKey) {
@@ -299,6 +310,14 @@ export async function appendMessage(
 			sourceId: created.id,
 		});
 
+		await appendNotification(tx, notifications, {
+			kind: "notify.message.appended",
+			recipientAgentId: recipientId,
+			actorAgentId: input.senderId,
+			threadId: handoff.id,
+			sourceId: created.id,
+			summary: input.body,
+		});
 		return {
 			messageId: created.id,
 			sequenceNo: created.sequenceNo,
@@ -318,7 +337,11 @@ export interface TransitionInput {
 	requestId: string;
 }
 
-export async function transitionHandoff(db: Database, input: TransitionInput): Promise<Handoff> {
+export async function transitionHandoff(
+	db: Database,
+	input: TransitionInput,
+	notifications: NotificationContext,
+): Promise<Handoff> {
 	return await db.transaction(async (tx) => {
 		// Lock the row to prevent racing transitions (-32010 state_changed).
 		const [handoff] = await tx
@@ -428,6 +451,14 @@ export async function transitionHandoff(db: Database, input: TransitionInput): P
 					threadId: handoff.id,
 					kind: "thread.completed",
 					sourceId: handoff.id,
+				});
+				await appendNotification(tx, notifications, {
+					kind: "notify.handoff.completed",
+					recipientAgentId: handoff.senderId,
+					actorAgentId: input.callerId,
+					threadId: handoff.id,
+					sourceId: handoff.id,
+					summary: handoff.summary,
 				});
 				return updated;
 			}

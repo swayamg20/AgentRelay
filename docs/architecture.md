@@ -68,8 +68,9 @@ The repository currently ships:
   completing handoff threads.
 - Optional typed engineering artifacts plus provenance wrapping or structural
   markers on all teammate-originated mailbox content.
-- An optional in-process Slack notification adapter with encrypted-at-rest webhook
-  setup.
+- An optional Slack notification adapter with encrypted-at-rest webhook setup and
+  transactional notification intent. Each Relay process claims durable jobs from
+  the shared database; retries and lease recovery survive process death.
 - A durable, recipient-isolated mailbox event ledger and authenticated replay cursor.
   A content-free SSE signal reduces replay latency but is never correctness state.
 - An optional local `agentrelay watch` preview with exact-sender consent, one local
@@ -511,13 +512,15 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   kind without inventing an Agent identity.
 - `trust_overlay` is returned as JSON but is not dynamically applied to the host.
 - Relay audit does not record local commands, edits, tests, or policy decisions.
-- The notification queue is process-local and can drop work on overflow or restart.
+- Slack attempts are at least once, not exactly once. A lost provider response or
+  expired worker lease can cause a duplicate; Slack success is not agent pickup.
+  Queue metrics through #30 remain deferred. See [notification operations](notifications.md).
 - Local and relay revocation behavior is not one atomic, continuously observed policy;
   successful CLI block/unblock converges both stores but cannot transactionally commit
   a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
-- Notification delivery is process-local and does not prove pickup, reading, or
+- Notification delivery does not prove pickup, reading, or
   response. The new event feed likewise proves only durable event storage; an SSE
   write and a Codex queue receipt remain weaker facts than model pickup.
 - The connector is foreground-only and its first migration is a forward-only event
