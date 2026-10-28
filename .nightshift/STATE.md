@@ -1,112 +1,150 @@
-# Autopilot state
+# Nightshift state
 
-Working memory. Rewrite this file at the end of every session.
+Working memory. Rewrite at the end of each session; history and active tests take
+precedence over notes.
 
 ## Goal as understood
 
-Ship core-mailbox issues one at a time. Implement only the owner's chosen issue,
-then propose three next candidates. The goal is unchanged.
+Ship owner-chosen `core-mailbox` issues, with small concern-specific commits and
+passing checks, then request the next selection. The goal is unchanged. The owner's
+October 28, 2026 reply on #171, “go ahead with all three,” approves all three scoped
+plans by reference, including #10 strict-root rejection and #39's independent
+passive stdout mode/replay contract. This supersedes the previous waiting state
+and the usual single-selection limit for these three issues only.
 
-The owner's “go with 111” reply on #165 approved #111. It is now complete and
-verified in `46b6e68` (`fix(roster): honor filters and add bounded pagination`).
-The next-choice question proposes #10 (recommended, strict-root rejection), #103,
-and #39 (explicitly passive stdout metadata mode). No other issue was implemented.
+All three selected issues are complete and verified on `nightshift`:
 
-History supersedes the previous memory: #40's safe thread export was merged into
-main by #163 (`4acf32d`) before this session. #11 is also already on main.
-The current branch's new product change is #111 only; use `Closes #111`, not
-`Closes #40`, in its PR description.
+- #10: `46bea8d` — `fix(trust): reject unknown root policy keys`.
+- #103: `e34465a` — `test(mailbox): prove retry and restart reliability`.
+- #39: `be91a0f` — `feat(cli): add passive stdout mailbox observation`.
+
+The session started clean at `8ab55ae`. #111, #40, and #11 are already on main;
+they are not new changes on this branch. The PR must use `Closes #10`,
+`Closes #103`, and `Closes #39`, not closure claims for prior main work.
 
 ## Plan
 
-- [x] Read memory, recent journal/history, design sources, and the issue snapshot.
-- [x] Install locked dependencies and migrate the disposable test database.
-- [x] Trace roster schemas, MCP forwarding/provenance, Relay dispatch/query, card
-  writers, registration, bearer authentication, and existing REST discovery.
-- [x] Implement exact AND-combined filters and opt-in bounded keyset pagination.
-- [x] Add focused MCP/Relay contract tests and truthful documentation examples.
-- [x] Inspect filtered and continuation query plans before considering indexes.
-- [x] Run focused tests, shared lint/typecheck/build/unit gates, sequential Relay
-  integration, diff checks, and local Markdown-link checks; commit #111.
-- [x] Prepare the external next-choice question; resolve the answered #165.
-- [x] Update memory and full-branch summary/PR outputs; stop awaiting selection.
-- [ ] Receive the next explicit owner selection and implement only that issue.
+- [x] Read state, recent journal/history, repository instructions, design sources,
+  issue snapshot, and the owner's scope approval.
+- [x] Run harness setup/locked installation and prepare the disposable database.
+- [x] Implement #10's root-only strict schema and focused loader/doctor/watcher
+  regressions; preserve nested acceptance, generated files, fallback, and consent.
+- [x] Verify and commit #10 separately.
+- [x] Run existing MCP and Relay evidence before adding #103 tests; map all nine
+  cases and fill only process, non-participant, terminal/ownership, and notification
+  loss gaps.
+- [x] Add the reliability evidence record and README link; verify and commit #103.
+- [x] Implement #39's separate metadata-only stdout observer with Zod edge checks,
+  bounded replay, exclusive cursors, in-memory duplicate suppression, reconnect,
+  safe diagnostics, and no attention checkpoint/runtime side effects.
+- [x] Verify #39's focused CLI/client/watcher contracts and disposable real Relay
+  restart/reconnect smoke; finish shared gates/full e2e and commit separately.
+- [x] Review the remaining eligible backlog; prepare the conditional three-issue
+  next-choice question without inventing runnable scope or implementing it.
+- [x] Record answered #171 for resolution and write external summary/STOP outputs.
+- [x] Update memory and the full-branch PR description; leave the working tree clean.
+- [ ] Receive the next owner selection with any required access/evidence/scope.
 
 ## Next step
 
-Read the owner inbox and current issue snapshot for a reply to this run's
-next-choice question. The workflow assigns its issue number; do not duplicate
-the question or treat its recommendation as approval. Recheck origin/main to
-avoid stale closure claims. If #10 is selected, require explicit strict-root
-rejection approval. If #103 is selected, first map all nine required cases to
-existing evidence. If #39 is selected, require approval of the passive stdout
-metadata mode and its replay contract, preserving the existing attention watcher.
+Read the owner inbox and refreshed issue snapshot. The next-choice question is
+`questions/next-mailbox-prerequisites.md` in the external run output; the workflow
+assigns its issue number. Do not duplicate it or mistake a recommendation for
+approval. Do not implement anything beyond #10/#103/#39 without a new selection.
+Recheck origin/main/history before making closure claims.
+
+The eligible non-epic backlog currently contains only #34, #44, and #8. There is
+no honest three-candidate, unconditionally one-run-ready shortlist. The question
+lists all three with plans, files, verification, and prerequisites, recommends
+unblocking #34, and requests another small owner-scoped mailbox issue if none is
+ready. Epics, Labs, demand-gated work, non-mailbox-labelled interop issues, and
+completed main work stay excluded.
 
 ## Waiting on owner
 
-Choose #10 (strict-root rejection, recommended), #103 (mailbox reliability proof),
-or #39 (passive stdout metadata observer). The question is in this run's external
-`questions/next-core-mailbox-issue.md`, ready for the workflow to publish.
-All three include plans, file scopes, verification, and scope-approval conditions.
-#165 is answered and recorded for resolution; it is no longer a blocker.
+- #171 is answered; external `resolved.txt` records 171. It is no longer a blocker.
+- Select the next issue through the newly prepared question:
+  - #34 requires a disposable Docker-capable environment/approved daemon access.
+    Ordinary Docker access is denied; noninteractive sudo requires a password.
+    Native job Postgres is not the required Compose backup/restore proof.
+  - #44 needs bounded outbox scope approval and a decision on its #30 metrics
+    dependency, which is demand-gated and excluded. Do not silently omit criteria
+    or close the full issue for a partial outbox.
+  - #8 needs actual redacted #101 prerequisite evidence and two owners/machines;
+    local process tests cannot certify that proof.
 
-## Learned about this repository
+## Learned about the repository
 
-- This session started clean on `autopilot` at `4acf32d`, with no commits or diff
-  ahead of origin/main. Previous #40 work and run memory are already on main.
-- Roster discovery is internal mailbox functionality, not A2A v1 discovery.
-  It requires an active agent bearer identity and intentionally still includes
-  the caller and blocked agents. No tenant or block-list discovery policy was added.
-- Registration creates agents/keys, not cards. Missing cards must retain empty
-  skills/repositories. Card updates write role to agents.role and skill/repo arrays
-  to agent_cards. The new query uses those canonical columns.
-- role/skill/repo filters trim the query input, preserve case, match exactly,
-  combine with AND, and do not tokenize. Stored card values are not normalized.
-  Their bounds are 60/60/200 characters; unknown keys, empty or malformed inputs fail.
-- Pagination is opt-in via page: limit 1–200 (default 50), cursor null or a strict
-  validated after_handle object. Unique ascending database handle ordering and an
-  exclusive greater-than predicate form the keyset. Fetch limit+1 rows to determine
-  next_cursor; final/empty pages return null. Without page, retain the full matching
-  roster and omit next_cursor. Cursors are positions, not snapshots or permissions;
-  reuse the same filters. MCP preserves the cursor and existing roster provenance.
-- The 10,000-row rolled-back EXPLAIN fixture used the existing skills GIN index
-  for combined filtering and idx_agents_handle for continuation, with card primary
-  key lookups. No new index, migration, dependency, or REST change was needed.
-  These local query plans are not a production capacity claim.
-- #10 still accepts unknown root trust keys without warning; nested acceptance
-  and trust decisions must remain unchanged if strict-root rejection is approved.
-- #103 has a reusable Relay restart harness. Existing mailbox tests establish many
-  retry/authorization/block/lifecycle/provenance cases; process restart and lost
-  notification followed by retrieval still need explicit evidence.
-- #39's existing watch command is an attention-only Codex connector. A new stdout
-  observer must be separately approved, read-only, content-free, and must not write
-  its shared connector checkpoints or weaken binding/exact-sender consent.
-- #34 remains blocked on Docker socket access: Compose is installed, docker info
-  returns permission denied. Native Postgres is not a Compose restore proof.
-  #44 is broader architecture; #8/#101 need actual people/machines.
+- Trust root keys are now exactly `version`, `teammates`, `unknown_teammates`,
+  `blocked`, and `defaults`. Unknown roots return existing `invalid` policy,
+  doctor reports broken trust, MCP retains safe fallback, and attention watch
+  refuses pickup without checkpointing. Nested schemas and trust precedence are
+  unchanged; pickup is still exact-sender consent, never inherited.
+- #103's real-process proof preserves Postgres and Relay secrets through
+  `TestRelay.restart()`. It retries creation after restart, starts receiver MCP
+  only after three messages commit offline, observes ordered provenance-marked
+  retrieval, and proves a same-thread reply as sequence 4.
+- The lost-append-response transport consumes the real committed HTTP response,
+  independently observes the message through MCP, withholds the response, and
+  verifies identical serialized automatic retries plus stable receipt/data/event
+  count after another restart. Its fault flag prevents retry logic from hiding
+  failed assertions inside the injected transport.
+- Notification evidence discards actual handoff/append enqueue jobs and replaces
+  the HTTP app before retrieval. This is local loss-boundary proof, not a killed
+  Slack worker, remote-provider outage, durable outbox, power-loss, or capacity
+  claim. Slack remains process-local best effort.
+- Non-participant read/append disclose no result/private content and leave no
+  mutation audit. Completed/cancelled tests cover both participants' append and
+  all transitions, preserving ownership and unchanged thread/audit/event state.
+  Existing block-fence/provenance tests remain the evidence for those rules.
+- `watch --stdout` uses only configured bearer metadata replay/SSE reads and emits
+  six-field `thread.created`/`message.appended` NDJSON. No body fetch, binding,
+  trust read/mutation, runtime enqueue, connector lock, or shared state access
+  occurs. Default attention-mode code remains intact apart from CLI option parsing.
+- Passive cursors are exclusive positive decimal strings within Postgres bigint
+  range. CAC numerically coerces option values, so the CLI preserves the original
+  cursor token before Zod validation; max-bigint, exponential/hex/leading-zero,
+  duplicate-flag, and `--` separator regressions cover that boundary.
+- Replay asks for 100 events per page, advances over filtered lifecycle events
+  only in memory, suppresses duplicate cursors, and rejects unordered new events
+  before printing. SSE ready/change/resync triggers replay; heartbeat does not
+  poll. Reconnect waits for ready before replay, permanent 4xx other than 408/429
+  fail, and output/schema failures stop rather than printing unsafe diagnostics.
+- Source docs explicitly do not claim the new flag is in published 0.3.0.
+  A printed ledger reference is not pickup, model processing, or a reply receipt.
+- Run database-mutating integration/e2e/smoke commands serially. Keep both Relay
+  database variables unset for unit tests; avoid simultaneous dist writers during
+  process tests. Do not use recursive `pnpm -r test`.
+- No dependencies, versions, release notes, migrations, workflows, infra, runtime
+  activation, or notification architecture changes were made.
 
 ## Verification this session
 
-- Install and migration passed (expected unbuilt Node bin warnings during install).
-- Focused MCP schema/tool tests passed: 64 tests. Focused Relay a2a tests passed:
-  73 tests. Initial Relay runs exposed missing protocol build output and a fixture
-  that updated nonexistent cards; both were corrected before final verification.
-- pnpm lint passed with four pre-existing unused-suppression warnings;
-  pnpm -r typecheck and pnpm -r build passed. The initial typecheck exposed an
-  unchecked final-row access, corrected with a typed last-row guard. Formatting
-  differences were corrected and the final focused/full checks passed.
-- The canonical database-unset protocol/Relay/MCP/Node unit command passed.
-  Relay's 230 database tests skipped there, as intended; Node's three opt-in tests
-  also skipped. Canonical sequential Relay integration passed all 230 tests.
-- EXPLAIN (ANALYZE, BUFFERS) on disposable fixture data passed and rolled back.
-  git diff --check, git diff --cached --check, and local Markdown-link checks passed.
-- No e2e, publish, deployment, workflow, dependency, or migration changes were made.
-  Exact validation commands and corrected initial failures are in the journal.
+- Harness setup and explicit frozen-lockfile install passed. Initial setup had
+  expected unbuilt Node-bin warnings; the final install passed cleanly.
+- #10 focused loader/trust mutation/doctor/watcher tests passed: 85 tests.
+- Existing MCP client/provenance/tools evidence passed: 39 tests. Focused Relay
+  routes passed: 76 tests; focused handoff/reliability e2e passed: 3 tests.
+- Final stdout observer/CLI/event-client/existing attention-watcher tests passed:
+  59 tests. The external `.mts` real Relay smoke passed ordered replay, exclusive
+  cursor, restart/reconnect, duplicate suppression, metadata-only output, clean
+  SIGTERM, and unchanged local file hashes/listing.
+- All canonical gates passed before each product commit: lint, recursive
+  typecheck/build, database-unset protocol/Relay/MCP/Node unit tests, and sequential
+  Relay integration. Final units: 125 protocol, 393 MCP, 77 Relay, 438 Node passed;
+  233 Relay DB and three Node opt-in tests skipped normally. Integration: 233
+  passed. Full e2e: 13 passed, one opt-in test skipped.
+- Lint retains four pre-existing unused-suppression warnings. Focused formatting,
+  diff/cached diff, and public-document local Markdown-link checks passed.
+- Corrected initial doctor regex, route fixture list shape, cursor refinement,
+  formatting, and external smoke module-format failures before passing checks;
+  no failed implementation or test was committed.
+- Exact validation commands and outcomes are in the latest journal entry.
 
 ## End-of-session outputs
 
-- External summary and PR description cover #111 and use Closes #111 only.
-- External resolved.txt records #165; the next-choice question awaits publication.
-- External STOP ends this run because another product issue requires selection.
-- Commit STATE.md/JOURNAL.md as chore(autopilot): update run memory and leave
-  the working tree clean. Do not push or call GitHub.
+- External summary and PR description cover all three branch-only product changes.
+- External next-choice question covers the only three remaining eligible issues
+  conditionally and explains why a ready triple cannot currently be supplied.
+- External `resolved.txt` records #171; `STOP` ends this run pending selection.
+- Memory commit: `chore(nightshift): update run memory`. No push or GitHub calls.
