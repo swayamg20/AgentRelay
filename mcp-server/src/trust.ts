@@ -52,7 +52,7 @@ const trustFileSchema = z
 		blocked: z.array(z.string()).optional().default([]),
 		defaults: inheritedTrustEntrySchema.optional().default({}),
 	})
-	.passthrough();
+	.strict();
 
 export type TrustFile = z.infer<typeof trustFileSchema>;
 export type TeammateEntry = z.infer<typeof teammateEntrySchema>;

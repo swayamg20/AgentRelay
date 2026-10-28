@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { serializeTrust } from "./cli/trust-mutate.js";
 import {
 	FALLBACK_TRUST,
 	type TrustFile,
@@ -240,10 +241,54 @@ defaults:
 		}
 	});
 
-	it("ignores unknown top-level keys (warning, not error)", async () => {
+	it.each(["future_field", "teammate", "auto_pickup"])(
+		"rejects the unknown top-level key %s as invalid policy",
+		async (key) => {
+			const path = join(dir, "trust.yaml");
+			await writeFile(path, `version: 1\n${key}: true\n`, "utf8");
+			const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path } as NodeJS.ProcessEnv);
+			expect(out.ok).toBe(false);
+			if (!out.ok) {
+				expect(out.reason).toBe("invalid");
+				expect(out.detail).toContain(key);
+			}
+		},
+	);
+
+	it("loads CLI-generated trust without changing decisions", async () => {
 		const path = join(dir, "trust.yaml");
-		await writeFile(path, "version: 1\nfuture_field: hello\n", "utf8");
+		await writeFile(path, serializeTrust(fullTrust), "utf8");
 		const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path } as NodeJS.ProcessEnv);
 		expect(out.ok).toBe(true);
+		if (out.ok) expect(out.trust).toEqual(fullTrust);
+	});
+
+	it("preserves nested acceptance without inheriting pickup consent", async () => {
+		const path = join(dir, "trust.yaml");
+		await writeFile(
+			path,
+			`version: 1
+teammates:
+  bob@acme:
+    future_field: hello
+defaults:
+  auto_pickup: true
+  future_field: hello
+unknown_teammates:
+  policy: allow_with_default_trust
+  future_field: hello
+`,
+			"utf8",
+		);
+		const out = await loadTrust({ AGENTRELAY_TRUST_PATH: path } as NodeJS.ProcessEnv);
+		expect(out.ok).toBe(true);
+		if (out.ok) {
+			expect(out.trust.teammates["bob@acme"]?.future_field).toBe("hello");
+			for (const handle of ["bob@acme", "unknown@acme"]) {
+				const decision = computeOverlay(out.trust, handle);
+				expect(decision.decision).toBe("allow");
+				if (decision.decision === "allow") expect(decision.overlay.auto_pickup).toBe(false);
+			}
+		}
 	});
 });

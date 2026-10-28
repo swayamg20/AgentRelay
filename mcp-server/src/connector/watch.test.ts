@@ -118,29 +118,32 @@ describe("runMailboxWatch", () => {
 		expect(persistProgress).not.toHaveBeenCalled();
 	});
 
-	it("does not advance the cursor while the trust file is invalid", async () => {
-		const persistProgress = vi.fn(async () => undefined);
-		const enqueueAttention = vi.fn();
-		await expect(
-			runMailboxWatch({
-				relayUrl: "https://relay.example",
-				agentId: "receiver-id",
-				client: clientWithEvent(),
-				adapter: { enqueueAttention },
-				signal: new AbortController().signal,
-				once: true,
-				loadTrust: async () => ({
-					ok: false,
-					reason: "malformed",
-					path: "/trust",
+	it.each(["malformed", "invalid"] as const)(
+		"does not advance the cursor while the trust file is %s",
+		async (reason) => {
+			const persistProgress = vi.fn(async () => undefined);
+			const enqueueAttention = vi.fn();
+			await expect(
+				runMailboxWatch({
+					relayUrl: "https://relay.example",
+					agentId: "receiver-id",
+					client: clientWithEvent(),
+					adapter: { enqueueAttention },
+					signal: new AbortController().signal,
+					once: true,
+					loadTrust: async () => ({
+						ok: false,
+						reason,
+						path: "/trust",
+					}),
+					loadState: async () => structuredClone(EMPTY_CONNECTOR_STATE),
+					persistProgress: persistProgress as never,
 				}),
-				loadState: async () => structuredClone(EMPTY_CONNECTOR_STATE),
-				persistProgress: persistProgress as never,
-			}),
-		).rejects.toThrow("pickup will retry");
-		expect(enqueueAttention).not.toHaveBeenCalled();
-		expect(persistProgress).not.toHaveBeenCalled();
-	});
+			).rejects.toThrow("pickup will retry");
+			expect(enqueueAttention).not.toHaveBeenCalled();
+			expect(persistProgress).not.toHaveBeenCalled();
+		},
+	);
 
 	it("revalidates the local target before enqueue and preserves the event if it changed", async () => {
 		const persistProgress = vi.fn(async () => undefined);

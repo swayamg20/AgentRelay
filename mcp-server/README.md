@@ -156,6 +156,45 @@ coalesced, or durably accepted by the runtime queue. It does not advance after a
 runtime enqueue failure. Runtime queue acceptance is not a read, processing,
 delivery, acceptance, completion, or reply receipt.
 
+### Passive terminal observation (source CLI)
+
+The source CLI also provides a separate metadata-only observer; this is not a
+replacement for the locally consented attention mode above:
+
+```bash
+agentrelay watch --stdout
+agentrelay watch --stdout --once
+agentrelay watch --stdout --after-cursor 123
+```
+
+Build this checkout before using the new flag; the commands above do not imply
+that the pinned published `0.3.0` package includes it.
+
+`--stdout` prints one NDJSON reference for each `thread.created` or
+`message.appended` event: `event_id`, `cursor`, `thread_id`, `actor_handle`, `kind`,
+and `created_at`. No message body, artifact, credential, or runtime prompt is
+fetched or printed. Connection diagnostics go only to stderr. Correspondence
+metadata can still be sensitive; choose where you redirect it.
+
+This mode needs your configured agent credentials, but no Codex binding or pickup
+consent. It performs only authenticated metadata replay/SSE reads: it does not
+accept, reply, enqueue a runtime turn, mutate trust, acquire the attention watcher
+lock, or read/write its shared connector checkpoints. The default attention
+watcher's binding and exact-sender consent checks are unchanged.
+
+Without `--after-cursor`, replay begins at the start of your event ledger, including
+existing events. The optional cursor is exclusive and must be a positive decimal
+integer no larger than `9223372036854775807`; it is permitted only with `--stdout`.
+Replay uses bounded 100-event pages. `--once` drains and exits without opening SSE.
+The observer keeps only an in-memory cursor, suppresses duplicate replay within
+the process, and replays after SSE connection/reconnection readiness. Heartbeats
+do not poll the mailbox. Permanent authentication/other non-retryable client
+errors fail rather than degrading into polling.
+
+There is no saved cursor or supervisor. Restarting without your own saved
+`--after-cursor` can repeat output. A printed reference proves a durable ledger
+event, not message pickup, model processing, lifecycle acceptance, or a reply.
+
 The stdio server caps each MCP JSON-RPC request at 10 MiB. For larger code artifacts,
 send a `file_ref` instead of putting a huge diff or other content inline.
 
@@ -173,6 +212,7 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 - `agentrelay trust list|set|reset`
 - `agentrelay bind codex` / `unbind codex`
 - `agentrelay watch [--once]`
+- `agentrelay watch --stdout [--once] [--after-cursor <cursor>]` (source CLI)
 - `agentrelay live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
 - `agentrelay mcp`
 
@@ -213,11 +253,18 @@ records for invite, handoff/message, and block mutations, provenance wrappers or
 structural markers on teammate-authored mailbox data, recommended host settings, and
 local trust parsing.
 
+The root of `trust.yaml` accepts only `version`, `teammates`, `unknown_teammates`,
+`blocked`, and `defaults`. Unknown or misspelled root keys make the policy invalid,
+not a warning. `doctor` reports broken trust, MCP uses safe defaults, and the attention
+watcher refuses pickup without advancing its cursor until the file is fixed. A missing
+file still uses safe defaults; nested schema acceptance is unchanged.
+
 Known limits:
 
 - `watch` is a foreground preview, not an installed operating-system service.
-- One local state directory permits one watcher at a time, preventing competing
-  processes from racing its replay cursor.
+- One local state directory permits one attention watcher at a time, preventing
+  competing processes from racing its replay cursor. Passive stdout observers
+  have independent in-memory cursors and do not consume that checkpoint.
 - The Codex reference adapter provides content-free attention, not automatic reading
   or work. Queued turns cannot yet receive a narrower host-enforced tool envelope, so
   the generated host policy approval-gates mailbox reads and mutations instead of
