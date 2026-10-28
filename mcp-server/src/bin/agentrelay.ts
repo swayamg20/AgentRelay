@@ -28,6 +28,7 @@ import {
 } from "../cli/commands.js";
 import { listTrust } from "../cli/trust-mutate.js";
 import { bindCodex, unbindCodex } from "../connector/binding.js";
+import { parseWatchOptions, watchConfiguredStdout } from "../connector/stdout-watch.js";
 import { watchConfiguredCodex } from "../connector/watch.js";
 import { runLiveCommand } from "../live/command.js";
 import { LiveSessionError } from "../live/contracts.js";
@@ -325,15 +326,53 @@ cli
 cli
 	.command("watch", "Keep a live, replayable connection for locally consented attention")
 	.option("--once", "Drain currently queued mailbox events and exit", { default: false })
+	.option("--stdout", "Observe mailbox event references as NDJSON without runtime pickup", {
+		default: false,
+	})
+	.option("--after-cursor <cursor>", "Exclusive replay cursor for --stdout (default: beginning)")
 	.action(async (opts: Record<string, unknown>) => {
+		const rawArguments = process.argv.slice(2);
+		const optionsEnd = rawArguments.indexOf("--");
+		const optionArguments = optionsEnd < 0 ? rawArguments : rawArguments.slice(0, optionsEnd);
+		const cursorArguments = optionArguments.flatMap((argument, index, argumentsList) => {
+			if (argument === "--after-cursor") return [argumentsList[index + 1]];
+			if (argument.startsWith("--after-cursor=")) return [argument.slice("--after-cursor=".length)];
+			return [];
+		});
+		const options = parseWatchOptions({
+			...opts,
+			afterCursor:
+				!Array.isArray(opts.afterCursor) && cursorArguments.length === 1
+					? cursorArguments[0]
+					: opts.afterCursor,
+		});
 		const controller = new AbortController();
 		const stop = () => controller.abort();
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);
 		try {
+			if (options.stdout) {
+				await watchConfiguredStdout({
+					signal: controller.signal,
+					once: options.once,
+					afterCursor: options.afterCursor,
+					writeLine: (line) =>
+						new Promise<void>((resolve, reject) => {
+							process.stdout.write(line, (error) => (error ? reject(error) : resolve()));
+						}),
+					onStatus: (status) => {
+						process.stderr.write(
+							status.type === "connected"
+								? "AgentRelay mailbox observer connected\n"
+								: `AgentRelay mailbox observer reconnecting in ${status.delayMs}ms\n`,
+						);
+					},
+				});
+				return;
+			}
 			await watchConfiguredCodex({
 				signal: controller.signal,
-				once: Boolean(opts.once),
+				once: options.once,
 				onStatus: (status) => {
 					switch (status.type) {
 						case "connected":
@@ -354,7 +393,7 @@ cli
 					}
 				},
 			});
-			if (opts.once) process.stdout.write("AgentRelay mailbox replay complete\n");
+			if (options.once) process.stdout.write("AgentRelay mailbox replay complete\n");
 		} finally {
 			process.removeListener("SIGINT", stop);
 			process.removeListener("SIGTERM", stop);

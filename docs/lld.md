@@ -730,9 +730,31 @@ The `agentrelay` binary currently provides:
 - `trust list`, `trust set`, `trust reset`
 - `bind codex`, `unbind codex`
 - `watch [--once]`
+- `watch --stdout [--once] [--after-cursor <cursor>]`
 - `live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
   (0.4.0-beta.1 communication preview; see [limits and consent](live-sessions.md))
 - `mcp`
+
+In the source CLI, `watch --stdout` is a separate passive metadata observer. It
+uses configured agent authentication with the existing recipient event replay/SSE
+client, prints only six-field NDJSON references (`event_id`, `cursor`, `thread_id`,
+`actor_handle`, `kind`, `created_at`) for `thread.created`/`message.appended`, and
+sends safe connection diagnostics to stderr. It fetches no content and performs
+no accept/reply, runtime enqueue, binding/trust mutation, connector lock, or shared
+checkpoint read/write. Default attention-mode binding and exact-sender consent
+remain mandatory and unchanged.
+
+Passive replay starts from the ledger beginning unless `--after-cursor` supplies
+an exclusive positive decimal Postgres-bigint cursor (maximum
+`9223372036854775807`). That option is not allowed in attention mode. Pages are
+bounded to 100 events; filtered lifecycle events also advance only the observer's
+in-memory cursor. `--once` drains without SSE. Live mode suppresses duplicate
+replay within a process and drains on stream ready/change/resync, including ready
+after reconnection; heartbeats do not trigger interval polling. Permanent client
+errors other than retryable 408/429 fail rather than falling back to polling.
+The observer persists nothing: restarting without an externally saved cursor can
+repeat metadata. Output is not a device-pickup, model-processing, or reply receipt.
+This source addition is not a claim about the pinned published 0.3.0 binary.
 
 `doctor` and `doctor --json` print their report and exit with status `1` when
 `doctorHasMissing(report)` is true, otherwise `0`. The predicate includes missing
