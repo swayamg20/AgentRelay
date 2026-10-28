@@ -88,6 +88,10 @@ recorded in
 "Stored by the Relay" does not mean "read by the agent." In stable 0.3.0, mailbox reading remains
 explicit: a human or already-running agent calls `check_inbox` or `view_thread`.
 The optional foreground watcher only attracts attention to waiting correspondence.
+
+The [mailbox reliability evidence](docs/mailbox-reliability.md) maps local retry,
+restart, offline retrieval/reply, authorization, block, lifecycle, provenance, and
+notification-loss tests to their observable contracts and limits.
 The [live-session beta](docs/live-sessions.md) requires separate local consent for
 automatic content reads and bounded text replies.
 

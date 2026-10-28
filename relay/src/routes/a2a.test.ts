@@ -12,6 +12,7 @@ import {
 } from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
 import { createLogger } from "../logger.js";
+import { NotificationDispatcher } from "../notifications/dispatcher.js";
 import { createServer } from "../server.js";
 import { lockAgentBlockPair } from "../services/agent-block-lock.js";
 
@@ -722,6 +723,44 @@ d("a2a JSON-RPC + state machine", () => {
 		expect(tooEarly.body.error.data.code).toBe("invalid_transition");
 	});
 
+	it("preserves accepted ownership, rejects cancellation, and treats re-accept as idempotent", async () => {
+		const bob = await register("bob@acme");
+		const frank = await register("frank@acme");
+		const created = await rpc(bob.key, "message/send", {
+			recipient: "frank@acme",
+			message: { parts: [{ type: "text", text: "accepted fixture" }] },
+		});
+		const taskId = created.body.result.task_id;
+		const accepted = await rpc(frank.key, "tasks/update", {
+			task_id: taskId,
+			transition: "accept",
+		});
+		expect(accepted.body.error).toBeUndefined();
+		const auditBefore = await handle.db.select().from(auditLog);
+		const eventsBefore = await handle.db.select().from(mailboxEvents);
+		const repeated = await rpc(frank.key, "tasks/update", {
+			task_id: taskId,
+			transition: "accept",
+		});
+		expect(repeated.body.result).toEqual(accepted.body.result);
+		const wrongOwner = await rpc(bob.key, "tasks/update", {
+			task_id: taskId,
+			transition: "complete",
+		});
+		expect(wrongOwner.body.error.data.code).toBe("not_authorized_transition");
+		for (const actor of [bob, frank]) {
+			const denied = await rpc(actor.key, "tasks/cancel", { task_id: taskId });
+			expect(denied.body.error.data.code).toBe(
+				actor === bob ? "invalid_transition" : "not_authorized_transition",
+			);
+		}
+		const unchanged = await rpc(bob.key, "tasks/get", { task_id: taskId });
+		expect(unchanged.body.result.status.state).toBe("accepted");
+		expect(unchanged.body.result.history).toHaveLength(1);
+		expect(await handle.db.select().from(auditLog)).toEqual(auditBefore);
+		expect(await handle.db.select().from(mailboxEvents)).toEqual(eventsBefore);
+	});
+
 	it("rejects completion artifacts on transitions that cannot persist them", async () => {
 		const bob = await register("bob@acme");
 		const frank = await register("frank@acme");
@@ -750,7 +789,155 @@ d("a2a JSON-RPC + state machine", () => {
 		const taskId = create.body.result.task_id;
 		const peek = await rpc(eve.key, "tasks/get", { task_id: taskId });
 		expect(peek.body.error.data.code).toBe("not_a_participant");
+		for (const [method, params] of [
+			[
+				"message/send",
+				{ task_id: taskId, message: { parts: [{ type: "text", text: "intrusion" }] } },
+			],
+			["tasks/update", { task_id: taskId, transition: "accept" }],
+			["tasks/update", { task_id: taskId, transition: "complete", result_summary: "intrusion" }],
+			["tasks/cancel", { task_id: taskId }],
+		] as const) {
+			const denied = await rpc(eve.key, method, params);
+			expect(denied.body.error.data.code).toBe("not_a_participant");
+			expect(denied.body.result).toBeUndefined();
+			expect(JSON.stringify(denied.body)).not.toContain("private");
+		}
+		expect(peek.body.result).toBeUndefined();
+		expect(JSON.stringify(peek.body)).not.toContain("private");
+		const unchanged = await rpc(bob.key, "tasks/get", { task_id: taskId });
+		expect(unchanged.body.result.history).toHaveLength(1);
+		expect(unchanged.body.result.status.state).toBe("pending");
 	});
+
+	it.each(["completed", "cancelled"] as const)(
+		"rejects new appends and transitions in a %s thread without changing durable state",
+		async (status) => {
+			const bob = await register("bob@acme");
+			const frank = await register("frank@acme");
+			const created = await rpc(bob.key, "message/send", {
+				recipient: "frank@acme",
+				message: { parts: [{ type: "text", text: "terminal fixture" }] },
+			});
+			const taskId = created.body.result.task_id;
+			if (status === "completed") {
+				expect(
+					(await rpc(frank.key, "tasks/update", { task_id: taskId, transition: "accept" })).body
+						.error,
+				).toBeUndefined();
+				expect(
+					(
+						await rpc(frank.key, "tasks/update", {
+							task_id: taskId,
+							transition: "complete",
+							result_summary: "done",
+						})
+					).body.error,
+				).toBeUndefined();
+			} else {
+				expect(
+					(await rpc(bob.key, "tasks/cancel", { task_id: taskId })).body.error,
+				).toBeUndefined();
+			}
+			const before = await rpc(bob.key, "tasks/get", { task_id: taskId });
+			const auditBefore = await handle.db.select().from(auditLog);
+			const eventsBefore = await handle.db.select().from(mailboxEvents);
+			for (const actor of [bob, frank]) {
+				const append = await rpc(actor.key, "message/send", {
+					task_id: taskId,
+					message: { parts: [{ type: "text", text: "late new content" }] },
+				});
+				expect(append.body.error.data.code).toBe("thread_terminal");
+				for (const transition of ["accept", "complete", "cancel"]) {
+					const denied = await rpc(actor.key, "tasks/update", { task_id: taskId, transition });
+					const owner = transition === "cancel" ? bob : frank;
+					expect(denied.body.error.data.code).toBe(
+						actor === owner ? "invalid_transition" : "not_authorized_transition",
+					);
+					expect(denied.body.result).toBeUndefined();
+				}
+			}
+			const after = await rpc(bob.key, "tasks/get", { task_id: taskId });
+			expect(after.body.result).toEqual(before.body.result);
+			expect(after.body.result.status.state).toBe(status);
+			expect(await handle.db.select().from(auditLog)).toEqual(auditBefore);
+			expect(await handle.db.select().from(mailboxEvents)).toEqual(eventsBefore);
+		},
+	);
+
+	it.each(["dropped", "interrupted"] as const)(
+		"keeps committed handoffs and recipient events retrievable when notification enqueue is %s",
+		async (failure) => {
+			const bob = await register("bob@acme");
+			const frank = await register("frank@acme");
+			const config = loadConfig({ ...TEST_ENV });
+			const logger = createLogger(config);
+			const dispatcher = new NotificationDispatcher({
+				db: handle.db,
+				encryptionKey: config.RELAY_ENCRYPTION_KEY,
+				publicUrl: config.RELAY_PUBLIC_URL,
+				logger,
+				maxQueueDepth: 0,
+			});
+			let attemptedThreadId: string | undefined;
+			const faultyApp = createServer({
+				config,
+				logger,
+				db: handle.db,
+				notify: (job) => {
+					attemptedThreadId = job.threadId;
+					if (failure === "interrupted") throw new Error("test notification sink unavailable");
+					dispatcher.enqueue(job);
+				},
+			});
+			const response = await faultyApp.request("/a2a", {
+				method: "POST",
+				headers: bearer(bob.key),
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: "notification-failure",
+					method: "message/send",
+					params: {
+						recipient: "frank@acme",
+						message: { parts: [{ type: "text", text: "durable despite notification loss" }] },
+					},
+				}),
+			});
+			expect(response.status).toBe(200);
+			const receipt = (await response.json()) as { result: { task_id: string }; error?: unknown };
+			expect(receipt.error).toBeUndefined();
+			expect(attemptedThreadId).toBe(receipt.result.task_id);
+			if (failure === "dropped") expect(dispatcher.metrics.dropped).toBe(1);
+			const appendResponse = await faultyApp.request("/a2a", {
+				method: "POST",
+				headers: bearer(bob.key),
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: "notification-append-failure",
+					method: "message/send",
+					params: {
+						task_id: receipt.result.task_id,
+						message: { parts: [{ type: "text", text: "follow-up despite notification loss" }] },
+					},
+				}),
+			});
+			expect(appendResponse.status).toBe(200);
+			expect(await appendResponse.json()).toMatchObject({ result: { sequence_no: 2 } });
+			if (failure === "dropped") expect(dispatcher.metrics.dropped).toBe(2);
+			const retrieved = await rpc(frank.key, "tasks/get", { task_id: receipt.result.task_id });
+			expect(retrieved.body.error).toBeUndefined();
+			expect(retrieved.body.result.summary).toBe("durable despite notification loss");
+			expect(retrieved.body.result.history).toHaveLength(2);
+			const replay = await app.request("/agents/me/mailbox/events", { headers: bearer(frank.key) });
+			expect(replay.status).toBe(200);
+			expect(await replay.json()).toMatchObject({
+				events: [
+					expect.objectContaining({ thread_id: receipt.result.task_id, kind: "thread.created" }),
+					expect.objectContaining({ thread_id: receipt.result.task_id, kind: "message.appended" }),
+				],
+			});
+		},
+	);
 
 	it("intent=propose_action requires proposed_action; mismatch → -32012", async () => {
 		const bob = await register("bob@acme");

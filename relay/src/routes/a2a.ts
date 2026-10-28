@@ -5,6 +5,7 @@ import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { agentCards, agents, handoffs } from "../db/schema.js";
 import { ERROR_MAP, type ErrorSymbol, RelayError } from "../errors.js";
+import type { Logger } from "../logger.js";
 import { mailboxArtifactSchema } from "../mailbox-schemas.js";
 import type { NotificationJob, NotificationKind } from "../notifications/types.js";
 import {
@@ -199,6 +200,7 @@ export function createA2aRoutes(opts: A2aRoutesOptions): Hono<AppEnv> {
 				requestId,
 				publicUrl: opts.publicUrl,
 				notify: opts.notify,
+				logger: c.get("logger"),
 			});
 			return c.json(rpcSuccess(id, result));
 		} catch (err) {
@@ -220,6 +222,7 @@ interface DispatchCtx {
 	requestId: string;
 	publicUrl: string;
 	notify?: (job: NotificationJob) => void;
+	logger?: Logger;
 }
 
 async function emitNotification(
@@ -241,16 +244,23 @@ async function emitNotification(
 	} catch {
 		// swallow
 	}
-	ctx.notify({
-		kind,
-		recipientAgentId,
-		threadId,
-		senderHandle: ctx.agent.handle,
-		senderName,
-		summary,
-		publicUrl: ctx.publicUrl,
-		enqueuedAt: Date.now(),
-	});
+	try {
+		ctx.notify({
+			kind,
+			recipientAgentId,
+			threadId,
+			senderHandle: ctx.agent.handle,
+			senderName,
+			summary,
+			publicUrl: ctx.publicUrl,
+			enqueuedAt: Date.now(),
+		});
+	} catch {
+		ctx.logger?.warn(
+			{ event: "notify.enqueue_failed", kind, threadId },
+			"notification enqueue failed after mailbox commit",
+		);
+	}
 }
 
 async function loadHandoffParticipants(
