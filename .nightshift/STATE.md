@@ -7,71 +7,69 @@ precedence over notes.
 
 Ship owner-chosen `core-mailbox` issues, with small concern-specific commits and
 passing checks, then request the next selection. The goal is unchanged. The owner's
-October 28, 2026 reply on #171, “go ahead with all three,” approves all three scoped
-plans by reference, including #10 strict-root rejection and #39's independent
-passive stdout mode/replay contract. This supersedes the previous waiting state
-and the usual single-selection limit for these three issues only.
+October 28, 2026, 16:30:54 UTC reply on #176, “agreed with these 3,” endorses the
+conditional #34/#44/#8 plans. It does not supply Docker access, real two-owner
+evidence, or a decision on the explicitly excluded #30 metrics dependency.
+Do not repeat the candidate-selection question or treat missing prerequisites as
+waived. Work may resume on an endorsed issue when its prerequisite is resolved.
 
-All three selected issues are complete and verified on `nightshift`:
+The previous three selected issues are now complete on `origin/main`:
 
 - #10: `46bea8d` — `fix(trust): reject unknown root policy keys`.
 - #103: `e34465a` — `test(mailbox): prove retry and restart reliability`.
 - #39: `be91a0f` — `feat(cli): add passive stdout mailbox observation`.
 
-The session started clean at `8ab55ae`. #111, #40, and #11 are already on main;
-they are not new changes on this branch. The PR must use `Closes #10`,
-`Closes #103`, and `Closes #39`, not closure claims for prior main work.
+This session started clean at `cc61e09`, the merge of PR #175. Both `HEAD` and
+`origin/main` included that merge; the initial branch comparison was empty.
+Do not reuse `Closes #10`, `Closes #103`, or `Closes #39` in this run's PR.
+#111, #40, and #11 also remain prior main work, not new branch changes.
 
 ## Plan
 
-- [x] Read state, recent journal/history, repository instructions, design sources,
-  issue snapshot, and the owner's scope approval.
+- [x] Read state, recent journal/history, repository instructions, relevant design
+  sources, issue snapshot, and the owner's conditional plan endorsement on #176.
 - [x] Run harness setup/locked installation and prepare the disposable database.
-- [x] Implement #10's root-only strict schema and focused loader/doctor/watcher
-  regressions; preserve nested acceptance, generated files, fallback, and consent.
-- [x] Verify and commit #10 separately.
-- [x] Run existing MCP and Relay evidence before adding #103 tests; map all nine
-  cases and fill only process, non-participant, terminal/ownership, and notification
-  loss gaps.
-- [x] Add the reliability evidence record and README link; verify and commit #103.
-- [x] Implement #39's separate metadata-only stdout observer with Zod edge checks,
-  bounded replay, exclusive cursors, in-memory duplicate suppression, reconnect,
-  safe diagnostics, and no attention checkpoint/runtime side effects.
-- [x] Verify #39's focused CLI/client/watcher contracts and disposable real Relay
-  restart/reconnect smoke; finish shared gates/full e2e and commit separately.
-- [x] Review the remaining eligible backlog; prepare the conditional three-issue
-  next-choice question without inventing runnable scope or implementing it.
-- [x] Record answered #171 for resolution and write external summary/STOP outputs.
-- [x] Update memory and the full-branch PR description; leave the working tree clean.
-- [ ] Receive the next owner selection with any required access/evidence/scope.
+- [x] Confirm previous product work is merged and there are no PR findings.
+- [x] Recheck #34 Docker access without changing daemon permissions; still denied.
+- [x] Inspect #44's dispatcher/callers/tests and current design: no durable outbox
+  or metrics endpoint exists, and #30 remains demand-gated.
+- [x] Check #8/#101 evidence requirements against the available local proof record;
+  no actual two-owner/two-machine recording or redacted transcripts were supplied.
+- [x] Finish all required shared gates and prepare the memory-only commit/outputs.
+- [ ] Resume an endorsed issue after its required access/evidence/scope is supplied.
 
 ## Next step
 
-Read the owner inbox and refreshed issue snapshot. The next-choice question is
-`questions/next-mailbox-prerequisites.md` in the external run output; the workflow
-assigns its issue number. Do not duplicate it or mistake a recommendation for
-approval. Do not implement anything beyond #10/#103/#39 without a new selection.
-Recheck origin/main/history before making closure claims.
+Read the owner inbox for a substantive prerequisite resolution on #176 and the
+refreshed issue snapshot. The three conditional plans are endorsed; do not ask the
+owner to choose the same candidates again. First check whether Docker access is
+available for #34, whether #44's metrics scope has been explicitly resolved, or
+whether actual #101 proof evidence is supplied for #8. Implement only an unblocked
+endorsed scope. Recheck origin/main/history before making closure claims.
 
-The eligible non-epic backlog currently contains only #34, #44, and #8. There is
-no honest three-candidate, unconditionally one-run-ready shortlist. The question
-lists all three with plans, files, verification, and prerequisites, recommends
-unblocking #34, and requests another small owner-scoped mailbox issue if none is
-ready. Epics, Labs, demand-gated work, non-mailbox-labelled interop issues, and
-completed main work stay excluded.
+The eligible non-epic backlog still contains only #34, #44, and #8. #176 already
+lists their plans, files, checks, prerequisites, and the recommendation to unblock
+#34. Do not create a duplicate question. Epics, Labs, demand-gated work,
+non-mailbox-labelled interop issues, and completed main work stay excluded.
 
 ## Waiting on owner
 
-- #171 is answered; external `resolved.txt` records 171. It is no longer a blocker.
-- Select the next issue through the newly prepared question:
+- #171 is historical and answered; the prior product branch is merged.
+- #176 remains open: its reply endorses the plans but does not fully resolve the
+  prerequisite request. Do not record 176 in `resolved.txt` yet.
   - #34 requires a disposable Docker-capable environment/approved daemon access.
-    Ordinary Docker access is denied; noninteractive sudo requires a password.
-    Native job Postgres is not the required Compose backup/restore proof.
-  - #44 needs bounded outbox scope approval and a decision on its #30 metrics
-    dependency, which is demand-gated and excluded. Do not silently omit criteria
-    or close the full issue for a partial outbox.
+    `docker version --format '{{.Server.Version}}'` still fails with permission
+    denied; `sudo -n true` still requires a password. Do not change socket
+    permissions, protected workflows, or deployment configuration. Native job
+    Postgres is usable, but is not the required Compose backup/restore proof.
+  - #44's conditional outbox plan is endorsed, but its requirement to expose
+    metrics through #30 still conflicts with the goal's demand-gated exclusion.
+    The owner must explicitly defer that requirement for this issue or authorize
+    a bounded notification-metrics exception. Do not implement all of #30,
+    silently omit criteria, or close the full issue for a partial outbox.
   - #8 needs actual redacted #101 prerequisite evidence and two owners/machines;
-    local process tests cannot certify that proof.
+    none was supplied in the reply or available records. Local process tests
+    cannot certify that proof. Do not fabricate participants or recordings.
 
 ## Learned about the repository
 
@@ -120,31 +118,26 @@ completed main work stay excluded.
 
 ## Verification this session
 
-- Harness setup and explicit frozen-lockfile install passed. Initial setup had
-  expected unbuilt Node-bin warnings; the final install passed cleanly.
-- #10 focused loader/trust mutation/doctor/watcher tests passed: 85 tests.
-- Existing MCP client/provenance/tools evidence passed: 39 tests. Focused Relay
-  routes passed: 76 tests; focused handoff/reliability e2e passed: 3 tests.
-- Final stdout observer/CLI/event-client/existing attention-watcher tests passed:
-  59 tests. The external `.mts` real Relay smoke passed ordered replay, exclusive
-  cursor, restart/reconnect, duplicate suppression, metadata-only output, clean
-  SIGTERM, and unchanged local file hashes/listing.
-- All canonical gates passed before each product commit: lint, recursive
-  typecheck/build, database-unset protocol/Relay/MCP/Node unit tests, and sequential
-  Relay integration. Final units: 125 protocol, 393 MCP, 77 Relay, 438 Node passed;
+- Harness setup passed locked installation and migration preparation on the job's
+  native disposable Postgres. Explicit frozen-lockfile installation passed;
+  expected initial unbuilt Node-bin warnings disappeared on the post-build install.
+- All six shared gates passed: frozen-lockfile install, lint, recursive typecheck,
+  recursive build, database-unset package unit tests, and sequential Relay
+  integration. Unit results: 125 protocol, 393 MCP, 77 Relay, and 438 Node passed;
   233 Relay DB and three Node opt-in tests skipped normally. Integration: 233
-  passed. Full e2e: 13 passed, one opt-in test skipped.
-- Lint retains four pre-existing unused-suppression warnings. Focused formatting,
-  diff/cached diff, and public-document local Markdown-link checks passed.
-- Corrected initial doctor regex, route fixture list shape, cursor refinement,
-  formatting, and external smoke module-format failures before passing checks;
-  no failed implementation or test was committed.
-- Exact validation commands and outcomes are in the latest journal entry.
+  passed, zero failed.
+- Lint retains four pre-existing unused-suppression warnings. `git diff --check`
+  passed. No public Markdown links, source, or tests changed; no new e2e or
+  Compose proof was run or claimed. Previous proof commands remain in the journal.
+- Docker server access and noninteractive sudo both failed as expected access
+  probes, not failing repository gates. No permission/deployment changes were made.
+- Exact validation commands and outcomes are in the newest journal entry.
 
 ## End-of-session outputs
 
-- External summary and PR description cover all three branch-only product changes.
-- External next-choice question covers the only three remaining eligible issues
-  conditionally and explains why a ready triple cannot currently be supplied.
-- External `resolved.txt` records #171; `STOP` ends this run pending selection.
+- External summary explains the endorsed plans and still-missing prerequisites.
+- External PR description covers only memory changes against `origin/main`;
+  previous product work is merged and no new issue closure is claimed.
+- No duplicate question or resolution record is created: #176 remains open until
+  its prerequisite request is fully answered. `STOP` ends this blocked run.
 - Memory commit: `chore(nightshift): update run memory`. No push or GitHub calls.
