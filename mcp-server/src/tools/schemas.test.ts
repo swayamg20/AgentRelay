@@ -125,4 +125,44 @@ describe("listTeammatesInput", () => {
 	it("rejects unknown keys", () => {
 		expect(() => listTeammatesInput.parse({ team: "x" })).toThrow();
 	});
+	it("trims exact filters without changing case or splitting tokens", () => {
+		expect(
+			listTeammatesInput.parse({ role: " Backend ", skill: " Type Script ", repo: " acme/core " }),
+		).toEqual({ role: "Backend", skill: "Type Script", repo: "acme/core" });
+	});
+	it("opts into pagination only when page is present", () => {
+		expect(listTeammatesInput.parse({})).toEqual({});
+		expect(listTeammatesInput.parse({ page: {} })).toEqual({ page: { limit: 50, cursor: null } });
+		expect(
+			listTeammatesInput.parse({ page: { limit: 200, cursor: { after_handle: "bob@acme" } } }),
+		).toEqual({ page: { limit: 200, cursor: { after_handle: "bob@acme" } } });
+	});
+	it.each([
+		{ role: "" },
+		{ skill: " \t\n " },
+		{ repo: "" },
+		{ role: null },
+		{ skill: ["TypeScript"] },
+		{ repo: 42 },
+		{ role: "x".repeat(61) },
+		{ skill: "x".repeat(61) },
+		{ repo: "x".repeat(201) },
+		{ filter: { role: "backend" } },
+		{ page: null },
+		{ page: [] },
+		{ page: { limit: 0 } },
+		{ page: { limit: -1 } },
+		{ page: { limit: 201 } },
+		{ page: { limit: 1.5 } },
+		{ page: { limit: "2" } },
+		{ page: { offset: 0 } },
+		{ page: { cursor: "bob@acme" } },
+		{ page: { cursor: {} } },
+		{ page: { cursor: { after_handle: "" } } },
+		{ page: { cursor: { after_handle: "not a handle" } } },
+		{ page: { cursor: { after_handle: "bob@acme", extra: true } } },
+		{ page: { cursor: { after_handle: `${"x".repeat(116)}@acme` } } },
+	])("rejects malformed roster input %j", (input) => {
+		expect(() => listTeammatesInput.parse(input)).toThrow();
+	});
 });

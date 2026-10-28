@@ -128,10 +128,27 @@ export const completeHandoffInput = z
 	})
 	.strict();
 
+export const rosterCursorSchema = z
+	.object({
+		after_handle: z
+			.string()
+			.min(1)
+			.max(120)
+			.regex(/^[a-z0-9._-]+@[a-z0-9.-]+$/),
+	})
+	.strict();
+
 export const listTeammatesInput = z
 	.object({
-		role: z.string().optional(),
-		skill: z.string().optional(),
-		repo: z.string().optional(),
+		role: z.string().trim().min(1).max(60).optional(),
+		skill: z.string().trim().min(1).max(60).optional(),
+		repo: z.string().trim().min(1).max(200).optional(),
+		page: z
+			.object({
+				limit: z.number().int().min(1).max(200).default(50),
+				cursor: rosterCursorSchema.nullable().default(null),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();

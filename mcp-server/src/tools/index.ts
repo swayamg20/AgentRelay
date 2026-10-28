@@ -58,7 +58,7 @@ const TOOL_DEFS = [
 	{
 		name: "list_teammates",
 		description:
-			"Discover teammates registered on this relay. Filter by role, skill, or owned repo.",
+			"Discover active teammates on this relay. Trimmed, case-sensitive exact role/skill/repo filters combine with AND. Opt into bounded handle-ordered pagination with page; reuse next_cursor with the same filters.",
 	},
 	{
 		name: "view_thread",
@@ -125,9 +125,35 @@ const TOOL_INPUT_SCHEMAS = {
 		type: "object",
 		additionalProperties: false,
 		properties: {
-			role: { type: "string" },
-			skill: { type: "string" },
-			repo: { type: "string" },
+			role: { type: "string", minLength: 1, maxLength: 60 },
+			skill: { type: "string", minLength: 1, maxLength: 60 },
+			repo: { type: "string", minLength: 1, maxLength: 200 },
+			page: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+					cursor: {
+						anyOf: [
+							{ type: "null" },
+							{
+								type: "object",
+								additionalProperties: false,
+								properties: {
+									after_handle: {
+										type: "string",
+										minLength: 1,
+										maxLength: 120,
+										pattern: "^[a-z0-9._-]+@[a-z0-9.-]+$",
+									},
+								},
+								required: ["after_handle"],
+							},
+						],
+						default: null,
+					},
+				},
+			},
 		},
 	},
 	view_thread: {

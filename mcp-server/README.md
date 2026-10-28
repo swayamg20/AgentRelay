@@ -58,11 +58,50 @@ configuration is written to the current Claude and Codex user config locations.
 | `view_thread` | Read a participant thread without changing its lifecycle. |
 | `send_message` | Append a message to an active thread. |
 | `complete_handoff` | Mark an accepted handoff complete. |
-| `list_teammates` | Fetch the active team roster. |
+| `list_teammates` | Discover active teammates with exact role/skill/repo filters and optional bounded pages. |
 
 In stable 0.3.0, the relay stores messages durably, but pickup is explicit. A human or
 running agent must call `check_inbox` or `view_thread`. The beta live command adds a
 separate, explicitly consented read/reply loop.
+
+### Roster filters and pagination
+
+`list_teammates` accepts optional `role`, `skill`, and `repo` filters. Inputs are
+trimmed, then matched case-sensitively and exactly: role equality or whole-element
+membership in skills/owned repositories. Filters combine with AND; no comma or
+whitespace tokenization occurs. Stored card values are not normalized. Empty,
+whitespace-only, non-string, unknown-key, or overlong filters fail validation
+(role/skill maximum 60 characters, repo maximum 200). A valid unmatched value
+returns an empty roster.
+
+Filtered tool input:
+
+```json
+{ "role": "backend", "skill": "TypeScript", "repo": "acme/core" }
+```
+
+Without `page`, existing callers still receive the full matching roster with no
+`next_cursor` field. To bound results, supply `page` with an integer `limit` from
+1 to 200 (default 50) and optional `cursor` (default null):
+
+```json
+{ "skill": "TypeScript", "page": { "limit": 2 } }
+```
+
+The response includes provenance-marked `teammates` and `next_cursor`. If the
+cursor is non-null, pass it back unchanged with the same filters; for example,
+if it is `{ "after_handle": "bob@acme" }`:
+
+```json
+{ "skill": "TypeScript", "page": { "limit": 2, "cursor": { "after_handle": "bob@acme" } } }
+```
+
+A null `next_cursor` ends the traversal. The cursor is a validated exclusive
+handle position, not a snapshot or permission. Handles are ordered ascending
+under the Relay database's text ordering; an unchanged roster has no duplicates
+across pages. Concurrent card/identity changes can change matches. Only active
+identities appear, but the caller and blocked agents remain discoverable. Discovery
+does not grant messaging consent. REST `GET /agents` is unchanged.
 
 ## Foreground auto-pickup preview
 
