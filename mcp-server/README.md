@@ -213,6 +213,12 @@ records for invite, handoff/message, and block mutations, provenance wrappers or
 structural markers on teammate-authored mailbox data, recommended host settings, and
 local trust parsing.
 
+The root of `trust.yaml` accepts only `version`, `teammates`, `unknown_teammates`,
+`blocked`, and `defaults`. Unknown or misspelled root keys make the policy invalid,
+not a warning. `doctor` reports broken trust, MCP uses safe defaults, and the attention
+watcher refuses pickup without advancing its cursor until the file is fixed. A missing
+file still uses safe defaults; nested schema acceptance is unchanged.
+
 Known limits:
 
 - `watch` is a foreground preview, not an installed operating-system service.

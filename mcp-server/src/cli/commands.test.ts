@@ -460,6 +460,26 @@ describe("install", () => {
 });
 
 describe("doctor", () => {
+	it("reports unknown root trust keys as broken policy", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agentrelay-doctor-trust-"));
+		vi.stubEnv("AGENTRELAY_CONFIG_PATH", join(dir, "missing.json"));
+		vi.stubEnv("AGENTRELAY_TRUST_PATH", join(dir, "trust.yaml"));
+		try {
+			await writeFile(join(dir, "trust.yaml"), "version: 1\nteammate: {}\n", "utf8");
+			const report = await doctor({
+				readSettings: async () => undefined,
+				clientPaths: () => ({ settingsPath: "/x/settings.json", format: "json" }),
+				whoami: async () => true,
+			});
+			expect(report.trustParseable).toBe(false);
+			expect(formatDoctor(report)).toMatch(/trust\.yaml:.*BROKEN/);
+			expect(doctorHasMissing(report)).toBe(true);
+		} finally {
+			vi.unstubAllEnvs();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("reports config + trust + overlay status", async () => {
 		const settings = JSON.stringify({
 			mcpServers: { agentrelay: {} },

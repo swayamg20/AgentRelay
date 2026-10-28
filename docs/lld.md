@@ -441,7 +441,12 @@ Default location is `~/.agentrelay/`:
   and an optional locally selected connector binding.
 - `trust.yaml`: schema version, teammate entries, unknown-sender policy, defaults,
   exact-sender `auto_pickup`, and local blocked list. `auto_pickup` is ignored in
-  defaults and is never inferred from join or unknown-sender policy.
+  defaults and is never inferred from join or unknown-sender policy. The root is
+  strict: only `version`, `teammates`, `unknown_teammates`, `blocked`, and `defaults`
+  are accepted. Unknown root keys return the existing invalid-policy result:
+  doctor reports broken trust, MCP falls back to safe defaults, and the attention
+  watcher refuses pickup without checkpointing. Missing-file fallback and nested
+  schema acceptance are unchanged.
 - `connector-state.json`: versioned, mode-0600 replay cursors and hashed
   sender/thread coalescing keys. A cursor records local disposition or runtime queue
   acceptance, not remote delivery or model processing.
