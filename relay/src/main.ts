@@ -31,7 +31,6 @@ try {
 const dispatcher = new NotificationDispatcher({
 	db: dbHandle.db,
 	encryptionKey: config.RELAY_ENCRYPTION_KEY,
-	publicUrl: config.RELAY_PUBLIC_URL,
 	logger,
 });
 dispatcher.start();
@@ -40,7 +39,6 @@ const app = createServer({
 	logger,
 	db: dbHandle.db,
 	mailboxSignalHub,
-	notify: (job) => dispatcher.enqueue(job),
 	readinessProbe: async () => {
 		try {
 			await dbHandle.sql`SELECT 1`;

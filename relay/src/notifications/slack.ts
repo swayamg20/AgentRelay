@@ -8,7 +8,11 @@ export interface SlackPostResult {
 	retryAfterSeconds?: number;
 }
 
-export type SlackPoster = (url: string, payload: unknown) => Promise<SlackPostResult>;
+export type SlackPoster = (
+	url: string,
+	payload: unknown,
+	signal?: AbortSignal,
+) => Promise<SlackPostResult>;
 
 export function isSlackWebhookUrl(value: string): boolean {
 	try {
@@ -31,7 +35,7 @@ export function isSlackWebhookUrl(value: string): boolean {
 	}
 }
 
-export const defaultSlackPoster: SlackPoster = async (url, payload) => {
+export const defaultSlackPoster: SlackPoster = async (url, payload, signal) => {
 	if (!isSlackWebhookUrl(url)) {
 		throw new Error("refusing non-Slack notification webhook URL");
 	}
@@ -42,7 +46,7 @@ export const defaultSlackPoster: SlackPoster = async (url, payload) => {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify(payload),
-			signal: ctrl.signal,
+			signal: signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal,
 			redirect: "error",
 		});
 		const retryAfter = res.headers.get("retry-after");

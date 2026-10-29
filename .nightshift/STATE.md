@@ -5,146 +5,108 @@ precedence over notes.
 
 ## Goal as understood
 
-Ship owner-chosen `core-mailbox` issues, with small concern-specific commits and
-passing checks, then request the next selection. The goal is unchanged. The owner's
-October 28, 2026 reply on #171, “go ahead with all three,” approves all three scoped
-plans by reference, including #10 strict-root rejection and #39's independent
-passive stdout mode/replay contract. This supersedes the previous waiting state
-and the usual single-selection limit for these three issues only.
+Ship owner-chosen `core-mailbox` issues one at a time with passing checks. The goal
+is unchanged. The recorded October 28, 2026, 21:41:13 UTC owner reply on #176
+selected #44, deferred its #30 metrics requirement, assigned #34 elsewhere, and
+held #8 until actual #101 two-owner/two-machine evidence exists. This run supplies
+no new owner reply or PR feedback.
 
-All three selected issues are complete and verified on `nightshift`:
+#44 is complete on this branch in `ce0b06e` —
+`feat(notifications): add a transactional outbox worker`. The prior PR #178
+typecheck repair is in `945e9d5` —
+`fix(e2e): build relay before typechecking restart tests`. Both remain outside
+the workflow-supplied `origin/main` snapshot, whose tip is `0a93246`.
 
-- #10: `46bea8d` — `fix(trust): reject unknown root policy keys`.
-- #103: `e34465a` — `test(mailbox): prove retry and restart reliability`.
-- #39: `be91a0f` — `feat(cli): add passive stdout mailbox observation`.
-
-The session started clean at `8ab55ae`. #111, #40, and #11 are already on main;
-they are not new changes on this branch. The PR must use `Closes #10`,
-`Closes #103`, and `Closes #39`, not closure claims for prior main work.
+Run 40942715397 starts at `956cbb4`, makes no product changes, and passes all six
+required checks, four mailbox process tests, protocol exports, and the packed MCP
+artifact smoke. The branch-wide PR description closes only #44, with metrics
+explicitly deferred. Remote CI, PR, and merge status were not queried.
 
 ## Plan
 
-- [x] Read state, recent journal/history, repository instructions, design sources,
-  issue snapshot, and the owner's scope approval.
-- [x] Run harness setup/locked installation and prepare the disposable database.
-- [x] Implement #10's root-only strict schema and focused loader/doctor/watcher
-  regressions; preserve nested acceptance, generated files, fallback, and consent.
-- [x] Verify and commit #10 separately.
-- [x] Run existing MCP and Relay evidence before adding #103 tests; map all nine
-  cases and fill only process, non-participant, terminal/ownership, and notification
-  loss gaps.
-- [x] Add the reliability evidence record and README link; verify and commit #103.
-- [x] Implement #39's separate metadata-only stdout observer with Zod edge checks,
-  bounded replay, exclusive cursors, in-memory duplicate suppression, reconnect,
-  safe diagnostics, and no attention checkpoint/runtime side effects.
-- [x] Verify #39's focused CLI/client/watcher contracts and disposable real Relay
-  restart/reconnect smoke; finish shared gates/full e2e and commit separately.
-- [x] Review the remaining eligible backlog; prepare the conditional three-issue
-  next-choice question without inventing runnable scope or implementing it.
-- [x] Record answered #171 for resolution and write external summary/STOP outputs.
-- [x] Update memory and the full-branch PR description; leave the working tree clean.
-- [ ] Receive the next owner selection with any required access/evidence/scope.
+- [x] Read memory first, run harness setup, and inspect clean status and history.
+- [x] Review instructions, relevant designs, issue scope, and notification
+  producer/worker plus the MCP mailbox consumer and nearby tests.
+- [x] Confirm #44 and the typecheck repair are already committed; do not duplicate
+  implementation or expand the approved scope.
+- [x] Pass all six required checks against the job's Postgres on port 5433.
+- [x] Pass mailbox/restart process proofs, protocol exports, and packed MCP smoke.
+- [x] Recheck the backlog and request an owner decision on the exhausted eligible
+  inventory without inventing a three-issue shortlist.
+- [x] Update memory, branch-wide PR description, external summary, and STOP.
 
 ## Next step
 
-Read the owner inbox and refreshed issue snapshot. The next-choice question is
-`questions/next-mailbox-prerequisites.md` in the external run output; the workflow
-assigns its issue number. Do not duplicate it or mistake a recommendation for
-approval. Do not implement anything beyond #10/#103/#39 without a new selection.
-Recheck origin/main/history before making closure claims.
+Read new PR feedback and owner replies first, then compare branch history with the
+workflow-supplied `origin/main`. Address blocking PR findings before new work. If
+#44 has merged, exclude it from future candidates.
 
-The eligible non-epic backlog currently contains only #34, #44, and #8. There is
-no honest three-candidate, unconditionally one-run-ready shortlist. The question
-lists all three with plans, files, verification, and prerequisites, recommends
-unblocking #34, and requests another small owner-scoped mailbox issue if none is
-ready. Epics, Labs, demand-gated work, non-mailbox-labelled interop issues, and
-completed main work stay excluded.
+The supplied inventory has exactly five `core-mailbox` issues: #128, #102, and
+#101 are excluded epics; #44 is complete on the branch; #8 lacks its prerequisite
+real-user evidence. #34's backup/restore docs are already on main through PR #179.
+The earlier #10/#103/#39 and #111/#40/#11 work is also on main.
+
+There are no three eligible, unblocked one-run candidates. Do not substitute Labs,
+interop, demand-gated #30, completed main work, or fabricated proof evidence.
+Follow the response to this run's scope-unblock question; shortlist three issues
+only when a refreshed, approved backlog actually supports that shortlist.
 
 ## Waiting on owner
 
-- #171 is answered; external `resolved.txt` records 171. It is no longer a blocker.
-- Select the next issue through the newly prepared question:
-  - #34 requires a disposable Docker-capable environment/approved daemon access.
-    Ordinary Docker access is denied; noninteractive sudo requires a password.
-    Native job Postgres is not the required Compose backup/restore proof.
-  - #44 needs bounded outbox scope approval and a decision on its #30 metrics
-    dependency, which is demand-gated and excluded. Do not silently omit criteria
-    or close the full issue for a partial outbox.
-  - #8 needs actual redacted #101 prerequisite evidence and two owners/machines;
-    local process tests cannot certify that proof.
+- #44 is ready for review/merge, subject to remote checks; #30 metrics remain
+  expressly deferred, not shipped by this branch.
+- This run writes `questions/next-mailbox-scope.md` in the external output
+  directory. It asks whether to supply new scoped mailbox issues, provide real
+  sanitized #101 evidence for #8, or keep implementation stopped. The recommendation
+  is to review #44 and wait for evidence of a concrete mailbox blocker.
+- No open question was supplied in this run's owner inbox. The new question
+  concerns the exhausted next-task backlog, not the resolved #176 selection.
+- #8 still needs evidence from two owners and two machines. Local process tests
+  cannot satisfy that prerequisite. Stop this run rather than expand scope.
 
 ## Learned about the repository
 
-- Trust root keys are now exactly `version`, `teammates`, `unknown_teammates`,
-  `blocked`, and `defaults`. Unknown roots return existing `invalid` policy,
-  doctor reports broken trust, MCP retains safe fallback, and attention watch
-  refuses pickup without checkpointing. Nested schemas and trust precedence are
-  unchanged; pickup is still exact-sender consent, never inherited.
-- #103's real-process proof preserves Postgres and Relay secrets through
-  `TestRelay.restart()`. It retries creation after restart, starts receiver MCP
-  only after three messages commit offline, observes ordered provenance-marked
-  retrieval, and proves a same-thread reply as sequence 4.
-- The lost-append-response transport consumes the real committed HTTP response,
-  independently observes the message through MCP, withholds the response, and
-  verifies identical serialized automatic retries plus stable receipt/data/event
-  count after another restart. Its fault flag prevents retry logic from hiding
-  failed assertions inside the injected transport.
-- Notification evidence discards actual handoff/append enqueue jobs and replaces
-  the HTTP app before retrieval. This is local loss-boundary proof, not a killed
-  Slack worker, remote-provider outage, durable outbox, power-loss, or capacity
-  claim. Slack remains process-local best effort.
-- Non-participant read/append disclose no result/private content and leave no
-  mutation audit. Completed/cancelled tests cover both participants' append and
-  all transitions, preserving ownership and unchanged thread/audit/event state.
-  Existing block-fence/provenance tests remain the evidence for those rules.
-- `watch --stdout` uses only configured bearer metadata replay/SSE reads and emits
-  six-field `thread.created`/`message.appended` NDJSON. No body fetch, binding,
-  trust read/mutation, runtime enqueue, connector lock, or shared state access
-  occurs. Default attention-mode code remains intact apart from CLI option parsing.
-- Passive cursors are exclusive positive decimal strings within Postgres bigint
-  range. CAC numerically coerces option values, so the CLI preserves the original
-  cursor token before Zod validation; max-bigint, exponential/hex/leading-zero,
-  duplicate-flag, and `--` separator regressions cover that boundary.
-- Replay asks for 100 events per page, advances over filtered lifecycle events
-  only in memory, suppresses duplicate cursors, and rejects unordered new events
-  before printing. SSE ready/change/resync triggers replay; heartbeat does not
-  poll. Reconnect waits for ready before replay, permanent 4xx other than 408/429
-  fail, and output/schema failures stop rather than printing unsafe diagnostics.
-- Source docs explicitly do not claim the new flag is in published 0.3.0.
-  A printed ledger reference is not pickup, model processing, or a reply receipt.
-- Run database-mutating integration/e2e/smoke commands serially. Keep both Relay
-  database variables unset for unit tests; avoid simultaneous dist writers during
-  process tests. Do not use recursive `pnpm -r test`.
-- No dependencies, versions, release notes, migrations, workflows, infra, runtime
-  activation, or notification architecture changes were made.
+- Mailbox creation, append, and completion insert encrypted notification intent
+  alongside their mutation, recipient event, and audit in the same transaction.
+  Replays do not add jobs; acceptance/cancellation stay silent.
+- Migration `0011_notification_outbox` adds unique source identity, encrypted
+  previews, due/lease/terminal state, and partial indexes. It does not backfill jobs
+  already lost from the previous in-memory queue.
+- Workers claim one job with skip-locked row selection, a fresh UUID token, and
+  a 30-second lease. Bounded retries, one persisted Slack 429 retry, fencing,
+  safe outcomes, and terminal cleanup are durable database state.
+- Slack is an optional at-least-once hint, never pickup or reply evidence. Current
+  webhook configuration and its allowlist are checked at send time. Sensitive
+  payloads and provider exception text are not logged.
+- Worker memory is bounded, not total PostgreSQL backlog. Active jobs are not
+  evicted; terminal previews are erased and old terminal rows are batch-cleaned.
+- E2E typechecking needs the Relay build before the static production import in
+  restart tests. Serial package hooks avoid concurrent protocol output writers.
+- This run passes 125 protocol, 393 MCP, 79 database-free Relay, and 438 Node unit
+  tests, with expected 274 Relay database and three Node opt-in skips. Integration
+  passes 274 tests; mailbox process proofs pass four tests across three files.
+- Lint retains three existing unused-suppression warnings. Initial install warns
+  about links to not-yet-built Node binaries; subsequent builds and packed smoke
+  pass. No source, dependency, workflow, infrastructure, version, or public contract
+  changes are made this session. Memory contains no Markdown links.
 
-## Verification this session
+## Verification commands
 
-- Harness setup and explicit frozen-lockfile install passed. Initial setup had
-  expected unbuilt Node-bin warnings; the final install passed cleanly.
-- #10 focused loader/trust mutation/doctor/watcher tests passed: 85 tests.
-- Existing MCP client/provenance/tools evidence passed: 39 tests. Focused Relay
-  routes passed: 76 tests; focused handoff/reliability e2e passed: 3 tests.
-- Final stdout observer/CLI/event-client/existing attention-watcher tests passed:
-  59 tests. The external `.mts` real Relay smoke passed ordered replay, exclusive
-  cursor, restart/reconnect, duplicate suppression, metadata-only output, clean
-  SIGTERM, and unchanged local file hashes/listing.
-- All canonical gates passed before each product commit: lint, recursive
-  typecheck/build, database-unset protocol/Relay/MCP/Node unit tests, and sequential
-  Relay integration. Final units: 125 protocol, 393 MCP, 77 Relay, 438 Node passed;
-  233 Relay DB and three Node opt-in tests skipped normally. Integration: 233
-  passed. Full e2e: 13 passed, one opt-in test skipped.
-- Lint retains four pre-existing unused-suppression warnings. Focused formatting,
-  diff/cached diff, and public-document local Markdown-link checks passed.
-- Corrected initial doctor regex, route fixture list shape, cursor refinement,
-  formatting, and external smoke module-format failures before passing checks;
-  no failed implementation or test was committed.
-- Exact validation commands and outcomes are in the latest journal entry.
+All pass this session:
 
-## End-of-session outputs
-
-- External summary and PR description cover all three branch-only product changes.
-- External next-choice question covers the only three remaining eligible issues
-  conditionally and explains why a ready triple cannot currently be supplied.
-- External `resolved.txt` records #171; `STOP` ends this run pending selection.
-- Memory commit: `chore(nightshift): update run memory`. No push or GitHub calls.
+```bash
+bash "$NIGHTSHIFT_HARNESS/setup-install.sh"
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm -r typecheck
+pnpm -r build
+env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter agentrelay-e2e exec vitest run src/notification-reliability.e2e.test.ts src/mailbox-reliability.e2e.test.ts src/handoff-roundtrip.e2e.test.ts
+pnpm --filter @agentrelay/protocol test:exports
+pnpm --dir mcp-server pack --pack-destination "$NIGHTSHIFT_OUT"
+node mcp-server/scripts/smoke-packed-artifact.mjs "$NIGHTSHIFT_OUT/agentrelay-mcp-$(node -p "require('./mcp-server/package.json').version").tgz"
+! rg -n '\[[^]]+\]\([^)]+\)' .nightshift/STATE.md .nightshift/JOURNAL.md
+git diff --check
+git diff --cached --check
+```

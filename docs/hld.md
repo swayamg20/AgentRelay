@@ -93,8 +93,8 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
   authenticated replay, and a content-free SSE hint.
 - Participant authorization and lifecycle transitions.
 - Audit records for invite, handoff/message, and block mutations.
-- An optional in-process Slack notification adapter with encrypted-at-rest webhook
-  configuration.
+- An optional Slack notification adapter with encrypted-at-rest webhook
+  configuration and transactionally persisted notification intent.
 
 Its Labs routes additionally own:
 
@@ -112,8 +112,10 @@ Its Labs routes additionally own:
 
 The HTTP application is stateless with respect to durable domain rows. One process
 level PostgreSQL listener fans content-free changes out to local SSE streams; missed
-hints are recovered through durable replay. The separate Slack notification queue is
-still process-local and not durable.
+hints are recovered through durable replay. The separate Slack notification outbox
+is committed with mailbox writes. Relay processes claim one due attempt at a time
+using database row locks and expiring, token-fenced leases; retries, outcomes, and
+terminal cleanup are database state rather than a local queue.
 
 ### MCP server
 
@@ -467,7 +469,9 @@ nonclaim, not a mailbox product gate. See the security section of
 
 - If Postgres is unavailable, relay requests fail; there is no alternate durable
   store.
-- If a notification fails, the persisted handoff remains available for polling.
+- If Slack fails, the persisted handoff remains available for polling. Notification
+  intent and the mailbox mutation share one database transaction; a database failure
+  rolls both back instead of returning a durable receipt for only one of them.
 - If an SSE connection drops, the connector reconnects and replays from its local
   cursor. It advances only after policy deliberately skips an event or the runtime
   accepts the content-free attention item; ambiguous enqueue failures may duplicate

@@ -5,7 +5,6 @@ import { type ErrorEnvelope, RelayError } from "./errors.js";
 import type { MailboxSignalHub } from "./events/mailbox-signal.js";
 import type { Logger } from "./logger.js";
 import { loggerMiddleware, requestIdMiddleware } from "./middleware.js";
-import type { NotificationJob } from "./notifications/types.js";
 import { createA2aRoutes } from "./routes/a2a.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createAgentsRoutes } from "./routes/agents.js";
@@ -22,8 +21,6 @@ export interface CreateServerOptions {
 	db?: Database;
 	/** Async readiness probe; default returns true. */
 	readinessProbe?: () => Promise<boolean>;
-	/** Notification sink. Failures here must not block requests (lld §9.4). */
-	notify?: (job: NotificationJob) => void;
 	/** Optional live wake hints. Durable replay remains available without it. */
 	mailboxSignalHub?: MailboxSignalHub;
 }
@@ -95,7 +92,7 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 				db,
 				pepper: config.RELAY_PEPPER,
 				publicUrl: config.RELAY_PUBLIC_URL,
-				notify: opts.notify,
+				encryptionKey: config.RELAY_ENCRYPTION_KEY,
 			}),
 		);
 	}

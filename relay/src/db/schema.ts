@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
 	bigserial,
+	boolean,
 	check,
 	customType,
 	foreignKey,
@@ -811,6 +812,70 @@ export const deliveryOperationReceipts = pgTable(
 	}),
 );
 
+export const notificationOutbox = pgTable(
+	"notification_outbox",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		recipientAgentId: uuid("recipient_agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "cascade" }),
+		threadId: uuid("thread_id")
+			.notNull()
+			.references(() => handoffs.id, { onDelete: "cascade" }),
+		kind: text("kind").notNull(),
+		sourceId: uuid("source_id").notNull(),
+		encryptedPayload: text("encrypted_payload"),
+		status: text("status").notNull().default("pending"),
+		attempts: integer("attempts").notNull().default(0),
+		rateLimitRetried: boolean("rate_limit_retried").notNull().default(false),
+		availableAt: timestamp("available_at", { withTimezone: true }).notNull().default(sql`now()`),
+		leaseToken: uuid("lease_token"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+		lastStatus: integer("last_status"),
+		reason: text("reason"),
+		terminalAt: timestamp("terminal_at", { withTimezone: true }),
+		createdAt,
+	},
+	(table) => ({
+		sourceIdx: uniqueIndex("idx_notification_outbox_source").on(
+			table.recipientAgentId,
+			table.kind,
+			table.sourceId,
+		),
+		dueIdx: index("idx_notification_outbox_due")
+			.on(table.availableAt, table.id)
+			.where(sql`${table.status} = 'pending'`),
+		leaseIdx: index("idx_notification_outbox_lease")
+			.on(table.leaseExpiresAt, table.id)
+			.where(sql`${table.status} = 'leased'`),
+		terminalIdx: index("idx_notification_outbox_terminal")
+			.on(table.terminalAt, table.id)
+			.where(sql`${table.terminalAt} IS NOT NULL`),
+		kindCheck: check(
+			"notification_outbox_kind_chk",
+			sql`${table.kind} IN ('notify.handoff.created','notify.message.appended',
+				'notify.handoff.completed','notify.handoff.cancelled')`,
+		),
+		attemptsCheck: check(
+			"notification_outbox_attempts_chk",
+			sql`${table.attempts} BETWEEN 0 AND 4`,
+		),
+		stateCheck: check(
+			"notification_outbox_state_chk",
+			sql`(${table.status} = 'pending' AND ${table.encryptedPayload} IS NOT NULL
+				AND ${table.leaseToken} IS NULL AND ${table.leaseExpiresAt} IS NULL
+				AND ${table.terminalAt} IS NULL)
+				OR (${table.status} = 'leased' AND ${table.encryptedPayload} IS NOT NULL
+				AND ${table.leaseToken} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL
+				AND ${table.attempts} > 0 AND ${table.terminalAt} IS NULL)
+				OR (${table.status} IN ('succeeded','failed','skipped')
+				AND ${table.encryptedPayload} IS NULL AND ${table.leaseToken} IS NULL
+				AND ${table.leaseExpiresAt} IS NULL AND ${table.terminalAt} IS NOT NULL)`,
+		),
+	}),
+);
+
+export type NotificationOutboxJob = typeof notificationOutbox.$inferSelect;
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type AgentCard = typeof agentCards.$inferSelect;

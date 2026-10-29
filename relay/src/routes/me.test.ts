@@ -9,6 +9,7 @@ import { createLogger } from "../logger.js";
 import { decryptWebhook } from "../notifications/crypto.js";
 import { NotificationDispatcher } from "../notifications/dispatcher.js";
 import { createServer } from "../server.js";
+import { createHandoff } from "../services/handoff.js";
 
 const conn = await tryConnect();
 const d = conn.available ? describe : describe.skip;
@@ -270,25 +271,30 @@ d("self-management endpoints", () => {
 		const dispatcher = new NotificationDispatcher({
 			db: handle.db,
 			encryptionKey: TEST_ENV.RELAY_ENCRYPTION_KEY,
-			publicUrl: TEST_ENV.RELAY_PUBLIC_URL,
 			logger: createLogger(loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv)),
 			slackPoster: async (url) => {
 				postedUrls.push(url);
 				return { status: 200, ok: true };
 			},
 		});
-		await expect(
-			dispatcher.dispatchOne({
-				kind: "notify.handoff.created",
-				recipientAgentId: frank.id,
-				threadId: "00000000-0000-4000-8000-000000000001",
-				senderHandle: "bob@acme",
-				senderName: "Bob",
+		const bob = await register("bob-notify@acme");
+		await createHandoff(
+			handle.db,
+			{
+				senderId: bob.id,
+				recipientHandle: "frank@acme",
 				summary: "hello",
-				publicUrl: TEST_ENV.RELAY_PUBLIC_URL,
-				enqueuedAt: Date.now(),
-			}),
-		).resolves.toMatchObject({ ok: true, attempts: 1 });
+				intent: "inform",
+				artifacts: [],
+				initialPayload: {},
+				proposedAction: null,
+				metadata: {},
+				idempotencyKey: null,
+				requestId: "notify-card-test",
+			},
+			{ encryptionKey: TEST_ENV.RELAY_ENCRYPTION_KEY, publicUrl: TEST_ENV.RELAY_PUBLIC_URL },
+		);
+		await expect(dispatcher.processDueJob()).resolves.toBe(true);
 		expect(postedUrls).toEqual([webhook]);
 
 		const cleared = await app.request("/agents/me/card", {
