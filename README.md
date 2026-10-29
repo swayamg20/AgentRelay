@@ -121,7 +121,9 @@ npx -y -p agentrelay-mcp agentrelay doctor
 
 `join` redeems the invite, writes mode-0600 local credentials and trust state, and
 installs the MCP server for supported clients. Full Relay deployment and onboarding
-instructions are in [`docs/onboarding.md`](docs/onboarding.md).
+instructions are in [`docs/onboarding.md`](docs/onboarding.md). Operators of the
+Compose deployment can back it up and restore it with
+[`docs/backup-restore.md`](docs/backup-restore.md).
 
 ### Make the first round trip
 
@@ -268,6 +270,7 @@ pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp \
     ├── hld.md            implemented high-level behavior
     ├── lld.md            current schemas, routes, tools, and gaps
     ├── onboarding.md     current mailbox setup
+    ├── backup-restore.md Compose Relay backup and restore
     ├── rfcs/002-*.md     public mailbox and sovereignty decisions
     └── rfcs/001-*.md     historical Labs decisions
 ```

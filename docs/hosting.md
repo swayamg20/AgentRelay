@@ -69,7 +69,7 @@ not the primary path:
 - **`fly.toml`** at the repo root and **`docs/deploy-fly.md`** — a complete Fly walkthrough, kept as a reference for users who already use Fly.
 - **`infra/azure/`** and **`docs/deploy-azure.md`** — a reviewable Azure Container Apps + private PostgreSQL team-pilot deployment.
 - **`.github/workflows/deploy.yml`** — auto-deploy to Fly on `v*.*.*` tag push. Adapt the steps for your platform if it's different.
-- **`docker-compose.yml`** with the `selfhost` profile — the canonical "everything on one box" setup. It forwards all required Relay secrets from `.env`; use it on any VPS.
+- **`docker-compose.yml`** with the `selfhost` profile — the canonical "everything on one box" setup. It forwards all required Relay secrets from `.env`; use it on any VPS. Back it up and restore it with [`backup-restore.md`](backup-restore.md).
 
 If you write a guide for a platform that isn't in this list, PRs are
 welcome. Keep cost notes honest and dated.
