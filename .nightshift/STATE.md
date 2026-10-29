@@ -9,38 +9,39 @@ Ship owner-chosen `core-mailbox` issues with passing checks and concern-specific
 commits. The goal is unchanged. The owner's October 28, 2026, 21:41:13 UTC reply on
 #176 explicitly selects #44 now, defers its #30 metrics requirement to a follow-up,
 assigns #34 outside Nightshift, and holds #8 until the #101 two-machine proof exists.
-This supersedes the prerequisite interpretation recorded in the previous session.
+That selection remains authoritative; this session has no new owner scope reply.
 
 #44 is complete on this branch in `ce0b06e` —
-`feat(notifications): add a transactional outbox worker`. It is ready for owner
-review, not yet claimed as merged into main. The PR description closes #44 under
-the owner's explicitly approved metrics deferral. No other product issue is closed.
+`feat(notifications): add a transactional outbox worker`. The blocking PR #178
+`lint-typecheck` failure is reproduced and fixed in `945e9d5` —
+`fix(e2e): build relay before typechecking restart tests`. All six required local
+checks and the mailbox process proofs pass. Remote CI still needs to rerun; no
+GitHub access was attempted. The PR description closes #44 under the owner's
+explicitly approved metrics deferral. No other product issue is closed here.
 
 The previous #10/#103/#39 changes already merged through PR #175 (`cc61e09`).
-#111/#40/#11 are also prior main work, not new branch product changes. This session
-started clean on `nightshift` at `f0ac5bd`, a memory-only commit above `origin/main`.
+#111/#40/#11 are also prior main work, not new branch product changes. #34's backup
+and restore documentation now landed on main through PR #179 (`0a93246`) and is
+absent from the refreshed issue inventory. This session started clean on
+`nightshift` at `b4f2f92`, after the workflow merged that main update into the branch.
 
 ## Plan
 
-- [x] Read state, recent journal, history, repository instructions, design sources,
-  issue inventory, and the owner's substantive #176 scope resolution.
-- [x] Run harness setup and locked installation; use native job Postgres on 5433.
-- [x] Trace mailbox transactions, A2A producers, notification destinations, the
-  dispatcher and startup/shutdown, MCP receipts, and existing reliability tests.
-- [x] Add the encrypted outbox migration/schema and transactional intent for
-  creation, append, and completion without changing public mailbox contracts.
-- [x] Replace the volatile queue with token-fenced, skip-locked shared claims,
-  persisted retries/429 budget/outcomes, lease recovery, and terminal retention.
-- [x] Verify rollback, idempotency, concurrency, expired/stale holders, lost
-  responses, timeout, poison jobs, backlog, destination validation, and redaction.
-- [x] Prove SIGKILL recovery with real 30-second leases in separate worker
-  processes and committed pending-job replay across a production Relay restart.
-- [x] Update truthful architecture/HLD/LLD/hosting/notification operations docs;
-  check 56 local Markdown links and execute all four documented SQL diagnostics.
-- [x] Pass all six shared gates and the focused/mailbox process checks; commit #44
-  and prepare run memory, owner-resolution record, summary, and branch-wide PR text.
-- [ ] Resume only after owner feedback, new eligible scoped work, or actual #101
-  evidence supplies another unblocked issue. Stop this run after memory is committed.
+- [x] Read memory, recent history, instructions, relevant designs, and refreshed
+  inventory before addressing the blocking PR #178 finding.
+- [x] Run harness setup and locked installation against native Postgres on 5433.
+- [x] Reproduce clean-checkout `pnpm -r typecheck` failure: TS2307 for the new E2E
+  test's static import of `relay/dist/db/client.js`.
+- [x] Trace the compiled Relay database producer, E2E import, test global setup,
+  and existing package build hooks; preserve the production-restart test boundary.
+- [x] Add only the missing Relay build to E2E `pretypecheck`, using the same serial
+  Relay/MCP/Node order as E2E global setup, without dependencies or workflow edits.
+- [x] Pass all six shared gates, protocol exports, packed-artifact smoke, and all
+  four mailbox process tests across three E2E files; commit the focused fix.
+- [x] Recheck eligible issues: #44 is complete here, #34 landed elsewhere, and #8
+  still lacks #101 evidence. Do not invent three eligible candidates.
+- [x] Prepare branch-wide PR description, external summary, updated run memory,
+  and STOP. Resume only for PR feedback or newly unblocked owner-scoped work.
 
 ## Next step
 
@@ -49,20 +50,20 @@ making closure claims or repeating implementation. If #44 is already merged,
 exclude it from candidate selection. Read the refreshed inventory and owner inbox.
 
 There are not three remaining unconditional, one-run-ready eligible candidates:
-#34 is explicitly being done outside Nightshift, #8 still requires real #101
-evidence, and #44 is now complete. Do not manufacture a third candidate from an
-epic, Labs, interop, or demand-gated #30. Do not repeat the answered #176 selection
-question. Propose three candidates only if a refreshed eligible backlog supplies
-them; otherwise wait for new small owner-scoped mailbox work or the proof evidence.
+#34 is already on main, #8 still requires real #101 evidence, and #44 is complete
+on this branch. Do not manufacture candidates from epics, Labs, interop, or
+demand-gated #30. Do not repeat the answered #176 selection question. Propose three
+candidates only if a refreshed eligible backlog supplies them; otherwise wait for
+new small owner-scoped mailbox work or the proof evidence.
 
 ## Waiting on owner
 
-- #176 is fully resolved by the October 28, 2026, 21:41:13 UTC reply. Record 176 in
-  the external `resolved.txt`; no duplicate prerequisite question is needed.
+- #176 was fully resolved and recorded by the previous run; no duplicate question
+  or new resolution record is needed. The current inbox contains no open question.
 - #44 is ready for review/merge. Queue age/depth/outcome metrics through #30 are
   explicitly deferred, not implemented or required for this scoped closure.
-- #34 is assigned outside Nightshift; do not probe or change Docker permissions,
-  touch protected workflows, or attempt its backup/restore runbook here.
+- PR #178's reproduced typecheck failure is fixed locally; the workflow must
+  rerun remote CI. No workflow, infra, Docker-permission, or deployment changes.
 - #8 stays on hold until actual sanitized #101 two-owner/two-machine evidence
   exists. Local worker and mailbox process proofs are not that evidence.
 - No additional unblocked eligible three-issue shortlist exists in this snapshot.
@@ -99,11 +100,17 @@ them; otherwise wait for new small owner-scoped mailbox work or the proof eviden
 - No notification body, ciphertext, webhook, provider error text, or response body
   is logged. No metrics endpoint, new dependency, Labs activation, release,
   workflow, Compose, version, deployment, or public HTTP/MCP/config change was added.
+- E2E global setup builds Relay/MCP/Node before tests, but TypeScript does not run
+  Vitest setup. A static compiled Relay import therefore also needs Relay built
+  by E2E `pretypecheck`. Recursive typechecking must work before recursive build
+  on a fresh checkout. Keep build hooks serial to avoid shared protocol writers.
 - Shared checks passed: 125 protocol, 393 MCP, 79 database-free Relay, and 438 Node
   unit tests (expected 274 Relay database and three Node opt-in skips); 274 Relay
   integration tests; four mailbox process tests across three e2e files. Lint has
   three existing unused-suppression warnings. Keep database URLs unset for unit
   tests and run database test files serially through the canonical integration runner.
+- Protocol export validation and the locally packed MCP artifact smoke also passed
+  this session. No public documentation links changed; memory adds no Markdown links.
 
 ## Verification commands
 
@@ -114,6 +121,10 @@ pnpm -r typecheck
 pnpm -r build
 env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test
 RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration
-RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter relay exec vitest run src/notifications/dispatcher-process.test.ts
-pnpm --filter agentrelay-e2e exec vitest run src/notification-reliability.e2e.test.ts src/mailbox-reliability.e2e.test.ts src/handoff-roundtrip.e2e.test.ts
+RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter agentrelay-e2e exec vitest run src/notification-reliability.e2e.test.ts src/mailbox-reliability.e2e.test.ts src/handoff-roundtrip.e2e.test.ts
+pnpm --filter @agentrelay/protocol test:exports
+pnpm --dir mcp-server pack --pack-destination "$NIGHTSHIFT_OUT"
+node mcp-server/scripts/smoke-packed-artifact.mjs "$NIGHTSHIFT_OUT/agentrelay-mcp-$(node -p "require('./mcp-server/package.json').version").tgz"
+git diff --check
+git diff --cached --check
 ```
