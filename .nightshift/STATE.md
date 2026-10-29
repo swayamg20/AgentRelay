@@ -5,116 +5,96 @@ precedence over notes.
 
 ## Goal as understood
 
-Ship owner-chosen `core-mailbox` issues with passing checks and concern-specific
-commits. The goal is unchanged. The owner's October 28, 2026, 21:41:13 UTC reply on
-#176 explicitly selects #44 now, defers its #30 metrics requirement to a follow-up,
-assigns #34 outside Nightshift, and holds #8 until the #101 two-machine proof exists.
-That selection remains authoritative; this session has no new owner scope reply.
+Ship owner-chosen `core-mailbox` issues one at a time with passing checks. The goal
+is unchanged. The previously recorded October 28, 2026, 21:41:13 UTC owner reply on
+#176 selected #44, deferred its #30 metrics requirement, assigned #34 elsewhere,
+and held #8 until actual #101 two-owner/two-machine evidence exists. This run has
+no new owner reply or PR feedback.
 
 #44 is complete on this branch in `ce0b06e` —
-`feat(notifications): add a transactional outbox worker`. The blocking PR #178
-`lint-typecheck` failure is reproduced and fixed in `945e9d5` —
-`fix(e2e): build relay before typechecking restart tests`. All six required local
-checks and the mailbox process proofs pass. Remote CI still needs to rerun; no
-GitHub access was attempted. The PR description closes #44 under the owner's
-explicitly approved metrics deferral. No other product issue is closed here.
+`feat(notifications): add a transactional outbox worker`. The prior PR #178
+typecheck repair is in `945e9d5` —
+`fix(e2e): build relay before typechecking restart tests`. Both remain outside
+the supplied `origin/main` snapshot. This session starts at `2e569a2`, makes no
+product changes, and revalidates the branch with all six required checks, four
+mailbox process tests, protocol exports, and the packed MCP artifact smoke passing.
+Remote CI and merge status were not queried; no GitHub access was attempted.
 
-The previous #10/#103/#39 changes already merged through PR #175 (`cc61e09`).
-#111/#40/#11 are also prior main work, not new branch product changes. #34's backup
-and restore documentation now landed on main through PR #179 (`0a93246`) and is
-absent from the refreshed issue inventory. This session started clean on
-`nightshift` at `b4f2f92`, after the workflow merged that main update into the branch.
+The #10/#103/#39 work merged through PR #175 (`cc61e09`). #111/#40/#11 are also
+prior main work. #34's backup/restore documentation merged through PR #179
+(`0a93246`), the current supplied `origin/main` tip, and is not a branch change.
+The branch-wide PR description closes only #44, with metrics explicitly deferred.
 
 ## Plan
 
-- [x] Read memory, recent history, instructions, relevant designs, and refreshed
-  inventory before addressing the blocking PR #178 finding.
-- [x] Run harness setup and locked installation against native Postgres on 5433.
-- [x] Reproduce clean-checkout `pnpm -r typecheck` failure: TS2307 for the new E2E
-  test's static import of `relay/dist/db/client.js`.
-- [x] Trace the compiled Relay database producer, E2E import, test global setup,
-  and existing package build hooks; preserve the production-restart test boundary.
-- [x] Add only the missing Relay build to E2E `pretypecheck`, using the same serial
-  Relay/MCP/Node order as E2E global setup, without dependencies or workflow edits.
-- [x] Pass all six shared gates, protocol exports, packed-artifact smoke, and all
-  four mailbox process tests across three E2E files; commit the focused fix.
-- [x] Recheck eligible issues: #44 is complete here, #34 landed elsewhere, and #8
-  still lacks #101 evidence. Do not invent three eligible candidates.
-- [x] Prepare branch-wide PR description, external summary, updated run memory,
-  and STOP. Resume only for PR feedback or newly unblocked owner-scoped work.
+- [x] Read memory first, run harness setup, and inspect clean status and history.
+- [x] Read instructions, current designs, the eligible issue snapshot, and the
+  notification producer, worker, MCP consumer, and nearby tests.
+- [x] Confirm the selected issue and prior typecheck repair are already committed;
+  do not duplicate implementation or expand owner scope.
+- [x] Pass all six required gates against the job's Postgres on port 5433.
+- [x] Pass mailbox/notification process proofs, protocol exports, and packed MCP
+  artifact smoke.
+- [x] Recheck candidate eligibility; do not invent a three-issue shortlist.
+- [x] Update run memory, branch-wide PR description, external summary, and STOP.
 
 ## Next step
 
-Handle any PR findings first. Recheck `origin/main` and branch history before
-making closure claims or repeating implementation. If #44 is already merged,
-exclude it from candidate selection. Read the refreshed inventory and owner inbox.
+Read new PR feedback and owner replies first, then compare current branch history
+with the workflow-supplied `origin/main`. If #44 has merged, exclude it from
+future candidates. Address any blocking PR findings before new product work.
 
-There are not three remaining unconditional, one-run-ready eligible candidates:
-#34 is already on main, #8 still requires real #101 evidence, and #44 is complete
-on this branch. Do not manufacture candidates from epics, Labs, interop, or
-demand-gated #30. Do not repeat the answered #176 selection question. Propose three
-candidates only if a refreshed eligible backlog supplies them; otherwise wait for
-new small owner-scoped mailbox work or the proof evidence.
+The refreshed inventory contains exactly five `core-mailbox` issues: #128, #102,
+and #101 are epics and therefore excluded; #44 is complete on this branch; #8 is
+blocked on #101 evidence. There are no three unblocked one-run candidates. Do not
+repeat the answered #176 question or manufacture candidates from Labs, interop,
+demand-gated #30, completed main work, or fabricated proof evidence. Propose the
+next three only when an eligible refreshed backlog makes that possible.
 
 ## Waiting on owner
 
-- #176 was fully resolved and recorded by the previous run; no duplicate question
-  or new resolution record is needed. The current inbox contains no open question.
-- #44 is ready for review/merge. Queue age/depth/outcome metrics through #30 are
-  explicitly deferred, not implemented or required for this scoped closure.
-- PR #178's reproduced typecheck failure is fixed locally; the workflow must
-  rerun remote CI. No workflow, infra, Docker-permission, or deployment changes.
-- #8 stays on hold until actual sanitized #101 two-owner/two-machine evidence
-  exists. Local worker and mailbox process proofs are not that evidence.
-- No additional unblocked eligible three-issue shortlist exists in this snapshot.
+- #44 is ready for review/merge, subject to remote checks. Its #30 metrics work is
+  expressly deferred, not shipped by this branch.
+- No unresolved question or new owner selection appears in this run's inbox.
+  No duplicate question or resolution record is created.
+- #8 needs actual sanitized #101 transcripts/evidence from two owners and two
+  machines. Local process tests do not satisfy that prerequisite.
+- New small eligible mailbox issues or that evidence are needed before another
+  product change. Stop this run rather than expanding scope.
 
 ## Learned about the repository
 
-- `relay/src/services/handoff.ts` now receives notification encryption/public-URL
-  context from A2A. Creation, append, and completion insert intent alongside their
-  authoritative mutation, mailbox event, and audit in the same transaction.
-  Creation/append replays do not enqueue again. Acceptance remains silent;
-  cancellation remains pending-only and silent, preserving the lifecycle contract.
-- `0011_notification_outbox` stores recipient/thread/kind/source identity and an
-  AES-GCM encrypted 240-character preview with sender metadata. Recipient/kind/source
-  is unique. Partial indexes cover due jobs, expired leases, and terminal cleanup.
-  There is no historical backfill or recovery of the old queue's already-lost jobs.
-- Each process polls idle work once per second and claims one job using
-  `FOR UPDATE SKIP LOCKED`. Claims have fresh UUID tokens and 30-second leases.
-  Attempts count claims (including ambiguous/dead claims), with a maximum of four.
-  A dead fourth holder settles terminally without a fifth provider post.
-- Five-second posting bounds and token/deadline predicates protect settlement.
-  Provider and database failures have separate boundaries: failed settlement leaves
-  leased work for recovery, not a false provider classification. A pause beyond a
-  lease or lost provider response can still duplicate external attempts; database
-  fencing does not promise exactly-once Slack delivery or recipient pickup.
-- Network/5xx retry due times persist at 1s/4s/16s. One 429 retry budget survives
-  reconstruction; numeric Retry-After is capped at one day, invalid/missing values
-  use one second. Other 4xx and poison payloads are terminal. Destinations are read
-  from the current encrypted card, validated at send time, and cannot redirect.
-  Removed webhooks/disabled recipients skip; unmarked plaintext fails closed.
-- No old 10,000-entry overflow drop remains. Worker memory/concurrency are bounded,
-  not total PostgreSQL backlog. Active work is never silently evicted. Terminal
-  previews are erased immediately and up to 100 terminal rows older than seven
-  days are cleaned per worker per minute. Preserve the encryption key on replicas.
-- No notification body, ciphertext, webhook, provider error text, or response body
-  is logged. No metrics endpoint, new dependency, Labs activation, release,
-  workflow, Compose, version, deployment, or public HTTP/MCP/config change was added.
-- E2E global setup builds Relay/MCP/Node before tests, but TypeScript does not run
-  Vitest setup. A static compiled Relay import therefore also needs Relay built
-  by E2E `pretypecheck`. Recursive typechecking must work before recursive build
-  on a fresh checkout. Keep build hooks serial to avoid shared protocol writers.
-- Shared checks passed: 125 protocol, 393 MCP, 79 database-free Relay, and 438 Node
-  unit tests (expected 274 Relay database and three Node opt-in skips); 274 Relay
-  integration tests; four mailbox process tests across three e2e files. Lint has
-  three existing unused-suppression warnings. Keep database URLs unset for unit
-  tests and run database test files serially through the canonical integration runner.
-- Protocol export validation and the locally packed MCP artifact smoke also passed
-  this session. No public documentation links changed; memory adds no Markdown links.
+- Mailbox creation, append, and completion insert encrypted notification intent
+  alongside their mutation, recipient event, and audit in the same transaction.
+  Creation/append replays do not add jobs; acceptance/cancellation stay silent.
+- Migration `0011_notification_outbox` adds unique source identity, encrypted
+  previews, due/lease/terminal state, and partial indexes. No historical backfill
+  or recovery of jobs already lost from the old queue is claimed.
+- Workers claim one job with skip-locked row selection, a fresh UUID token, and
+  a 30-second lease. Claim count, bounded retries, one persisted Slack 429 retry,
+  fencing, outcomes, and terminal cleanup are durable database state.
+- Slack is an optional at-least-once hint, never pickup or reply evidence.
+  Workers resolve current webhook configuration, enforce the Slack allowlist,
+  and never log sensitive payloads or provider exception text.
+- Worker memory is bounded, not total PostgreSQL backlog. Active work is not
+  evicted. Terminal previews are erased and old terminal rows are batch-cleaned.
+- TypeScript does not run Vitest global setup. The static production Relay import
+  in E2E restart tests needs the Relay build in E2E `pretypecheck`; package hooks
+  remain serial to avoid concurrent protocol output writers.
+- This run passes 125 protocol, 393 MCP, 79 database-free Relay, and 438 Node unit
+  tests, with expected 274 Relay database and three Node opt-in skips. Integration
+  passes 274 tests; mailbox process proofs pass four tests across three files.
+- Lint retains three existing unused-suppression warnings. Initial locked install
+  reports missing links to not-yet-built Node binaries; later builds and packed
+  artifact smoke pass. No dependency, workflow, infra, version, or public contract
+  change is made this session. Memory adds no Markdown links.
 
 ## Verification commands
 
+All pass this session:
+
 ```bash
+bash "$NIGHTSHIFT_HARNESS/setup-install.sh"
 pnpm install --frozen-lockfile
 pnpm lint
 pnpm -r typecheck
