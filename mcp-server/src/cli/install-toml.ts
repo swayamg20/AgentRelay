@@ -31,6 +31,8 @@ export const CODEX_MUTATING_AGENTRELAY_TOOLS = [
 	"accept_handoff",
 	"send_message",
 	"complete_handoff",
+	"share_handoff",
+	"answer_share",
 ] as const;
 
 export const CODEX_PROMPTED_AGENTRELAY_TOOLS = [

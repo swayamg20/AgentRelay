@@ -9,6 +9,21 @@ import {
 } from "./install.js";
 
 describe("mergeClaudeSettings", () => {
+	it.each(["share_handoff", "answer_share"])(
+		"approval-gates %s without adding an automatic allow",
+		(tool) => {
+			const rule = `mcp__agentrelay__${tool}`;
+			const { next } = mergeClaudeSettings({}, { overwriteMcp: true, overwritePermissions: true });
+			expect(next.permissions?.ask).toContain(rule);
+			expect(next.permissions?.allow).not.toContain(rule);
+			const { next: corrected } = mergeClaudeSettings(
+				{ permissions: { allow: [rule] } },
+				{ overwriteMcp: false, overwritePermissions: true },
+			);
+			expect(corrected.permissions?.ask).toContain(rule);
+			expect(corrected.permissions?.allow).not.toContain(rule);
+		},
+	);
 	it("adds the MCP entry to an empty file", () => {
 		const { next, report } = mergeClaudeSettings(
 			{},

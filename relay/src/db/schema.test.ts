@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentCards, agents, apiKeys, auditLog, handoffs, messages } from "./schema.js";
+import {
+	agentCards,
+	agents,
+	apiKeys,
+	auditLog,
+	handoffs,
+	messages,
+	shareEvents,
+	shareLinks,
+	shareReplies,
+} from "./schema.js";
 import { type TestDb, truncateAll, tryConnect } from "./test-utils.js";
 
 const conn = await tryConnect();
@@ -275,5 +285,51 @@ d("db schema integration", () => {
 		await handle.db.update(agents).set({ role: "platform" }).where(eq(agents.id, id));
 		const [after] = await handle.db.select().from(agents).where(eq(agents.id, id));
 		expect(after?.updatedAt.getTime()).toBeGreaterThan(before?.updatedAt.getTime() ?? 0);
+	});
+
+	it("share tables round-trip separately from two-party handoffs and clear through test isolation", async () => {
+		const senderId = await makeAgent("-share");
+		const [agent] = await handle.db.select().from(agents).where(eq(agents.id, senderId));
+		expect(agent?.companyDomain).toBeNull();
+		const [link] = await handle.db
+			.insert(shareLinks)
+			.values({
+				publicId: "a".repeat(43),
+				senderId,
+				content: "Sender-authored only",
+				idempotencyKey: randomUUID(),
+			})
+			.returning();
+		if (!link) throw new Error("expected share link");
+		const [reply] = await handle.db
+			.insert(shareReplies)
+			.values({
+				linkId: link.id,
+				seq: 1,
+				authorKind: "external",
+				channel: "api",
+				content: "Held unverified reply",
+				idempotencyKey: randomUUID(),
+			})
+			.returning();
+		if (!reply) throw new Error("expected share reply");
+		const [event] = await handle.db
+			.insert(shareEvents)
+			.values({
+				linkId: link.id,
+				replyId: reply.id,
+				kind: "reply.posted",
+				actorKind: "external",
+				metadata: { channel: "api" },
+			})
+			.returning();
+		expect(link.contentDeletedAt).toBeNull();
+		expect(reply.releasedAt).toBeNull();
+		expect(event).toMatchObject({ actorAgentId: null, metadata: { channel: "api" } });
+		expect(typeof event?.id).toBe("bigint");
+		await truncateAll(handle.sql);
+		expect(await handle.db.select().from(shareEvents)).toEqual([]);
+		expect(await handle.db.select().from(shareReplies)).toEqual([]);
+		expect(await handle.db.select().from(shareLinks)).toEqual([]);
 	});
 });

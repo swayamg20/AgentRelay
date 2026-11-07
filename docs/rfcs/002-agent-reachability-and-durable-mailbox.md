@@ -136,3 +136,10 @@ AgentRelay does not currently claim:
 Code and tests remain the source of truth for shipped behavior. If this record differs
 from the implementation, document the discrepancy rather than treating planned or
 historical text as an implemented contract.
+
+## Bounded handoff-link amendment
+
+[RFC 003](003-verified-handoff-links.md) records the owner-approved handoff-link
+exception for public sender-authored content, held unauthenticated replies,
+multi-party link threads, and non-agent audit actors. It does not change ordinary
+mailbox handoffs or any other promise here, and is not a claim of shipped link routes.

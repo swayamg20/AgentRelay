@@ -93,8 +93,8 @@ The relay is a Node/TypeScript Hono service backed by Postgres and Drizzle. It o
   authenticated replay, and a content-free SSE hint.
 - Participant authorization and lifecycle transitions.
 - Audit records for invite, handoff/message, and block mutations.
-- An optional in-process Slack notification adapter with encrypted-at-rest webhook
-  configuration.
+- An optional Slack notification adapter with encrypted-at-rest webhook
+  configuration and transactionally persisted notification intent.
 
 Its Labs routes additionally own:
 
@@ -112,8 +112,10 @@ Its Labs routes additionally own:
 
 The HTTP application is stateless with respect to durable domain rows. One process
 level PostgreSQL listener fans content-free changes out to local SSE streams; missed
-hints are recovered through durable replay. The separate Slack notification queue is
-still process-local and not durable.
+hints are recovered through durable replay. The separate Slack notification outbox
+is committed with mailbox writes. Relay processes claim one due attempt at a time
+using database row locks and expiring, token-fenced leases; retries, outcomes, and
+terminal cleanup are database state rather than a local queue.
 
 ### MCP server
 
@@ -121,9 +123,13 @@ still process-local and not durable.
 
 - Loads the relay URL and developer credential from local config.
 - Validates tool inputs with Zod.
-- Translates seven tools to relay calls.
+- Translates seven mailbox tools to relay calls; source `share_handoff` and
+  `answer_share` additionally scan and preview explicitly selected text before
+  authenticated publication to the separate handoff-link routes.
 - Wraps or marks every teammate-authored mailbox field returned by its inbox and
   thread tools, while preserving the shape of structured payloads and artifacts.
+- Reads owner-released external replies from the separate share inbox, preserving
+  `external_unverified` body/record provenance and explicit release-event cursors.
 - Loads local `trust.yaml` and returns a computed trust overlay.
 
 The MCP process is not persistent when its host is closed. It does not subscribe to
@@ -139,6 +145,24 @@ nor peer content.
 The `agentrelay` binary supports registration, invite/join, client installation, key
 rotation, doctor/fix, audit, block/unblock, trust management, local runtime
 bind/unbind, the foreground watch connector, and starting the stdio MCP server.
+
+The source `share` commands add exact-file preview/confirmation for link creation
+and public sender answers, plus provenance-marked sender-only reply inspection.
+Only `share release <reply-id>` permits external inbox visibility, with an exact
+interactive-terminal confirmation and an idempotent sender-authenticated mutation.
+Release does not verify the author or grant authority. The current checkpoint and
+best-effort content-free share-notification and explicit invite-interest boundaries are in
+[handoff-links.md](handoff-links.md).
+
+An external receiver needs only the capability URL and its existing network tools,
+not an account or AgentRelay installation. GET renders Relay instructions followed
+by sender-only content; JSON/form POST stores unverified replies outside ordinary
+mailbox rows. The sender inspects them privately and explicitly releases individual
+replies before the separate durable `check_inbox` array can expose them. Public
+sender answers remain a separate previewed, secret-scanned publication. Optional
+invite requests measure explicit interest only; they issue no credentials or email.
+Expiry/revocation closes public operations, and the in-process retention sweep
+deletes all content thirty days after expiry while retaining content-free facts.
 
 ### Labs: experimental foreground Node
 
@@ -294,12 +318,14 @@ pending --accept--> accepted --complete--> completed
 ### Invite and join
 
 1. A registered team member uses the admin token to mint an invite for a handle and
-   role.
+   role, optionally supplying an admin-attested company domain.
 2. The relay stores the invite and returns a URL whose fragment contains the signed
-   token.
+   token. The stored domain and admin-attributed mint audit commit together; no
+   domain is inferred from the handle or email.
 3. The joiner submits the token to the relay's redemption endpoint.
 4. The relay locks the invite, validates signature, expiry, hash, and unused state,
-   then creates the agent and initial API key in one transaction.
+   then creates the agent and initial API key in one transaction, copying company
+   provenance from the stored invite rather than any receiver assertion.
 5. The CLI writes local config, adds the inviter to local trust, and installs MCP
    settings for supported clients.
 
@@ -467,7 +493,9 @@ nonclaim, not a mailbox product gate. See the security section of
 
 - If Postgres is unavailable, relay requests fail; there is no alternate durable
   store.
-- If a notification fails, the persisted handoff remains available for polling.
+- If Slack fails, the persisted handoff remains available for polling. Notification
+  intent and the mailbox mutation share one database transaction; a database failure
+  rolls both back instead of returning a durable receipt for only one of them.
 - If an SSE connection drops, the connector reconnects and replays from its local
   cursor. It advances only after policy deliberately skips an event or the runtime
   accepts the content-free attention item; ambiguous enqueue failures may duplicate

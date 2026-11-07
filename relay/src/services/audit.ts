@@ -16,7 +16,7 @@ interface AuditEntryDetails {
 
 export type AuditActor =
 	| { actorKind: "agent"; actorId: string }
-	| { actorKind: "admin" | "system"; actorId: null };
+	| { actorKind: "admin" | "external" | "system"; actorId: null };
 
 export type AuditEntry = AuditEntryDetails &
 	(AuditActor | { actorKind?: undefined; actorId: string });

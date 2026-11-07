@@ -11,6 +11,7 @@ export interface RegisterAgentInput {
 	email?: string;
 	displayName?: string;
 	role: string;
+	companyDomain?: string | null;
 	pepper: string;
 	keyEnvironment: KeyEnvironment;
 	keyLabel?: string;
@@ -41,6 +42,7 @@ export async function registerAgentWithInitialKey(
 			email: input.email ?? input.handle,
 			displayName: input.displayName ?? input.handle,
 			role: input.role,
+			companyDomain: input.companyDomain ?? null,
 		})
 		.returning();
 	if (!agent) throw new RelayError("internal", "Failed to create agent");

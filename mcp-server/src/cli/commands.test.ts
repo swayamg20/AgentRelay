@@ -129,6 +129,48 @@ describe("invite", () => {
 		expect(headers.authorization).toBe("Bearer adm_test");
 	});
 
+	it("sends a normalized explicit company domain for admin attestation", async () => {
+		const httpPost = vi.fn(async () => ({
+			status: 201,
+			json: { url: "https://relay.test/join#x", jti: "invite-1", expires_at: "later" },
+		}));
+		await invite(
+			{
+				handle: "new@acme",
+				role: "frontend",
+				companyDomain: " Sub.Example.COM ",
+				expiresInSeconds: 86_400,
+				adminToken: "adm_test",
+			},
+			{ httpPost, loadConfig: async () => ({ ok: true, config }) },
+		);
+		expect(httpPost.mock.calls[0]?.[1]).toMatchObject({ company_domain: "sub.example.com" });
+	});
+
+	it.each([
+		"",
+		"localhost",
+		"https://example.com",
+		"person@example.com",
+		"*.example.com",
+		"127.0.0.1",
+	])("rejects invalid company domain %j before an HTTP request", async (companyDomain) => {
+		const httpPost = vi.fn();
+		await expect(
+			invite(
+				{
+					handle: "new@acme",
+					role: "frontend",
+					companyDomain,
+					expiresInSeconds: 86_400,
+					adminToken: "adm_test",
+				},
+				{ httpPost, loadConfig: async () => ({ ok: true, config }) },
+			),
+		).rejects.toThrow();
+		expect(httpPost).not.toHaveBeenCalled();
+	});
+
 	it("throws on relay errors using the relay message", async () => {
 		const httpPost = vi.fn(async () => ({
 			status: 403,

@@ -1,5 +1,5 @@
 import { asc, eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
 import {
@@ -9,6 +9,7 @@ import {
 	auditLog,
 	handoffs,
 	mailboxEvents,
+	notificationOutbox,
 } from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
 import { createLogger } from "../logger.js";
@@ -827,14 +828,12 @@ d("a2a JSON-RPC + state machine", () => {
 		},
 	);
 
-	it("retrieves committed content when best-effort notification jobs are lost", async () => {
+	it("retrieves committed content while durable notification jobs remain unprocessed", async () => {
 		const config = loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv);
-		const droppedNotification = vi.fn(() => undefined);
 		app = createServer({
 			config,
 			logger: createLogger(config),
 			db: handle.db,
-			notify: droppedNotification,
 		});
 		const bob = await register("bob@acme");
 		const frank = await register("frank@acme");
@@ -849,15 +848,17 @@ d("a2a JSON-RPC + state machine", () => {
 			message: { parts: [{ type: "text", text: "follow-up without notification" }] },
 		});
 		expect(appended.body.result.sequence_no).toBe(2);
-		expect(droppedNotification.mock.calls).toHaveLength(2);
-		expect(droppedNotification).toHaveBeenNthCalledWith(
-			1,
-			expect.objectContaining({ kind: "notify.handoff.created", threadId: taskId }),
-		);
-		expect(droppedNotification).toHaveBeenNthCalledWith(
-			2,
-			expect.objectContaining({ kind: "notify.message.appended", threadId: taskId }),
-		);
+		const jobs = await handle.db
+			.select()
+			.from(notificationOutbox)
+			.orderBy(asc(notificationOutbox.createdAt));
+		expect(jobs).toHaveLength(2);
+		expect(
+			jobs.map((job) => ({ kind: job.kind, threadId: job.threadId, status: job.status })),
+		).toEqual([
+			{ kind: "notify.handoff.created", threadId: taskId, status: "pending" },
+			{ kind: "notify.message.appended", threadId: taskId, status: "pending" },
+		]);
 		app = createServer({ config, logger: createLogger(config), db: handle.db });
 		const inbox = await rpc(frank.key, "tasks/list", {});
 		expect(inbox.body.result.items.map((item: { thread_id: string }) => item.thread_id)).toContain(

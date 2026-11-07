@@ -10,7 +10,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { createA2AClient } from "./a2a-client.js";
 import { type LoadConfigResult, unavailableMessage } from "./config.js";
 import { logger } from "./logger.js";
+import { createShareClient } from "./share-client.js";
 import { registerTools } from "./tools/index.js";
+import { createShareTools } from "./tools/share.js";
 import { FALLBACK_TRUST, loadTrust } from "./trust.js";
 import { PACKAGE_VERSION } from "./version.js";
 
@@ -48,11 +50,19 @@ export async function startServer(opts: {
 			);
 		}
 		const trust = trustResult.ok ? trustResult.trust : FALLBACK_TRUST;
+		const shareClient = createShareClient({ relayUrl: cfg.relay_url, apiKey: cfg.api_key });
 
 		registerTools(server, {
 			client,
 			trust,
 			senderHandle: cfg.agent_handle,
+			shareInbox: shareClient,
+			shareTools: createShareTools({
+				client: shareClient,
+				relayUrl: cfg.relay_url,
+				senderId: cfg.agent_id,
+				apiKey: cfg.api_key,
+			}),
 			loadTrust: async () => {
 				const current = await loadTrust();
 				if (!current.ok) {

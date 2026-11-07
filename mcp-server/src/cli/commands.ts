@@ -68,6 +68,13 @@ const inviteResponseSchema = z
 		return { url, jti, expiresAt: normalizedExpiresAt };
 	});
 
+const companyDomainSchema = z
+	.string()
+	.trim()
+	.toLowerCase()
+	.max(253)
+	.regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/);
+
 const inviteTokenPayloadSchema = z
 	.object({
 		jti: z.string().min(1),
@@ -135,6 +142,7 @@ export async function register(
 export interface InviteOptions {
 	handle: string;
 	role: string;
+	companyDomain?: string;
 	expiresInSeconds: number;
 	adminToken: string;
 	relayUrl?: string;
@@ -168,6 +176,7 @@ export interface InviteDeps {
 }
 
 export async function invite(opts: InviteOptions, deps: InviteDeps = {}): Promise<InviteResult> {
+	const companyDomain = companyDomainSchema.optional().parse(opts.companyDomain);
 	const post = deps.httpPost ?? defaultHttpPost;
 	const load = deps.loadConfig ?? loadConfig;
 	const cfg = await load();
@@ -191,6 +200,7 @@ export async function invite(opts: InviteOptions, deps: InviteDeps = {}): Promis
 			role: opts.role,
 			inviter_handle: inviterHandle,
 			expires_in_seconds: opts.expiresInSeconds ?? 86_400,
+			...(companyDomain !== undefined ? { company_domain: companyDomain } : {}),
 		},
 		{
 			"content-type": "application/json",

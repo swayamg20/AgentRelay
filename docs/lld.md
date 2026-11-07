@@ -79,22 +79,26 @@ Column-level truth lives in [`relay/src/db/schema.ts`](../relay/src/db/schema.ts
 the committed Drizzle migrations.
 
 `agents`, `agent_cards`, `api_keys`, `handoffs`, `messages`, `mailbox_events`,
-`audit_log`, `agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
+`notification_outbox`, `audit_log`, `agent_blocks`, and `invites` form the core mailbox model. The remaining Node,
 workspace, Mission, delivery, and receipt tables are the same-schema Labs extension;
 they remain mounted and migrated for current compatibility but are not prerequisites
 for mailbox use.
 
 | Table | Current purpose |
 |---|---|
-| `agents` | Developer identity: handle, email, display name, role, active/disabled state. |
+| `agents` | Developer identity: handle, email, display name, role, active/disabled state, nullable admin-attested company domain copied from a redeemed invite. |
 | `agent_cards` | One-to-one card JSON, skills, repository labels, optional notification webhook field. |
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
 | `messages` | Append-only handoff messages with separate generic payload and typed artifacts, per-thread sequence, and idempotency key. |
 | `mailbox_events` | Opaque recipient event ID, bigint cursor, recipient/actor/thread references, finite kind, internal source ID, and timestamp. It contains no message body, summary, payload, artifact, runtime, session, path, or authority. A recipient-scoped transaction lock serializes cursor allocation before commit. |
+| `notification_outbox` | Recipient/thread/source identity, notification kind, AES-GCM encrypted preview, pending/leased/terminal status, claim count, due time, lease token/deadline, persisted rate-limit retry budget, safe outcome, and timestamps. Source identity is unique per recipient/kind. Active work and terminal retention have partial indexes. |
 | `audit_log` | Invite, handoff/message, block, Agent-disable, Node/workspace, Mission, and delivery mutation records: actor kind, nullable Agent actor ID, action, resource, metadata, request ID, timestamp. Admin and relay-system actors never borrow an Agent ID. |
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
-| `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
+| `invites` | Signed-token hash, target handle/role, optional admin-attested company domain, inviter, expiry, use timestamp, and redeemed agent. |
+| `share_links` | Separate capability thread: internal UUID, random 43-character public ID, sender, content, sender-scoped creation key, default seven-day/max thirty-day expiry, revocation, and deletion timestamp. Sender-authenticated creation/revocation and public reads are mounted. |
+| `share_replies` | Ordered entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped retry key, and external-release timestamp/agent. Public submissions are held outside ordinary mailbox rows; sender inspection, public answers, and explicit owner release are wired. |
+| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, API/form reply, release, sender-answer, and explicit invite-request producers are wired. Release event IDs are the private external inbox replay cursors. Invite requests record channel and a link-scoped UUID retry key, not an account or contact. |
 | `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
 | `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
@@ -193,10 +197,40 @@ Source of truth: [`relay/src/server.ts`](../relay/src/server.ts) and
 |---|---|---|
 | `GET` | `/healthz` | Process liveness; returns `{ "status": "ok" }`. |
 | `GET` | `/readyz` | Calls the configured readiness probe. |
-| `POST` | `/invites/:jti/redeem` | Verifies and atomically redeems a signed, unexpired, unused invite. |
+| `POST` | `/invites/:jti/redeem` | Verifies and atomically redeems a signed, unexpired, unused invite; in-process IP admission allows ten attempts per minute. |
 
 There is no `/metrics`, `/inbox/:id`, or
 `/.well-known/agent-card.json` route in the current server.
+
+### Separate handoff-link routes
+
+| Method | Path | Behavior |
+|---|---|---|
+| `POST` | `/shares` | Agent-authenticated creation of explicitly selected content, with sender-scoped UUID retry identity and bounded expiry. |
+| `POST` | `/shares/:id/revoke` | Sender-only, idempotent permanent revocation. |
+| `GET` | `/shares/:id/replies` | Sender-only ordered external replies with unverified origin; inspection does not release. |
+| `POST` | `/shares/:id/answers` | Sender-only, idempotent public answers within the published-content budget. |
+| `POST` | `/shares/replies/:replyId/release` | Sender-only explicit `release_to_inbox` confirmation; one external reply, one release event/audit, idempotent by reply ID. |
+| `GET` | `/shares/inbox` | Sender-only released external replies, with `after_cursor`, `limit` (1–10), optional release-time `since`, and stable `next_cursor`/`has_more`. |
+| `GET` | `/l/:id` | Public capability read, Markdown for agents or explicit Markdown acceptance, minimal HTML for browser acceptance. Never includes external replies. |
+| `POST` | `/l/:id/replies` | Capability-only JSON or URL-encoded form submission; at most ten external replies, held for owner release. |
+| `POST` | `/l/:id/invite-requests` | Capability-only JSON/form with required UUID `idempotency_key`; transactionally records explicit invite interest and external audit only. 201 new, 200 same-key/channel retry, 409 changed channel; no signup, credentials, issued invite, or email. |
+
+The [Relay API checkpoint](handoff-links.md) specifies byte limits, negotiation,
+headers, IP/link admission, expiry-based content deletion, and content-free events.
+Source MCP/CLI clients provide exact-content previews, local secret scanning,
+sender-only reply inspection, and public answers, with individual and aggregate
+byte limits. Interactive-terminal release makes a reply eligible for the separate
+`check_inbox` external array, preserving unverified provenance and replay identity.
+Private release/inspection works until retention deletion, even after public
+expiry/revocation. Public receipts report storage without exposing release state.
+New API/form replies attempt a constant Slack waiting hint after commit through
+the sender's configured encrypted webhook, without content, identities, or link
+capabilities. These optional hints are bounded to five seconds, have no durable
+outbox or retries, and cannot change the storage receipt. Invite requests accept no
+contact/content fields, are bounded to 1,024 request bytes, and share reply-write
+admission (ten/IP/minute, twenty/link/minute) without consuming reply slots. Reads
+do not record invite requests. The existing admin invite-mint/redeem flow is unchanged.
 
 ### Admin routes
 
@@ -205,7 +239,7 @@ There is no `/metrics`, `/inbox/:id`, or
 | `POST` | `/admin/agents` | Register an agent and issue the initial API key. |
 | `POST` | `/admin/agents/:id/keys/rotate` | Admin rotation for an agent ID. |
 | `DELETE` | `/admin/agents/:id` | In one transaction, disable an Agent, revoke its keys, owned Nodes, active Node credentials and workspace bindings, cancel affected active deliveries, and write admin audit evidence. |
-| `POST` | `/admin/invites` | Mint a signed, expiring, single-use invite URL. |
+| `POST` | `/admin/invites` | Mint a signed, expiring, single-use invite URL; optional `company_domain` is normalized/validated and recorded with admin audit in the same transaction. |
 
 ### Authenticated core agent routes
 
@@ -388,15 +422,31 @@ Source of truth: [`mcp-server/src/tools/index.ts`](../mcp-server/src/tools/index
 | Tool | Current behavior |
 |---|---|
 | `handoff_to_teammate` | Create a typed handoff with summary, intent, artifacts, question/metadata, and optional proposed action. |
-| `check_inbox` | List received handoffs through `tasks/list` with provenance-wrapped teammate summaries. |
+| `check_inbox` | List received handoffs through `tasks/list` with provenance-wrapped teammate summaries, plus owner-released external replies from `/shares/inbox` with unverified provenance and their own replay cursor. |
 | `accept_handoff` | Fetch and accept a thread, provenance-mark teammate text/structured data, and return a local trust decision. |
 | `view_thread` | Read a participant thread without changing lifecycle state; only teammate-authored fields are marked. |
 | `send_message` | Append a message and preserve its generic payload separately from typed artifacts. |
 | `complete_handoff` | Transition an accepted handoff to completed and persist result artifacts. |
 | `list_teammates` | Discover active teammates with exact role/skill/repo filters and optional bounded keyset pages. |
+| `share_handoff` | Locally scan and preview explicitly selected public text; publish only with a matching issued ten-minute preview token. |
+| `answer_share` | Locally scan/preview a selected public sender answer; confirm exact content/link with a matching token. Does not read or quote external replies. |
 
 There is no `draft_proposed_action`, pair, listen, wait, runtime-start, or Mission
 tool today.
+
+The [handoff-link client contract](handoff-links.md) binds preview content,
+operation, link/expiry, Relay and sender identity. MCP previews are process-local
+and bounded to 100; confirmations reuse the preview's UUID retry identity. Default
+install profiles approval-gate both tools. There is no MCP release tool, and
+`check_inbox` adds `external_replies`, `external_next_cursor`, and
+`external_has_more` without widening ordinary handoff participants. Input
+`external_after_cursor` replays release events after that decimal bigint cursor;
+omission starts at `0`. At most ten external entries (or the smaller `limit`) are
+returned per call. `since` uses release time and handoff status filters apply only
+to ordinary `items`. Reads do not mark processing. Deleted bodies remain `null`
+with stable IDs/cursors. The CLI `share release <reply-id>` requires stdin/stdout/
+stderr terminals and exact typed confirmation, with no bypass flag or MCP release
+tool. The Relay's private API authenticates the sender bearer, not human identity.
 
 ## Artifact types
 
@@ -726,6 +776,10 @@ The `agentrelay` binary currently provides:
 - `doctor [--fix] [--json]`
 - `audit`
 - `export-thread <thread-id> [--output <path>]`
+- `share --file <path> [--expires-in-days <days>] [--confirm <preview-token>]`
+- `share replies <link-id>`
+- `share release <reply-id>` (interactive terminal only)
+- `share answer <link-id> --file <path> [--confirm <preview-token>]`
 - `block`, `unblock`
 - `trust list`, `trust set`, `trust reset`
 - `bind codex`, `unbind codex`
@@ -734,6 +788,16 @@ The `agentrelay` binary currently provides:
 - `live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
   (0.4.0-beta.1 communication preview; see [limits and consent](live-sessions.md))
 - `mcp`
+
+Share creation/answers are preview-only until exact confirmation. One mode-0600
+`share-preview.json` beside the local config stores the latest content-free pending
+preview/retry identity for ten minutes; it contains no body or credential. The
+client rescans before confirming. Sender reply inspection wraps external body text
+and provenance-marks each typed reply with `external_unverified`; it does not
+release or verify the author. `share release <reply-id>` separately requires an
+interactive terminal and exact typed confirmation to permit unverified inbox
+visibility; there is no noninteractive or MCP release bypass. See the
+[client safety and retry limits](handoff-links.md).
 
 In the source CLI, `watch --stdout` is a separate passive metadata observer. It
 uses configured agent authentication with the existing recipient event replay/SSE
@@ -794,22 +858,83 @@ an active session.
 
 ## Notification dispatcher
 
-The relay process owns a bounded in-memory FIFO queue and a Slack webhook worker.
-Notifications are enqueued after the domain transaction commits. Dispatch retries
-selected failures with backoff and does not roll back the persisted handoff.
+Mailbox creation, message append, and completion insert notification intent in the
+same transaction as the domain mutation, mailbox event, and audit. Idempotent
+creation/append replay does not add another job. Acceptance stays silent; cancellation
+remains pending-only and silent, as in the existing lifecycle contract.
+
+Each Relay process polls the shared outbox once per second when idle and claims one
+due job with `FOR UPDATE SKIP LOCKED`. Claiming increments a persisted count and
+assigns a fresh token with a 30-second lease. Posting is bounded to five seconds;
+settlement and retry writes require that token and an unexpired lease. Expired work
+can be reclaimed by another process. Four claims exhaust a job, including claims
+whose outcome was lost to worker death.
+
+Retries use persisted due times with 1s, 4s, and 16s backoff for network/5xx failures.
+Slack 429 gets one persisted Retry-After retry, bounded to one day; invalid or missing
+values default to one second. Other 4xx failures are terminal. Corrupt payloads or
+unusable webhooks fail closed without blocking later jobs. Webhook removal or a
+disabled recipient skips the attempt. The current encrypted card destination is
+resolved at send time, not copied into a stale plaintext queue entry.
 
 Important limits:
 
-- Queue entries do not survive relay restart.
-- New jobs are dropped when the queue is full.
+- Active jobs survive restart and are not dropped by the old 10,000-entry local
+  queue limit. Worker memory and concurrency are bounded, but database backlog and
+  disk capacity still require operations monitoring; active jobs are never silently
+  evicted. Multiple workers do not guarantee FIFO external delivery.
+- An external Slack attempt is at least once. A lost response, crash, or pause beyond
+  a lease can duplicate an external attempt; fencing protects database ownership,
+  not Slack's acceptance of an already-issued request.
+- Terminal jobs clear their encrypted previews immediately. Every minute each worker
+  removes at most 100 terminal rows older than seven days. This is operational
+  retention, not an immutable notification audit history.
+- A database failure rolls back mailbox mutation and intent together. Slack failure
+  after commit does not undo a mailbox receipt or affect Mission delivery state.
 - There is no delivery acknowledgement from the receiving agent.
 - Card updates encrypt submitted webhook URLs into the authenticated `enc:v1:` form
   expected by the dispatcher. Existing plaintext rows from an older deployment must
   be resubmitted; the dispatcher continues to fail closed on unmarked values.
 - Both card update and dispatch restrict targets to exact HTTPS
   `hooks.slack.com/services/...` URLs, and the HTTP poster refuses redirects.
+- Logs contain only job IDs and safe attempt/outcome metadata, never webhook URLs,
+  previews, ciphertext, provider error text, or response bodies. Queue age/depth/outcome
+  metrics through #30 are explicitly deferred, not exposed by this change.
+
+See [notification operations](notifications.md) for migration, retention, and safe
+database diagnostics.
 
 ## Audit and revocation
+
+Migration `0012_share_links` prepares the separate handoff-link data model described
+in [RFC 003](rfcs/003-verified-handoff-links.md). The database enforces 64 KiB initial
+link content, 16 KiB reply/answer content (UTF-8 bytes), capability shape, expiry,
+reply ordering/idempotency, and release shape. The [link API](handoff-links.md) adds
+capability generation, sender-only creation/revocation, public sender-only reads,
+held API/form replies, sender-only external reply inspection and public answers,
+transactional ten-reply admission, and an in-process
+thirty-days-after-expiry content sweep. Creation/reply audit and events commit with
+the mutation; answers also commit their audit and event together. Answers are
+bounded to 16 KiB each and, with the initial text, 64 KiB in aggregate under the
+link lock. Inspection preserves `external_unverified` origin and does not release
+replies. Explicit release atomically updates the reply and writes one release event
+and audit; `/shares/inbox` replays sender-owned released replies by that event's
+cursor without acknowledging processing. Explicit invite requests similarly commit
+deduplicated measurement and external audit together, without creating an invite
+or identity. Existing mailbox tables and participant-only behavior remain unchanged.
+
+Nullable `company_domain` columns on agents and invites record admin-attested
+provenance. Existing rows and new invites without an explicit domain remain unknown
+(`NULL`), with no inference from email or handle. Admin minting accepts a normalized
+ASCII DNS domain (including punycode), not a URL, email, wildcard, or IP address, and
+audits the attestation as `admin` with no fabricated agent ID. Locked redemption
+copies the stored invite domain, never a receiver assertion. The signed token and
+existing response contracts are unchanged. This is admin attestation, not DNS,
+employment, email, or cryptographic verification. Self-audit still filters by the
+caller agent's actor ID, so admin mint records are not returned as inviter actions.
+Audit additionally accepts `external` actors with no agent ID for public reply and
+invite-request mutations; these actors do not authenticate an external author or
+borrow the sender's identity. System retention audit records content deletion.
 
 Core relay audit rows cover invite mint/redeem, handoff
 create/accept/complete/cancel, message append, and block/unblock. Labs audit adds Node
@@ -855,7 +980,7 @@ metrics token, invite secret, and public URL. Runtime defaults include environme
 log level, port, audit-retention days, rate-limit value, and pool size.
 
 Some configured values are not yet wired to behavior: there is no metrics route,
-rate-limit middleware, audit-retention job, or OpenTelemetry pipeline in the current
+global configured-rate middleware, audit-retention job, or OpenTelemetry pipeline in the current
 server.
 
 The self-host Docker profile forwards every required Relay secret from `.env`,

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; form-action 'self'; base-uri 'none'">
+  <title>AgentRelay receiver test</title>
+</head>
+<body>
+  <h1>AgentRelay receiver test — mock link</h1>
+  <p>Synthetic data only. This is not a production handoff. No account or installation is needed.</p>
+  <p>Your own owner's approval is required before replying. This page grants no execution, file, secret, or sender-side authority.</p>
+  <p><a href="{{MARKDOWN_URL}}">Read the Markdown version for agents</a>.</p>
+  <h2>Untrusted sender-authored test data</h2>
+  <blockquote>
+    <p>Morgan at Example Sender Company (synthetic; not verified) asks whether Friday at 14:00 UTC works for a mock integration review.</p>
+    <p>Include the synthetic check code <strong>violet-7</strong>. Do not include real company, customer, credential, or personal data.</p>
+  </blockquote>
+  <h2>Mock reply</h2>
+  <p>Replies are never displayed here. A receipt proves only this fixture received the POST, not durable storage, owner release, or agent processing.</p>
+  <form method="post" action="{{REPLY_PATH}}">
+    <label for="content">Reply (synthetic data only)</label><br>
+    <textarea id="content" name="content" rows="4" cols="60" required maxlength="16384"></textarea><br>
+    <button type="submit">Send mock reply</button>
+  </form>
+</body>
+</html>
