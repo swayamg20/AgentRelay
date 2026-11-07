@@ -34,6 +34,23 @@ export const shareAnswerSchema = z
 	})
 	.strict();
 
+export const shareReleaseSchema = z
+	.object({ confirmation: z.literal("release_to_inbox") })
+	.strict();
+
+export const shareInboxSchema = z
+	.object({
+		after_cursor: z
+			.string()
+			.regex(/^(0|[1-9][0-9]{0,18})$/)
+			.pipe(z.string().refine((value) => BigInt(value) <= 9223372036854775807n))
+			.default("0"),
+		limit: z.coerce.number().int().min(1).max(10).default(10),
+		since: z.string().datetime().optional(),
+	})
+	.strict();
+
 export type CreateShareInput = z.infer<typeof createShareSchema>;
 export type ShareReplyInput = z.infer<typeof shareReplySchema>;
 export type ShareAnswerInput = z.infer<typeof shareAnswerSchema>;
+export type ShareInboxInput = z.infer<typeof shareInboxSchema>;

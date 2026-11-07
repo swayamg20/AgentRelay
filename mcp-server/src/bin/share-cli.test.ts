@@ -218,6 +218,20 @@ describeIfBuilt("share CLI and MCP processes", () => {
 		expect(requests).toHaveLength(2);
 	});
 
+	it("refuses piped release and rejects all confirmation bypass flags without a request", async () => {
+		const replyId = randomUUID();
+		const result = await run(["release", replyId]);
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("requires an interactive terminal");
+		for (const flags of [["--yes"], ["--confirm", randomUUID()], ["--file", contentPath]]) {
+			const rejected = await run(["release", replyId, ...flags]);
+			expect(rejected.status).toBe(1);
+			expect(rejected.stdout).toBe("");
+		}
+		expect(requests).toEqual([]);
+	});
+
 	it("rejects changed content and failed scans with empty stdout and no publication", async () => {
 		const preview = JSON.parse((await run(["--file", contentPath])).stdout);
 		await writeFile(contentPath, "changed content");

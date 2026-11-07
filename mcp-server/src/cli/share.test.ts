@@ -16,6 +16,7 @@ describe("share CLI commands", () => {
 		create: ReturnType<typeof vi.fn>;
 		answer: ReturnType<typeof vi.fn>;
 		replies: ReturnType<typeof vi.fn>;
+		release: ReturnType<typeof vi.fn>;
 	};
 	let config: {
 		relay_url: string;
@@ -34,6 +35,7 @@ describe("share CLI commands", () => {
 			create: vi.fn().mockResolvedValue({ link_id: LINK }),
 			answer: vi.fn().mockResolvedValue({ link_id: LINK }),
 			replies: vi.fn(),
+			release: vi.fn(),
 		};
 		config = {
 			relay_url: "https://relay.example",
@@ -246,5 +248,63 @@ describe("share CLI commands", () => {
 				},
 			),
 		).rejects.toThrow("valid local Relay configuration");
+	});
+
+	it("refuses noninteractive release before configuration, prompting, or network access", async () => {
+		const load = vi.fn();
+		const confirm = vi.fn();
+		await expect(
+			shareCommand(
+				{ action: "release", linkId: randomUUID() },
+				{
+					client,
+					loadConfig: load,
+					terminal: { isInteractive: false, confirmRelease: confirm },
+				},
+			),
+		).rejects.toThrow("interactive terminal");
+		expect(load).not.toHaveBeenCalled();
+		expect(confirm).not.toHaveBeenCalled();
+		expect(client.release).not.toHaveBeenCalled();
+	});
+
+	it("requires a fresh exact terminal confirmation for each release, including retries", async () => {
+		const replyId = randomUUID();
+		const confirm = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+		client.release.mockResolvedValue({
+			reply_id: replyId,
+			origin: "external_unverified",
+			replayed: false,
+		});
+		const deps = {
+			client,
+			loadConfig: async () => ({ ok: true as const, config, path: join(directory, "config.json") }),
+			terminal: { isInteractive: true, confirmRelease: confirm },
+		};
+		const input = { action: "release", linkId: replyId };
+		expect(await shareCommand(input, deps)).toEqual({ state: "cancelled", reply_id: replyId });
+		expect(client.release).not.toHaveBeenCalled();
+		client.release.mockRejectedValueOnce(new Error("ambiguous response"));
+		await expect(shareCommand(input, deps)).rejects.toThrow("ambiguous response");
+		expect(await shareCommand(input, deps)).toMatchObject({
+			state: "released_to_inbox",
+			reply_id: replyId,
+		});
+		expect(confirm.mock.calls).toEqual([[replyId], [replyId], [replyId]]);
+		expect(client.release.mock.calls).toEqual([[replyId], [replyId]]);
+		expect(client.replies).not.toHaveBeenCalled();
+		expect(client.create).not.toHaveBeenCalled();
+		expect(client.answer).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ action: "release", linkId: randomUUID(), confirm: randomUUID() },
+		{ action: "release", linkId: randomUUID(), file: "file" },
+		{ action: "release", linkId: randomUUID(), expiresInDays: 7 },
+		{ action: "release", linkId: LINK },
+		{ action: "release", linkId: randomUUID(), yes: true },
+	])("rejects release publication flags and bypass attempts", async (input) => {
+		await expect(run(input)).rejects.toThrow("share: use");
+		expect(client.release).not.toHaveBeenCalled();
 	});
 });

@@ -50,13 +50,15 @@ export async function startServer(opts: {
 			);
 		}
 		const trust = trustResult.ok ? trustResult.trust : FALLBACK_TRUST;
+		const shareClient = createShareClient({ relayUrl: cfg.relay_url, apiKey: cfg.api_key });
 
 		registerTools(server, {
 			client,
 			trust,
 			senderHandle: cfg.agent_handle,
+			shareInbox: shareClient,
 			shareTools: createShareTools({
-				client: createShareClient({ relayUrl: cfg.relay_url, apiKey: cfg.api_key }),
+				client: shareClient,
 				relayUrl: cfg.relay_url,
 				senderId: cfg.agent_id,
 				apiKey: cfg.api_key,

@@ -24,6 +24,86 @@ function fixture() {
 }
 
 describe("share HTTP client", () => {
+	it.each(["invalid", "-1", "01", "9223372036854775808", "9".repeat(100)])(
+		"rejects invalid inbox cursors without requests or raw validation diagnostics",
+		async (after_cursor) => {
+			const { client, httpFetch } = fixture();
+			await expect(client.inbox({ after_cursor })).rejects.toThrow("invalid local inbox query");
+			expect(httpFetch).not.toHaveBeenCalled();
+		},
+	);
+	it("releases the same reply ID with an explicit confirmation on transport retry", async () => {
+		const { client, httpFetch } = fixture();
+		const replyId = randomUUID();
+		const receipt = {
+			link_id: LINK,
+			reply_id: replyId,
+			released_at: "2026-11-07T00:00:00.000Z",
+			origin: "external_unverified",
+			replayed: true,
+		};
+		httpFetch
+			.mockRejectedValueOnce(new Error("ambiguous"))
+			.mockResolvedValueOnce(Response.json(receipt));
+		expect(await client.release(replyId)).toEqual(receipt);
+		expect(httpFetch.mock.calls.map((call) => [call[0], call[1]?.body])).toEqual([
+			[
+				`https://relay.example/shares/replies/${replyId}/release`,
+				'{"confirmation":"release_to_inbox"}',
+			],
+			[
+				`https://relay.example/shares/replies/${replyId}/release`,
+				'{"confirmation":"release_to_inbox"}',
+			],
+		]);
+		httpFetch.mockResolvedValueOnce(Response.json({ ...receipt, reply_id: randomUUID() }));
+		await expect(client.release(replyId)).rejects.toThrow("invalid Relay release receipt");
+	});
+
+	it("reads a bounded released inbox and validates checkpoint order and content", async () => {
+		const { client, httpFetch } = fixture();
+		const reply = {
+			cursor: "12",
+			link_id: LINK,
+			reply_id: randomUUID(),
+			sequence: 1,
+			channel: "form",
+			content: "external text",
+			created_at: "2026-11-07T00:00:00.000Z",
+			released_at: "2026-11-07T01:00:00.000Z",
+			origin: "external_unverified",
+		};
+		const page = { replies: [reply], next_cursor: "12", has_more: false };
+		httpFetch.mockResolvedValueOnce(Response.json(page));
+		expect(await client.inbox({ after_cursor: "5", limit: 1 })).toEqual(page);
+		expect(httpFetch.mock.calls[0]?.[0]).toBe(
+			"https://relay.example/shares/inbox?after_cursor=5&limit=1",
+		);
+		expect(httpFetch.mock.calls[0]?.[1]?.method).toBe("GET");
+		for (const invalid of [
+			{ ...page, next_cursor: "13" },
+			{ ...page, replies: [{ ...reply, cursor: "5" }] },
+			{ ...page, replies: [{ ...reply, released_at: null }] },
+			{ ...page, replies: [{ ...reply, origin: "trusted" }] },
+			{ ...page, replies: [reply, reply] },
+			{ replies: [], next_cursor: "5", has_more: true },
+		]) {
+			httpFetch.mockResolvedValueOnce(Response.json(invalid));
+			await expect(client.inbox({ after_cursor: "5", limit: 1 })).rejects.toThrow("invalid Relay");
+		}
+		httpFetch.mockResolvedValueOnce(
+			Response.json({ replies: [{ ...reply, content: null }], next_cursor: "12", has_more: false }),
+		);
+		expect((await client.inbox({})).replies[0]?.content).toBeNull();
+		httpFetch.mockResolvedValueOnce(
+			Response.json({ replies: [], next_cursor: "12", has_more: false }),
+		);
+		expect(await client.inbox({ after_cursor: "12" })).toEqual({
+			replies: [],
+			next_cursor: "12",
+			has_more: false,
+		});
+	});
 	it("creates through the authenticated route, accepting the Relay's separate canonical public URL", async () => {
 		const { client, httpFetch } = fixture();
 		httpFetch.mockResolvedValue(Response.json(created, { status: 201 }));

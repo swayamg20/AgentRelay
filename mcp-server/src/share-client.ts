@@ -35,27 +35,59 @@ const answerReceipt = z.object({
 	replayed: z.boolean(),
 });
 
+const externalReply = z.object({
+	reply_id: z.string().uuid(),
+	sequence: z.number().int().positive(),
+	channel: z.enum(["api", "form"]),
+	content: z
+		.string()
+		.refine(
+			(content) => Buffer.byteLength(content, "utf8") <= 16 * 1024 && !content.includes("\u0000"),
+		)
+		.nullable(),
+	created_at: z.string().datetime(),
+	released_at: z.string().datetime().nullable(),
+	origin: z.literal("external_unverified"),
+});
+
 const repliesReceipt = z.object({
 	...lifecycle,
+	replies: z.array(externalReply).max(10),
+});
+
+const releaseReceipt = z.object({
+	link_id: shareLinkId,
+	reply_id: z.string().uuid(),
+	released_at: z.string().datetime(),
+	origin: z.literal("external_unverified"),
+	replayed: z.boolean(),
+});
+
+export const shareCursor = z
+	.string()
+	.regex(/^(0|[1-9][0-9]{0,18})$/)
+	.pipe(z.string().refine((value) => BigInt(value) <= 9223372036854775807n));
+
+const inboxInput = z
+	.object({
+		after_cursor: shareCursor.default("0"),
+		limit: z.number().int().min(1).max(10).default(10),
+		since: z.string().datetime().optional(),
+	})
+	.strict();
+
+export const shareInboxReceipt = z.object({
 	replies: z
 		.array(
-			z.object({
-				reply_id: z.string().uuid(),
-				sequence: z.number().int().positive(),
-				channel: z.enum(["api", "form"]),
-				content: z
-					.string()
-					.refine(
-						(content) =>
-							Buffer.byteLength(content, "utf8") <= 16 * 1024 && !content.includes("\u0000"),
-					)
-					.nullable(),
-				created_at: z.string().datetime(),
-				released_at: z.string().datetime().nullable(),
-				origin: z.literal("external_unverified"),
+			externalReply.extend({
+				cursor: shareCursor,
+				link_id: shareLinkId,
+				released_at: z.string().datetime(),
 			}),
 		)
 		.max(10),
+	next_cursor: shareCursor,
+	has_more: z.boolean(),
 });
 
 export interface ShareClient {
@@ -70,6 +102,8 @@ export interface ShareClient {
 		idempotencyKey: string,
 	): Promise<z.infer<typeof answerReceipt>>;
 	replies(linkId: string): Promise<z.infer<typeof repliesReceipt>>;
+	release(replyId: string): Promise<z.infer<typeof releaseReceipt>>;
+	inbox(input: z.input<typeof inboxInput>): Promise<z.infer<typeof shareInboxReceipt>>;
 }
 
 export function createShareClient(options: {
@@ -106,6 +140,7 @@ export function createShareClient(options: {
 		path: string,
 		body: unknown,
 		schema: z.ZodType<Receipt>,
+		retryHint = "retry with the same preview token.",
 	): Promise<Receipt> {
 		const serialized = body === undefined ? undefined : JSON.stringify(body);
 		for (let attempt = 0; attempt < 3; attempt++) {
@@ -126,7 +161,7 @@ export function createShareClient(options: {
 					await sleep(100 * 4 ** attempt);
 					continue;
 				}
-				throw new Error("share: Relay request failed; retry with the same preview token.");
+				throw new Error(`share: Relay request failed; ${retryHint}`);
 			}
 			if (response.status >= 500 && attempt < 2) {
 				await response.body?.cancel().catch(() => undefined);
@@ -163,10 +198,9 @@ export function createShareClient(options: {
 					JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))),
 				);
 			} catch {
-				throw new Error("share: invalid Relay receipt; retry with the same preview token.");
+				throw new Error(`share: invalid Relay receipt; ${retryHint}`);
 			}
-			if (!parsed.success)
-				throw new Error("share: invalid Relay receipt; retry with the same preview token.");
+			if (!parsed.success) throw new Error(`share: invalid Relay receipt; ${retryHint}`);
 			return parsed.data;
 		}
 		throw new Error("share: Relay request failed.");
@@ -197,6 +231,48 @@ export function createShareClient(options: {
 			shareLinkId.parse(linkId);
 			const receipt = await request(`/shares/${linkId}/replies`, undefined, repliesReceipt);
 			if (receipt.link_id !== linkId) throw new Error("share: invalid Relay replies receipt.");
+			return receipt;
+		},
+		release: async (replyId) => {
+			if (!z.string().uuid().safeParse(replyId).success) {
+				throw new Error("share: invalid reply ID.");
+			}
+			const receipt = await request(
+				`/shares/replies/${replyId}/release`,
+				{ confirmation: "release_to_inbox" },
+				releaseReceipt,
+				"retry release of the same reply ID.",
+			);
+			if (receipt.reply_id !== replyId) throw new Error("share: invalid Relay release receipt.");
+			return receipt;
+		},
+		inbox: async (input) => {
+			const validated = inboxInput.safeParse(input);
+			if (!validated.success) throw new Error("share: invalid local inbox query.");
+			const parsed = validated.data;
+			const query = new URLSearchParams({
+				after_cursor: parsed.after_cursor,
+				limit: String(parsed.limit),
+			});
+			if (parsed.since) query.set("since", parsed.since);
+			const receipt = await request(
+				`/shares/inbox?${query}`,
+				undefined,
+				shareInboxReceipt,
+				"retry the same inbox read.",
+			);
+			let previous = BigInt(parsed.after_cursor);
+			for (const reply of receipt.replies) {
+				if (BigInt(reply.cursor) <= previous) throw new Error("share: invalid Relay inbox order.");
+				previous = BigInt(reply.cursor);
+			}
+			if (
+				receipt.next_cursor !== (receipt.replies.at(-1)?.cursor ?? parsed.after_cursor) ||
+				receipt.replies.length > parsed.limit ||
+				(receipt.has_more && receipt.replies.length !== parsed.limit)
+			) {
+				throw new Error("share: invalid Relay inbox cursor.");
+			}
 			return receipt;
 		},
 	};

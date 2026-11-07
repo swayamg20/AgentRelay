@@ -68,8 +68,9 @@ separate, explicitly consented read/reply loop.
 
 The current source adds `share_handoff` and `answer_share`. These are not a new
 published package release. They require the matching Relay handoff-link routes;
-owner release, released-reply inbox delivery, and Slack waiting hints are not yet
-wired. The manual receiver kit is ready, but real-client compatibility trials
+interactive-terminal owner release and released-reply inbox replay are wired in
+source. Slack waiting hints and invite requests are not yet wired. The manual
+receiver kit is ready, but real-client compatibility trials
 have not been run. See the
 [handoff-link checkpoint](../docs/handoff-links.md) and
 [receiver test kit](../docs/handoff-links-receiver-test.md).
@@ -94,6 +95,7 @@ Source CLI equivalents:
 agentrelay share --file selected-handoff.md
 agentrelay share --file selected-handoff.md --confirm <preview-token>
 agentrelay share replies <link-id>
+agentrelay share release <reply-id>
 agentrelay share answer <link-id> --file selected-answer.md
 agentrelay share answer <link-id> --file selected-answer.md --confirm <preview-token>
 ```
@@ -115,7 +117,21 @@ most 16 KiB, sharing the initial content's 64 KiB published budget (UTF-8 bytes)
 `share replies` returns sender-only external replies with preserved typed fields,
 origin `external_unverified`, untrusted/data-only markers, and wrapped body text.
 Inspection neither verifies the author nor releases a reply to `check_inbox`.
-There is no MCP release tool or release CLI at this checkpoint.
+`share release <reply-id>` requires interactive stdin, stdout, and stderr and the
+exact typed confirmation `release <reply-id>`. Wrong input or EOF cancels; there
+is no pipe, `--yes`, preview-token, or MCP release bypass. Each invocation prompts
+again, including a retry. The private API uses the sender's bearer; the local CLI
+terminal check is not Relay verification of human identity. Keep that bearer local.
+
+`check_inbox` adds a separate `external_replies` array containing only released
+replies, with unverified/untrusted/data-only body and record markers. Release
+permits visibility only, never trust, acceptance, or execution authority. Pass
+`external_next_cursor` as `external_after_cursor` to replay later releases; while
+`external_has_more` is true, request another page. The external page holds up to
+ten entries, or the smaller `limit`; ordinary status filters do not apply, and
+`since` uses release time. Reads do not acknowledge processing; without a cursor,
+the same stable reply IDs can reappear. After retention deletion, bodies are null
+but cursors remain replayable. Shares do not enter the ordinary mailbox watch feed.
 
 ### Roster filters and pagination
 

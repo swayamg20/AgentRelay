@@ -13,7 +13,7 @@ import {
 } from "../share-publication.js";
 
 export function createShareTools(deps: {
-	client: ShareClient;
+	client: Pick<ShareClient, "create" | "answer">;
 	relayUrl: string;
 	senderId: string;
 	apiKey: string;

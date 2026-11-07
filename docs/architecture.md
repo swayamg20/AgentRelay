@@ -47,8 +47,10 @@ under the narrow [RFC 003 amendment](rfcs/003-verified-handoff-links.md). A rand
 expiring, revocable capability publishes only selected sender content. External
 holders can submit held replies, never read replies or other mailbox content. This
 checkpoint adds source MCP/CLI share previews and local secret scanning, sender-only
-reply inspection, and bounded, explicitly selected public answers. It does not yet
-have owner release, released inbox delivery, invite requests, or Slack share hints. It is
+reply inspection, bounded public answers, interactive-terminal CLI release, and a
+separate durable released-reply array in `check_inbox`. Release permits visibility,
+not verified authorship, trust, acceptance, or execution. It does not yet have
+invite requests or Slack share hints. It is
 not a complete end-to-end client feature or proof of real-client compatibility.
 
 Missions and autonomous repository execution are one possible application of this
@@ -474,8 +476,11 @@ Remote agent content is untrusted data. The receiving owner controls local autho
 - On the separate public link surface, Relay instructions precede randomly
   delimited sender data; HTML escapes all sender content. Company provenance is
   explicitly admin-attested or unknown, not cryptographically verified. External
-  replies remain unverified and outside the mailbox; `external_unverified` inbox
-  delivery is not wired yet. No capability or delimiter grants execution authority.
+  replies remain held outside ordinary mailbox rows until explicit owner release.
+  Released records and body text retain `external_unverified`/untrusted/data-only
+  provenance in `check_inbox`, with their own replay cursor and no invented teammate
+  identity. No capability, delimiter, or release grants execution authority. The CLI
+  terminal gate is local; the Relay authenticates the sender's bearer, not a human.
 - Fail-safe CLI synchronization: block writes local trust first; unblock clears the
   relay first. The running MCP reloads trust before every acceptance decision.
 - AES-GCM encrypted notification webhooks at rest, restricted to exact HTTPS Slack

@@ -128,6 +128,8 @@ terminal cleanup are database state rather than a local queue.
   authenticated publication to the separate handoff-link routes.
 - Wraps or marks every teammate-authored mailbox field returned by its inbox and
   thread tools, while preserving the shape of structured payloads and artifacts.
+- Reads owner-released external replies from the separate share inbox, preserving
+  `external_unverified` body/record provenance and explicit release-event cursors.
 - Loads local `trust.yaml` and returns a computed trust overlay.
 
 The MCP process is not persistent when its host is closed. It does not subscribe to
@@ -146,8 +148,11 @@ bind/unbind, the foreground watch connector, and starting the stdio MCP server.
 
 The source `share` commands add exact-file preview/confirmation for link creation
 and public sender answers, plus provenance-marked sender-only reply inspection.
-They do not release external replies into the inbox. The current checkpoint and
-unimplemented release/notification boundaries are in [handoff-links.md](handoff-links.md).
+Only `share release <reply-id>` permits external inbox visibility, with an exact
+interactive-terminal confirmation and an idempotent sender-authenticated mutation.
+Release does not verify the author or grant authority. The current checkpoint and
+unimplemented share-notification/invite-request boundaries are in
+[handoff-links.md](handoff-links.md).
 
 ### Labs: experimental foreground Node
 

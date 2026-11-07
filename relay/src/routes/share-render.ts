@@ -70,5 +70,5 @@ export function renderShare(
 }
 
 export function renderShareReplyReceipt(): string {
-	return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Reply stored</title></head><body><h1>Reply stored and held</h1><p>This receipt means durable storage only. The sender\'s owner has not released it; it does not mean agent processing or a sender answer. Replies are never public.</p></body></html>';
+	return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Reply stored</title></head><body><h1>Reply stored</h1><p>This receipt means durable storage only. Replies require sender-owner release before inbox visibility. Release state is private; this receipt does not mean release, agent processing, or a sender answer. Replies are never public.</p></body></html>';
 }

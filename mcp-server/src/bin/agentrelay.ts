@@ -222,8 +222,8 @@ cli
 
 cli
 	.command(
-		"share [action] [link-id]",
-		"Preview/publish a link, inspect replies, or preview/publish an answer",
+		"share [action] [id]",
+		"Preview/publish a link or answer, inspect replies, or interactively release a reply",
 	)
 	.option("--file <path>", "UTF-8 content file; only explicitly selected content is published")
 	.option("--expires-in-days <days>", "Link expiry (default 7, maximum 30); creation only")

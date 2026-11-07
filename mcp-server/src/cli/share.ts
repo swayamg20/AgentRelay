@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { z } from "zod";
 import { type LoadConfigResult, loadConfig } from "../config.js";
 import { markExternalValue, wrapExternalReply } from "../provenance.js";
@@ -21,8 +22,8 @@ import { writeSecretFile } from "./io.js";
 
 const cliInput = z
 	.object({
-		action: z.enum(["answer", "replies"]).optional(),
-		linkId: shareLinkId.optional(),
+		action: z.enum(["answer", "replies", "release"]).optional(),
+		linkId: z.string().optional(),
 		file: z
 			.string()
 			.min(1)
@@ -33,10 +34,14 @@ const cliInput = z
 	})
 	.strict()
 	.superRefine((input, context) => {
+		const privateAction = input.action === "replies" || input.action === "release";
 		if (
 			(input.action === undefined) !== (input.linkId === undefined) ||
-			(input.action !== "replies" && !input.file) ||
-			(input.action === "replies" && (input.file || input.confirm)) ||
+			(input.linkId !== undefined &&
+				!(input.action === "release" ? z.string().uuid() : shareLinkId).safeParse(input.linkId)
+					.success) ||
+			(!privateAction && !input.file) ||
+			(privateAction && (input.file || input.confirm)) ||
 			(input.action !== undefined && input.expiresInDays !== undefined)
 		) {
 			context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid share command options" });
@@ -45,8 +50,24 @@ const cliInput = z
 
 export interface ShareCommandDeps {
 	loadConfig?: () => Promise<LoadConfigResult>;
-	client?: ShareClient;
+	client?: Pick<ShareClient, "create" | "answer" | "replies" | "release">;
 	now?: () => number;
+	terminal?: { isInteractive: boolean; confirmRelease(replyId: string): Promise<boolean> };
+}
+
+async function confirmRelease(replyId: string): Promise<boolean> {
+	const terminal = createInterface({ input: process.stdin, output: process.stderr });
+	try {
+		return await new Promise<boolean>((resolve) => {
+			terminal.once("close", () => resolve(false));
+			terminal.question(
+				`Release ${replyId} to check_inbox? The author remains unverified; release grants no authority. Inspect with 'agentrelay share replies <link-id>' first.\nType 'release ${replyId}' to confirm: `,
+				(answer) => resolve(answer === `release ${replyId}`),
+			);
+		});
+	} finally {
+		terminal.close();
+	}
 }
 
 async function readContent(path: string, maxBytes: number): Promise<string> {
@@ -82,15 +103,28 @@ export async function shareCommand(rawInput: unknown, deps: ShareCommandDeps = {
 	const parsed = cliInput.safeParse(rawInput);
 	if (!parsed.success)
 		throw new Error(
-			"share: use --file <path>, answer <link-id> --file <path>, or replies <link-id>; --confirm requires a preview token.",
+			"share: use --file <path>, answer <link-id> --file <path>, replies <link-id>, or release <reply-id>; --confirm requires a publication preview token.",
 		);
 	const input = parsed.data;
+	const terminal = deps.terminal ?? {
+		isInteractive: Boolean(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY),
+		confirmRelease,
+	};
+	if (input.action === "release" && !terminal.isInteractive) {
+		throw new Error("share: release requires an interactive terminal; no noninteractive bypass.");
+	}
 	const result = await (deps.loadConfig ?? loadConfig)();
 	if (!result.ok)
 		throw new Error("share: valid local Relay configuration is required; run agentrelay doctor.");
 	const { config } = result;
 	const client =
 		deps.client ?? createShareClient({ relayUrl: config.relay_url, apiKey: config.api_key });
+	if (input.action === "release") {
+		if (!(await terminal.confirmRelease(input.linkId!))) {
+			return { state: "cancelled" as const, reply_id: input.linkId! };
+		}
+		return { state: "released_to_inbox" as const, ...(await client.release(input.linkId!)) };
+	}
 	if (input.action === "replies") {
 		const receipt = await client.replies(input.linkId!);
 		return {

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { and, asc, eq, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, isNull, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { agents, shareEvents, shareLinks, shareReplies } from "../db/schema.js";
 import { RelayError } from "../errors.js";
@@ -7,6 +7,7 @@ import {
 	type CreateShareInput,
 	SHARE_CONTENT_BYTES,
 	type ShareAnswerInput,
+	type ShareInboxInput,
 	type ShareReplyInput,
 } from "../share-schemas.js";
 import { writeAudit } from "./audit.js";
@@ -173,7 +174,7 @@ export async function postShareReply(
 			if (existing.content !== input.content || existing.channel !== channel) {
 				throw new RelayError("duplicate_idempotency_key", "Reply key already used");
 			}
-			return { stored: true, held: true, replayed: true };
+			return { stored: true, replayed: true };
 		}
 		if (replies.filter((reply) => reply.authorKind === "external").length >= 10) {
 			throw new RelayError("invalid_transition", "Reply limit reached");
@@ -206,7 +207,7 @@ export async function postShareReply(
 			metadata: { link_id: link.id, channel },
 			requestId,
 		});
-		return { stored: true, held: true, replayed: false };
+		return { stored: true, replayed: false };
 	});
 }
 
@@ -321,6 +322,102 @@ export async function answerShare(
 			sequence: answer.seq,
 			created_at: answer.createdAt.toISOString(),
 			replayed: existing !== undefined,
+		};
+	});
+}
+
+export async function releaseShareReply(
+	db: Database,
+	senderId: string,
+	replyId: string,
+	requestId: string,
+) {
+	return db.transaction(async (transaction) => {
+		const [owned] = await transaction
+			.select({ publicId: shareLinks.publicId })
+			.from(shareReplies)
+			.innerJoin(shareLinks, eq(shareLinks.id, shareReplies.linkId))
+			.where(and(eq(shareReplies.id, replyId), eq(shareLinks.senderId, senderId)));
+		if (!owned) throw new RelayError("thread_not_found", "Reply unavailable");
+		const link = await lockOwnerLink(transaction, senderId, owned.publicId);
+		const [reply] = await transaction
+			.select()
+			.from(shareReplies)
+			.where(and(eq(shareReplies.id, replyId), eq(shareReplies.authorKind, "external")));
+		if (!reply) throw new RelayError("thread_not_found", "Reply unavailable");
+		if (reply.content === null || link.contentDeletedAt) {
+			throw new RelayError("thread_not_found", "Reply content unavailable");
+		}
+		const releasedAt = reply.releasedAt ?? new Date();
+		if (!reply.releasedAt) {
+			await transaction
+				.update(shareReplies)
+				.set({ releasedAt, releasedByAgentId: senderId })
+				.where(eq(shareReplies.id, reply.id));
+			await transaction.insert(shareEvents).values({
+				linkId: link.id,
+				replyId: reply.id,
+				kind: "reply.released",
+				actorKind: "agent",
+				actorAgentId: senderId,
+			});
+			await writeAudit(transaction, {
+				actorId: senderId,
+				action: "reply.released",
+				resourceType: "share_reply",
+				resourceId: reply.id,
+				metadata: { link_id: link.id },
+				requestId,
+			});
+		}
+		return {
+			link_id: link.publicId,
+			reply_id: reply.id,
+			released_at: releasedAt.toISOString(),
+			origin: "external_unverified" as const,
+			replayed: reply.releasedAt !== null,
+		};
+	});
+}
+
+export async function listShareInbox(db: Database, senderId: string, input: ShareInboxInput) {
+	return db.transaction(async (transaction) => {
+		await lockAgentLifecycle(transaction, senderId);
+		const [sender] = await transaction
+			.select({ id: agents.id })
+			.from(agents)
+			.where(and(eq(agents.id, senderId), eq(agents.status, "active")));
+		if (!sender) throw new RelayError("forbidden", "Sender unavailable");
+		const conditions = [
+			eq(shareLinks.senderId, senderId),
+			eq(shareEvents.kind, "reply.released"),
+			eq(shareReplies.authorKind, "external"),
+			gt(shareEvents.id, BigInt(input.after_cursor)),
+		];
+		if (input.since) conditions.push(gte(shareReplies.releasedAt, new Date(input.since)));
+		const rows = await transaction
+			.select({ cursor: shareEvents.id, linkId: shareLinks.publicId, reply: shareReplies })
+			.from(shareEvents)
+			.innerJoin(shareLinks, eq(shareLinks.id, shareEvents.linkId))
+			.innerJoin(shareReplies, eq(shareReplies.id, shareEvents.replyId))
+			.where(and(...conditions))
+			.orderBy(asc(shareEvents.id))
+			.limit(input.limit + 1);
+		const page = rows.slice(0, input.limit);
+		return {
+			replies: page.map(({ cursor, linkId, reply }) => ({
+				cursor: cursor.toString(),
+				link_id: linkId,
+				reply_id: reply.id,
+				sequence: reply.seq,
+				channel: reply.channel,
+				content: reply.content,
+				created_at: reply.createdAt.toISOString(),
+				released_at: reply.releasedAt!.toISOString(),
+				origin: "external_unverified" as const,
+			})),
+			next_cursor: page.at(-1)?.cursor.toString() ?? input.after_cursor,
+			has_more: rows.length > input.limit,
 		};
 	});
 }

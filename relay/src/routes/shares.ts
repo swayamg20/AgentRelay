@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { RelayError } from "../errors.js";
@@ -7,14 +8,18 @@ import {
 	answerShare,
 	createShare,
 	fetchShare,
+	listShareInbox,
 	listShareReplies,
 	postShareReply,
+	releaseShareReply,
 	revokeShare,
 } from "../services/shares.js";
 import {
 	createShareSchema,
 	shareAnswerSchema,
 	shareIdSchema,
+	shareInboxSchema,
+	shareReleaseSchema,
 	shareReplySchema,
 } from "../share-schemas.js";
 import type { AppEnv } from "../types.js";
@@ -145,6 +150,27 @@ export function createOwnerShareRoutes(opts: ShareRoutesOptions): Hono<AppEnv> {
 	router.use("*", async (context, next) => {
 		context.header("Cache-Control", "no-store");
 		await next();
+	});
+	router.get("/inbox", async (context) => {
+		const sender = context.get("agent");
+		if (!sender) throw new RelayError("unauthenticated", "Auth required");
+		const parsed = shareInboxSchema.safeParse(context.req.query());
+		if (!parsed.success) throw new RelayError("invalid_params", "Invalid inbox query");
+		return context.json(await listShareInbox(opts.db, sender.id, parsed.data));
+	});
+	router.post("/replies/:replyId/release", async (context) => {
+		const sender = context.get("agent");
+		if (!sender) throw new RelayError("unauthenticated", "Auth required");
+		const replyId = z.string().uuid().safeParse(context.req.param("replyId"));
+		const parsed = shareReleaseSchema.safeParse(
+			parseJson(await readShareBody(context.req.raw, 1024)),
+		);
+		if (!replyId.success || !parsed.success) {
+			throw new RelayError("invalid_params", "Invalid release confirmation");
+		}
+		return context.json(
+			await releaseShareReply(opts.db, sender.id, replyId.data, context.get("requestId")),
+		);
 	});
 	router.post("/", async (context) => {
 		const sender = context.get("agent");

@@ -97,8 +97,8 @@ for mailbox use.
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
 | `invites` | Signed-token hash, target handle/role, optional admin-attested company domain, inviter, expiry, use timestamp, and redeemed agent. |
 | `share_links` | Separate capability thread: internal UUID, random 43-character public ID, sender, content, sender-scoped creation key, default seven-day/max thirty-day expiry, revocation, and deletion timestamp. Sender-authenticated creation/revocation and public reads are mounted. |
-| `share_replies` | Ordered entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped retry key, and external-release timestamp/agent. Public submissions are held outside the mailbox; sender inspection and public answers are wired, owner release is not. |
-| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, API/form reply, and sender-answer producers are wired; release and invite-request producers are not. |
+| `share_replies` | Ordered entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped retry key, and external-release timestamp/agent. Public submissions are held outside ordinary mailbox rows; sender inspection, public answers, and explicit owner release are wired. |
+| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, API/form reply, release, and sender-answer producers are wired. Release event IDs are the private external inbox replay cursors; the invite-request producer is not wired. |
 | `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
 | `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
@@ -210,6 +210,8 @@ There is no `/metrics`, `/inbox/:id`, or
 | `POST` | `/shares/:id/revoke` | Sender-only, idempotent permanent revocation. |
 | `GET` | `/shares/:id/replies` | Sender-only ordered external replies with unverified origin; inspection does not release. |
 | `POST` | `/shares/:id/answers` | Sender-only, idempotent public answers within the published-content budget. |
+| `POST` | `/shares/replies/:replyId/release` | Sender-only explicit `release_to_inbox` confirmation; one external reply, one release event/audit, idempotent by reply ID. |
+| `GET` | `/shares/inbox` | Sender-only released external replies, with `after_cursor`, `limit` (1–10), optional release-time `since`, and stable `next_cursor`/`has_more`. |
 | `GET` | `/l/:id` | Public capability read, Markdown for agents or explicit Markdown acceptance, minimal HTML for browser acceptance. Never includes external replies. |
 | `POST` | `/l/:id/replies` | Capability-only JSON or URL-encoded form submission; at most ten external replies, held for owner release. |
 
@@ -217,8 +219,11 @@ The [Relay API checkpoint](handoff-links.md) specifies byte limits, negotiation,
 headers, IP/link admission, expiry-based content deletion, and content-free events.
 Source MCP/CLI clients provide exact-content previews, local secret scanning,
 sender-only reply inspection, and public answers, with individual and aggregate
-byte limits. Owner release, released inbox delivery, invite requests, and Slack
-share hints are not wired yet.
+byte limits. Interactive-terminal release makes a reply eligible for the separate
+`check_inbox` external array, preserving unverified provenance and replay identity.
+Private release/inspection works until retention deletion, even after public
+expiry/revocation. Public receipts report storage without exposing release state.
+Invite requests and Slack share hints are not wired yet.
 
 ### Admin routes
 
@@ -410,7 +415,7 @@ Source of truth: [`mcp-server/src/tools/index.ts`](../mcp-server/src/tools/index
 | Tool | Current behavior |
 |---|---|
 | `handoff_to_teammate` | Create a typed handoff with summary, intent, artifacts, question/metadata, and optional proposed action. |
-| `check_inbox` | List received handoffs through `tasks/list` with provenance-wrapped teammate summaries. |
+| `check_inbox` | List received handoffs through `tasks/list` with provenance-wrapped teammate summaries, plus owner-released external replies from `/shares/inbox` with unverified provenance and their own replay cursor. |
 | `accept_handoff` | Fetch and accept a thread, provenance-mark teammate text/structured data, and return a local trust decision. |
 | `view_thread` | Read a participant thread without changing lifecycle state; only teammate-authored fields are marked. |
 | `send_message` | Append a message and preserve its generic payload separately from typed artifacts. |
@@ -426,7 +431,15 @@ The [handoff-link client contract](handoff-links.md) binds preview content,
 operation, link/expiry, Relay and sender identity. MCP previews are process-local
 and bounded to 100; confirmations reuse the preview's UUID retry identity. Default
 install profiles approval-gate both tools. There is no MCP release tool, and
-`check_inbox` does not return external replies at this checkpoint.
+`check_inbox` adds `external_replies`, `external_next_cursor`, and
+`external_has_more` without widening ordinary handoff participants. Input
+`external_after_cursor` replays release events after that decimal bigint cursor;
+omission starts at `0`. At most ten external entries (or the smaller `limit`) are
+returned per call. `since` uses release time and handoff status filters apply only
+to ordinary `items`. Reads do not mark processing. Deleted bodies remain `null`
+with stable IDs/cursors. The CLI `share release <reply-id>` requires stdin/stdout/
+stderr terminals and exact typed confirmation, with no bypass flag or MCP release
+tool. The Relay's private API authenticates the sender bearer, not human identity.
 
 ## Artifact types
 
@@ -758,6 +771,7 @@ The `agentrelay` binary currently provides:
 - `export-thread <thread-id> [--output <path>]`
 - `share --file <path> [--expires-in-days <days>] [--confirm <preview-token>]`
 - `share replies <link-id>`
+- `share release <reply-id>` (interactive terminal only)
 - `share answer <link-id> --file <path> [--confirm <preview-token>]`
 - `block`, `unblock`
 - `trust list`, `trust set`, `trust reset`
@@ -773,7 +787,9 @@ Share creation/answers are preview-only until exact confirmation. One mode-0600
 preview/retry identity for ten minutes; it contains no body or credential. The
 client rescans before confirming. Sender reply inspection wraps external body text
 and provenance-marks each typed reply with `external_unverified`; it does not
-release or verify the author. No owner-release CLI exists yet. See the
+release or verify the author. `share release <reply-id>` separately requires an
+interactive terminal and exact typed confirmation to permit unverified inbox
+visibility; there is no noninteractive or MCP release bypass. See the
 [client safety and retry limits](handoff-links.md).
 
 In the source CLI, `watch --stdout` is a separate passive metadata observer. It

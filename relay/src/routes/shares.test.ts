@@ -124,6 +124,244 @@ databaseDescribe("handoff link routes", () => {
 			headers: { authorization: `Bearer ${owner.api_key}` },
 		});
 	}
+	function release(replyId: string, owner = sender, confirmation: unknown = "release_to_inbox") {
+		return app.request(`/shares/replies/${replyId}/release`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${owner.api_key}`, "content-type": "application/json" },
+			body: JSON.stringify({ confirmation }),
+		});
+	}
+	function inbox(query = "", owner = sender) {
+		return app.request(`/shares/inbox${query}`, {
+			headers: { authorization: `Bearer ${owner.api_key}` },
+		});
+	}
+
+	it("keeps held bodies out of the inbox and atomically releases one external reply once", async () => {
+		const link = await createLink();
+		const key = randomUUID();
+		await reply(link, { content: "private external instructions", idempotency_key: key });
+		const [stored] = await handle.db.select().from(shareReplies);
+		expect(await (await inbox()).json()).toEqual({
+			replies: [],
+			next_cursor: "0",
+			has_more: false,
+		});
+		const releases = await Promise.all([release(stored!.id), release(stored!.id)]);
+		expect(releases.every((response) => response.status === 200)).toBe(true);
+		const receipts = await Promise.all(releases.map((response) => response.json()));
+		expect(receipts.map((receipt) => receipt.replayed).sort()).toEqual([false, true]);
+		expect(receipts[0].released_at).toBe(receipts[1].released_at);
+		const page = await (await inbox()).json();
+		expect(page.replies).toHaveLength(1);
+		expect(page.replies[0]).toMatchObject({
+			link_id: link.link_id,
+			reply_id: stored!.id,
+			content: "private external instructions",
+			origin: "external_unverified",
+			channel: "api",
+			released_at: receipts[0].released_at,
+		});
+		expect(await (await inbox(`?after_cursor=${page.next_cursor}`)).json()).toEqual({
+			replies: [],
+			next_cursor: page.next_cursor,
+			has_more: false,
+		});
+		expect((await (await listReplies(link)).json()).replies[0].released_at).toBe(
+			receipts[0].released_at,
+		);
+		const [released] = await handle.db.select().from(shareReplies);
+		expect(released!.releasedByAgentId).toBe(sender.agent_id);
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "reply.released")),
+		).toHaveLength(1);
+		const audits = await handle.db
+			.select()
+			.from(auditLog)
+			.where(eq(auditLog.action, "reply.released"));
+		expect(audits).toHaveLength(1);
+		expect(audits[0]).toMatchObject({ actorKind: "agent", actorId: sender.agent_id });
+		expect(JSON.stringify(audits.map((audit) => audit.metadata))).not.toContain(
+			"private external instructions",
+		);
+		expect(await handle.db.select().from(messages)).toHaveLength(0);
+		expect(await handle.db.select().from(mailboxEvents)).toHaveLength(0);
+		for (const accept of ["text/markdown", "text/html"]) {
+			expect(
+				await (await app.request(`/l/${link.link_id}`, { headers: { accept } })).text(),
+			).not.toContain("private external instructions");
+		}
+		const replay = await reply(link, {
+			content: "private external instructions",
+			idempotency_key: key,
+		});
+		expect(await replay.json()).toEqual({ stored: true, replayed: true });
+	});
+
+	it("authorizes private release and inbox reads without accepting link capabilities or sender answers", async () => {
+		const link = await createLink();
+		await reply(link);
+		const [stored] = await handle.db.select().from(shareReplies);
+		expect((await release(stored!.id, other)).status).toBe(404);
+		expect((await release(randomUUID())).status).toBe(404);
+		expect((await release("invalid")).status).toBe(400);
+		expect((await release(stored!.id, sender, "yes")).status).toBe(400);
+		expect(
+			(
+				await app.request(`/shares/replies/${stored!.id}/release`, {
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${sender.api_key}`,
+						"content-type": "application/json",
+					},
+					body: "{}",
+				})
+			).status,
+		).toBe(400);
+		const answerReceipt = await (await answer(link)).json();
+		expect((await release(answerReceipt.answer_id)).status).toBe(404);
+		expect(
+			(
+				await app.request(`/shares/replies/${stored!.id}/release`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ confirmation: "release_to_inbox" }),
+				})
+			).status,
+		).toBe(401);
+		expect((await app.request("/shares/inbox")).status).toBe(401);
+		expect(
+			(await app.request("/shares/inbox", { headers: { authorization: `Bearer ${link.link_id}` } }))
+				.status,
+		).toBe(401);
+		expect((await (await inbox("", other)).json()).replies).toEqual([]);
+		await handle.db
+			.update(agents)
+			.set({ status: "disabled" })
+			.where(eq(agents.id, sender.agent_id));
+		expect((await release(stored!.id)).status).toBe(403);
+		expect((await inbox()).status).toBe(403);
+	});
+
+	it("pages released replies across links in release order and replays after router reconstruction", async () => {
+		const first = await createLink();
+		const second = await createLink();
+		await reply(first);
+		await reply(second);
+		const stored = await handle.db.select().from(shareReplies).orderBy(asc(shareReplies.createdAt));
+		await release(stored[1]!.id);
+		await release(stored[0]!.id);
+		const firstPage = await (await inbox("?limit=1")).json();
+		expect(firstPage.replies.map((entry: { reply_id: string }) => entry.reply_id)).toEqual([
+			stored[1]!.id,
+		]);
+		expect(firstPage.has_more).toBe(true);
+		const config = loadConfig(TEST_ENV);
+		app = createServer({ config, logger: createLogger(config), db: handle.db });
+		const secondPage = await (await inbox(`?limit=1&after_cursor=${firstPage.next_cursor}`)).json();
+		expect(secondPage.replies.map((entry: { reply_id: string }) => entry.reply_id)).toEqual([
+			stored[0]!.id,
+		]);
+		expect(secondPage.has_more).toBe(false);
+		expect(BigInt(secondPage.next_cursor)).toBeGreaterThan(BigInt(firstPage.next_cursor));
+		expect((await (await inbox("?since=2099-01-01T00%3A00%3A00.000Z")).json()).replies).toEqual([]);
+		for (const query of [
+			"?limit=0",
+			"?limit=11",
+			"?after_cursor=-1",
+			"?after_cursor=01",
+			"?after_cursor=invalid",
+			"?after_cursor=9223372036854775808",
+			"?since=invalid",
+			"?status=pending",
+		]) {
+			expect((await inbox(query)).status).toBe(400);
+		}
+	});
+
+	it("allows private historical release until deletion without reviving the public link", async () => {
+		const link = await createLink();
+		await reply(link);
+		const [stored] = await handle.db.select().from(shareReplies);
+		await app.request(`/shares/${link.link_id}/revoke`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${sender.api_key}` },
+		});
+		expect((await release(stored!.id)).status).toBe(200);
+		expect((await app.request(`/l/${link.link_id}`)).status).toBe(404);
+		await handle.db
+			.update(shareLinks)
+			.set({
+				createdAt: new Date(Date.now() - 39 * 86_400_000),
+				expiresAt: new Date(Date.now() - 31 * 86_400_000),
+			})
+			.where(eq(shareLinks.publicId, link.link_id));
+		await deleteExpiredShareContent(handle.db);
+		expect((await release(stored!.id)).status).toBe(404);
+		const page = await (await inbox()).json();
+		expect(page.replies[0]).toMatchObject({
+			reply_id: stored!.id,
+			content: null,
+			origin: "external_unverified",
+		});
+		expect(page.next_cursor).toBe(page.replies[0].cursor);
+	});
+
+	it("does not checkpoint past a release whose transaction has not committed", async () => {
+		const first = await createLink();
+		const second = await createLink();
+		await reply(first);
+		await reply(second);
+		const stored = await handle.db.select().from(shareReplies).orderBy(asc(shareReplies.createdAt));
+		await handle.sql.unsafe(
+			`CREATE FUNCTION share_test_delay_release() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind = 'reply.released' AND NEW.reply_id = '${stored[0]!.id}'::uuid THEN PERFORM pg_sleep(0.2); END IF; RETURN NEW; END $$`,
+		);
+		await handle.sql.unsafe(
+			"CREATE TRIGGER share_test_delay_release BEFORE INSERT ON share_events FOR EACH ROW EXECUTE FUNCTION share_test_delay_release()",
+		);
+		try {
+			const slow = release(stored[0]!.id);
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			const fast = release(stored[1]!.id);
+			const observed = await (await inbox()).json();
+			expect((await slow).status).toBe(200);
+			expect((await fast).status).toBe(200);
+			const later = await (await inbox(`?after_cursor=${observed.next_cursor}`)).json();
+			const ids = [...observed.replies, ...later.replies].map(
+				(entry: { reply_id: string }) => entry.reply_id,
+			);
+			expect(ids.sort()).toEqual(stored.map((entry) => entry.id).sort());
+		} finally {
+			await handle.sql.unsafe("DROP TRIGGER share_test_delay_release ON share_events");
+			await handle.sql.unsafe("DROP FUNCTION share_test_delay_release()");
+		}
+	});
+
+	it("rolls back release state and its replay event when the audit write fails", async () => {
+		const link = await createLink();
+		await reply(link);
+		const [stored] = await handle.db.select().from(shareReplies);
+		await handle.sql.unsafe(
+			"CREATE FUNCTION share_test_reject_release_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'reply.released' THEN RAISE EXCEPTION 'release failure'; END IF; RETURN NEW; END $$",
+		);
+		await handle.sql.unsafe(
+			"CREATE TRIGGER share_test_reject_release_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION share_test_reject_release_audit()",
+		);
+		try {
+			expect((await release(stored!.id)).status).toBe(500);
+			expect((await (await inbox()).json()).replies).toEqual([]);
+			const [unchanged] = await handle.db.select().from(shareReplies);
+			expect(unchanged!.releasedAt).toBeNull();
+			expect(unchanged!.releasedByAgentId).toBeNull();
+			expect(
+				await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "reply.released")),
+			).toHaveLength(0);
+		} finally {
+			await handle.sql.unsafe("DROP TRIGGER share_test_reject_release_audit ON audit_log");
+			await handle.sql.unsafe("DROP FUNCTION share_test_reject_release_audit()");
+		}
+		expect((await release(stored!.id)).status).toBe(200);
+	});
 
 	it("lists external replies only for the sender, without releasing or verifying them", async () => {
 		const link = await createLink();
@@ -381,7 +619,7 @@ databaseDescribe("handoff link routes", () => {
 		const link = await createLink();
 		const response = await reply(link);
 		expect(response.status).toBe(201);
-		expect(await response.json()).toEqual({ stored: true, held: true, replayed: false });
+		expect(await response.json()).toEqual({ stored: true, replayed: false });
 		const [stored] = await handle.db.select().from(shareReplies);
 		expect(stored).toMatchObject({
 			authorKind: "external",
