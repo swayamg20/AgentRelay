@@ -4,9 +4,12 @@
 
 Build verified handoff links through all seven owner-supplied steps while preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42361776481, session 5. All seven steps are complete in source
-with passing required checks. The receiver kit is ready; actual Claude Code/Codex/
-Cursor trials remain unrun and explicitly nonblocking. No package release or deployment.
+and is unchanged in run 42364222753, session 1. All seven steps are complete in source
+with passing required local checks. New feedback reports a failing GitGuardian
+Security Checks gate on PR #178 without incident details. A synthetic Basic-auth
+fixture mitigation is committed, but the reported gate is not verified fixed.
+The receiver kit is ready; actual Claude Code/Codex/Cursor trials remain unrun and
+explicitly nonblocking. No package release or deployment.
 
 ## Plan
 
@@ -26,23 +29,35 @@ Cursor trials remain unrun and explicitly nonblocking. No package release or dep
 - [x] All six required gates, focused contracts, documentation links, and current
   branch-wide mailbox/share/notification process regressions pass.
 - [x] Commit product work; finalize memory, branch-wide PR text, summary, and STOP.
+- [x] Investigate supplied security feedback without contacting GitHub or exposing
+  credentials; construct the Basic-auth scan fixture at runtime (a830510) and stop
+  parameterized test names from echoing credential-like content.
+- [x] Rerun all six required checks and focused publication tests successfully.
+- [ ] Confirm GitGuardian passes or obtain content-free detector/path/commit/error
+  details and address the specific finding. Do not claim the candidate fix resolves it.
 
 ## Next step
 
-The owner can review the branch and run the 15-minute matrix in
-`docs/handoff-links-receiver-test.md`. Do not infer real-client compatibility from
-synthetic HTTP/stdio/terminal/process tests. Further sessions in this run are stopped.
-If the owner supplies review findings or changes the goal, read those fresh inputs
-and git history first; do not expand this completed scope.
+Read the owner's reply to `questions/gitguardian-finding-details.md` and refreshed
+check feedback first. If the gate passes, no further product change is required. If
+it still fails, use the content-free incident/error details to fix the specific
+cause; do not weaken scanners, rewrite branch history, or assume a real credential
+is merely synthetic. The owner can independently run the 15-minute matrix in
+`docs/handoff-links-receiver-test.md`. Real-client compatibility is not established
+by synthetic tests. Stop further sessions in this run while awaiting details.
 
 ## Waiting on owner
 
-No blocking question or requested access. Manual receiver results are nonblocking.
+The output question `questions/gitguardian-finding-details.md` requests the detector,
+path/line, affected commit, and sanitized status/error for PR #178, or confirmation
+that the newly published commit passes. No incident detail was present in the run
+snapshot or owner inbox. Do not duplicate this question. Do not request raw secrets
+or credentials. Manual receiver results remain nonblocking.
 The unchanged merge guard denies migrations and does not allow integration-runner/
 e2e package-script paths. This approved branch includes those paths and needs direct
 repository review rather than reply-only merge.
 
-## Verified in session 5
+## Verified in run 42364222753, session 1
 
 - Setup script and frozen install pass. Lint passes with three existing warnings.
 - Recursive typecheck/build and canonical units pass: protocol 125, MCP 501,
@@ -50,10 +65,14 @@ repository review rather than reply-only merge.
   Never set database variables for units or use recursive workspace tests.
 - Serialized Relay integration passes 337 against local Postgres on port 5433,
   with RELAY_TEST_TRUNCATE_VIA_PSQL=1; zero failures.
-- Focused share/render contracts pass 53 (44 DB route/nine edge tests).
-- Current built-process share/release/invite, notification restart, mailbox
-  restart, and handoff round-trip regressions pass six across four files.
-- Local Markdown checker passes 70 targets/seven documents. Whitespace checks pass.
+- Focused publication/CLI/MCP contracts pass 62; twelve built-binary tests initially
+  skip before build, then pass within the complete 501-test MCP run after build.
+- Whitespace checks pass. GitGuardian was not run locally; no private findings or
+  credentials were accessed, no scan suppression was added, and its remote failure
+  is explicitly unresolved pending a rerun or owner-supplied details.
+- Previous session 5 additionally passed 53 focused share/render tests, six process
+  regressions across four files, and 70 local Markdown targets/seven documents.
+  Those extra commands were not rerun for this two-line test-only change.
 
 ## Learned about the repository
 
@@ -98,3 +117,7 @@ repository review rather than reply-only merge.
   build ordering) remain outside origin/main and are included in PR text. Queue
   metrics through #30 stay deferred. This session adds no migration, dependency,
   version bump, protected-path modification, publication, or Labs expansion.
+- The security feedback snapshot contains only the failing check name. The static
+  Basic-auth fixture decoded to explicitly synthetic test text; runtime construction
+  preserves its bytes and scan coverage. This is a plausible false-positive source,
+  not an identified incident. Historical occurrences remain in existing commits.
