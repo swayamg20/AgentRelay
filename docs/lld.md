@@ -96,6 +96,9 @@ for mailbox use.
 | `audit_log` | Invite, handoff/message, block, Agent-disable, Node/workspace, Mission, and delivery mutation records: actor kind, nullable Agent actor ID, action, resource, metadata, request ID, timestamp. Admin and relay-system actors never borrow an Agent ID. |
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
 | `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
+| `share_links` | Separate link-thread foundation: internal UUID, unique 43-character public capability ID, sender, content, sender-scoped creation idempotency key, default seven-day/max thirty-day expiry, revocation, and content-deletion timestamp. No production link route is mounted yet. |
+| `share_replies` | Ordered link entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped idempotency key, and explicit external-release timestamp/agent. No reply submission or release service is shipped yet. |
+| `share_events` | Internal link/reply references, finite measurement kind, explicit actor kind/nullable agent ID, object metadata, and timestamp. Mutation facts are unique; fetches may repeat. No production event producer is shipped yet. |
 | `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
 | `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
@@ -842,6 +845,21 @@ See [notification operations](notifications.md) for migration, retention, and sa
 database diagnostics.
 
 ## Audit and revocation
+
+Migration `0012_share_links` prepares the separate handoff-link data model described
+in [RFC 003](rfcs/003-verified-handoff-links.md). The database enforces 64 KiB initial
+link content, 16 KiB reply/answer content (UTF-8 bytes), capability shape, expiry,
+reply ordering/idempotency, and release shape. It does not yet implement capability
+generation, public reads, aggregate public-content limits, ten-reply admission,
+authorization/release services, retention sweeps, inbox delivery, or event emission.
+These are not claims of a shipped link feature. Existing mailbox tables and
+participant-only behavior remain unchanged.
+
+Nullable `company_domain` columns are prepared on agents and invites. Existing rows
+remain unknown (`NULL`), with no inference from email or handle. The mint/redemption
+routes do not yet populate an admin-attested domain. Audit additionally accepts
+`external` actors with no agent ID; this schema support does not authenticate an
+external sender or implement a public reply route.
 
 Core relay audit rows cover invite mint/redeem, handoff
 create/accept/complete/cancel, message append, and block/unblock. Labs audit adds Node

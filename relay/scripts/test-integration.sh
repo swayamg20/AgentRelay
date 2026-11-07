@@ -37,13 +37,13 @@ truncate_all() {
   if [[ -n "${RELAY_TEST_TRUNCATE_VIA_PSQL:-}" ]]; then
     command -v psql >/dev/null || { echo "psql not on PATH" >&2; exit 1; }
     psql "$RELAY_TEST_DATABASE_URL" -q -c \
-      "TRUNCATE notification_outbox, delivery_operation_receipts, node_deliveries, mission_events, mission_participants, missions, workspace_bindings, node_credentials, nodes, mailbox_events, agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks, invites RESTART IDENTITY CASCADE;" \
+      "TRUNCATE share_events, share_replies, share_links, notification_outbox, delivery_operation_receipts, node_deliveries, mission_events, mission_participants, missions, workspace_bindings, node_credentials, nodes, mailbox_events, agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks, invites RESTART IDENTITY CASCADE;" \
       >/dev/null 2>&1
     return
   fi
 
   docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -q -c \
-    "TRUNCATE notification_outbox, delivery_operation_receipts, node_deliveries, mission_events, mission_participants, missions, workspace_bindings, node_credentials, nodes, mailbox_events, agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks, invites RESTART IDENTITY CASCADE;" \
+    "TRUNCATE share_events, share_replies, share_links, notification_outbox, delivery_operation_receipts, node_deliveries, mission_events, mission_participants, missions, workspace_bindings, node_credentials, nodes, mailbox_events, agents, agent_cards, api_keys, handoffs, messages, audit_log, agent_blocks, invites RESTART IDENTITY CASCADE;" \
     >/dev/null 2>&1
 }
 
@@ -59,6 +59,7 @@ INTEGRATION_FILES=(
   src/db/migration-0009.test.ts
   src/db/migration-0010.test.ts
   src/db/migration-0011.test.ts
+  src/db/migration-0012.test.ts
   src/db/schema.test.ts
   src/services/mailbox-events.test.ts
   src/services/delivery-ledger.test.ts

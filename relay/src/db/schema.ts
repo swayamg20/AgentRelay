@@ -47,6 +47,7 @@ export const agents = pgTable(
 		email: citext("email").notNull().unique(),
 		displayName: text("display_name").notNull(),
 		role: text("role").notNull(),
+		companyDomain: text("company_domain"),
 		status: text("status").notNull().default("active"),
 		createdAt,
 		updatedAt,
@@ -237,13 +238,13 @@ export const auditLog = pgTable(
 		actorIdx: index("idx_audit_actor").on(t.actorId, t.createdAt.desc()),
 		actorKindCheck: check(
 			"audit_log_actor_kind_chk",
-			sql`${t.actorKind} IN ('agent','admin','system')`,
+			sql`${t.actorKind} IN ('agent','admin','external','system')`,
 		),
 		actorIdentityCheck: check(
 			"audit_log_actor_identity_chk",
 			sql`(
 				(${t.actorKind} = 'agent' AND ${t.actorId} IS NOT NULL)
-				OR (${t.actorKind} IN ('admin','system') AND ${t.actorId} IS NULL)
+				OR (${t.actorKind} IN ('admin','external','system') AND ${t.actorId} IS NULL)
 			)`,
 		),
 	}),
@@ -275,6 +276,7 @@ export const invites = pgTable(
 		tokenHash: text("token_hash").notNull(),
 		handle: text("handle").notNull(),
 		role: text("role").notNull(),
+		companyDomain: text("company_domain"),
 		inviterId: uuid("inviter_id")
 			.notNull()
 			.references(() => agents.id, { onDelete: "restrict" }),
@@ -288,6 +290,148 @@ export const invites = pgTable(
 	(t) => ({
 		uniqTokenHash: uniqueIndex("uniq_invites_token_hash").on(t.tokenHash),
 		idxExpiresAt: index("idx_invites_expires_at").on(t.expiresAt).where(sql`${t.usedAt} IS NULL`),
+	}),
+);
+
+export const shareLinks = pgTable(
+	"share_links",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		publicId: text("public_id").notNull(),
+		senderId: uuid("sender_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		content: text("content"),
+		idempotencyKey: text("idempotency_key").notNull(),
+		expiresAt: timestamp("expires_at", { withTimezone: true })
+			.notNull()
+			.default(sql`now() + interval '7 days'`),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		contentDeletedAt: timestamp("content_deleted_at", { withTimezone: true }),
+		createdAt,
+	},
+	(table) => ({
+		publicIdIdx: uniqueIndex("idx_share_links_public_id").on(table.publicId),
+		idempotencyIdx: uniqueIndex("idx_share_links_idempotency").on(
+			table.senderId,
+			table.idempotencyKey,
+		),
+		senderIdx: index("idx_share_links_sender").on(table.senderId, table.createdAt.desc()),
+		retentionIdx: index("idx_share_links_retention")
+			.on(table.expiresAt)
+			.where(sql`${table.contentDeletedAt} IS NULL`),
+		publicIdCheck: check(
+			"share_links_public_id_chk",
+			sql`${table.publicId} ~ '^[A-Za-z0-9_-]{43}$'`,
+		),
+		contentSizeCheck: check(
+			"share_links_content_size_chk",
+			sql`octet_length(${table.content}) <= 65536`,
+		),
+		contentStateCheck: check(
+			"share_links_content_state_chk",
+			sql`(${table.content} IS NOT NULL AND ${table.contentDeletedAt} IS NULL)
+				OR (${table.content} IS NULL AND ${table.contentDeletedAt} IS NOT NULL)`,
+		),
+		expiryCheck: check(
+			"share_links_expiry_chk",
+			sql`${table.expiresAt} > ${table.createdAt}
+				AND ${table.expiresAt} <= ${table.createdAt} + interval '30 days'`,
+		),
+	}),
+);
+
+export const shareReplies = pgTable(
+	"share_replies",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		linkId: uuid("link_id")
+			.notNull()
+			.references(() => shareLinks.id, { onDelete: "restrict" }),
+		seq: integer("seq").notNull(),
+		authorKind: text("author_kind").notNull(),
+		channel: text("channel").notNull(),
+		content: text("content"),
+		idempotencyKey: text("idempotency_key").notNull(),
+		releasedAt: timestamp("released_at", { withTimezone: true }),
+		releasedByAgentId: uuid("released_by_agent_id").references(() => agents.id, {
+			onDelete: "restrict",
+		}),
+		createdAt,
+	},
+	(table) => ({
+		seqIdx: uniqueIndex("idx_share_replies_link_seq").on(table.linkId, table.seq),
+		identityLinkIdx: uniqueIndex("idx_share_replies_identity_link").on(table.id, table.linkId),
+		idempotencyIdx: uniqueIndex("idx_share_replies_idempotency").on(
+			table.linkId,
+			table.authorKind,
+			table.idempotencyKey,
+		),
+		seqCheck: check("share_replies_seq_chk", sql`${table.seq} > 0`),
+		authorCheck: check(
+			"share_replies_author_kind_chk",
+			sql`${table.authorKind} IN ('sender','external')`,
+		),
+		channelCheck: check("share_replies_channel_chk", sql`${table.channel} IN ('api','form')`),
+		contentSizeCheck: check(
+			"share_replies_content_size_chk",
+			sql`octet_length(${table.content}) <= 16384`,
+		),
+		releaseCheck: check(
+			"share_replies_release_chk",
+			sql`(${table.releasedAt} IS NULL AND ${table.releasedByAgentId} IS NULL)
+				OR (${table.authorKind} = 'external' AND ${table.releasedAt} IS NOT NULL
+				AND ${table.releasedByAgentId} IS NOT NULL)`,
+		),
+	}),
+);
+
+export const shareEvents = pgTable(
+	"share_events",
+	{
+		id: bigserial("id", { mode: "bigint" }).primaryKey(),
+		linkId: uuid("link_id")
+			.notNull()
+			.references(() => shareLinks.id, { onDelete: "restrict" }),
+		replyId: uuid("reply_id"),
+		kind: text("kind").notNull(),
+		actorKind: text("actor_kind").notNull(),
+		actorAgentId: uuid("actor_agent_id").references(() => agents.id, { onDelete: "restrict" }),
+		metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+		createdAt,
+	},
+	(table) => ({
+		linkIdx: index("idx_share_events_link").on(table.linkId, table.createdAt),
+		replyKindIdx: uniqueIndex("idx_share_events_reply_kind")
+			.on(table.replyId, table.kind)
+			.where(sql`${table.replyId} IS NOT NULL`),
+		creationIdx: uniqueIndex("idx_share_events_link_created")
+			.on(table.linkId)
+			.where(sql`${table.kind} = 'link.created'`),
+		replyLinkFk: foreignKey({
+			name: "share_events_reply_link_fk",
+			columns: [table.replyId, table.linkId],
+			foreignColumns: [shareReplies.id, shareReplies.linkId],
+		}).onDelete("restrict"),
+		kindCheck: check(
+			"share_events_kind_chk",
+			sql`${table.kind} IN ('link.created','link.fetched','reply.posted',
+				'reply.released','answer.posted','invite.requested')`,
+		),
+		replyCheck: check(
+			"share_events_reply_chk",
+			sql`(${table.kind} IN ('reply.posted','reply.released','answer.posted') AND ${table.replyId} IS NOT NULL)
+				OR (${table.kind} IN ('link.created','link.fetched','invite.requested') AND ${table.replyId} IS NULL)`,
+		),
+		actorCheck: check(
+			"share_events_actor_chk",
+			sql`(${table.actorKind} = 'agent' AND ${table.actorAgentId} IS NOT NULL)
+				OR (${table.actorKind} IN ('admin','external','system') AND ${table.actorAgentId} IS NULL)`,
+		),
+		metadataCheck: check(
+			"share_events_metadata_chk",
+			sql`jsonb_typeof(${table.metadata}) = 'object'`,
+		),
 	}),
 );
 
@@ -884,6 +1028,9 @@ export type Handoff = typeof handoffs.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type MailboxEvent = typeof mailboxEvents.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
+export type ShareLink = typeof shareLinks.$inferSelect;
+export type ShareReply = typeof shareReplies.$inferSelect;
+export type ShareEvent = typeof shareEvents.$inferSelect;
 export type Node = typeof nodes.$inferSelect;
 export type NodeCredential = typeof nodeCredentials.$inferSelect;
 export type WorkspaceBinding = typeof workspaceBindings.$inferSelect;
