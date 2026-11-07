@@ -42,6 +42,14 @@ reference; the recommended host policy requires approval before content-bearing
 mailbox reads. It does not prove that an agent read or processed a message.
 Best-effort notification and the live stream remain hints.
 
+The current source also adds a separate [handoff-link Relay API](handoff-links.md),
+under the narrow [RFC 003 amendment](rfcs/003-verified-handoff-links.md). A random,
+expiring, revocable capability publishes only selected sender content. External
+holders can submit held replies, never read replies or other mailbox content. This
+checkpoint does not yet have MCP/CLI share preview/scanning, owner release, released
+inbox delivery, sender-answer routes, invite requests, or Slack share hints. It is
+not a complete end-to-end client feature or proof of real-client compatibility.
+
 Missions and autonomous repository execution are one possible application of this
 communication network. They remain valuable engineering research, but they are not
 the identity, prerequisite, or released product behavior of AgentRelay.
@@ -462,6 +470,11 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   block a fence for those mutations.
 - Provenance wrappers on teammate text and non-spoofable structural markers on
   teammate payloads, proposals, and artifacts returned by mailbox MCP tools.
+- On the separate public link surface, Relay instructions precede randomly
+  delimited sender data; HTML escapes all sender content. Company provenance is
+  explicitly admin-attested or unknown, not cryptographically verified. External
+  replies remain unverified and outside the mailbox; `external_unverified` inbox
+  delivery is not wired yet. No capability or delimiter grants execution authority.
 - Fail-safe CLI synchronization: block writes local trust first; unblock clears the
   relay first. The running MCP reloads trust before every acceptance decision.
 - AES-GCM encrypted notification webhooks at rest, restricted to exact HTTPS Slack

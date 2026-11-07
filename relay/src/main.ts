@@ -7,6 +7,7 @@ import { type MailboxSignalHub, createMailboxSignalHub } from "./events/mailbox-
 import { createLogger } from "./logger.js";
 import { NotificationDispatcher } from "./notifications/dispatcher.js";
 import { createServer } from "./server.js";
+import { ShareRetentionSweep } from "./services/share-retention.js";
 
 loadDotenv();
 
@@ -34,6 +35,8 @@ const dispatcher = new NotificationDispatcher({
 	logger,
 });
 dispatcher.start();
+const shareRetention = new ShareRetentionSweep(dbHandle.db, logger);
+shareRetention.start();
 const app = createServer({
 	config,
 	logger,
@@ -89,6 +92,7 @@ const shutdown = (signal: string): void => {
 		await dispatcher
 			.stop()
 			.catch((stopErr) => logger.warn({ err: stopErr }, "dispatcher stop failed"));
+		await shareRetention.stop();
 		await dbHandle.close().catch((closeErr) => logger.warn({ err: closeErr }, "db close failed"));
 		process.exit(err ? 1 : 0);
 	});

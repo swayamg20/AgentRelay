@@ -7,6 +7,7 @@ import { adminAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { agents, invites } from "../db/schema.js";
 import { RelayError } from "../errors.js";
+import { PublicRateLimiter, publicRateLimit } from "../public-rate-limit.js";
 import { registerAgentWithInitialKey } from "../services/agent-registration.js";
 import { writeAudit } from "../services/audit.js";
 import {
@@ -181,7 +182,7 @@ export function createInviteRoutes(opts: InviteRoutesOptions): Hono<AppEnv> {
 		);
 	});
 
-	// TODO(issue-6 followup): per-IP rate limit on redeem.
+	router.use("/invites/:jti/redeem", publicRateLimit(new PublicRateLimiter(), "invite"));
 	router.post("/invites/:jti/redeem", async (c) => {
 		const params = inviteParamSchema.safeParse(c.req.param());
 		if (!params.success) {

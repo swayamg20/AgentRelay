@@ -4,12 +4,13 @@ import type { Database } from "./db/client.js";
 import { type ErrorEnvelope, RelayError } from "./errors.js";
 import type { MailboxSignalHub } from "./events/mailbox-signal.js";
 import type { Logger } from "./logger.js";
-import { loggerMiddleware, requestIdMiddleware } from "./middleware.js";
+import { isSensitiveRoute, loggerMiddleware, requestIdMiddleware } from "./middleware.js";
 import { createA2aRoutes } from "./routes/a2a.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createAgentsRoutes } from "./routes/agents.js";
 import { createInviteRoutes } from "./routes/invites.js";
 import { createNodeRoutes } from "./routes/node.js";
+import { createOwnerShareRoutes, createPublicShareRoutes } from "./routes/shares.js";
 import type { AppEnv } from "./types.js";
 
 export type { AppEnv };
@@ -49,6 +50,9 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 
 	if (db) {
 		const keyEnvironment = config.RELAY_ENV === "production" ? "live" : "test";
+		const shareOptions = { db, pepper: config.RELAY_PEPPER, publicUrl: config.RELAY_PUBLIC_URL };
+		app.route("/l", createPublicShareRoutes(shareOptions));
+		app.route("/shares", createOwnerShareRoutes(shareOptions));
 		app.route(
 			"/admin",
 			createAdminRoutes({
@@ -100,7 +104,9 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 	app.notFound((c) => {
 		const envelope: ErrorEnvelope = {
 			code: "method_not_found",
-			message: `No route for ${c.req.method} ${c.req.path}`,
+			message: isSensitiveRoute(c.req.path)
+				? "No route"
+				: `No route for ${c.req.method} ${c.req.path}`,
 			request_id: c.get("requestId"),
 		};
 		return c.json(envelope, 404);
@@ -111,11 +117,18 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 		const log = c.get("logger") ?? logger;
 
 		if (err instanceof RelayError) {
-			log.warn({ event: "request.error", code: err.code, details: err.details }, err.message);
+			if (isSensitiveRoute(c.req.path)) {
+				log.warn({ event: "request.error", code: err.code }, "request rejected");
+			} else {
+				log.warn({ event: "request.error", code: err.code, details: err.details }, err.message);
+			}
 			return c.json(err.toEnvelope(requestId), err.httpStatus as never);
 		}
 
-		log.error({ event: "request.error", err }, "unhandled error");
+		log.error(
+			isSensitiveRoute(c.req.path) ? { event: "request.error" } : { event: "request.error", err },
+			"unhandled error",
+		);
 		const envelope: ErrorEnvelope = {
 			code: "internal",
 			message: "Internal server error",

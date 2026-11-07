@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
@@ -50,14 +51,13 @@ d("invite REST endpoints", () => {
 	beforeAll(() => {
 		if (!conn.handle) throw new Error("expected db handle");
 		handle = conn.handle;
-		const config = loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv);
-		const logger = createLogger(config);
-		app = createServer({ config, logger, db: handle.db });
 	});
 
 	beforeEach(async () => {
 		await truncateAll(handle.sql);
 		clearLastUsedDebounce();
+		const config = loadConfig({ ...TEST_ENV } as NodeJS.ProcessEnv);
+		app = createServer({ config, logger: createLogger(config), db: handle.db });
 	});
 
 	afterAll(async () => {
@@ -114,6 +114,23 @@ d("invite REST endpoints", () => {
 		expect(token).toMatch(/^v1\./);
 		return token;
 	}
+
+	it("rate limits invite redemption by forwarded client IP before token validation", async () => {
+		const jti = randomUUID();
+		const request = (ip: string) =>
+			app.request(`/invites/${jti}/redeem`, {
+				method: "POST",
+				headers: { "content-type": "application/json", "x-forwarded-for": ip },
+				body: JSON.stringify({ token: "invalid-token" }),
+			});
+		for (let index = 0; index < 10; index++) {
+			expect((await request("192.0.2.1")).status).not.toBe(429);
+		}
+		const denied = await request("192.0.2.1");
+		expect(denied.status).toBe(429);
+		expect(denied.headers.get("retry-after")).toBe("60");
+		expect((await request("192.0.2.2")).status).not.toBe(429);
+	});
 
 	function tamperPayload(token: string): string {
 		const parts = token.split(".");

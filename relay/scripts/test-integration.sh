@@ -69,6 +69,7 @@ INTEGRATION_FILES=(
   src/routes/admin.test.ts
   src/routes/agents.test.ts
   src/routes/invites.test.ts
+  src/routes/shares.test.ts
   src/routes/a2a.test.ts
   src/routes/blocks.test.ts
   src/routes/me.test.ts
