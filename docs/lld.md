@@ -223,7 +223,11 @@ byte limits. Interactive-terminal release makes a reply eligible for the separat
 `check_inbox` external array, preserving unverified provenance and replay identity.
 Private release/inspection works until retention deletion, even after public
 expiry/revocation. Public receipts report storage without exposing release state.
-Invite requests and Slack share hints are not wired yet.
+New API/form replies attempt a constant Slack waiting hint after commit through
+the sender's configured encrypted webhook, without content, identities, or link
+capabilities. These optional hints are bounded to five seconds, have no durable
+outbox or retries, and cannot change the storage receipt. Invite requests are not
+wired yet.
 
 ### Admin routes
 

@@ -69,7 +69,8 @@ separate, explicitly consented read/reply loop.
 The current source adds `share_handoff` and `answer_share`. These are not a new
 published package release. They require the matching Relay handoff-link routes;
 interactive-terminal owner release and released-reply inbox replay are wired in
-source. Slack waiting hints and invite requests are not yet wired. The manual
+source. New external replies may trigger a content-free, best-effort Slack waiting
+hint through the sender's configured webhook; invite requests are not yet wired. The manual
 receiver kit is ready, but real-client compatibility trials
 have not been run. See the
 [handoff-link checkpoint](../docs/handoff-links.md) and

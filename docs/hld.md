@@ -151,7 +151,7 @@ and public sender answers, plus provenance-marked sender-only reply inspection.
 Only `share release <reply-id>` permits external inbox visibility, with an exact
 interactive-terminal confirmation and an idempotent sender-authenticated mutation.
 Release does not verify the author or grant authority. The current checkpoint and
-unimplemented share-notification/invite-request boundaries are in
+best-effort content-free share-notification and unimplemented invite-request boundaries are in
 [handoff-links.md](handoff-links.md).
 
 ### Labs: experimental foreground Node

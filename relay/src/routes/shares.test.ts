@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearLastUsedDebounce } from "../auth/middleware.js";
 import { loadConfig } from "../config.js";
 import {
+	agentCards,
 	agents,
 	auditLog,
 	mailboxEvents,
@@ -14,6 +15,9 @@ import {
 } from "../db/schema.js";
 import { type TestDb, truncateAll, tryConnect } from "../db/test-utils.js";
 import { createLogger } from "../logger.js";
+import { encryptWebhook } from "../notifications/crypto.js";
+import { sendShareReplyHint } from "../notifications/share-hint.js";
+import type { SlackPoster } from "../notifications/slack.js";
 import { createServer } from "../server.js";
 import { deleteExpiredShareContent } from "../services/shares.js";
 
@@ -50,6 +54,7 @@ databaseDescribe("handoff link routes", () => {
 	let sender: Sender;
 	let other: Sender;
 	let nextIp = 1;
+	const slackPoster = vi.fn<SlackPoster>();
 
 	beforeAll(() => {
 		if (!conn.handle) throw new Error("expected database handle");
@@ -60,7 +65,14 @@ databaseDescribe("handoff link routes", () => {
 		clearLastUsedDebounce();
 		nextIp = 1;
 		const config = loadConfig(TEST_ENV);
-		app = createServer({ config, logger: createLogger(config), db: handle.db });
+		slackPoster.mockReset();
+		slackPoster.mockResolvedValue({ status: 200, ok: true });
+		app = createServer({
+			config,
+			logger: createLogger(config),
+			db: handle.db,
+			shareSlackPoster: slackPoster,
+		});
 		sender = await register("sender@acme");
 		other = await register("other@acme");
 	});
@@ -136,6 +148,138 @@ databaseDescribe("handoff link routes", () => {
 			headers: { authorization: `Bearer ${owner.api_key}` },
 		});
 	}
+
+	async function configureWebhook(value: string | null) {
+		await handle.db
+			.insert(agentCards)
+			.values({ agentId: sender.agent_id, card: {}, notificationWebhookUrl: value })
+			.onConflictDoUpdate({
+				target: agentCards.agentId,
+				set: { notificationWebhookUrl: value },
+			});
+	}
+
+	it("sends only a constant waiting hint to the sender's configured Slack webhook", async () => {
+		const webhook = "https://hooks.slack.com/services/T/B/private-webhook";
+		await configureWebhook(encryptWebhook(webhook, TEST_ENV.RELAY_ENCRYPTION_KEY));
+		const link = await createLink({ content: "private sender text" });
+		const key = randomUUID();
+		expect(
+			(await reply(link, { content: "private external text", idempotency_key: key })).status,
+		).toBe(201);
+		expect(slackPoster).toHaveBeenCalledTimes(1);
+		expect(slackPoster).toHaveBeenCalledWith(
+			webhook,
+			{
+				text: "AgentRelay: an unverified handoff-link reply is waiting for owner review. It is held until you explicitly release it; this hint does not mean agent processing.",
+			},
+			expect.any(AbortSignal),
+		);
+		const payload = JSON.stringify(slackPoster.mock.calls[0]?.[1]);
+		for (const privateValue of [
+			link.link_id,
+			link.url,
+			sender.agent_id,
+			"sender@acme",
+			"private sender text",
+			"private external text",
+		]) {
+			expect(payload).not.toContain(privateValue);
+		}
+		expect(
+			(await reply(link, { content: "private external text", idempotency_key: key })).status,
+		).toBe(200);
+		expect(slackPoster).toHaveBeenCalledTimes(1);
+		expect((await answer(link)).status).toBe(201);
+		expect(slackPoster).toHaveBeenCalledTimes(1);
+		const held = await handle.db.select().from(shareReplies);
+		expect(held.find((row) => row.authorKind === "external")?.releasedAt).toBeNull();
+	});
+
+	it("sends the same content-free hint for an HTML form reply", async () => {
+		await configureWebhook(
+			encryptWebhook("https://hooks.slack.com/services/T/B/form", TEST_ENV.RELAY_ENCRYPTION_KEY),
+		);
+		const link = await createLink();
+		const response = await app.request(`/l/${link.link_id}/replies`, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				content: "untrusted form content",
+				idempotency_key: randomUUID(),
+			}).toString(),
+		});
+		expect(response.status).toBe(201);
+		expect(slackPoster).toHaveBeenCalledTimes(1);
+		expect(JSON.stringify(slackPoster.mock.calls[0]?.[1])).not.toContain("untrusted form content");
+	});
+
+	it.each([
+		null,
+		"legacy-plaintext-url",
+		encryptWebhook("https://127.0.0.1/internal", TEST_ENV.RELAY_ENCRYPTION_KEY),
+		encryptWebhook("https://hooks.slack.com/services/T/B/wrong-key", "wrong-encryption-key"),
+	])("stores replies without posting to an unusable webhook (%#)", async (value) => {
+		await configureWebhook(value);
+		const link = await createLink();
+		expect((await reply(link)).status).toBe(201);
+		expect(slackPoster).not.toHaveBeenCalled();
+		expect(await handle.db.select().from(shareReplies)).toHaveLength(1);
+	});
+
+	it.each([
+		new Error("sensitive webhook error"),
+		{ status: 429, ok: false },
+		{ status: 500, ok: false },
+	])("does not retry or roll back a stored reply when Slack fails (%#)", async (result) => {
+		await configureWebhook(
+			encryptWebhook("https://hooks.slack.com/services/T/B/test", TEST_ENV.RELAY_ENCRYPTION_KEY),
+		);
+		if (result instanceof Error) slackPoster.mockRejectedValue(result);
+		else slackPoster.mockResolvedValue(result);
+		const link = await createLink();
+		expect((await reply(link)).status).toBe(201);
+		expect(slackPoster).toHaveBeenCalledTimes(1);
+		expect(await handle.db.select().from(shareReplies)).toHaveLength(1);
+		expect(
+			(await handle.db.select().from(shareEvents)).filter((row) => row.kind === "reply.posted"),
+		).toHaveLength(1);
+	});
+
+	it("bounds a stuck Slack hint without failing the durable reply receipt", async () => {
+		await configureWebhook(
+			encryptWebhook("https://hooks.slack.com/services/T/B/test", TEST_ENV.RELAY_ENCRYPTION_KEY),
+		);
+		slackPoster.mockImplementation(() => new Promise(() => {}));
+		const link = await createLink();
+		expect((await reply(link)).status).toBe(201);
+		expect(slackPoster.mock.calls[0]?.[2]?.aborted).toBe(true);
+		expect(await handle.db.select().from(shareReplies)).toHaveLength(1);
+	}, 10_000);
+
+	it("skips hints after sender disablement or link revocation", async () => {
+		await configureWebhook(
+			encryptWebhook("https://hooks.slack.com/services/T/B/test", TEST_ENV.RELAY_ENCRYPTION_KEY),
+		);
+		const link = await createLink();
+		await handle.db
+			.update(agents)
+			.set({ status: "disabled" })
+			.where(eq(agents.id, sender.agent_id));
+		const options = {
+			encryptionKey: TEST_ENV.RELAY_ENCRYPTION_KEY,
+			logger: createLogger(loadConfig(TEST_ENV)),
+			slackPoster,
+		};
+		await sendShareReplyHint(handle.db, link.link_id, options);
+		await handle.db.update(agents).set({ status: "active" }).where(eq(agents.id, sender.agent_id));
+		await handle.db
+			.update(shareLinks)
+			.set({ revokedAt: new Date() })
+			.where(eq(shareLinks.publicId, link.link_id));
+		await sendShareReplyHint(handle.db, link.link_id, options);
+		expect(slackPoster).not.toHaveBeenCalled();
+	});
 
 	it("keeps held bodies out of the inbox and atomically releases one external reply once", async () => {
 		const link = await createLink();
@@ -811,6 +955,9 @@ databaseDescribe("handoff link routes", () => {
 	});
 
 	it("rolls back replies and measurement if the transaction's audit insert fails", async () => {
+		await configureWebhook(
+			encryptWebhook("https://hooks.slack.com/services/T/B/test", TEST_ENV.RELAY_ENCRYPTION_KEY),
+		);
 		const link = await createLink();
 		await handle.sql.unsafe(
 			"CREATE FUNCTION share_test_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'reply.posted' THEN RAISE EXCEPTION 'sensitive reply failure'; END IF; RETURN NEW; END $$",
@@ -821,6 +968,7 @@ databaseDescribe("handoff link routes", () => {
 		try {
 			const response = await reply(link);
 			expect(response.status).toBe(500);
+			expect(slackPoster).not.toHaveBeenCalled();
 			expect(await response.text()).not.toContain("sensitive reply");
 			expect(await handle.db.select().from(shareReplies)).toHaveLength(0);
 			expect(

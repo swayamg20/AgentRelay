@@ -5,6 +5,7 @@ import { type ErrorEnvelope, RelayError } from "./errors.js";
 import type { MailboxSignalHub } from "./events/mailbox-signal.js";
 import type { Logger } from "./logger.js";
 import { isSensitiveRoute, loggerMiddleware, requestIdMiddleware } from "./middleware.js";
+import type { SlackPoster } from "./notifications/slack.js";
 import { createA2aRoutes } from "./routes/a2a.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createAgentsRoutes } from "./routes/agents.js";
@@ -24,6 +25,7 @@ export interface CreateServerOptions {
 	readinessProbe?: () => Promise<boolean>;
 	/** Optional live wake hints. Durable replay remains available without it. */
 	mailboxSignalHub?: MailboxSignalHub;
+	shareSlackPoster?: SlackPoster;
 }
 
 export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
@@ -50,7 +52,16 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 
 	if (db) {
 		const keyEnvironment = config.RELAY_ENV === "production" ? "live" : "test";
-		const shareOptions = { db, pepper: config.RELAY_PEPPER, publicUrl: config.RELAY_PUBLIC_URL };
+		const shareOptions = {
+			db,
+			pepper: config.RELAY_PEPPER,
+			publicUrl: config.RELAY_PUBLIC_URL,
+			notification: {
+				encryptionKey: config.RELAY_ENCRYPTION_KEY,
+				logger,
+				slackPoster: opts.shareSlackPoster,
+			},
+		};
 		app.route("/l", createPublicShareRoutes(shareOptions));
 		app.route("/shares", createOwnerShareRoutes(shareOptions));
 		app.route(

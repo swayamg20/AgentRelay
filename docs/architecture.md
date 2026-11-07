@@ -49,8 +49,10 @@ holders can submit held replies, never read replies or other mailbox content. Th
 checkpoint adds source MCP/CLI share previews and local secret scanning, sender-only
 reply inspection, bounded public answers, interactive-terminal CLI release, and a
 separate durable released-reply array in `check_inbox`. Release permits visibility,
-not verified authorship, trust, acceptance, or execution. It does not yet have
-invite requests or Slack share hints. It is
+not verified authorship, trust, acceptance, or execution. New external replies may
+trigger a constant, best-effort Slack waiting hint through the sender's configured
+webhook, separate from the ordinary durable notification outbox. It does not yet have
+invite requests. It is
 not a complete end-to-end client feature or proof of real-client compatibility.
 
 Missions and autonomous repository execution are one possible application of this

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { RelayError } from "../errors.js";
+import { type ShareHintOptions, sendShareReplyHint } from "../notifications/share-hint.js";
 import { PublicRateLimiter, publicRateLimit } from "../public-rate-limit.js";
 import {
 	answerShare,
@@ -34,6 +35,7 @@ export interface ShareRoutesOptions {
 	db: Database;
 	pepper: string;
 	publicUrl: string;
+	notification?: ShareHintOptions;
 }
 
 export function shareSecurityHeaders() {
@@ -137,6 +139,9 @@ export function createPublicShareRoutes(opts: ShareRoutesOptions): Hono<AppEnv> 
 			context.get("requestId"),
 		);
 		const status = receipt.replayed ? 200 : 201;
+		if (!receipt.replayed && opts.notification) {
+			await sendShareReplyHint(opts.db, id, opts.notification);
+		}
 		return channel === "api"
 			? context.json(receipt, status)
 			: context.html(renderShareReplyReceipt(), status);

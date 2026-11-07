@@ -1,7 +1,7 @@
 # Handoff links: sender client and Relay checkpoint
 
 The current source implements the Relay routes below. This is not yet the complete
-client product: invite-request measurement and Slack waiting hints are not wired.
+client product: invite-request measurement is not wired.
 Owner release and released-reply inbox replay are implemented in source. Do not
 publish sensitive content through this API while expecting a
 server-side secret scanner. The approved boundary is
@@ -167,6 +167,21 @@ public operations through the same transaction locks used for creation. Link
 revocation is permanent; key rotation is not link revocation.
 
 ## Admission, retention, and facts
+
+After a new API/form reply commits, the Relay attempts a content-free Slack hint
+through the sender's existing configured webhook. The payload is constant: no
+sender name, link/reply ID, capability URL, or message text. It says an unverified
+reply is held for owner review, not that an agent processed it. Identical retries,
+sender answers, and failed reply submissions do not trigger hints. Missing webhooks
+skip the attempt; inactive senders or unavailable links also skip it.
+
+These share hints are **best-effort, not durable notification jobs**. They reuse
+encrypted webhook storage, the exact HTTPS Slack allowlist, and redirect refusal,
+but do not enter the ordinary handoff notification outbox or retry Slack failures.
+The POST waits at most five seconds for the Slack attempt; timeout or transport
+failure cannot undo the already committed reply or change its storage receipt.
+A process crash after commit can lose the hint. Private reply inspection and
+explicit release remain authoritative; this optional hint is not a delivery state.
 
 The in-process fixed-window limits are separate for reads and writes:
 

@@ -4,6 +4,11 @@ Slack is an optional human-facing hint. A Relay receipt proves database storage,
 not Slack delivery, device pickup, agent processing, or a reply. The mailbox and
 its authenticated replay remain authoritative when notifications fail.
 
+The outbox guarantees below describe ordinary mailbox notifications only.
+[Handoff-link waiting hints](handoff-links.md#admission-retention-and-facts) are
+separate, content-free, best-effort attempts after reply storage. They use the
+sender's configured encrypted Slack webhook but have no durable jobs or retries.
+
 ## Upgrade and replica ownership
 
 Stop older Relay processes, apply migrations using the existing deployment's
