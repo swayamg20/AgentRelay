@@ -1,112 +1,92 @@
 # Nightshift state
 
-Working memory. Rewrite at the end of each session; history and active tests take
-precedence over notes.
-
 ## Goal as understood
 
-Ship owner-chosen `core-mailbox` issues one at a time with passing checks. The goal
-is unchanged. The recorded October 28, 2026, 21:41:13 UTC owner reply on #176
-selected #44, deferred its #30 metrics requirement, assigned #34 elsewhere, and
-held #8 until actual #101 two-owner/two-machine evidence exists. This run supplies
-no new owner reply or PR feedback.
+The owner changed the goal from the exhausted `core-mailbox` issue inventory to
+verified handoff links on November 7, 2026. Implement the seven supplied steps in
+order, with passing checks and small commits. Receiver accounts, self-serve
+signup, email, signing, live sessions, wake-up, Missions/Node, federation, and
+execution remain out of scope. Nothing in a link grants sender-side authority.
 
-#44 is complete on this branch in `ce0b06e` —
-`feat(notifications): add a transactional outbox worker`. The prior PR #178
-typecheck repair is in `945e9d5` —
-`fix(e2e): build relay before typechecking restart tests`. Both remain outside
-the workflow-supplied `origin/main` snapshot, whose tip is `0a93246`.
-
-Run 40942715397 starts at `956cbb4`, makes no product changes, and passes all six
-required checks, four mailbox process tests, protocol exports, and the packed MCP
-artifact smoke. The branch-wide PR description closes only #44, with metrics
-explicitly deferred. Remote CI, PR, and merge status were not queried.
+Run 42361776481, session 1, completes steps 1–3. Production link routes and client
+tools are not implemented yet. Continue this run; do not create STOP or wait for
+manual receiver results.
 
 ## Plan
 
-- [x] Read memory first, run harness setup, and inspect clean status and history.
-- [x] Review instructions, relevant designs, issue scope, and notification
-  producer/worker plus the MCP mailbox consumer and nearby tests.
-- [x] Confirm #44 and the typecheck repair are already committed; do not duplicate
-  implementation or expand the approved scope.
-- [x] Pass all six required checks against the job's Postgres on port 5433.
-- [x] Pass mailbox/restart process proofs, protocol exports, and packed MCP smoke.
-- [x] Recheck the backlog and request an owner decision on the exhausted eligible
-  inventory without inventing a three-issue shortlist.
-- [x] Update memory, branch-wide PR description, external summary, and STOP.
+- [x] Read prior memory, history, instructions, and relevant designs; run harness
+  setup and inspect the initially clean working tree.
+- [x] Step 1: static Markdown/HTML, runnable synthetic receiver server, focused
+  tests, and the six-trial 15-minute manual receiver matrix (`ef1b781`).
+- [x] Step 2: RFC 003 narrowly amends RFC 002 with the four approved exceptions;
+  ordinary mailbox promises remain (`9a1b703`).
+- [x] Step 3: share tables/migration and external audit actors (`c0048d5`), plus
+  admin-attested invite domains copied during redemption (`3f8f1a4`).
+- [ ] Step 4: production capability reads, held JSON/form replies, revocation,
+  expiry, and the in-process retention sweep.
+- [ ] Step 5: preview/secret-scan MCP and CLI creation/answers, interactive owner
+  release, and `external_unverified` inbox delivery.
+- [ ] Step 6: production byte/admission limits, IP/link rate limiting and invite
+  redemption, secure rendering/instructions, and content-free Slack hints.
+- [ ] Step 7: truthful architecture/provenance/MCP documentation and event producers.
 
 ## Next step
 
-Read new PR feedback and owner replies first, then compare branch history with the
-workflow-supplied `origin/main`. Address blocking PR findings before new work. If
-#44 has merged, exclude it from future candidates.
+Read any new feedback first, then implement step 4 against the separate share
+tables. Trace sender-authenticated creation/revocation and public reads/replies
+together. Include necessary safety at the edge before mounting a public route;
+do not land an unsafe intermediate implementation while deferring step 6.
 
-The supplied inventory has exactly five `core-mailbox` issues: #128, #102, and
-#101 are excluded epics; #44 is complete on the branch; #8 lacks its prerequisite
-real-user evidence. #34's backup/restore docs are already on main through PR #179.
-The earlier #10/#103/#39 and #111/#40/#11 work is also on main.
-
-There are no three eligible, unblocked one-run candidates. Do not substitute Labs,
-interop, demand-gated #30, completed main work, or fabricated proof evidence.
-Follow the response to this run's scope-unblock question; shortlist three issues
-only when a refreshed, approved backlog actually supports that shortlist.
+`docs/handoff-links-receiver-test.md` is ready for the owner. Its mock receipts
+prove only a fixture POST, not real-client compatibility, durability, or release.
+Keep the six real-client trials marked not run until actual evidence arrives.
 
 ## Waiting on owner
 
-- #44 is ready for review/merge, subject to remote checks; #30 metrics remain
-  expressly deferred, not shipped by this branch.
-- This run writes `questions/next-mailbox-scope.md` in the external output
-  directory. It asks whether to supply new scoped mailbox issues, provide real
-  sanitized #101 evidence for #8, or keep implementation stopped. The recommendation
-  is to review #44 and wait for evidence of a concrete mailbox blocker.
-- No open question was supplied in this run's owner inbox. The new question
-  concerns the exhausted next-task backlog, not the resolved #176 selection.
-- #8 still needs evidence from two owners and two machines. Local process tests
-  cannot satisfy that prerequisite. Stop this run rather than expand scope.
+No blocking question. Receiver test results are explicitly not a prerequisite for
+further work. The previous next-mailbox-scope request is superseded by the supplied
+new goal; do not resurrect the old backlog-selection loop.
+
+The existing merge path guard denies database migrations and does not allow the
+integration-runner script. This owner-approved goal explicitly requires migrations;
+implement them, but leave the guard unchanged and note that direct repository review
+is needed rather than reply-only merge. No new credentials or external systems are
+needed to continue local implementation.
 
 ## Learned about the repository
 
-- Mailbox creation, append, and completion insert encrypted notification intent
-  alongside their mutation, recipient event, and audit in the same transaction.
-  Replays do not add jobs; acceptance/cancellation stay silent.
-- Migration `0011_notification_outbox` adds unique source identity, encrypted
-  previews, due/lease/terminal state, and partial indexes. It does not backfill jobs
-  already lost from the previous in-memory queue.
-- Workers claim one job with skip-locked row selection, a fresh UUID token, and
-  a 30-second lease. Bounded retries, one persisted Slack 429 retry, fencing,
-  safe outcomes, and terminal cleanup are durable database state.
-- Slack is an optional at-least-once hint, never pickup or reply evidence. Current
-  webhook configuration and its allowlist are checked at send time. Sensitive
-  payloads and provider exception text are not logged.
-- Worker memory is bounded, not total PostgreSQL backlog. Active jobs are not
-  evicted; terminal previews are erased and old terminal rows are batch-cleaned.
-- E2E typechecking needs the Relay build before the static production import in
-  restart tests. Serial package hooks avoid concurrent protocol output writers.
-- This run passes 125 protocol, 393 MCP, 79 database-free Relay, and 438 Node unit
-  tests, with expected 274 Relay database and three Node opt-in skips. Integration
-  passes 274 tests; mailbox process proofs pass four tests across three files.
-- Lint retains three existing unused-suppression warnings. Initial install warns
-  about links to not-yet-built Node binaries; subsequent builds and packed smoke
-  pass. No source, dependency, workflow, infrastructure, version, or public contract
-  changes are made this session. Memory contains no Markdown links.
-
-## Verification commands
-
-All pass this session:
-
-```bash
-bash "$NIGHTSHIFT_HARNESS/setup-install.sh"
-pnpm install --frozen-lockfile
-pnpm lint
-pnpm -r typecheck
-pnpm -r build
-env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL pnpm --filter @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter agentrelay-node test
-RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration
-RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay pnpm --filter agentrelay-e2e exec vitest run src/notification-reliability.e2e.test.ts src/mailbox-reliability.e2e.test.ts src/handoff-roundtrip.e2e.test.ts
-pnpm --filter @agentrelay/protocol test:exports
-pnpm --dir mcp-server pack --pack-destination "$NIGHTSHIFT_OUT"
-node mcp-server/scripts/smoke-packed-artifact.mjs "$NIGHTSHIFT_OUT/agentrelay-mcp-$(node -p "require('./mcp-server/package.json').version").tgz"
-! rg -n '\[[^]]+\]\([^)]+\)' .nightshift/STATE.md .nightshift/JOURNAL.md
-git diff --check
-git diff --cached --check
-```
+- Share correspondence is separate from ordinary two-party `handoffs`/`messages`.
+  No public route or share event producer is mounted yet.
+- `share_links.id` is an internal UUID for foreign keys/audit; `public_id` is a
+  unique 43-character base64url capability. Creation must generate 32 random bytes;
+  the schema checks shape, not entropy. Creation keys are sender-scoped.
+- Links default to seven days and cap expiry at thirty days. Nullable content and
+  `content_deleted_at` support deletion while retaining content-free history.
+- Replies/answers have one per-link sequence, `author_kind` sender/external,
+  `channel` api/form, author-scoped idempotency keys, and explicit release fields.
+  The schema checks release shape, not authenticated owner authority.
+- DB byte caps cover initial link content (64 KiB) and each reply/answer (16 KiB).
+  Aggregate public content, ten external replies, lifecycle, retention, and
+  authorization must still be enforced transactionally by production services.
+- `share_events` supports the six requested kinds, non-agent actor identity,
+  exact reply/link foreign keys, unique creation/reply mutation facts, and repeated
+  fetches. Metadata must remain content-free; do not put URLs or bodies there.
+- Invite `company_domain` is optional, normalized ASCII DNS/punycode, admin-audited
+  at minting, and copied from the stored row during locked redemption. Existing
+  agents/invites and omitted domains remain NULL; never infer from email/handle.
+  Signed tokens and existing response shapes are unchanged. Receiver assertions
+  cannot set provenance. The new optional CLI flag is source-only, not published.
+- Invite mint audit now identifies the authenticated admin, not the named inviter.
+  Agent self-audit remains actor-scoped; it does not expose admin mint records.
+- The global logger currently logs raw request paths and unhandled errors. Public
+  capability routes require path/error redaction so IDs, URLs, and bodies never leak.
+- Existing mailbox events require authenticated agent actors and handoff references;
+  do not fabricate an agent identity to fit an external reply into that ledger.
+  Existing notification-outbox rows also require a handoff; Slack is only a hint.
+- All six checks pass after every product concern. Final units: 125 protocol,
+  401 MCP, 82 database-free Relay, 438 Node; expected 292 Relay DB/three Node skips.
+  Integration passes 292 tests. The inherited mailbox/restart proofs pass four.
+  Lint retains three existing unused-suppression warnings. No dependencies changed.
+- The inherited branch still contains `ce0b06e` (#44 notification outbox) and
+  `945e9d5` (restart-test typecheck ordering) outside `origin/main`. Include them
+  in branch-wide PR text; only #44 is closed, and its metrics remain deferred.
