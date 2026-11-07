@@ -74,6 +74,17 @@ describeIfBuilt("agentrelay CLI mcp subcommand", () => {
 		expect(result.stdout.trim()).toContain(`agentrelay/${pkg.version}`);
 	});
 
+	it("documents explicit admin company attestation in invite help", () => {
+		const result = spawnSync("node", [AGENTRELAY_BIN_PATH, "invite", "--help"], {
+			cwd: PACKAGE_ROOT,
+			encoding: "utf8",
+			stdio: "pipe",
+		});
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain("--company-domain <domain>");
+		expect(result.stdout).toContain("not DNS verified");
+	});
+
 	it("reports the package version during MCP initialization", async () => {
 		const transport = new StdioClientTransport({
 			command: "node",

@@ -91,6 +91,7 @@ d("invite REST endpoints", () => {
 		inviterHandle?: string;
 		handle?: string;
 		role?: string;
+		companyDomain?: string;
 		expiresInSeconds?: number;
 	}): Promise<InviteResponse> {
 		const res = await app.request("/admin/invites", {
@@ -100,6 +101,7 @@ d("invite REST endpoints", () => {
 				inviter_handle: input?.inviterHandle ?? "lead@acme",
 				handle: input?.handle ?? "builder@acme",
 				role: input?.role ?? "frontend",
+				company_domain: input?.companyDomain,
 				expires_in_seconds: input?.expiresInSeconds ?? 86_400,
 			}),
 		});
@@ -159,6 +161,7 @@ d("invite REST endpoints", () => {
 		expect(row.tokenHash).toBe(hashToken(token));
 		expect(row.inviterId).toBe(inviter.agent_id);
 		expect(row.usedAt).toBeNull();
+		expect(row.companyDomain).toBeNull();
 	});
 
 	it("redeem with valid token creates agent and marks used_at", async () => {
@@ -254,13 +257,14 @@ d("invite REST endpoints", () => {
 	});
 
 	it("audit log written for both operations", async () => {
-		const inviter = await register("lead@acme");
+		await register("lead@acme");
 		const invite = await mintInvite({ handle: "audit@acme", role: "reviewer" });
 		const token = tokenFromUrl(invite.url);
 
 		const afterMint = await handle.db
 			.select({
 				action: auditLog.action,
+				actorKind: auditLog.actorKind,
 				actorId: auditLog.actorId,
 				resourceType: auditLog.resourceType,
 				resourceId: auditLog.resourceId,
@@ -270,7 +274,8 @@ d("invite REST endpoints", () => {
 		expect(afterMint).toHaveLength(1);
 		expect(afterMint[0]).toMatchObject({
 			action: "invite.minted",
-			actorId: inviter.agent_id,
+			actorKind: "admin",
+			actorId: null,
 			resourceType: "invite",
 			resourceId: invite.jti,
 		});
@@ -299,5 +304,111 @@ d("invite REST endpoints", () => {
 			resourceType: "invite",
 			resourceId: invite.jti,
 		});
+	});
+
+	it("stores a normalized admin attestation and redeems it from the invite, not receiver assertions", async () => {
+		const inviter = await register("lead@acme");
+		const response = await app.request("/admin/invites", {
+			method: "POST",
+			headers: { ...adminHeaders(), "x-request-id": "domain-attestation-test" },
+			body: JSON.stringify({
+				inviter_handle: "lead@acme",
+				handle: "verified@acme",
+				role: "reviewer",
+				company_domain: "  Sub.Example.COM  ",
+			}),
+		});
+		expect(response.status).toBe(201);
+		const invite = (await response.json()) as InviteResponse;
+		const [storedInvite] = await handle.db
+			.select()
+			.from(invites)
+			.where(eq(invites.jti, invite.jti));
+		expect(storedInvite?.companyDomain).toBe("sub.example.com");
+		const [audit] = await handle.db
+			.select()
+			.from(auditLog)
+			.where(eq(auditLog.resourceId, invite.jti));
+		expect(audit).toMatchObject({
+			actorKind: "admin",
+			actorId: null,
+			action: "invite.minted",
+			requestId: "domain-attestation-test",
+			metadata: { company_domain: "sub.example.com", inviter_id: inviter.agent_id },
+		});
+		const redeemed = await app.request(`/invites/${invite.jti}/redeem`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ token: tokenFromUrl(invite.url), company_domain: "attacker.example" }),
+		});
+		expect(redeemed.status).toBe(201);
+		const result = (await redeemed.json()) as AgentResponse;
+		const [agent] = await handle.db.select().from(agents).where(eq(agents.id, result.agent_id));
+		expect(agent?.companyDomain).toBe("sub.example.com");
+		const [original] = await handle.db.select().from(agents).where(eq(agents.id, inviter.agent_id));
+		expect(original?.companyDomain).toBeNull();
+	});
+
+	it("keeps omitted invite domains unknown instead of inferring from handle or email", async () => {
+		await register("lead@acme");
+		const invite = await mintInvite();
+		const response = await app.request(`/invites/${invite.jti}/redeem`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ token: tokenFromUrl(invite.url), company_domain: "acme.com" }),
+		});
+		expect(response.status).toBe(201);
+		const result = (await response.json()) as AgentResponse;
+		const [agent] = await handle.db.select().from(agents).where(eq(agents.id, result.agent_id));
+		expect(agent?.companyDomain).toBeNull();
+	});
+
+	it.each([
+		"",
+		"localhost",
+		"https://example.com",
+		"person@example.com",
+		"*.example.com",
+		"-bad.example",
+		"127.0.0.1",
+		`${"a".repeat(64)}.example`,
+		"example.com.",
+	])("rejects invalid company domain %j before minting or auditing", async (companyDomain) => {
+		await register("lead@acme");
+		const response = await app.request("/admin/invites", {
+			method: "POST",
+			headers: adminHeaders(),
+			body: JSON.stringify({
+				inviter_handle: "lead@acme",
+				handle: "builder@acme",
+				role: "frontend",
+				company_domain: companyDomain,
+			}),
+		});
+		expect(response.status).toBe(400);
+		expect(await handle.db.select().from(invites)).toEqual([]);
+		expect(await handle.db.select().from(auditLog)).toEqual([]);
+	});
+
+	it("rolls back the attested invite when its audit write fails", async () => {
+		await register("lead@acme");
+		await handle.sql`ALTER TABLE audit_log ADD CONSTRAINT reject_test_invite_mint CHECK (action != 'invite.minted')`;
+		try {
+			const response = await app.request("/admin/invites", {
+				method: "POST",
+				headers: adminHeaders(),
+				body: JSON.stringify({
+					inviter_handle: "lead@acme",
+					handle: "builder@acme",
+					role: "frontend",
+					company_domain: "example.com",
+				}),
+			});
+			expect(response.status).toBe(500);
+			expect(await handle.db.select().from(invites)).toEqual([]);
+			expect(await handle.db.select().from(auditLog)).toEqual([]);
+		} finally {
+			await handle.sql`ALTER TABLE audit_log DROP CONSTRAINT reject_test_invite_mint`;
+		}
 	});
 });

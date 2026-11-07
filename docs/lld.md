@@ -86,7 +86,7 @@ for mailbox use.
 
 | Table | Current purpose |
 |---|---|
-| `agents` | Developer identity: handle, email, display name, role, active/disabled state. |
+| `agents` | Developer identity: handle, email, display name, role, active/disabled state, nullable admin-attested company domain copied from a redeemed invite. |
 | `agent_cards` | One-to-one card JSON, skills, repository labels, optional notification webhook field. |
 | `api_keys` | Hashed bearer keys with label, last-used timestamp, and revocation timestamp. |
 | `handoffs` | Sender, recipient, summary, intent, four-state lifecycle, initial and completion artifacts, proposed action, metadata, timestamps, idempotency key. |
@@ -95,7 +95,7 @@ for mailbox use.
 | `notification_outbox` | Recipient/thread/source identity, notification kind, AES-GCM encrypted preview, pending/leased/terminal status, claim count, due time, lease token/deadline, persisted rate-limit retry budget, safe outcome, and timestamps. Source identity is unique per recipient/kind. Active work and terminal retention have partial indexes. |
 | `audit_log` | Invite, handoff/message, block, Agent-disable, Node/workspace, Mission, and delivery mutation records: actor kind, nullable Agent actor ID, action, resource, metadata, request ID, timestamp. Admin and relay-system actors never borrow an Agent ID. |
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
-| `invites` | Signed-token hash, target handle/role, inviter, expiry, use timestamp, and redeemed agent. |
+| `invites` | Signed-token hash, target handle/role, optional admin-attested company domain, inviter, expiry, use timestamp, and redeemed agent. |
 | `share_links` | Separate link-thread foundation: internal UUID, unique 43-character public capability ID, sender, content, sender-scoped creation idempotency key, default seven-day/max thirty-day expiry, revocation, and content-deletion timestamp. No production link route is mounted yet. |
 | `share_replies` | Ordered link entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped idempotency key, and explicit external-release timestamp/agent. No reply submission or release service is shipped yet. |
 | `share_events` | Internal link/reply references, finite measurement kind, explicit actor kind/nullable agent ID, object metadata, and timestamp. Mutation facts are unique; fetches may repeat. No production event producer is shipped yet. |
@@ -209,7 +209,7 @@ There is no `/metrics`, `/inbox/:id`, or
 | `POST` | `/admin/agents` | Register an agent and issue the initial API key. |
 | `POST` | `/admin/agents/:id/keys/rotate` | Admin rotation for an agent ID. |
 | `DELETE` | `/admin/agents/:id` | In one transaction, disable an Agent, revoke its keys, owned Nodes, active Node credentials and workspace bindings, cancel affected active deliveries, and write admin audit evidence. |
-| `POST` | `/admin/invites` | Mint a signed, expiring, single-use invite URL. |
+| `POST` | `/admin/invites` | Mint a signed, expiring, single-use invite URL; optional `company_domain` is normalized/validated and recorded with admin audit in the same transaction. |
 
 ### Authenticated core agent routes
 
@@ -855,11 +855,17 @@ authorization/release services, retention sweeps, inbox delivery, or event emiss
 These are not claims of a shipped link feature. Existing mailbox tables and
 participant-only behavior remain unchanged.
 
-Nullable `company_domain` columns are prepared on agents and invites. Existing rows
-remain unknown (`NULL`), with no inference from email or handle. The mint/redemption
-routes do not yet populate an admin-attested domain. Audit additionally accepts
-`external` actors with no agent ID; this schema support does not authenticate an
-external sender or implement a public reply route.
+Nullable `company_domain` columns on agents and invites record admin-attested
+provenance. Existing rows and new invites without an explicit domain remain unknown
+(`NULL`), with no inference from email or handle. Admin minting accepts a normalized
+ASCII DNS domain (including punycode), not a URL, email, wildcard, or IP address, and
+audits the attestation as `admin` with no fabricated agent ID. Locked redemption
+copies the stored invite domain, never a receiver assertion. The signed token and
+existing response contracts are unchanged. This is admin attestation, not DNS,
+employment, email, or cryptographic verification. Self-audit still filters by the
+caller agent's actor ID, so admin mint records are not returned as inviter actions.
+Audit additionally accepts `external` actors with no agent ID; this schema support
+does not authenticate an external sender or implement a public reply route.
 
 Core relay audit rows cover invite mint/redeem, handoff
 create/accept/complete/cancel, message append, and block/unblock. Labs audit adds Node

@@ -68,6 +68,10 @@ cli
 cli
 	.command("invite <handle>", "Create a single-use invite URL")
 	.option("--role <role>", "Role for the invited agent")
+	.option(
+		"--company-domain <domain>",
+		"Company domain attested by the Relay admin (not DNS verified)",
+	)
 	.option("--expires <duration>", "Invite lifetime: seconds, Nh, or Nd", { default: "24h" })
 	.option("--relay <url>", "Override relay URL")
 	.action(async (handle: string | undefined, opts: Record<string, unknown>) => {
@@ -105,6 +109,7 @@ cli
 			const result = await invite({
 				handle,
 				role: opts.role,
+				companyDomain: opts.companyDomain as string | undefined,
 				expiresInSeconds,
 				adminToken,
 				relayUrl: typeof opts.relay === "string" ? opts.relay : undefined,

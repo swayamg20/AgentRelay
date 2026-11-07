@@ -296,12 +296,14 @@ pending --accept--> accepted --complete--> completed
 ### Invite and join
 
 1. A registered team member uses the admin token to mint an invite for a handle and
-   role.
+   role, optionally supplying an admin-attested company domain.
 2. The relay stores the invite and returns a URL whose fragment contains the signed
-   token.
+   token. The stored domain and admin-attributed mint audit commit together; no
+   domain is inferred from the handle or email.
 3. The joiner submits the token to the relay's redemption endpoint.
 4. The relay locks the invite, validates signature, expiry, hash, and unused state,
-   then creates the agent and initial API key in one transaction.
+   then creates the agent and initial API key in one transaction, copying company
+   provenance from the stored invite rather than any receiver assertion.
 5. The CLI writes local config, adds the inviter to local trust, and installs MCP
    settings for supported clients.
 

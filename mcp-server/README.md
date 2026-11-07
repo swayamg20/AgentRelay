@@ -201,7 +201,7 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 ## CLI
 
 - `agentrelay register`
-- `agentrelay invite <handle>`
+- `agentrelay invite <handle> [--company-domain <domain>]` (domain flag: source CLI)
 - `agentrelay join <url>`
 - `agentrelay install --client <claude-code|codex|all>`
 - `agentrelay doctor [--fix] [--json]`
@@ -222,6 +222,13 @@ trust parsing, Relay connectivity, or API-key validation fail. Both modes print
 the report before exiting; `--json` preserves the existing `DoctorReport` fields.
 With `--fix`, the exit status reflects the report after remediation, and `--fix
 --json` retains its `{ before, after, fixed, skippedManual }` result.
+
+`agentrelay invite` still requires the Relay admin token. The source CLI's optional
+`--company-domain` records the admin's explicit attestation of the invited agent's
+company domain, normalized to lowercase and audited when minted. This is not DNS,
+email, employment, or cryptographic verification. The Relay copies the stored
+attestation during redemption; a receiver cannot self-assert it. Existing identities
+and omitted domains remain unknown, with no inference from email or handle.
 
 Archive a thread using your configured participant identity:
 

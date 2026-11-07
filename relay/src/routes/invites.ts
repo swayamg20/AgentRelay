@@ -40,6 +40,14 @@ const createInviteSchema = z.object({
 	inviter_handle: z.string().min(1),
 	handle: z.string().min(1),
 	role: z.string().min(1),
+	company_domain: z
+		.string()
+		.trim()
+		.toLowerCase()
+		.max(253)
+		.regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
+		.nullable()
+		.default(null),
 	expires_in_seconds: z.number().int().positive().default(86_400),
 });
 
@@ -141,16 +149,24 @@ export function createInviteRoutes(opts: InviteRoutesOptions): Hono<AppEnv> {
 				tokenHash,
 				handle: input.handle,
 				role: input.role,
+				companyDomain: input.company_domain,
 				inviterId: inviter.id,
 				expiresAt,
 			});
 
 			await writeAudit(tx, {
-				actorId: inviter.id,
+				actorKind: "admin",
+				actorId: null,
 				action: "invite.minted",
 				resourceType: "invite",
 				resourceId: jti,
-				metadata: { jti, handle: input.handle, role: input.role },
+				metadata: {
+					jti,
+					handle: input.handle,
+					role: input.role,
+					inviter_id: inviter.id,
+					company_domain: input.company_domain,
+				},
 				requestId,
 			});
 		});
@@ -201,6 +217,7 @@ export function createInviteRoutes(opts: InviteRoutesOptions): Hono<AppEnv> {
 			const result = await registerAgentWithInitialKey(tx, {
 				handle: invite.handle,
 				role: invite.role,
+				companyDomain: invite.companyDomain,
 				pepper: opts.pepper,
 				keyEnvironment: opts.keyEnvironment,
 			});
