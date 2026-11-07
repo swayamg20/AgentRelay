@@ -2,7 +2,7 @@
 
 The current source implements the Relay routes below. This is not yet the complete
 client product: MCP/CLI preview and secret scanning, owner release, released inbox
-delivery, sender answers, invite-request measurement, and Slack waiting hints are
+delivery, invite-request measurement, and Slack waiting hints are
 not wired. Do not publish sensitive content through this API while expecting a
 server-side secret scanner. The approved boundary is
 [RFC 003](rfcs/003-verified-handoff-links.md); ordinary mailbox participants, blocks,
@@ -20,6 +20,8 @@ Agent API keys authenticate these routes. Node credentials do not.
 |---|---|---|
 | `POST` | `/shares` | JSON `content`, UUID `idempotency_key`, optional integer `expires_in_days` (default 7, range 1–30). Returns `link_id`, canonical `url`, expiry/revocation/deletion timestamps, and `replayed`. |
 | `POST` | `/shares/:id/revoke` | No body. Only the sender may revoke. Returns lifecycle timestamps and `replayed`; repeated revocation adds no audit entry. |
+| `GET` | `/shares/:id/replies` | Sender-only ordered external replies, with IDs, channel, nullable content, creation/release timestamps, and origin `external_unverified`. Inspection does not release or verify a reply. |
+| `POST` | `/shares/:id/answers` | JSON `content` and UUID `idempotency_key`. Publishes a sender answer, returning `answer_id`, `link_id`, sequence, creation timestamp, and `replayed` (201 new, 200 identical retry, 409 changed-key input). |
 
 Creation returns 201, or 200 for an identical sender-scoped retry. Changed content
 or expiry with the same key returns 409, rather than republishing a changed link.
@@ -28,6 +30,15 @@ invalid keys/expiry are rejected. Request bodies are stream-bounded independentl
 of `Content-Length`. The link capability is 32 random bytes encoded as 43 base64url
 characters, distinct from the internal database UUID. Capability URLs and content
 must be treated as sensitive; forwarding the URL forwards its read/reply power.
+
+Answers require an active sender-owned link, are capped at 16,384 UTF-8 bytes each,
+and share a 65,536-byte aggregate published-content budget with the initial text.
+Per-link locking protects ordering, idempotency, and that budget under contention.
+External replies do not consume the published budget and are never implicitly
+quoted in answers. Sender inspection remains available after expiry/revocation;
+after retention deletion, reply bodies are `null`. No inspection creates ordinary
+messages or mailbox events. Clients must provenance-mark external text before
+returning it to a local agent.
 
 ## Public receiver API
 
@@ -91,10 +102,10 @@ ordering, release state, idempotency keys, and content-free measurement/audit re
 Revocation does not move the expiry-based deletion deadline earlier. When a process
 is down, deletion resumes at its next sweep; backups have their own retention.
 
-Creation and reply mutations commit with their audit and measurement facts;
+Creation, reply, and answer mutations commit with their audit and measurement facts;
 revocation commits with audit. `share_events` currently emits `link.created`,
-`link.fetched` (HTML/Markdown and a known-bot user-agent hint), and `reply.posted`
-(API/form). Raw user agents, IPs, bodies, and capability URLs are not recorded in
+`link.fetched` (HTML/Markdown and a known-bot user-agent hint), `reply.posted`
+(API/form), and `answer.posted`. Raw user agents, IPs, bodies, and capability URLs are not recorded in
 these facts. Sensitive route paths, caller-supplied request IDs, and raw failure
-diagnostics are excluded from request logs. Owner release, answers, and invite
+diagnostics are excluded from request logs. Owner release and invite
 requests are schema-supported but their producers are not implemented yet.

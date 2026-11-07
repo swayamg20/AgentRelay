@@ -3,8 +3,20 @@ import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
 import { RelayError } from "../errors.js";
 import { PublicRateLimiter, publicRateLimit } from "../public-rate-limit.js";
-import { createShare, fetchShare, postShareReply, revokeShare } from "../services/shares.js";
-import { createShareSchema, shareIdSchema, shareReplySchema } from "../share-schemas.js";
+import {
+	answerShare,
+	createShare,
+	fetchShare,
+	listShareReplies,
+	postShareReply,
+	revokeShare,
+} from "../services/shares.js";
+import {
+	createShareSchema,
+	shareAnswerSchema,
+	shareIdSchema,
+	shareReplySchema,
+} from "../share-schemas.js";
 import type { AppEnv } from "../types.js";
 import {
 	isKnownShareBot,
@@ -156,6 +168,29 @@ export function createOwnerShareRoutes(opts: ShareRoutesOptions): Hono<AppEnv> {
 			context.get("requestId"),
 		);
 		return context.json(receipt);
+	});
+	router.get("/:id/replies", async (context) => {
+		const sender = context.get("agent");
+		if (!sender) throw new RelayError("unauthenticated", "Auth required");
+		return context.json(
+			await listShareReplies(opts.db, sender.id, parseId(context.req.param("id"))),
+		);
+	});
+	router.post("/:id/answers", async (context) => {
+		const sender = context.get("agent");
+		if (!sender) throw new RelayError("unauthenticated", "Auth required");
+		const parsed = shareAnswerSchema.safeParse(
+			parseJson(await readShareBody(context.req.raw, 100_000)),
+		);
+		if (!parsed.success) throw new RelayError("invalid_params", "Invalid answer payload");
+		const receipt = await answerShare(
+			opts.db,
+			sender.id,
+			parseId(context.req.param("id")),
+			parsed.data,
+			context.get("requestId"),
+		);
+		return context.json(receipt, receipt.replayed ? 200 : 201);
 	});
 	return router;
 }

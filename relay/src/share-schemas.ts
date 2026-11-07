@@ -27,5 +27,13 @@ export const shareReplySchema = z
 	})
 	.strict();
 
+export const shareAnswerSchema = z
+	.object({
+		content: boundedContent(SHARE_REPLY_BYTES),
+		idempotency_key: z.string().uuid(),
+	})
+	.strict();
+
 export type CreateShareInput = z.infer<typeof createShareSchema>;
 export type ShareReplyInput = z.infer<typeof shareReplySchema>;
+export type ShareAnswerInput = z.infer<typeof shareAnswerSchema>;

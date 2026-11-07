@@ -112,6 +112,157 @@ databaseDescribe("handoff link routes", () => {
 			body: JSON.stringify({ content: "external held reply", ...input }),
 		});
 	}
+	function answer(link: Link, input: Record<string, unknown> = {}, owner = sender) {
+		return app.request(`/shares/${link.link_id}/answers`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${owner.api_key}`, "content-type": "application/json" },
+			body: JSON.stringify({ content: "public answer", idempotency_key: randomUUID(), ...input }),
+		});
+	}
+	function listReplies(link: Link, owner = sender) {
+		return app.request(`/shares/${link.link_id}/replies`, {
+			headers: { authorization: `Bearer ${owner.api_key}` },
+		});
+	}
+
+	it("lists external replies only for the sender, without releasing or verifying them", async () => {
+		const link = await createLink();
+		await reply(link, { content: "untrusted external body" });
+		expect((await answer(link)).status).toBe(201);
+		expect((await listReplies(link, other)).status).toBe(404);
+		expect((await app.request(`/shares/${link.link_id}/replies`)).status).toBe(401);
+		const response = await listReplies(link);
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(await response.json()).toMatchObject({
+			link_id: link.link_id,
+			replies: [
+				{
+					sequence: 1,
+					channel: "api",
+					content: "untrusted external body",
+					released_at: null,
+					origin: "external_unverified",
+				},
+			],
+		});
+		expect(await handle.db.select().from(mailboxEvents)).toHaveLength(0);
+		expect(await handle.db.select().from(messages)).toHaveLength(0);
+	});
+
+	it("publishes sender answers once with ordered, content-free audit and measurement", async () => {
+		const link = await createLink();
+		await reply(link, { content: "never publish this external body" });
+		const input = { content: "sender selected answer", idempotency_key: randomUUID() };
+		const responses = await Promise.all([answer(link, input), answer(link, input)]);
+		expect(responses.map((response) => response.status).sort()).toEqual([200, 201]);
+		const receipts = await Promise.all(responses.map((response) => response.json()));
+		expect(receipts[0]).toMatchObject({ link_id: link.link_id, sequence: 2 });
+		expect(receipts[0].answer_id).toBe(receipts[1].answer_id);
+		expect((await answer(link, { ...input, content: "changed answer" })).status).toBe(409);
+		const page = await (await app.request(`/l/${link.link_id}`)).text();
+		expect(page).toContain(input.content);
+		expect(page).not.toContain("never publish this external body");
+		const events = await handle.db
+			.select()
+			.from(shareEvents)
+			.where(eq(shareEvents.kind, "answer.posted"));
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({
+			actorKind: "agent",
+			actorAgentId: sender.agent_id,
+			metadata: {},
+		});
+		const audits = await handle.db
+			.select()
+			.from(auditLog)
+			.where(eq(auditLog.action, "answer.posted"));
+		expect(audits).toHaveLength(1);
+		expect(audits[0]).toMatchObject({ actorKind: "agent", actorId: sender.agent_id });
+		expect(
+			JSON.stringify({ events, audits }, (_key, value) =>
+				typeof value === "bigint" ? value.toString() : value,
+			),
+		).not.toContain(input.content);
+	});
+
+	it("validates sender answer identity and bytes and requires active sender-owned links", async () => {
+		const link = await createLink();
+		expect((await answer(link, {}, other)).status).toBe(404);
+		expect((await app.request(`/shares/${link.link_id}/answers`, { method: "POST" })).status).toBe(
+			401,
+		);
+		for (const input of [
+			{ content: "" },
+			{ content: "\u0000" },
+			{ content: "é".repeat(8193) },
+			{ idempotency_key: "invalid" },
+			{ idempotency_key: undefined },
+			{ channel: "form" },
+		]) {
+			expect((await answer(link, input)).status).toBe(400);
+		}
+		expect((await answer(link, { content: "é".repeat(8192) })).status).toBe(201);
+		await app.request(`/shares/${link.link_id}/revoke`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${sender.api_key}` },
+		});
+		expect((await answer(link)).status).toBe(404);
+		expect((await listReplies(link)).status).toBe(200);
+		const expired = await createLink();
+		await handle.db
+			.update(shareLinks)
+			.set({ createdAt: new Date(Date.now() - 86_400_000), expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(shareLinks.publicId, expired.link_id));
+		expect((await answer(expired)).status).toBe(404);
+		await handle.db
+			.update(agents)
+			.set({ status: "disabled" })
+			.where(eq(agents.id, sender.agent_id));
+		expect((await answer(expired)).status).toBe(403);
+		expect((await listReplies(expired)).status).toBe(403);
+	});
+
+	it("serializes aggregate published UTF-8 content at 64 KiB without counting external replies", async () => {
+		const link = await createLink({ content: "é".repeat(24 * 1024) });
+		await reply(link, { content: "x".repeat(16 * 1024) });
+		const input = { content: "é".repeat(8192), idempotency_key: randomUUID() };
+		const responses = await Promise.all([
+			answer(link, input),
+			answer(link, { ...input, idempotency_key: randomUUID() }),
+		]);
+		expect(responses.map((response) => response.status).sort()).toEqual([201, 400]);
+		const successful = responses.find((response) => response.status === 201);
+		const receipt = await successful?.json();
+		const [stored] = await handle.db
+			.select()
+			.from(shareReplies)
+			.where(eq(shareReplies.id, receipt.answer_id));
+		expect(
+			(await answer(link, { content: input.content, idempotency_key: stored?.idempotencyKey }))
+				.status,
+		).toBe(200);
+		expect((await answer(link, { content: "a" })).status).toBe(400);
+	});
+
+	it("rolls back a sender answer and measurement when its audit insert fails", async () => {
+		const link = await createLink();
+		await handle.sql.unsafe(
+			"CREATE FUNCTION share_test_reject_answer_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'answer.posted' THEN RAISE EXCEPTION 'answer failure'; END IF; RETURN NEW; END $$",
+		);
+		await handle.sql.unsafe(
+			"CREATE TRIGGER share_test_reject_answer_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION share_test_reject_answer_audit()",
+		);
+		try {
+			expect((await answer(link)).status).toBe(500);
+			expect(await handle.db.select().from(shareReplies)).toHaveLength(0);
+			expect(
+				await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "answer.posted")),
+			).toHaveLength(0);
+		} finally {
+			await handle.sql.unsafe("DROP TRIGGER share_test_reject_answer_audit ON audit_log");
+			await handle.sql.unsafe("DROP FUNCTION share_test_reject_answer_audit()");
+		}
+	});
 
 	it("creates an unguessable capability with default expiry and content-free atomic audit", async () => {
 		const before = Date.now();

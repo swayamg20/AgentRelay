@@ -47,7 +47,8 @@ under the narrow [RFC 003 amendment](rfcs/003-verified-handoff-links.md). A rand
 expiring, revocable capability publishes only selected sender content. External
 holders can submit held replies, never read replies or other mailbox content. This
 checkpoint does not yet have MCP/CLI share preview/scanning, owner release, released
-inbox delivery, sender-answer routes, invite requests, or Slack share hints. It is
+inbox delivery, invite requests, or Slack share hints. Sender-only reply inspection
+and bounded, explicitly selected public answers are implemented in the Relay API. It is
 not a complete end-to-end client feature or proof of real-client compatibility.
 
 Missions and autonomous repository execution are one possible application of this

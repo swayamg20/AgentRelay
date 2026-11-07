@@ -97,8 +97,8 @@ for mailbox use.
 | `agent_blocks` | Blocker/blocked pairs enforced for handoff content and as a transaction fence for later Mission activation, events, and delivery mutations. |
 | `invites` | Signed-token hash, target handle/role, optional admin-attested company domain, inviter, expiry, use timestamp, and redeemed agent. |
 | `share_links` | Separate capability thread: internal UUID, random 43-character public ID, sender, content, sender-scoped creation key, default seven-day/max thirty-day expiry, revocation, and deletion timestamp. Sender-authenticated creation/revocation and public reads are mounted. |
-| `share_replies` | Ordered entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped retry key, and external-release timestamp/agent. Public submissions are held outside the mailbox; owner release and sender-answer services are not yet wired. |
-| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, and API/form reply producers are wired; release, answer, and invite-request producers are not. |
+| `share_replies` | Ordered entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped retry key, and external-release timestamp/agent. Public submissions are held outside the mailbox; sender inspection and public answers are wired, owner release is not. |
+| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, API/form reply, and sender-answer producers are wired; release and invite-request producers are not. |
 | `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
 | `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
@@ -208,13 +208,16 @@ There is no `/metrics`, `/inbox/:id`, or
 |---|---|---|
 | `POST` | `/shares` | Agent-authenticated creation of explicitly selected content, with sender-scoped UUID retry identity and bounded expiry. |
 | `POST` | `/shares/:id/revoke` | Sender-only, idempotent permanent revocation. |
+| `GET` | `/shares/:id/replies` | Sender-only ordered external replies with unverified origin; inspection does not release. |
+| `POST` | `/shares/:id/answers` | Sender-only, idempotent public answers within the published-content budget. |
 | `GET` | `/l/:id` | Public capability read, Markdown for agents or explicit Markdown acceptance, minimal HTML for browser acceptance. Never includes external replies. |
 | `POST` | `/l/:id/replies` | Capability-only JSON or URL-encoded form submission; at most ten external replies, held for owner release. |
 
 The [Relay API checkpoint](handoff-links.md) specifies byte limits, negotiation,
 headers, IP/link admission, expiry-based content deletion, and content-free events.
 There are not yet MCP/CLI share tools, client previews/scanning, owner release,
-released inbox delivery, sender-answer routes, invite requests, or Slack share hints.
+released inbox delivery, invite requests, or Slack share hints. Sender-only reply
+inspection and public answers are wired, with individual and aggregate byte limits.
 
 ### Admin routes
 
@@ -865,10 +868,13 @@ in [RFC 003](rfcs/003-verified-handoff-links.md). The database enforces 64 KiB i
 link content, 16 KiB reply/answer content (UTF-8 bytes), capability shape, expiry,
 reply ordering/idempotency, and release shape. The [link API](handoff-links.md) adds
 capability generation, sender-only creation/revocation, public sender-only reads,
-held API/form replies, transactional ten-reply admission, and an in-process
+held API/form replies, sender-only external reply inspection and public answers,
+transactional ten-reply admission, and an in-process
 thirty-days-after-expiry content sweep. Creation/reply audit and events commit with
-the mutation. No release, sender-answer mutation, aggregate answer limit, or inbox
-delivery is wired yet. Existing mailbox tables and participant-only behavior remain
+the mutation; answers also commit their audit and event together. Answers are
+bounded to 16 KiB each and, with the initial text, 64 KiB in aggregate under the
+link lock. Inspection preserves `external_unverified` origin and does not release
+replies. No release or inbox delivery is wired yet. Existing mailbox tables and participant-only behavior remain
 unchanged.
 
 Nullable `company_domain` columns on agents and invites record admin-attested

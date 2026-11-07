@@ -3,7 +3,12 @@ import { and, asc, eq, isNull, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { agents, shareEvents, shareLinks, shareReplies } from "../db/schema.js";
 import { RelayError } from "../errors.js";
-import type { CreateShareInput, ShareReplyInput } from "../share-schemas.js";
+import {
+	type CreateShareInput,
+	SHARE_CONTENT_BYTES,
+	type ShareAnswerInput,
+	type ShareReplyInput,
+} from "../share-schemas.js";
 import { writeAudit } from "./audit.js";
 import { lockAgentLifecycle } from "./node-enrollment.js";
 
@@ -14,6 +19,22 @@ function requireActive(link: ShareLink): void {
 	if (link.revokedAt || link.contentDeletedAt || link.expiresAt.getTime() <= Date.now()) {
 		throw new RelayError("thread_not_found", "Link unavailable");
 	}
+}
+
+async function lockOwnerLink(transaction: ShareTransaction, senderId: string, publicId: string) {
+	await lockAgentLifecycle(transaction, senderId);
+	const [sender] = await transaction
+		.select({ id: agents.id })
+		.from(agents)
+		.where(and(eq(agents.id, senderId), eq(agents.status, "active")));
+	if (!sender) throw new RelayError("forbidden", "Sender unavailable");
+	const [link] = await transaction
+		.select()
+		.from(shareLinks)
+		.where(and(eq(shareLinks.publicId, publicId), eq(shareLinks.senderId, senderId)))
+		.for("update");
+	if (!link) throw new RelayError("thread_not_found", "Link unavailable");
+	return link;
 }
 
 async function lockPublicLink(transaction: ShareTransaction, publicId: string) {
@@ -196,18 +217,7 @@ export async function revokeShare(
 	requestId: string,
 ) {
 	return db.transaction(async (transaction) => {
-		await lockAgentLifecycle(transaction, senderId);
-		const [sender] = await transaction
-			.select({ id: agents.id })
-			.from(agents)
-			.where(and(eq(agents.id, senderId), eq(agents.status, "active")));
-		if (!sender) throw new RelayError("forbidden", "Sender unavailable");
-		const [link] = await transaction
-			.select()
-			.from(shareLinks)
-			.where(and(eq(shareLinks.publicId, publicId), eq(shareLinks.senderId, senderId)))
-			.for("update");
-		if (!link) throw new RelayError("thread_not_found", "Link unavailable");
+		const link = await lockOwnerLink(transaction, senderId, publicId);
 		if (link.revokedAt) return { ...shareReceipt(link), replayed: true };
 		const revokedAt = new Date();
 		await transaction.update(shareLinks).set({ revokedAt }).where(eq(shareLinks.id, link.id));
@@ -219,6 +229,99 @@ export async function revokeShare(
 			requestId,
 		});
 		return { ...shareReceipt({ ...link, revokedAt }), replayed: false };
+	});
+}
+
+export async function listShareReplies(db: Database, senderId: string, publicId: string) {
+	return db.transaction(async (transaction) => {
+		const link = await lockOwnerLink(transaction, senderId, publicId);
+		const replies = await transaction
+			.select()
+			.from(shareReplies)
+			.where(and(eq(shareReplies.linkId, link.id), eq(shareReplies.authorKind, "external")))
+			.orderBy(asc(shareReplies.seq));
+		return {
+			...shareReceipt(link),
+			replies: replies.map((reply) => ({
+				reply_id: reply.id,
+				sequence: reply.seq,
+				channel: reply.channel,
+				content: reply.content,
+				created_at: reply.createdAt.toISOString(),
+				released_at: reply.releasedAt?.toISOString() ?? null,
+				origin: "external_unverified" as const,
+			})),
+		};
+	});
+}
+
+export async function answerShare(
+	db: Database,
+	senderId: string,
+	publicId: string,
+	input: ShareAnswerInput,
+	requestId: string,
+) {
+	return db.transaction(async (transaction) => {
+		const link = await lockOwnerLink(transaction, senderId, publicId);
+		requireActive(link);
+		const replies = await transaction
+			.select()
+			.from(shareReplies)
+			.where(eq(shareReplies.linkId, link.id))
+			.orderBy(asc(shareReplies.seq));
+		const existing = replies.find(
+			(reply) => reply.authorKind === "sender" && reply.idempotencyKey === input.idempotency_key,
+		);
+		if (existing && existing.content !== input.content) {
+			throw new RelayError("duplicate_idempotency_key", "Answer key already used");
+		}
+		let answer = existing;
+		if (!answer) {
+			const bytes = replies
+				.filter((reply) => reply.authorKind === "sender")
+				.reduce(
+					(size, reply) => size + Buffer.byteLength(reply.content ?? "", "utf8"),
+					Buffer.byteLength(link.content ?? "", "utf8"),
+				);
+			if (bytes + Buffer.byteLength(input.content, "utf8") > SHARE_CONTENT_BYTES) {
+				throw new RelayError("invalid_params", "Published link content limit reached");
+			}
+			[answer] = await transaction
+				.insert(shareReplies)
+				.values({
+					linkId: link.id,
+					seq: (replies.at(-1)?.seq ?? 0) + 1,
+					authorKind: "sender",
+					channel: "api",
+					content: input.content,
+					idempotencyKey: input.idempotency_key,
+				})
+				.returning();
+			if (!answer) throw new Error("share answer insert returned no row");
+			await transaction.insert(shareEvents).values({
+				linkId: link.id,
+				replyId: answer.id,
+				kind: "answer.posted",
+				actorKind: "agent",
+				actorAgentId: senderId,
+			});
+			await writeAudit(transaction, {
+				actorId: senderId,
+				action: "answer.posted",
+				resourceType: "share_reply",
+				resourceId: answer.id,
+				metadata: { link_id: link.id },
+				requestId,
+			});
+		}
+		return {
+			link_id: link.publicId,
+			answer_id: answer.id,
+			sequence: answer.seq,
+			created_at: answer.createdAt.toISOString(),
+			replayed: existing !== undefined,
+		};
 	});
 }
 
