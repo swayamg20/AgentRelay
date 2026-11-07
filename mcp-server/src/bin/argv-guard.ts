@@ -17,6 +17,7 @@ export const CLI_VERBS = new Set([
 	"watch",
 	"live",
 	"rotate-key",
+	"share",
 	"version",
 	"--help",
 	"-h",

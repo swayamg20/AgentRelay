@@ -64,6 +64,59 @@ In stable 0.3.0, the relay stores messages durably, but pickup is explicit. A hu
 running agent must call `check_inbox` or `view_thread`. The beta live command adds a
 separate, explicitly consented read/reply loop.
 
+### Handoff links in source builds
+
+The current source adds `share_handoff` and `answer_share`. These are not a new
+published package release. They require the matching Relay handoff-link routes;
+owner release, released-reply inbox delivery, and Slack waiting hints are not yet
+wired. The manual receiver kit is ready, but real-client compatibility trials
+have not been run. See the
+[handoff-link checkpoint](../docs/handoff-links.md) and
+[receiver test kit](../docs/handoff-links-receiver-test.md).
+
+Supply only explicitly selected text, not an implicit thread export:
+
+```json
+{ "content": "Selected public handoff", "expires_in_days": 7 }
+```
+
+`share_handoff` first returns an exact preview, warning, and `preview_token`
+without publishing. Review it, then repeat the same content/expiry with that token
+to create the URL. `answer_share` takes `link_id` and `content` in the same
+preview/confirm flow. Answers are public to every holder and must not automatically
+quote external replies. Anyone holding a URL can read sender content and submit
+unverified replies; forwarding it forwards the capability. No link grants
+execution authority.
+
+Source CLI equivalents:
+
+```bash
+agentrelay share --file selected-handoff.md
+agentrelay share --file selected-handoff.md --confirm <preview-token>
+agentrelay share replies <link-id>
+agentrelay share answer <link-id> --file selected-answer.md
+agentrelay share answer <link-id> --file selected-answer.md --confirm <preview-token>
+```
+
+Creation/answers are preview-only without confirmation. Tokens bind the exact
+content, operation, link/expiry, Relay, and local sender and expire in ten minutes;
+identical retries reuse one mutation key. MCP previews are process-local (maximum
+100); CLI keeps only the latest pending preview per config in a mode-0600,
+content-free `share-preview.json` beside it. A changed/expired preview fails closed.
+After an ambiguous network failure, do not assume it failed and blindly create a
+new link. Default source install profiles approval-gate both MCP tools.
+
+Both phases block the configured bearer and recognized secret-like patterns
+locally, without returning the matched value. There is no bypass flag or Relay
+secret scanner. Pattern scanning can miss secrets and can reject safe examples;
+review the preview yourself. Initial content is at most 64 KiB; each answer is at
+most 16 KiB, sharing the initial content's 64 KiB published budget (UTF-8 bytes).
+
+`share replies` returns sender-only external replies with preserved typed fields,
+origin `external_unverified`, untrusted/data-only markers, and wrapped body text.
+Inspection neither verifies the author nor releases a reply to `check_inbox`.
+There is no MCP release tool or release CLI at this checkpoint.
+
 ### Roster filters and pagination
 
 `list_teammates` accepts optional `role`, `skill`, and `repo` filters. Inputs are

@@ -123,7 +123,9 @@ terminal cleanup are database state rather than a local queue.
 
 - Loads the relay URL and developer credential from local config.
 - Validates tool inputs with Zod.
-- Translates seven tools to relay calls.
+- Translates seven mailbox tools to relay calls; source `share_handoff` and
+  `answer_share` additionally scan and preview explicitly selected text before
+  authenticated publication to the separate handoff-link routes.
 - Wraps or marks every teammate-authored mailbox field returned by its inbox and
   thread tools, while preserving the shape of structured payloads and artifacts.
 - Loads local `trust.yaml` and returns a computed trust overlay.
@@ -141,6 +143,11 @@ nor peer content.
 The `agentrelay` binary supports registration, invite/join, client installation, key
 rotation, doctor/fix, audit, block/unblock, trust management, local runtime
 bind/unbind, the foreground watch connector, and starting the stdio MCP server.
+
+The source `share` commands add exact-file preview/confirmation for link creation
+and public sender answers, plus provenance-marked sender-only reply inspection.
+They do not release external replies into the inbox. The current checkpoint and
+unimplemented release/notification boundaries are in [handoff-links.md](handoff-links.md).
 
 ### Labs: experimental foreground Node
 

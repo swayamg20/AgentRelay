@@ -215,9 +215,10 @@ There is no `/metrics`, `/inbox/:id`, or
 
 The [Relay API checkpoint](handoff-links.md) specifies byte limits, negotiation,
 headers, IP/link admission, expiry-based content deletion, and content-free events.
-There are not yet MCP/CLI share tools, client previews/scanning, owner release,
-released inbox delivery, invite requests, or Slack share hints. Sender-only reply
-inspection and public answers are wired, with individual and aggregate byte limits.
+Source MCP/CLI clients provide exact-content previews, local secret scanning,
+sender-only reply inspection, and public answers, with individual and aggregate
+byte limits. Owner release, released inbox delivery, invite requests, and Slack
+share hints are not wired yet.
 
 ### Admin routes
 
@@ -415,9 +416,17 @@ Source of truth: [`mcp-server/src/tools/index.ts`](../mcp-server/src/tools/index
 | `send_message` | Append a message and preserve its generic payload separately from typed artifacts. |
 | `complete_handoff` | Transition an accepted handoff to completed and persist result artifacts. |
 | `list_teammates` | Discover active teammates with exact role/skill/repo filters and optional bounded keyset pages. |
+| `share_handoff` | Locally scan and preview explicitly selected public text; publish only with a matching issued ten-minute preview token. |
+| `answer_share` | Locally scan/preview a selected public sender answer; confirm exact content/link with a matching token. Does not read or quote external replies. |
 
 There is no `draft_proposed_action`, pair, listen, wait, runtime-start, or Mission
 tool today.
+
+The [handoff-link client contract](handoff-links.md) binds preview content,
+operation, link/expiry, Relay and sender identity. MCP previews are process-local
+and bounded to 100; confirmations reuse the preview's UUID retry identity. Default
+install profiles approval-gate both tools. There is no MCP release tool, and
+`check_inbox` does not return external replies at this checkpoint.
 
 ## Artifact types
 
@@ -747,6 +756,9 @@ The `agentrelay` binary currently provides:
 - `doctor [--fix] [--json]`
 - `audit`
 - `export-thread <thread-id> [--output <path>]`
+- `share --file <path> [--expires-in-days <days>] [--confirm <preview-token>]`
+- `share replies <link-id>`
+- `share answer <link-id> --file <path> [--confirm <preview-token>]`
 - `block`, `unblock`
 - `trust list`, `trust set`, `trust reset`
 - `bind codex`, `unbind codex`
@@ -755,6 +767,14 @@ The `agentrelay` binary currently provides:
 - `live codex --peer <handle> --handoff <Relay-thread-uuid> --allow-replies`
   (0.4.0-beta.1 communication preview; see [limits and consent](live-sessions.md))
 - `mcp`
+
+Share creation/answers are preview-only until exact confirmation. One mode-0600
+`share-preview.json` beside the local config stores the latest content-free pending
+preview/retry identity for ten minutes; it contains no body or credential. The
+client rescans before confirming. Sender reply inspection wraps external body text
+and provenance-marks each typed reply with `external_unverified`; it does not
+release or verify the author. No owner-release CLI exists yet. See the
+[client safety and retry limits](handoff-links.md).
 
 In the source CLI, `watch --stdout` is a separate passive metadata observer. It
 uses configured agent authentication with the existing recipient event replay/SSE

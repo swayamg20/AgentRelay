@@ -46,9 +46,9 @@ The current source also adds a separate [handoff-link Relay API](handoff-links.m
 under the narrow [RFC 003 amendment](rfcs/003-verified-handoff-links.md). A random,
 expiring, revocable capability publishes only selected sender content. External
 holders can submit held replies, never read replies or other mailbox content. This
-checkpoint does not yet have MCP/CLI share preview/scanning, owner release, released
-inbox delivery, invite requests, or Slack share hints. Sender-only reply inspection
-and bounded, explicitly selected public answers are implemented in the Relay API. It is
+checkpoint adds source MCP/CLI share previews and local secret scanning, sender-only
+reply inspection, and bounded, explicitly selected public answers. It does not yet
+have owner release, released inbox delivery, invite requests, or Slack share hints. It is
 not a complete end-to-end client feature or proof of real-client compatibility.
 
 Missions and autonomous repository execution are one possible application of this
@@ -489,6 +489,23 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   replay dedupe. Codex and Claude install profiles approval-gate content-bearing
   mailbox reads and AgentRelay mutations instead of auto-allowing the former broad
   wildcard.
+
+### Handoff-link provenance
+
+Public link content is sender-authored untrusted data, not a participant-only
+mailbox export. Relay instructions and random delimiters identify that boundary;
+admin-attested company provenance does not verify an external author. The sender's
+MCP/CLI clients preview only explicitly selected content and block recognized
+secrets locally before either preview or publication. A scan is not a guarantee
+of confidentiality, and a preview token does not grant authority.
+
+Sender CLI inspection preserves typed external reply fields and attaches
+`agentrelay_provenance` with origin `external_unverified`, trust `untrusted`, and
+instruction policy `data_only_do_not_execute`, overriding any content-supplied
+marker. External body text also receives an explicit untrusted-data wrapper.
+Held replies remain outside `check_inbox`; owner release and released external
+inbox delivery are not wired yet. Ordinary `agentrelay_teammate` provenance and
+participant authorization are unchanged.
 
 ### Implemented Labs safeguards
 

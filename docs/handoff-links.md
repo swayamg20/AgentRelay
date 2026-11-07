@@ -1,8 +1,7 @@
-# Handoff links: Relay API checkpoint
+# Handoff links: sender client and Relay checkpoint
 
 The current source implements the Relay routes below. This is not yet the complete
-client product: MCP/CLI preview and secret scanning, owner release, released inbox
-delivery, invite-request measurement, and Slack waiting hints are
+client product: owner release, released inbox delivery, invite-request measurement, and Slack waiting hints are
 not wired. Do not publish sensitive content through this API while expecting a
 server-side secret scanner. The approved boundary is
 [RFC 003](rfcs/003-verified-handoff-links.md); ordinary mailbox participants, blocks,
@@ -11,6 +10,57 @@ and lifecycle remain unchanged.
 The [receiver test kit](handoff-links-receiver-test.md) is ready for the owner to
 run. Its synthetic replies are not evidence that real clients work with these
 routes, or that a reply has been released or processed.
+
+## Sender clients in the current source
+
+Source builds add MCP `share_handoff`, MCP `answer_share`, and `agentrelay share`.
+These additions are not a package release or real-receiver compatibility claim.
+They publish only explicitly supplied text, never implicitly export a mailbox
+thread, read an external reply, or quote it into an answer.
+
+MCP creation first takes `{"content":"selected text","expires_in_days":7}`
+and returns the exact preview, expiry, boundary warning, and `preview_token` with
+no network mutation. After reviewing it, repeat the exact content and expiry with
+that token to publish. `answer_share` uses `link_id` and `content` in the same
+two-phase flow. Previews bind operation, link, content, expiry, Relay, and local
+sender identity; a changed, absent, or expired preview fails closed. They expire
+after ten minutes and survive identical retries with the same UUID mutation key.
+The running MCP retains at most 100 previews; restart or eviction requires a new
+preview. No MCP release tool exists.
+
+The CLI uses the same exact-content contract across separate invocations:
+
+```bash
+agentrelay share --file selected-handoff.md --expires-in-days 7
+agentrelay share --file selected-handoff.md --expires-in-days 7 --confirm <preview-token>
+agentrelay share replies <link-id>
+agentrelay share answer <link-id> --file selected-answer.md
+agentrelay share answer <link-id> --file selected-answer.md --confirm <preview-token>
+```
+
+Without `--confirm`, creation/answer is preview-only. Source files must be regular
+files containing valid bounded UTF-8 text. JSON output escapes control characters;
+failed scans/confirmations leave stdout empty and do not publish. The latest CLI
+preview per local config replaces the preceding one; pending tokens, a content
+digest, timestamp, and retry key are saved beside the config in mode-0600
+`share-preview.json`, without content or credentials. Identical confirmation
+retries use that saved key. If a preview expires after an ambiguous network
+failure, do not assume the operation failed or blindly create a new link.
+
+Both phases scan locally and block on the configured bearer, recognized private
+keys, provider/access-token formats, credential-bearing URLs, Slack webhook URLs,
+JWT-like tokens, and secret-like assignments. There is no bypass flag. This
+pattern scan has false positives and false negatives; arbitrary secrets and
+sensitive business content are not guaranteed detectable. Review the exact
+preview and remove sensitive content yourself. The Relay does not scan secrets.
+Authenticated HTTP requests do not follow redirects or expose response/error
+bodies in diagnostics. Default local install profiles approval-gate both new MCP
+tools; a preview token is not human authentication or execution permission.
+
+`share replies` preserves typed reply fields and marks external text and records
+with origin `external_unverified`, untrusted/data-only policy, and an explicit
+text wrapper. Inspection does not release, verify, accept, or deliver a reply to
+`check_inbox`. The owner-release command and external inbox path are not wired yet.
 
 ## Sender-authenticated API
 

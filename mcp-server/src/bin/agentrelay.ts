@@ -26,6 +26,7 @@ import {
 	trustSetCmd,
 	unblockCmd,
 } from "../cli/commands.js";
+import { shareCommand } from "../cli/share.js";
 import { listTrust } from "../cli/trust-mutate.js";
 import { bindCodex, unbindCodex } from "../connector/binding.js";
 import { parseWatchOptions, watchConfiguredStdout } from "../connector/stdout-watch.js";
@@ -218,6 +219,36 @@ cli
 			process.exitCode = 1;
 		}
 	});
+
+cli
+	.command(
+		"share [action] [link-id]",
+		"Preview/publish a link, inspect replies, or preview/publish an answer",
+	)
+	.option("--file <path>", "UTF-8 content file; only explicitly selected content is published")
+	.option("--expires-in-days <days>", "Link expiry (default 7, maximum 30); creation only")
+	.option("--confirm <token>", "Publish exact previewed content with its ten-minute preview token")
+	.action(
+		async (
+			action: string | undefined,
+			linkId: string | undefined,
+			opts: Record<string, unknown>,
+		) => {
+			try {
+				const result = await shareCommand({
+					action,
+					linkId,
+					file: opts.file,
+					expiresInDays: opts.expiresInDays,
+					confirm: opts.confirm,
+				});
+				process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+			} catch (error) {
+				process.stderr.write(`${error instanceof Error ? error.message : "share failed"}\n`);
+				process.exitCode = 1;
+			}
+		},
+	);
 
 cli
 	.command("audit", "Stream local + relay audit ledger entries")

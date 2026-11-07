@@ -8,6 +8,33 @@ import {
 } from "./install-toml.js";
 
 describe("mergeCodexSettings", () => {
+	it.each(["share_handoff", "answer_share"])(
+		"keeps %s prompt-by-default and corrects auto only on explicit overwrite",
+		(tool) => {
+			const first = mergeCodexSettings(undefined, {
+				overwriteMcp: true,
+				overwritePermissions: true,
+			});
+			const firstEntry = (first.next.mcp_servers as Record<string, any>).agentrelay;
+			expect(firstEntry.default_tools_approval_mode).toBe("prompt");
+			expect(firstEntry.tools[tool]).toBeUndefined();
+			const input = `[mcp_servers.agentrelay]\ncommand = "npx"\nargs = ["-y", "agentrelay-mcp"]\ndefault_tools_approval_mode = "prompt"\n[mcp_servers.agentrelay.tools.${tool}]\napproval_mode = "auto"\n`;
+			const preserved = mergeCodexSettings(input, {
+				overwriteMcp: false,
+				overwritePermissions: false,
+			});
+			expect(
+				(preserved.next.mcp_servers as Record<string, any>).agentrelay.tools[tool].approval_mode,
+			).toBe("auto");
+			const corrected = mergeCodexSettings(input, {
+				overwriteMcp: false,
+				overwritePermissions: true,
+			});
+			expect(
+				(corrected.next.mcp_servers as Record<string, any>).agentrelay.tools[tool].approval_mode,
+			).toBe("prompt");
+		},
+	);
 	it("installs AgentRelay with prompt-by-default native MCP approvals", () => {
 		const { tomlText, report, next } = mergeCodexSettings(undefined, {
 			overwriteMcp: true,
