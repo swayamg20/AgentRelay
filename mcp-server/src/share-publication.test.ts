@@ -61,8 +61,8 @@ describe("share content and secret scan", () => {
 		"RELAY_PEPPER=synthetic-relay-pepper",
 		"RELAY_ADMIN_TOKEN=synthetic-admin-token",
 		"Authorization: Bearer synthetic-opaque-bearer",
-		"Authorization: Basic c3ludGhldGljOm9ubHk=",
-	])("blocks known secret-like text without returning its value: %s", (secret) => {
+		`Authorization: Basic ${Buffer.from("synthetic:only").toString("base64")}`,
+	])("blocks known secret-like text without returning its value (case %#)", (secret) => {
 		expect(() => assertShareHasNoSecrets(`selected text ${secret}`, "local-key")).toThrow(
 			"secret scan blocked",
 		);
