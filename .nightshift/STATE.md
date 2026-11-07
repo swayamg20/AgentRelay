@@ -2,91 +2,107 @@
 
 ## Goal as understood
 
-The owner changed the goal from the exhausted `core-mailbox` issue inventory to
-verified handoff links on November 7, 2026. Implement the seven supplied steps in
-order, with passing checks and small commits. Receiver accounts, self-serve
-signup, email, signing, live sessions, wake-up, Missions/Node, federation, and
-execution remain out of scope. Nothing in a link grants sender-side authority.
-
-Run 42361776481, session 1, completes steps 1–3. Production link routes and client
-tools are not implemented yet. Continue this run; do not create STOP or wait for
-manual receiver results.
+Build verified handoff links through the seven owner-supplied steps, preserving
+ordinary mailbox and sovereignty boundaries. The goal changed on November 7,
+2026; it is unchanged in run 42361776481, session 2. Steps 1–4 are complete.
+Client preview/scanning, owner release, external inbox delivery, sender answers,
+Slack waiting hints, and the remaining event producers are not implemented yet.
+Continue this run; do not create STOP or wait for manual receiver results.
 
 ## Plan
 
-- [x] Read prior memory, history, instructions, and relevant designs; run harness
-  setup and inspect the initially clean working tree.
-- [x] Step 1: static Markdown/HTML, runnable synthetic receiver server, focused
-  tests, and the six-trial 15-minute manual receiver matrix (`ef1b781`).
-- [x] Step 2: RFC 003 narrowly amends RFC 002 with the four approved exceptions;
-  ordinary mailbox promises remain (`9a1b703`).
-- [x] Step 3: share tables/migration and external audit actors (`c0048d5`), plus
-  admin-attested invite domains copied during redemption (`3f8f1a4`).
-- [ ] Step 4: production capability reads, held JSON/form replies, revocation,
-  expiry, and the in-process retention sweep.
-- [ ] Step 5: preview/secret-scan MCP and CLI creation/answers, interactive owner
-  release, and `external_unverified` inbox delivery.
-- [ ] Step 6: production byte/admission limits, IP/link rate limiting and invite
-  redemption, secure rendering/instructions, and content-free Slack hints.
-- [ ] Step 7: truthful architecture/provenance/MCP documentation and event producers.
+- [x] Read memory/history/instructions/designs, inspect a clean tree, run setup.
+- [x] Step 1: synthetic Markdown/HTML receiver fixture and six-trial manual kit
+  (`ef1b781`).
+- [x] Step 2: RFC 003 narrowly amends exactly four RFC 002 decisions
+  (`9a1b703`).
+- [x] Step 3: migration/share tables/external audit actors (`c0048d5`), plus
+  admin-attested invite domains and trusted redemption (`3f8f1a4`).
+- [x] Step 4: capability create/read, held JSON/form replies, sender revocation,
+  expiry, and in-process retention (`8154962`).
+- [ ] Step 5: client preview and secret scanning, MCP/CLI share creation/answers,
+  interactive-terminal owner release, and `external_unverified` inbox delivery.
+- [ ] Step 6: remaining answer/aggregate bounds and content-free Slack waiting
+  hints. Public byte/admission limits, CSP/escaping/noindex/random delimiters,
+  sensitive log redaction, and invite-redeem rate limiting already land with step 4.
+- [ ] Step 7: remaining MCP README/provenance docs and release/answer/invite-request
+  producers. Architecture/LLD/API checkpoint docs and create/fetch/reply facts exist.
 
 ## Next step
 
-Read any new feedback first, then implement step 4 against the separate share
-tables. Trace sender-authenticated creation/revocation and public reads/replies
-together. Include necessary safety at the edge before mounting a public route;
-do not land an unsafe intermediate implementation while deferring step 6.
+Read fresh feedback first. Implement step 5 in small concerns, starting with the
+client-side secret-scan/preview contract and create/answer clients. Trace the Relay
+producer through the actual MCP and CLI consumers; do not implicitly serialize an
+ordinary thread or publish external replies. Add sender-answer/list-held services,
+then the explicit interactive-only release path and separately proven external
+inbox provenance. There must be no MCP release tool or model-driven release.
 
-`docs/handoff-links-receiver-test.md` is ready for the owner. Its mock receipts
-prove only a fixture POST, not real-client compatibility, durability, or release.
-Keep the six real-client trials marked not run until actual evidence arrives.
+The six real-client trials in `docs/handoff-links-receiver-test.md` remain not run.
+The kit is ready; synthetic fixture success is not actual receiver compatibility,
+production delivery, owner release, or processing evidence.
 
 ## Waiting on owner
 
-No blocking question. Receiver test results are explicitly not a prerequisite for
-further work. The previous next-mailbox-scope request is superseded by the supplied
-new goal; do not resurrect the old backlog-selection loop.
+No blocking question. Manual receiver results are explicitly nonblocking.
 
-The existing merge path guard denies database migrations and does not allow the
-integration-runner script. This owner-approved goal explicitly requires migrations;
-implement them, but leave the guard unchanged and note that direct repository review
-is needed rather than reply-only merge. No new credentials or external systems are
-needed to continue local implementation.
+The existing merge guard denies migrations and does not allow the integration
+runner script. This approved goal explicitly requires migrations: leave the guard
+unchanged and flag direct repository review instead of reply-only merge. No new
+credentials or external systems are needed to continue local implementation.
 
 ## Learned about the repository
 
-- Share correspondence is separate from ordinary two-party `handoffs`/`messages`.
-  No public route or share event producer is mounted yet.
-- `share_links.id` is an internal UUID for foreign keys/audit; `public_id` is a
-  unique 43-character base64url capability. Creation must generate 32 random bytes;
-  the schema checks shape, not entropy. Creation keys are sender-scoped.
-- Links default to seven days and cap expiry at thirty days. Nullable content and
-  `content_deleted_at` support deletion while retaining content-free history.
-- Replies/answers have one per-link sequence, `author_kind` sender/external,
-  `channel` api/form, author-scoped idempotency keys, and explicit release fields.
-  The schema checks release shape, not authenticated owner authority.
-- DB byte caps cover initial link content (64 KiB) and each reply/answer (16 KiB).
-  Aggregate public content, ten external replies, lifecycle, retention, and
-  authorization must still be enforced transactionally by production services.
-- `share_events` supports the six requested kinds, non-agent actor identity,
-  exact reply/link foreign keys, unique creation/reply mutation facts, and repeated
-  fetches. Metadata must remain content-free; do not put URLs or bodies there.
-- Invite `company_domain` is optional, normalized ASCII DNS/punycode, admin-audited
-  at minting, and copied from the stored row during locked redemption. Existing
-  agents/invites and omitted domains remain NULL; never infer from email/handle.
-  Signed tokens and existing response shapes are unchanged. Receiver assertions
-  cannot set provenance. The new optional CLI flag is source-only, not published.
-- Invite mint audit now identifies the authenticated admin, not the named inviter.
-  Agent self-audit remains actor-scoped; it does not expose admin mint records.
-- The global logger currently logs raw request paths and unhandled errors. Public
-  capability routes require path/error redaction so IDs, URLs, and bodies never leak.
-- Existing mailbox events require authenticated agent actors and handoff references;
-  do not fabricate an agent identity to fit an external reply into that ledger.
-  Existing notification-outbox rows also require a handoff; Slack is only a hint.
-- All six checks pass after every product concern. Final units: 125 protocol,
-  401 MCP, 82 database-free Relay, 438 Node; expected 292 Relay DB/three Node skips.
-  Integration passes 292 tests. The inherited mailbox/restart proofs pass four.
-  Lint retains three existing unused-suppression warnings. No dependencies changed.
-- The inherited branch still contains `ce0b06e` (#44 notification outbox) and
-  `945e9d5` (restart-test typecheck ordering) outside `origin/main`. Include them
-  in branch-wide PR text; only #44 is closed, and its metrics remain deferred.
+- Separate `share_links`/`share_replies`/`share_events` do not widen ordinary
+  two-party mailbox handoffs. Authenticated creation/revocation are `POST /shares`
+  and `POST /shares/:id/revoke`. No sender reply-list/release/answer route exists yet.
+- `GET /l/:id` and `POST /l/:id/replies` use only the 32-random-byte, 43-character
+  base64url capability. The internal UUID is only for DB/audit references. Public
+  reads include initial content and stored sender rows, never external replies,
+  whether held or released. Unknown/expired/revoked/deleted/disabled-owner links
+  give the same unavailable 404. Agent lifecycle and link locks fence public work.
+- Link creation requires a sender-scoped UUID key; matching input replays and
+  changed content/expiry conflicts. Replies accept optional UUID keys; no key means
+  a new submission. Per-link locks protect ten external replies, sequence, replay,
+  and mutation/event/audit atomicity. Revoke audits once. Node keys cannot create.
+- The current public POST receipt says stored/held and exposes no reply ID or body.
+  When implementing release, preserve honest replay semantics without publicly
+  leaking release state or claiming a released reply is still held.
+- Initial text is 64 KiB, each reply/answer is 16 KiB in UTF-8 bytes. Raw bodies are
+  stream-bounded and NUL/empty text is rejected. Aggregate answer admission still
+  needs the sender-answer mutation; the read path currently accepts stored sender
+  rows, but no production answer producer is mounted.
+- Explicit Markdown acceptance wins; positive HTML acceptance selects minimal HTML,
+  other clients get Markdown. Relay instructions precede random sender delimiters;
+  matching content is rejected, and HTML text/URLs are escaped. Strict CSP, noindex,
+  no-referrer, nosniff, no-store, and Vary apply. No content-bearing metadata/previews.
+- Rate limits are per process, separate read/write windows: link reads 60/IP and
+  120/link/minute; reply attempts 10/IP and 20/link; invite redemption 10/IP. First
+  valid forwarded-first-position IP wins, otherwise socket/unknown. IPv6 equivalents,
+  mapped IPv4, and zones normalize. Trusted ingress must strip client XFF assertions.
+  Each limiter caps memory at 10,000 buckets; this is not a distributed quota.
+  Hono wildcard middleware has no named params: bind per-link admission directly
+  to named routes so the per-link limit really applies.
+- A startup/minute sweep drains locked batches of 100 with SKIP LOCKED. Thirty days
+  after expiry it nulls link and all reply/answer bodies, marks deletion, and audits
+  as system in one transaction. IDs, ordering, release/idempotency fields, and facts
+  remain. Revocation does not accelerate the expiry-based deletion deadline.
+- Public/owner-share/invite paths and incoming correlation IDs are redacted from
+  request logs; raw share errors and sweep diagnostics are not logged. Share facts
+  store neither bodies, capabilities, raw user agents, nor IPs.
+- `share_events` now produces `link.created`, `link.fetched` (format/bot hint),
+  and `reply.posted` (API/form). Release/answer/invite-request kinds remain only
+  schema support. Fetch is not understanding; a storage receipt is not release.
+- Company domain is admin-attested at invite minting and copied from the locked
+  stored row at redemption; old/omitted domains stay unknown. It is not inferred
+  from email/handle or claimed by receivers. Tokens and prior shapes stay compatible.
+- Existing mailbox events require agent actors/handoff references: never invent an
+  agent to fit an external reply. Existing Slack outbox rows require a handoff;
+  do not fabricate one for a link hint. `check_inbox` currently reads tasks/list via
+  `mcp-server/src/tools/inbox.ts`; its provenance currently assumes teammates.
+- All six final checks pass: units 125 protocol/401 MCP/97 Relay/438 Node, expected
+  307 Relay DB and three Node skips; integration 307; inherited process proofs four.
+  New focused units pass 15 and share DB tests 14. Three existing lint suppression
+  warnings remain. No dependencies, package versions, protected paths, or Labs edits.
+- Inherited `ce0b06e` (#44 notification outbox) and `945e9d5` (restart-test build
+  ordering) are still outside origin/main. Include both in branch-wide PR text;
+  only #44 has an issue close, and its queue metrics remain deferred.
