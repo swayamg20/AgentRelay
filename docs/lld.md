@@ -98,7 +98,7 @@ for mailbox use.
 | `invites` | Signed-token hash, target handle/role, optional admin-attested company domain, inviter, expiry, use timestamp, and redeemed agent. |
 | `share_links` | Separate capability thread: internal UUID, random 43-character public ID, sender, content, sender-scoped creation key, default seven-day/max thirty-day expiry, revocation, and deletion timestamp. Sender-authenticated creation/revocation and public reads are mounted. |
 | `share_replies` | Ordered entries with `author_kind` sender/external and `channel` API/form, bounded content, author-scoped retry key, and external-release timestamp/agent. Public submissions are held outside ordinary mailbox rows; sender inspection, public answers, and explicit owner release are wired. |
-| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, API/form reply, release, and sender-answer producers are wired. Release event IDs are the private external inbox replay cursors; the invite-request producer is not wired. |
+| `share_events` | Internal references, finite measurement kind, actor kind/nullable agent ID, content-free metadata, and timestamp. Creation, HTML/Markdown/known-bot fetch, API/form reply, release, sender-answer, and explicit invite-request producers are wired. Release event IDs are the private external inbox replay cursors. Invite requests record channel and a link-scoped UUID retry key, not an account or contact. |
 | `nodes` | Device identity owned by one agent, with relay-visible capabilities, best-effort presence timestamp, and revocation state. |
 | `node_credentials` | Hashed Node-only bearer credentials with label, last-used timestamp, and independent revocation timestamp. A partial unique index permits at most one active credential per Node; raw tokens are never stored. |
 | `workspace_bindings` | A Node-local logical alias represented at the relay by repository URL and allowed base refs. It deliberately has no checkout path. |
@@ -214,6 +214,7 @@ There is no `/metrics`, `/inbox/:id`, or
 | `GET` | `/shares/inbox` | Sender-only released external replies, with `after_cursor`, `limit` (1–10), optional release-time `since`, and stable `next_cursor`/`has_more`. |
 | `GET` | `/l/:id` | Public capability read, Markdown for agents or explicit Markdown acceptance, minimal HTML for browser acceptance. Never includes external replies. |
 | `POST` | `/l/:id/replies` | Capability-only JSON or URL-encoded form submission; at most ten external replies, held for owner release. |
+| `POST` | `/l/:id/invite-requests` | Capability-only JSON/form with required UUID `idempotency_key`; transactionally records explicit invite interest and external audit only. 201 new, 200 same-key/channel retry, 409 changed channel; no signup, credentials, issued invite, or email. |
 
 The [Relay API checkpoint](handoff-links.md) specifies byte limits, negotiation,
 headers, IP/link admission, expiry-based content deletion, and content-free events.
@@ -226,8 +227,10 @@ expiry/revocation. Public receipts report storage without exposing release state
 New API/form replies attempt a constant Slack waiting hint after commit through
 the sender's configured encrypted webhook, without content, identities, or link
 capabilities. These optional hints are bounded to five seconds, have no durable
-outbox or retries, and cannot change the storage receipt. Invite requests are not
-wired yet.
+outbox or retries, and cannot change the storage receipt. Invite requests accept no
+contact/content fields, are bounded to 1,024 request bytes, and share reply-write
+admission (ten/IP/minute, twenty/link/minute) without consuming reply slots. Reads
+do not record invite requests. The existing admin invite-mint/redeem flow is unchanged.
 
 ### Admin routes
 
@@ -914,8 +917,11 @@ thirty-days-after-expiry content sweep. Creation/reply audit and events commit w
 the mutation; answers also commit their audit and event together. Answers are
 bounded to 16 KiB each and, with the initial text, 64 KiB in aggregate under the
 link lock. Inspection preserves `external_unverified` origin and does not release
-replies. No release or inbox delivery is wired yet. Existing mailbox tables and participant-only behavior remain
-unchanged.
+replies. Explicit release atomically updates the reply and writes one release event
+and audit; `/shares/inbox` replays sender-owned released replies by that event's
+cursor without acknowledging processing. Explicit invite requests similarly commit
+deduplicated measurement and external audit together, without creating an invite
+or identity. Existing mailbox tables and participant-only behavior remain unchanged.
 
 Nullable `company_domain` columns on agents and invites record admin-attested
 provenance. Existing rows and new invites without an explicit domain remain unknown
@@ -926,8 +932,9 @@ copies the stored invite domain, never a receiver assertion. The signed token an
 existing response contracts are unchanged. This is admin attestation, not DNS,
 employment, email, or cryptographic verification. Self-audit still filters by the
 caller agent's actor ID, so admin mint records are not returned as inviter actions.
-Audit additionally accepts `external` actors with no agent ID; this schema support
-does not authenticate an external sender or implement a public reply route.
+Audit additionally accepts `external` actors with no agent ID for public reply and
+invite-request mutations; these actors do not authenticate an external author or
+borrow the sender's identity. System retention audit records content deletion.
 
 Core relay audit rows cover invite mint/redeem, handoff
 create/accept/complete/cancel, message append, and block/unblock. Labs audit adds Node

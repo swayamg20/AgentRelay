@@ -12,6 +12,7 @@ import {
 	listShareInbox,
 	listShareReplies,
 	postShareReply,
+	recordShareInviteRequest,
 	releaseShareReply,
 	revokeShare,
 } from "../services/shares.js";
@@ -20,6 +21,7 @@ import {
 	shareAnswerSchema,
 	shareIdSchema,
 	shareInboxSchema,
+	shareInviteRequestSchema,
 	shareReleaseSchema,
 	shareReplySchema,
 } from "../share-schemas.js";
@@ -27,6 +29,7 @@ import type { AppEnv } from "../types.js";
 import {
 	isKnownShareBot,
 	renderShare,
+	renderShareInviteReceipt,
 	renderShareReplyReceipt,
 	shareFormat,
 } from "./share-render.js";
@@ -89,6 +92,23 @@ function parseId(id: string): string {
 	return parsed.data;
 }
 
+async function readPublicShareInput(
+	request: Request,
+	maxBytes: number,
+): Promise<{ input: unknown; channel: "api" | "form" }> {
+	const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+	if (contentType !== "application/json" && contentType !== "application/x-www-form-urlencoded") {
+		throw new RelayError("invalid_params", "Use JSON or an HTML form");
+	}
+	const body = await readShareBody(request, maxBytes);
+	if (contentType === "application/json") return { input: parseJson(body), channel: "api" };
+	const form = new URLSearchParams(body);
+	if (new Set(form.keys()).size !== Array.from(form.keys()).length) {
+		throw new RelayError("invalid_params", "Duplicate form fields");
+	}
+	return { input: Object.fromEntries(form), channel: "form" };
+}
+
 export function createPublicShareRoutes(opts: ShareRoutesOptions): Hono<AppEnv> {
 	const router = new Hono<AppEnv>();
 	router.use("*", async (context, next) => {
@@ -113,22 +133,7 @@ export function createPublicShareRoutes(opts: ShareRoutesOptions): Hono<AppEnv> 
 	});
 	router.post("/:id/replies", admission, async (context) => {
 		const id = parseId(context.req.param("id"));
-		const contentType = context.req.header("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-		if (contentType !== "application/json" && contentType !== "application/x-www-form-urlencoded") {
-			throw new RelayError("invalid_params", "Use JSON or the HTML reply form");
-		}
-		const body = await readShareBody(context.req.raw, 100_000);
-		const channel = contentType === "application/json" ? "api" : "form";
-		let input: unknown;
-		if (channel === "api") {
-			input = parseJson(body);
-		} else {
-			const form = new URLSearchParams(body);
-			if (new Set(form.keys()).size !== Array.from(form.keys()).length) {
-				throw new RelayError("invalid_params", "Duplicate form fields");
-			}
-			input = Object.fromEntries(form);
-		}
+		const { input, channel } = await readPublicShareInput(context.req.raw, 100_000);
 		const parsed = shareReplySchema.safeParse(input);
 		if (!parsed.success) throw new RelayError("invalid_params", "Invalid reply payload");
 		const receipt = await postShareReply(
@@ -145,6 +150,23 @@ export function createPublicShareRoutes(opts: ShareRoutesOptions): Hono<AppEnv> 
 		return channel === "api"
 			? context.json(receipt, status)
 			: context.html(renderShareReplyReceipt(), status);
+	});
+	router.post("/:id/invite-requests", admission, async (context) => {
+		const id = parseId(context.req.param("id"));
+		const { input, channel } = await readPublicShareInput(context.req.raw, 1024);
+		const parsed = shareInviteRequestSchema.safeParse(input);
+		if (!parsed.success) throw new RelayError("invalid_params", "Invalid invite request payload");
+		const receipt = await recordShareInviteRequest(
+			opts.db,
+			id,
+			parsed.data,
+			channel,
+			context.get("requestId"),
+		);
+		const status = receipt.replayed ? 200 : 201;
+		return channel === "api"
+			? context.json(receipt, status)
+			: context.html(renderShareInviteReceipt(), status);
 	});
 	return router;
 }

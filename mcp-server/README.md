@@ -70,7 +70,9 @@ The current source adds `share_handoff` and `answer_share`. These are not a new
 published package release. They require the matching Relay handoff-link routes;
 interactive-terminal owner release and released-reply inbox replay are wired in
 source. New external replies may trigger a content-free, best-effort Slack waiting
-hint through the sender's configured webhook; invite requests are not yet wired. The manual
+hint through the sender's configured webhook. Receivers may explicitly record
+invite interest through a separate JSON/form endpoint; it creates no account,
+issued invite, contact record, or email. The manual
 receiver kit is ready, but real-client compatibility trials
 have not been run. See the
 [handoff-link checkpoint](../docs/handoff-links.md) and
@@ -133,6 +135,17 @@ ten entries, or the smaller `limit`; ordinary status filters do not apply, and
 `since` uses release time. Reads do not acknowledge processing; without a cursor,
 the same stable reply IDs can reappear. After retention deletion, bodies are null
 but cursors remain replayable. Shares do not enter the ordinary mailbox watch feed.
+
+Receivers read the capability URL as Markdown (or minimal HTML in a browser) and
+post a JSON reply or use its fallback form with their existing network tools. They
+need neither an account nor AgentRelay installation. Relay instructions precede
+randomly delimited sender content; a receipt proves storage only. External replies
+never appear on the public page, even after release. Forwarding a link forwards its
+read/reply power until expiry or revocation. The default expiry is seven days,
+maximum thirty; content is deleted thirty days after expiry by the Relay sweep.
+Explicit invite interest is optional and not needed to read or reply. API/form
+writes are rate-limited per IP and link; see the [Relay API](../docs/handoff-links.md)
+for exact contracts, trusted-proxy requirements, retention, and measurement limits.
 
 ### Roster filters and pagination
 

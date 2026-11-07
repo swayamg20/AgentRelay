@@ -5,7 +5,7 @@ import { loadConfig } from "../config.js";
 import type { Database } from "../db/client.js";
 import { createLogger } from "../logger.js";
 import { createServer } from "../server.js";
-import { createShareSchema, shareReplySchema } from "../share-schemas.js";
+import { createShareSchema, shareInviteRequestSchema, shareReplySchema } from "../share-schemas.js";
 import { isKnownShareBot, renderShare, shareFormat } from "./share-render.js";
 import { readShareBody } from "./shares.js";
 
@@ -60,6 +60,29 @@ describe("share edge contracts", () => {
 		expect(html.split("</head>")[0]).not.toContain("secret proposal");
 		expect(html).not.toMatch(/og:|<meta[^>]+content=/);
 		expect(html).toContain('name="idempotency_key"');
+	});
+
+	it("offers optional invite interest before sender data, without signup or contact collection", () => {
+		const markdown = renderShare(content, "https://relay.example/l/cap/replies", "markdown");
+		expect(markdown).toContain("POST https://relay.example/l/cap/invite-requests");
+		expect(markdown.indexOf("This records interest only")).toBeLessThan(
+			markdown.indexOf("BEGIN agentrelay_sender_"),
+		);
+		expect(markdown).toContain("An invite is not required to read this link or reply");
+		const html = renderShare(content, "https://relay.example/l/cap/replies", "html");
+		expect(html).toContain('action="https://relay.example/l/cap/invite-requests"');
+		expect(html).toContain("Record invite request");
+		expect(html).not.toMatch(/name="(?:email|company|name|contact)"/);
+		expect(shareInviteRequestSchema.safeParse({ idempotency_key: randomUUID() }).success).toBe(
+			true,
+		);
+		for (const input of [
+			{},
+			{ idempotency_key: "bad-key" },
+			{ idempotency_key: randomUUID(), email: "receiver@example.test" },
+		]) {
+			expect(shareInviteRequestSchema.safeParse(input).success).toBe(false);
+		}
 	});
 
 	it("marks unknown company provenance and classifies only known bot hints", () => {

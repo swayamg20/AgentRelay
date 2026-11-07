@@ -38,6 +38,8 @@ export const shareReleaseSchema = z
 	.object({ confirmation: z.literal("release_to_inbox") })
 	.strict();
 
+export const shareInviteRequestSchema = z.object({ idempotency_key: z.string().uuid() }).strict();
+
 export const shareInboxSchema = z
 	.object({
 		after_cursor: z
@@ -54,3 +56,4 @@ export type CreateShareInput = z.infer<typeof createShareSchema>;
 export type ShareReplyInput = z.infer<typeof shareReplySchema>;
 export type ShareAnswerInput = z.infer<typeof shareAnswerSchema>;
 export type ShareInboxInput = z.infer<typeof shareInboxSchema>;
+export type ShareInviteRequestInput = z.infer<typeof shareInviteRequestSchema>;

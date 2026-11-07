@@ -8,6 +8,7 @@ import {
 	SHARE_CONTENT_BYTES,
 	type ShareAnswerInput,
 	type ShareInboxInput,
+	type ShareInviteRequestInput,
 	type ShareReplyInput,
 } from "../share-schemas.js";
 import { writeAudit } from "./audit.js";
@@ -208,6 +209,50 @@ export async function postShareReply(
 			requestId,
 		});
 		return { stored: true, replayed: false };
+	});
+}
+
+export async function recordShareInviteRequest(
+	db: Database,
+	publicId: string,
+	input: ShareInviteRequestInput,
+	channel: "api" | "form",
+	requestId: string,
+) {
+	return db.transaction(async (transaction) => {
+		const { link } = await lockPublicLink(transaction, publicId);
+		const [existing] = await transaction
+			.select({ channel: sql<string | null>`${shareEvents.metadata}->>'channel'` })
+			.from(shareEvents)
+			.where(
+				and(
+					eq(shareEvents.linkId, link.id),
+					eq(shareEvents.kind, "invite.requested"),
+					sql`${shareEvents.metadata}->>'idempotency_key' = ${input.idempotency_key}`,
+				),
+			);
+		if (existing) {
+			if (existing.channel !== channel) {
+				throw new RelayError("duplicate_idempotency_key", "Invite request key already used");
+			}
+			return { recorded: true, invite_issued: false, replayed: true };
+		}
+		await transaction.insert(shareEvents).values({
+			linkId: link.id,
+			kind: "invite.requested",
+			actorKind: "external",
+			metadata: { channel, idempotency_key: input.idempotency_key },
+		});
+		await writeAudit(transaction, {
+			actorKind: "external",
+			actorId: null,
+			action: "invite.requested",
+			resourceType: "share_link",
+			resourceId: link.id,
+			metadata: { channel },
+			requestId,
+		});
+		return { recorded: true, invite_issued: false, replayed: false };
 	});
 }
 

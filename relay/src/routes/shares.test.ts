@@ -7,6 +7,7 @@ import {
 	agentCards,
 	agents,
 	auditLog,
+	invites,
 	mailboxEvents,
 	messages,
 	shareEvents,
@@ -148,6 +149,248 @@ databaseDescribe("handoff link routes", () => {
 			headers: { authorization: `Bearer ${owner.api_key}` },
 		});
 	}
+
+	function inviteRequest(link: Link, input: Record<string, unknown> = {}, ip?: string) {
+		return app.request(`/l/${link.link_id}/invite-requests`, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				"x-forwarded-for": ip ?? `192.0.2.${nextIp++}`,
+			},
+			body: JSON.stringify({ idempotency_key: randomUUID(), ...input }),
+		});
+	}
+
+	it("records explicit external invite interest with audit, without identity, contact or account effects", async () => {
+		const link = await createLink();
+		const key = randomUUID();
+		const response = await inviteRequest(link, { idempotency_key: key });
+		expect(response.status).toBe(201);
+		expect(await response.json()).toEqual({
+			recorded: true,
+			invite_issued: false,
+			replayed: false,
+		});
+		expect(response.headers.get("x-robots-tag")).toContain("noindex");
+		expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+		const events = await handle.db
+			.select()
+			.from(shareEvents)
+			.where(eq(shareEvents.kind, "invite.requested"));
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({
+			actorKind: "external",
+			actorAgentId: null,
+			replyId: null,
+			metadata: { channel: "api", idempotency_key: key },
+		});
+		const audits = await handle.db
+			.select()
+			.from(auditLog)
+			.where(eq(auditLog.action, "invite.requested"));
+		expect(audits).toHaveLength(1);
+		expect(audits[0]).toMatchObject({
+			actorKind: "external",
+			actorId: null,
+			resourceType: "share_link",
+			resourceId: events[0]?.linkId,
+			metadata: { channel: "api" },
+		});
+		const facts = JSON.stringify({ events, audits }, (_name, value) =>
+			typeof value === "bigint" ? value.toString() : value,
+		);
+		expect(facts).not.toContain(link.link_id);
+		expect(facts).not.toContain("sender published proposal");
+		expect(facts).not.toContain("192.0.2.");
+		expect(await handle.db.select().from(agents)).toHaveLength(2);
+		expect(await handle.db.select().from(invites)).toHaveLength(0);
+		expect(await handle.db.select().from(shareReplies)).toHaveLength(0);
+		expect(await handle.db.select().from(messages)).toHaveLength(0);
+		expect(await handle.db.select().from(mailboxEvents)).toHaveLength(0);
+		expect(slackPoster).not.toHaveBeenCalled();
+	});
+
+	it("serializes invite request retries, scopes their keys to links, and rejects a changed channel", async () => {
+		const link = await createLink();
+		const key = randomUUID();
+		const responses = await Promise.all(
+			Array.from({ length: 3 }, () => inviteRequest(link, { idempotency_key: key })),
+		);
+		expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 201]);
+		for (const response of responses) {
+			expect(await response.json()).toMatchObject({ recorded: true, invite_issued: false });
+		}
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(1);
+		expect(
+			await handle.db.select().from(auditLog).where(eq(auditLog.action, "invite.requested")),
+		).toHaveLength(1);
+		const conflicting = await app.request(`/l/${link.link_id}/invite-requests`, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({ idempotency_key: key }).toString(),
+		});
+		expect(conflicting.status).toBe(409);
+		const second = await createLink();
+		expect((await inviteRequest(second, { idempotency_key: key })).status).toBe(201);
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(2);
+	});
+
+	it("accepts the rendered optional HTML invite form and safely replays its key", async () => {
+		const link = await createLink();
+		const page = await app.request(`/l/${link.link_id}`, { headers: { accept: "text/html" } });
+		const html = await page.text();
+		const form = html.match(
+			/<form method="post" action="([^"]+\/invite-requests)"><input type="hidden" name="idempotency_key" value="([^"]+)"/,
+		);
+		expect(form?.[1]).toBe(`${link.url}/invite-requests`);
+		const post = () =>
+			app.request(`/l/${link.link_id}/invite-requests`, {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({ idempotency_key: form![2]! }).toString(),
+			});
+		const response = await post();
+		expect(response.status).toBe(201);
+		expect(await response.text()).toContain(
+			"No account was created, no invite was issued, and no email was sent",
+		);
+		expect((await post()).status).toBe(200);
+		const [event] = await handle.db
+			.select()
+			.from(shareEvents)
+			.where(eq(shareEvents.kind, "invite.requested"));
+		expect(event?.metadata).toEqual({ channel: "form", idempotency_key: form![2] });
+	});
+
+	it("rejects invalid, duplicate, oversized, and contact-bearing invite request payloads before measurement", async () => {
+		const link = await createLink();
+		const path = `/l/${link.link_id}/invite-requests`;
+		for (const input of [
+			{ idempotency_key: undefined },
+			{ idempotency_key: "not-a-uuid" },
+			{ email: "private@receiver.example" },
+			{ content: "private external body" },
+			{ actor_kind: "agent" },
+		]) {
+			expect((await inviteRequest(link, input)).status).toBe(400);
+		}
+		for (const [contentType, body] of [
+			["application/json", "{"],
+			["application/json", ` ${" ".repeat(1024)}`],
+			["text/plain", "no"],
+			[
+				"application/x-www-form-urlencoded",
+				`idempotency_key=${randomUUID()}&idempotency_key=${randomUUID()}`,
+			],
+		]) {
+			const response = await app.request(path, {
+				method: "POST",
+				headers: { "content-type": contentType! },
+				body,
+			});
+			expect(response.status).toBe(400);
+		}
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(0);
+		expect(
+			await handle.db.select().from(auditLog).where(eq(auditLog.action, "invite.requested")),
+		).toHaveLength(0);
+	});
+
+	it("does not record invite requests from reads or unavailable capabilities", async () => {
+		const link = await createLink();
+		expect((await app.request(`/l/${link.link_id}`)).status).toBe(200);
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(0);
+		expect((await inviteRequest({ ...link, link_id: "a".repeat(43) })).status).toBe(404);
+		expect((await inviteRequest({ ...link, link_id: "malformed" })).status).toBe(404);
+		await handle.db
+			.update(agents)
+			.set({ status: "disabled" })
+			.where(eq(agents.id, sender.agent_id));
+		expect((await inviteRequest(link)).status).toBe(404);
+		await handle.db.update(agents).set({ status: "active" }).where(eq(agents.id, sender.agent_id));
+		await handle.db
+			.update(shareLinks)
+			.set({
+				createdAt: new Date(Date.now() - 2 * 86_400_000),
+				expiresAt: new Date(Date.now() - 86_400_000),
+			})
+			.where(eq(shareLinks.publicId, link.link_id));
+		expect((await inviteRequest(link)).status).toBe(404);
+		const revoked = await createLink();
+		await handle.db
+			.update(shareLinks)
+			.set({ revokedAt: new Date() })
+			.where(eq(shareLinks.publicId, revoked.link_id));
+		expect((await inviteRequest(revoked)).status).toBe(404);
+		const deleted = await createLink();
+		await handle.db
+			.update(shareLinks)
+			.set({ content: null, contentDeletedAt: new Date() })
+			.where(eq(shareLinks.publicId, deleted.link_id));
+		expect((await inviteRequest(deleted)).status).toBe(404);
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(0);
+	});
+
+	it("shares IP write admission across replies and invite requests", async () => {
+		const link = await createLink();
+		const ip = "198.51.100.77";
+		for (let count = 0; count < 5; count++) expect((await reply(link, {}, ip)).status).toBe(201);
+		for (let count = 0; count < 5; count++)
+			expect((await inviteRequest(link, {}, ip)).status).toBe(201);
+		const denied = await inviteRequest(link, {}, ip);
+		expect(denied.status).toBe(429);
+		expect(denied.headers.get("retry-after")).toBe("60");
+		expect(denied.headers.get("x-robots-tag")).toContain("noindex");
+		expect((await reply(link, {}, ip)).status).toBe(429);
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(5);
+	});
+
+	it("limits invite requests per link without consuming the ten-reply budget", async () => {
+		const link = await createLink();
+		for (let count = 0; count < 20; count++) expect((await inviteRequest(link)).status).toBe(201);
+		expect((await inviteRequest(link)).status).toBe(429);
+		expect((await reply(link)).status).toBe(429);
+		expect(
+			await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+		).toHaveLength(20);
+		expect(await handle.db.select().from(shareReplies)).toHaveLength(0);
+	});
+
+	it("rolls back invite-request measurement when its external audit fails", async () => {
+		const link = await createLink();
+		await handle.sql.unsafe(
+			"CREATE FUNCTION share_test_reject_invite_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'invite.requested' THEN RAISE EXCEPTION 'private invite request diagnostic'; END IF; RETURN NEW; END $$",
+		);
+		await handle.sql.unsafe(
+			"CREATE TRIGGER share_test_reject_invite_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION share_test_reject_invite_audit()",
+		);
+		try {
+			const response = await inviteRequest(link);
+			expect(response.status).toBe(500);
+			expect(await response.text()).not.toContain("private invite request diagnostic");
+			expect(
+				await handle.db.select().from(shareEvents).where(eq(shareEvents.kind, "invite.requested")),
+			).toHaveLength(0);
+			expect(
+				await handle.db.select().from(auditLog).where(eq(auditLog.action, "invite.requested")),
+			).toHaveLength(0);
+		} finally {
+			await handle.sql.unsafe("DROP TRIGGER share_test_reject_invite_audit ON audit_log");
+			await handle.sql.unsafe("DROP FUNCTION share_test_reject_invite_audit()");
+		}
+	});
 
 	async function configureWebhook(value: string | null) {
 		await handle.db

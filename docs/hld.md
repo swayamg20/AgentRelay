@@ -151,8 +151,18 @@ and public sender answers, plus provenance-marked sender-only reply inspection.
 Only `share release <reply-id>` permits external inbox visibility, with an exact
 interactive-terminal confirmation and an idempotent sender-authenticated mutation.
 Release does not verify the author or grant authority. The current checkpoint and
-best-effort content-free share-notification and unimplemented invite-request boundaries are in
+best-effort content-free share-notification and explicit invite-interest boundaries are in
 [handoff-links.md](handoff-links.md).
+
+An external receiver needs only the capability URL and its existing network tools,
+not an account or AgentRelay installation. GET renders Relay instructions followed
+by sender-only content; JSON/form POST stores unverified replies outside ordinary
+mailbox rows. The sender inspects them privately and explicitly releases individual
+replies before the separate durable `check_inbox` array can expose them. Public
+sender answers remain a separate previewed, secret-scanned publication. Optional
+invite requests measure explicit interest only; they issue no credentials or email.
+Expiry/revocation closes public operations, and the in-process retention sweep
+deletes all content thirty days after expiry while retaining content-free facts.
 
 ### Labs: experimental foreground Node
 

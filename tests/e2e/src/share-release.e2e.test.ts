@@ -116,4 +116,44 @@ describe("handoff link release process boundary", () => {
 		expect(publicContent).toContain(answer.content);
 		expect(publicContent).not.toContain(externalContent);
 	});
+
+	it("records capability-only invite interest and replays it after a Relay restart without inbox effects", async () => {
+		const before = await agent.callTool<InboxResponse>("check_inbox", {});
+		const selected = { content: "Synthetic invite-interest handoff" };
+		const preview = await agent.callTool<{ preview_token: string }>("share_handoff", selected);
+		const link = await agent.callTool<{ url: string }>("share_handoff", {
+			...selected,
+			preview_token: preview.preview_token,
+		});
+		const key = randomUUID();
+		const post = () =>
+			fetch(`${link.url}/invite-requests`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ idempotency_key: key }),
+			});
+		const first = await post();
+		expect(first.status).toBe(201);
+		expect(await first.json()).toEqual({ recorded: true, invite_issued: false, replayed: false });
+		await relay.restart();
+		const replay = await post();
+		expect(replay.status).toBe(200);
+		expect(await replay.json()).toEqual({ recorded: true, invite_issued: false, replayed: true });
+		const html = await (await fetch(link.url, { headers: { accept: "text/html" } })).text();
+		const form = html.match(
+			/<form method="post" action="([^"]+\/invite-requests)"><input type="hidden" name="idempotency_key" value="([^"]+)"/,
+		);
+		expect(form?.[1]).toBe(`${link.url}/invite-requests`);
+		const submitted = await fetch(form![1]!, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({ idempotency_key: form![2]! }),
+		});
+		expect(submitted.status).toBe(201);
+		expect(submitted.headers.get("x-robots-tag")).toContain("noindex");
+		expect(await submitted.text()).toContain(
+			"No account was created, no invite was issued, and no email was sent",
+		);
+		expect(await agent.callTool<InboxResponse>("check_inbox", {})).toEqual(before);
+	});
 });

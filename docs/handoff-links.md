@@ -1,8 +1,9 @@
-# Handoff links: sender client and Relay checkpoint
+# Handoff links: sender client and Relay API
 
-The current source implements the Relay routes below. This is not yet the complete
-client product: invite-request measurement is not wired.
-Owner release and released-reply inbox replay are implemented in source. Do not
+The current source implements the sender MCP/CLI and Relay routes below, including
+owner release, released-reply inbox replay, optional Slack waiting hints, and
+explicit invite-interest measurement. This is not a new published package release;
+use matching Relay and client source builds. Do not
 publish sensitive content through this API while expecting a
 server-side secret scanner. The approved boundary is
 [RFC 003](rfcs/003-verified-handoff-links.md); ordinary mailbox participants, blocks,
@@ -166,6 +167,32 @@ Expired, revoked, deleted, unknown, or disabled-sender links return an unavailab
 public operations through the same transaction locks used for creation. Link
 revocation is permanent; key rotation is not link revocation.
 
+### Optional invite requests
+
+Reading and replying never require an invite. A receiver who explicitly wants an
+AgentRelay invite may submit `POST /l/:id/invite-requests` with JSON
+`{"idempotency_key":"<UUID>"}` or use the separate HTML form. Each rendered page
+supplies a random retry key. The request records **interest only**: it creates no
+receiver account, signed invite, credential, email, signup, or contact record. It
+does not notify the sender or create any authority or automatic follow-up. No name,
+email, company, or content fields are accepted. Fulfillment remains outside this
+measurement surface and the existing admin-minted invite flow is unchanged.
+
+New requests return 201 with `recorded: true`, `invite_issued: false`, and
+`replayed: false`. An identical link-scoped UUID/channel retry returns 200 with
+`replayed: true`; changing API/form channel for that key returns 409. The HTML
+receipt likewise says no account, invite, or email was created. Bodies are capped
+at 1,024 bytes, duplicate/unknown fields fail closed, and unavailable capabilities
+return 404. Requests share public link-write IP/link admission with replies, but
+do not consume the ten-reply storage budget. An ordinary fetch never records an
+invite request.
+
+The link lock serializes request deduplication. The content-free `invite.requested`
+event stores the channel and UUID retry key, with an external actor and no agent
+or reply ID. Its external audit entry commits in the same transaction and contains
+only the channel and internal link reference. An audit failure rolls back the
+measurement. Neither record claims a verified requester identity.
+
 ## Admission, retention, and facts
 
 After a new API/form reply commits, the Relay attempts a content-free Slack hint
@@ -188,7 +215,7 @@ The in-process fixed-window limits are separate for reads and writes:
 | Scope | Per client IP per minute | Per link per minute |
 |---|---|---|
 | Link reads | 60 | 120 |
-| Link reply attempts | 10 | 20 |
+| Link write attempts (reply or invite request) | 10 | 20 |
 | Invite redemption attempts | 10 | not applicable |
 
 Rejected attempts count toward admission. A rate rejection returns 429 with
@@ -208,10 +235,26 @@ ordering, release state, idempotency keys, and content-free measurement/audit re
 Revocation does not move the expiry-based deletion deadline earlier. When a process
 is down, deletion resumes at its next sweep; backups have their own retention.
 
-Creation, reply, release, and answer mutations commit with their audit and measurement facts;
+Creation, reply, release, answer, and invite-request mutations commit with their audit and measurement facts;
 revocation commits with audit. `share_events` currently emits `link.created`,
 `link.fetched` (HTML/Markdown and a known-bot user-agent hint), `reply.posted`
-(API/form), `reply.released`, and `answer.posted`. Raw user agents, IPs, bodies, and capability URLs are not recorded in
+(API/form), `reply.released`, `answer.posted`, and `invite.requested` (API/form).
+Raw user agents, IPs, bodies, and capability URLs are not recorded in
 these facts. Sensitive route paths, caller-supplied request IDs, and raw failure
-diagnostics are excluded from request logs. Invite requests are schema-supported
-but their producer is not implemented yet.
+diagnostics are excluded from request logs.
+
+For local measurement, operators can aggregate the content-free database facts:
+
+```sql
+SELECT kind, count(*) FROM share_events GROUP BY kind ORDER BY kind;
+SELECT metadata->>'format' AS format, metadata->>'known_bot' AS known_bot,
+       count(*) FROM share_events WHERE kind = 'link.fetched' GROUP BY 1, 2;
+SELECT kind, metadata->>'channel' AS channel, count(*) FROM share_events
+WHERE kind IN ('reply.posted', 'invite.requested') GROUP BY 1, 2;
+```
+
+These are action counts, not unique people, companies, verified agents, delivery,
+understanding, or processing rates. Known bots are only a user-agent heuristic.
+No public measurement endpoint or new metrics service is introduced. Use the
+[manual receiver matrix](handoff-links-receiver-test.md) for real-client evidence;
+repository HTTP/stdio/terminal tests alone do not establish receiver compatibility.

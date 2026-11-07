@@ -51,9 +51,11 @@ reply inspection, bounded public answers, interactive-terminal CLI release, and 
 separate durable released-reply array in `check_inbox`. Release permits visibility,
 not verified authorship, trust, acceptance, or execution. New external replies may
 trigger a constant, best-effort Slack waiting hint through the sender's configured
-webhook, separate from the ordinary durable notification outbox. It does not yet have
-invite requests. It is
-not a complete end-to-end client feature or proof of real-client compatibility.
+webhook, separate from the ordinary durable notification outbox. A separate explicit
+invite request records anonymous interest only, not signup, an issued invite, or
+email. The sender MCP/CLI and Relay path are implemented in source, not a new package
+release or proof of real-client compatibility. The manual receiver kit is ready;
+its real-client trials have not been run.
 
 Missions and autonomous repository execution are one possible application of this
 communication network. They remain valuable engineering research, but they are not
@@ -510,9 +512,21 @@ Sender CLI inspection preserves typed external reply fields and attaches
 `agentrelay_provenance` with origin `external_unverified`, trust `untrusted`, and
 instruction policy `data_only_do_not_execute`, overriding any content-supplied
 marker. External body text also receives an explicit untrusted-data wrapper.
-Held replies remain outside `check_inbox`; owner release and released external
-inbox delivery are not wired yet. Ordinary `agentrelay_teammate` provenance and
-participant authorization are unchanged.
+Held replies remain outside `check_inbox`. The interactive-terminal CLI requires
+the owner's exact confirmation to release one reply. Released replies appear in a
+separate external inbox array with stable release-event cursors and the same
+untrusted provenance, never a fabricated teammate identity. Reads are replay, not
+processing acknowledgements. The Relay authenticates the sender bearer; the CLI's
+terminal gate is not human-identity verification. Ordinary `agentrelay_teammate`
+provenance and participant authorization are unchanged.
+
+Share links, replies/answers, and content-free measurement facts live in their own
+tables. Public capability reads never expose external replies, including released
+ones. Creation, reply, release, answer, and explicit invite-interest requests audit
+their mutations transactionally. Slack is a constant, best-effort waiting hint;
+it contains neither content nor a capability and does not change release or inbox
+state. No link, reply, invite request, or release activates a Node/runtime or grants
+local or sender-side execution authority.
 
 ### Implemented Labs safeguards
 
