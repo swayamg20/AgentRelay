@@ -4,12 +4,13 @@
 
 Build verified handoff links through all seven owner-supplied steps while preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42494936182, session 1. All seven steps are complete in source
-with passing required local checks. Feedback reports failing GitGuardian Security
-Checks and, newly, lint-typecheck on PR #178 without incident or failing-step
-details. Source/static, export, packed-artifact and available local Azure compilation
-checks pass. A synthetic Basic-auth fixture mitigation is committed, but neither
-reported remote gate is verified fixed.
+and is unchanged in run 42512358810, session 1. All seven steps are complete in source
+with passing required local checks. Current feedback reports only failing GitGuardian
+Security Checks on PR #178, without incident details. The previously reported
+lint-typecheck failure is absent from this snapshot, but no passing rerun or owner
+diagnostic is supplied. Previous source/static, export, packed-artifact and available
+local Azure compilation checks pass. A synthetic Basic-auth fixture mitigation is
+committed, but neither remote gate is independently verified fixed.
 The receiver kit is ready; actual Claude Code/Codex/Cursor trials remain unrun and
 explicitly nonblocking. No package release or deployment.
 
@@ -41,12 +42,12 @@ explicitly nonblocking. No package release or deployment.
 - [ ] Confirm GitGuardian passes or obtain content-free detector/path/commit/error
   details and address the specific finding. Do not claim the candidate fix resolves it.
 - [ ] Confirm lint-typecheck passes or obtain its failing step/commit/sanitized
-  diagnostic and fix the identified in-scope cause. External question prepared.
+  diagnostic and fix the identified in-scope cause. Open issue #184 requests it;
+  the current snapshot no longer lists that job as failing, not proof of a rerun.
 
 ## Next step
 
-Read an actual owner reply to #183 and the new
-`questions/lint-typecheck-failure-details.md`, plus refreshed check feedback first.
+Read actual owner replies to #183 and #184, plus refreshed check feedback first.
 If both gates pass, no further product change is required. Otherwise use only
 content-free incident/error details to fix the specific in-scope cause. A workflow
 or Azure asset change requires explicit approval because those paths are off-limits.
@@ -59,20 +60,23 @@ by synthetic tests. Stop further sessions in this run while awaiting details.
 
 Open issue #183 already requests the detector, path/line, affected commit, and
 sanitized status/error for PR #178, or confirmation that the newly published commit
-passes. Run 42494936182 still supplies only the failing check name. The owner inbox
+passes. Run 42512358810 still supplies only the failing check name. The owner inbox
 reproduces the existing question, not an answer or finding details. Do not duplicate
 this question or mark #183 resolved. Do not request raw secrets or credentials.
-The newly failing lint-typecheck job also has no failing-step or sanitized error
-details. `questions/lint-typecheck-failure-details.md` requests only its failing
-step, affected commit and sanitized diagnostic, or confirmation of a passing rerun.
-All locally reproduced steps pass. The installed Bicep is 0.48.1 rather than CI's
-pinned 0.46.1; no GitHub binary download/checksum or private check is verified.
+Open issue #184 requests the previously failing lint-typecheck job's failing step,
+affected commit and sanitized diagnostic, or confirmation of a passing rerun.
+Current feedback lists only GitGuardian; do not infer that #184 is resolved from
+omission alone. Do not duplicate either open question or append either issue to
+resolved.txt. Previous locally reproduced job steps pass. The previous run's installed
+Bicep was 0.48.1 rather than CI's pinned 0.46.1; no GitHub binary download/checksum
+or private check is verified. No further Azure investigation is needed without a
+diagnostic, and protected paths remain off-limits.
 Manual receiver results remain nonblocking.
 The unchanged merge guard denies migrations and does not allow integration-runner/
 e2e package-script paths. This approved branch includes those paths and needs direct
 repository review rather than reply-only merge.
 
-## Verification for run 42494936182, session 1
+## Verification for run 42512358810, session 1
 
 - Setup script and frozen install pass. Lint passes with three existing warnings.
 - Recursive typecheck/build and canonical units pass: protocol 125, MCP 501,
@@ -80,21 +84,26 @@ repository review rather than reply-only merge.
   Never set database variables for units or use recursive workspace tests.
 - Serialized Relay integration passes 337 against local Postgres on port 5433,
   with RELAY_TEST_TRUNCATE_VIA_PSQL=1; zero failures.
-- Protocol `test:exports`, MCP `pnpm pack` (including 501 tests), and the installed
-  packed-artifact CLI/MCP smoke pass. Azure shell syntax, template compilation and
-  parameter compilation with ephemeral synthetic values pass using installed Bicep
-  0.48.1. Generated parameter output is discarded; no Azure files are changed and
-  no GitHub download is attempted. This does not prove CI's pinned binary step.
+- Run 42494936182 additionally passed protocol `test:exports`, MCP `pnpm pack`
+  (including 501 tests), installed packed-artifact CLI/MCP smoke, and Azure shell/
+  template/parameter compilation using Bicep 0.48.1, not CI's pinned 0.46.1.
+  Those extra commands are not rerun for this memory-only session. No Azure files
+  are changed, GitHub download attempted, or remote binary step verified.
 - No product or fixture edits in this run. The prior run's 62 focused publication/
   CLI/MCP contracts are included in the passing MCP suite, not rerun separately.
 - Whitespace checks pass. GitGuardian was not run locally; no private findings or
-  credentials were accessed, no scan suppression was added, and both remote failures
-  are explicitly unresolved pending a rerun or owner-supplied details. The previous
+  credentials were accessed, no scan suppression was added, and both open diagnostic
+  questions remain unresolved pending a rerun or owner-supplied details. The previous
   candidate fixture mitigation is already committed; no further speculative
   mitigation, scanner suppression, history rewrite, or external API call is made.
 - Previous session 5 additionally passed 53 focused share/render tests, six process
   regressions across four files, and 70 local Markdown targets/seven documents.
   Those extra commands are not rerun separately for this memory-only session.
+- Post-memory lint and inline local Markdown-target checks pass; both memory files
+  have no local Markdown links. Frozen installation warns about e2e CLI bins before
+  Node is built; recursive typecheck/build subsequently pass. This is not a newly
+  reproduced source failure. Branch-wide PR text and summary retain the distinction
+  between completed source, unrun receiver trials, and unverified remote gates.
 
 ## Learned about the repository
 
