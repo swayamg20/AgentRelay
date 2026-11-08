@@ -4,7 +4,7 @@
 
 Build verified handoff links through all seven owner-supplied steps while preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42403751533, session 1. All seven steps are complete in source
+and is unchanged in run 42472206489, session 1. All seven steps are complete in source
 with passing required local checks. New feedback reports a failing GitGuardian
 Security Checks gate on PR #178 without incident details. A synthetic Basic-auth
 fixture mitigation is committed, but the reported gate is not verified fixed.
@@ -50,7 +50,7 @@ by synthetic tests. Stop further sessions in this run while awaiting details.
 
 Open issue #183 already requests the detector, path/line, affected commit, and
 sanitized status/error for PR #178, or confirmation that the newly published commit
-passes. Run 42403751533 still supplies only the failing check name. The owner inbox
+passes. Run 42472206489 still supplies only the failing check name. The owner inbox
 reproduces the existing question, not an answer or finding details. Do not duplicate
 this question or mark #183 resolved. Do not request raw secrets or credentials.
 Manual receiver results remain nonblocking.
@@ -58,7 +58,7 @@ The unchanged merge guard denies migrations and does not allow integration-runne
 e2e package-script paths. This approved branch includes those paths and needs direct
 repository review rather than reply-only merge.
 
-## Verified in run 42403751533, session 1
+## Verification for run 42472206489, session 1
 
 - Setup script and frozen install pass. Lint passes with three existing warnings.
 - Recursive typecheck/build and canonical units pass: protocol 125, MCP 501,
