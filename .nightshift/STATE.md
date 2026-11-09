@@ -4,7 +4,7 @@
 
 Build verified handoff links through all seven owner-supplied steps, preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42678869490, session 1. All seven steps are complete in
+and is unchanged in run 42720788857, session 1. All seven steps are complete in
 source; all six required local checks pass again. The receiver kit is ready, but
 actual Claude Code/Codex/Cursor trials remain unrun and explicitly nonblocking.
 No package release, publication, or deployment is part of this work.
@@ -67,7 +67,7 @@ migrations and does not allow integration-runner/e2e package-script paths. This
 branch includes those approved implementation paths and needs direct repository
 review rather than reply-only merge.
 
-## Verification for run 42678869490, session 1
+## Verification for run 42720788857, session 1
 
 - Setup script and `pnpm install --frozen-lockfile` pass. Installation warns about
   e2e CLI bins before the Node build; subsequent recursive builds pass.
@@ -78,9 +78,9 @@ review rather than reply-only merge.
   skip as expected; never set database variables for units or run `pnpm -r test`.
 - Serialized Relay integration against local Postgres on port 5433 passes all
   337 tests, zero failures, with `RELAY_TEST_TRUNCATE_VIA_PSQL=1`.
-- Inline local Markdown-target validation passes: 75 targets across eight current
-  handoff-link/design/client documents and both memory files. Post-memory lint,
-  local target validation, and whitespace checks pass.
+- Inline local Markdown-target validation passes: 79 targets across ten current
+  handoff-link/design/client documents. Post-memory lint and whitespace checks
+  pass.
 - Earlier export/packed-artifact/Azure compilation and six process regressions
   remain prior-run evidence, not separately rerun here. Neither private remote
   checks nor real receiver-client trials are run. No source changes in this session.
@@ -93,7 +93,9 @@ review rather than reply-only merge.
   inbox has no new reply. Preserve prior resolution history without reopening a
   duplicate question or treating the still-triggered historical finding as green.
   Choose verification, a memory-only commit, and STOP because all seven requested
-  source steps are complete; do not invent more work to fill the session.
+  source steps are complete and the only supplied blocker needs private historical
+  classification. No source change can clear that historical occurrence. Do not
+  invent more work to fill the session or reopen a question absent a fresh reply.
 
 ## Learned about the repository
 
