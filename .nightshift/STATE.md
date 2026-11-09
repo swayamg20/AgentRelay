@@ -4,7 +4,7 @@
 
 Build verified handoff links through all seven owner-supplied steps, preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42603299819, session 1. All seven steps are complete in
+and is unchanged in run 42612620144, session 1. All seven steps are complete in
 source; all six required local checks pass again. The receiver kit is ready, but
 actual Claude Code/Codex/Cursor trials remain unrun and explicitly nonblocking.
 No package release, publication, or deployment is part of this work.
@@ -67,7 +67,7 @@ migrations and does not allow integration-runner/e2e package-script paths. This
 branch includes those approved implementation paths and needs direct repository
 review rather than reply-only merge.
 
-## Verification for run 42603299819, session 1
+## Verification for run 42612620144, session 1
 
 - Setup script and `pnpm install --frozen-lockfile` pass. Installation warns about
   e2e CLI bins before the Node build; subsequent recursive builds pass.
@@ -84,6 +84,9 @@ review rather than reply-only merge.
 - Earlier export/packed-artifact/Azure compilation and six process regressions
   remain prior-run evidence, not separately rerun here. Neither private remote
   checks nor real receiver-client trials are run. No source changes in this session.
+- The canonical MCP units include the runtime-created Basic-auth fixture and its
+  secret-blocking/redacted-error assertions. The source remediation remains valid;
+  local tests cannot resolve the historical private GitGuardian classification.
 
 ## Learned about the repository
 
