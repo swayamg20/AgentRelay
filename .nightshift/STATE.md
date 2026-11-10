@@ -4,7 +4,7 @@
 
 Build verified handoff links through all seven owner-supplied steps, preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42855192073, session 1. All seven steps are complete in
+and is unchanged in run 42900000982, session 1. All seven steps are complete in
 source; all six required local checks pass again. The receiver kit is ready, but
 actual Claude Code/Codex/Cursor trials remain unrun and explicitly nonblocking.
 No package release, publication, or deployment is part of this work.
@@ -67,7 +67,7 @@ migrations and does not allow integration-runner/e2e package-script paths. This
 branch includes those approved implementation paths and needs direct repository
 review rather than reply-only merge.
 
-## Verification for run 42855192073, session 1
+## Verification for run 42900000982, session 1
 
 - Setup script and `pnpm install --frozen-lockfile` pass. Installation warns about
   e2e CLI bins before the Node build; subsequent recursive builds pass.
@@ -96,7 +96,7 @@ review rather than reply-only merge.
   source steps are complete and the only supplied blocker needs private historical
   classification. No source change can clear that historical occurrence. Do not
   invent more work to fill the session or reopen a question absent a fresh reply.
-- Run 42855192073 rechecks the current fixture, its MCP/CLI publication callers,
+- Run 42900000982 rechecks the current fixture, its MCP/CLI publication callers,
   all six required gates, and 97 local Markdown targets. All pass without product
   edits. The repeated historical scanner feedback contains no new actionable
   source finding; the supplied inbox contains no new owner reply. Record the
