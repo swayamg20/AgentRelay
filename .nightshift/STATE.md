@@ -4,7 +4,7 @@
 
 Build verified handoff links through all seven owner-supplied steps, preserving
 ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
-and is unchanged in run 42988996695, session 1. All seven steps are complete in
+and is unchanged in run 42991114240, session 1. All seven steps are complete in
 source, and all six required local checks pass. The receiver kit is ready; actual
 Claude Code/Codex/Cursor trials remain unrun and explicitly nonblocking. Release,
 publication, deployment, and additional product work are not authorized.
@@ -28,6 +28,8 @@ publication, deployment, and additional product work are not authorized.
   API/architecture/provenance/HLD/LLD/MCP documentation (b312e37).
 - [x] Confirm the reported historical Basic-auth fixture is already remediated
   in current source (a830510); preserve blocking remote status.
+- [x] Investigate newly supplied `unit (22)` feedback: no diagnostic is supplied,
+  and the canonical database-free unit command passes locally.
 - [x] Rerun all six required checks with database variables unset for units.
 - [x] Update memory, external run summary, and full-branch PR description;
   commit and prepare STOP plus IDLE to await owner review/classification.
@@ -38,7 +40,9 @@ The implementation goal is complete. Read changed goals, concrete PR findings,
 and fresh owner replies first when work resumes. Do not invent further source
 work or repeat memory-only sessions for unchanged historical scanner feedback.
 The owner can classify the synthetic GitGuardian incident if still triggered,
-review the full branch, and run `docs/handoff-links-receiver-test.md`.
+review the full branch, and run `docs/handoff-links-receiver-test.md`. If the remote
+unit check still fails, its actual diagnostic is the first investigation input;
+do not infer a fix from its name alone.
 
 ## Waiting on owner
 
@@ -52,6 +56,11 @@ contains neither #183 nor #184. Do not duplicate questions, re-emit resolutions,
 rewrite history, weaken scanning, call external systems, or claim the remote
 check is green. Further source edits cannot clear that historical occurrence.
 
+New supplied feedback lists `unit (22)` as failing but contains no error output.
+The canonical database-free unit command passes locally, including 438 Node tests;
+all six required checks pass. This does not establish remote check success. No
+source change is justified without a reproducible failure or concrete diagnostic.
+
 Prior #184 requested a lint/typecheck diagnostic. No diagnostic or failing
 lint/typecheck check is supplied now; local checks pass. Preserve that history
 without inferring remote resolution or investigating protected paths.
@@ -60,7 +69,7 @@ Manual receiver results remain nonblocking and unverified. The unchanged merge
 guard excludes migrations and integration/e2e script paths included in this
 branch, so direct repository review is needed rather than reply-only merge.
 
-## Verification for run 42988996695, session 1
+## Verification for run 42991114240, session 1
 
 - `bash "$NIGHTSHIFT_HARNESS/setup-install.sh"` and
   `pnpm install --frozen-lockfile`: pass. Installation warns about prebuild e2e
@@ -81,6 +90,9 @@ branch, so direct repository review is needed rather than reply-only merge.
 
 - Keep the current runtime-built fixture: it preserves scanner coverage without
   embedding the encoded literal and needs no additional source remediation.
+- Reproduce the newly reported unit check before considering source changes.
+  The full unit suite passes, so preserve existing code and report the remote
+  discrepancy rather than guessing or weakening tests.
 - Stop because all requested source steps are complete and the remaining supplied
   blocker needs private historical classification. Also write IDLE so unchanged
   feedback does not justify repeated memory-only scheduled sessions.
