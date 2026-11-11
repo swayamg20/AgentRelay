@@ -42,6 +42,21 @@ reference; the recommended host policy requires approval before content-bearing
 mailbox reads. It does not prove that an agent read or processed a message.
 Best-effort notification and the live stream remain hints.
 
+The current source also adds a separate [handoff-link Relay API](handoff-links.md),
+under the narrow [RFC 003 amendment](rfcs/003-verified-handoff-links.md). A random,
+expiring, revocable capability publishes only selected sender content. External
+holders can submit held replies, never read replies or other mailbox content. This
+checkpoint adds source MCP/CLI share previews and local secret scanning, sender-only
+reply inspection, bounded public answers, interactive-terminal CLI release, and a
+separate durable released-reply array in `check_inbox`. Release permits visibility,
+not verified authorship, trust, acceptance, or execution. New external replies may
+trigger a constant, best-effort Slack waiting hint through the sender's configured
+webhook, separate from the ordinary durable notification outbox. A separate explicit
+invite request records anonymous interest only, not signup, an issued invite, or
+email. The sender MCP/CLI and Relay path are implemented in source, not a new package
+release or proof of real-client compatibility. The manual receiver kit is ready;
+its real-client trials have not been run.
+
 Missions and autonomous repository execution are one possible application of this
 communication network. They remain valuable engineering research, but they are not
 the identity, prerequisite, or released product behavior of AgentRelay.
@@ -68,8 +83,9 @@ The repository currently ships:
   completing handoff threads.
 - Optional typed engineering artifacts plus provenance wrapping or structural
   markers on all teammate-originated mailbox content.
-- An optional in-process Slack notification adapter with encrypted-at-rest webhook
-  setup.
+- An optional Slack notification adapter with encrypted-at-rest webhook setup and
+  transactional notification intent. Each Relay process claims durable jobs from
+  the shared database; retries and lease recovery survive process death.
 - A durable, recipient-isolated mailbox event ledger and authenticated replay cursor.
   A content-free SSE signal reduces replay latency but is never correctness state.
 - An optional local `agentrelay watch` preview with exact-sender consent, one local
@@ -461,6 +477,14 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   block a fence for those mutations.
 - Provenance wrappers on teammate text and non-spoofable structural markers on
   teammate payloads, proposals, and artifacts returned by mailbox MCP tools.
+- On the separate public link surface, Relay instructions precede randomly
+  delimited sender data; HTML escapes all sender content. Company provenance is
+  explicitly admin-attested or unknown, not cryptographically verified. External
+  replies remain held outside ordinary mailbox rows until explicit owner release.
+  Released records and body text retain `external_unverified`/untrusted/data-only
+  provenance in `check_inbox`, with their own replay cursor and no invented teammate
+  identity. No capability, delimiter, or release grants execution authority. The CLI
+  terminal gate is local; the Relay authenticates the sender's bearer, not a human.
 - Fail-safe CLI synchronization: block writes local trust first; unblock clears the
   relay first. The running MCP reloads trust before every acceptance decision.
 - AES-GCM encrypted notification webhooks at rest, restricted to exact HTTPS Slack
@@ -474,6 +498,35 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   replay dedupe. Codex and Claude install profiles approval-gate content-bearing
   mailbox reads and AgentRelay mutations instead of auto-allowing the former broad
   wildcard.
+
+### Handoff-link provenance
+
+Public link content is sender-authored untrusted data, not a participant-only
+mailbox export. Relay instructions and random delimiters identify that boundary;
+admin-attested company provenance does not verify an external author. The sender's
+MCP/CLI clients preview only explicitly selected content and block recognized
+secrets locally before either preview or publication. A scan is not a guarantee
+of confidentiality, and a preview token does not grant authority.
+
+Sender CLI inspection preserves typed external reply fields and attaches
+`agentrelay_provenance` with origin `external_unverified`, trust `untrusted`, and
+instruction policy `data_only_do_not_execute`, overriding any content-supplied
+marker. External body text also receives an explicit untrusted-data wrapper.
+Held replies remain outside `check_inbox`. The interactive-terminal CLI requires
+the owner's exact confirmation to release one reply. Released replies appear in a
+separate external inbox array with stable release-event cursors and the same
+untrusted provenance, never a fabricated teammate identity. Reads are replay, not
+processing acknowledgements. The Relay authenticates the sender bearer; the CLI's
+terminal gate is not human-identity verification. Ordinary `agentrelay_teammate`
+provenance and participant authorization are unchanged.
+
+Share links, replies/answers, and content-free measurement facts live in their own
+tables. Public capability reads never expose external replies, including released
+ones. Creation, reply, release, answer, and explicit invite-interest requests audit
+their mutations transactionally. Slack is a constant, best-effort waiting hint;
+it contains neither content nor a capability and does not change release or inbox
+state. No link, reply, invite request, or release activates a Node/runtime or grants
+local or sender-side execution authority.
 
 ### Implemented Labs safeguards
 
@@ -511,13 +564,15 @@ Remote agent content is untrusted data. The receiving owner controls local autho
   kind without inventing an Agent identity.
 - `trust_overlay` is returned as JSON but is not dynamically applied to the host.
 - Relay audit does not record local commands, edits, tests, or policy decisions.
-- The notification queue is process-local and can drop work on overflow or restart.
+- Slack attempts are at least once, not exactly once. A lost provider response or
+  expired worker lease can cause a duplicate; Slack success is not agent pickup.
+  Queue metrics through #30 remain deferred. See [notification operations](notifications.md).
 - Local and relay revocation behavior is not one atomic, continuously observed policy;
   successful CLI block/unblock converges both stores but cannot transactionally commit
   a network write and a local file write together.
 - An allowed AgentRelay send tool can become an exfiltration path unless outbound
   content and artifact policy are bounded.
-- Notification delivery is process-local and does not prove pickup, reading, or
+- Notification delivery does not prove pickup, reading, or
   response. The new event feed likewise proves only durable event storage; an SSE
   write and a Codex queue receipt remain weaker facts than model pickup.
 - The connector is foreground-only and its first migration is a forward-only event

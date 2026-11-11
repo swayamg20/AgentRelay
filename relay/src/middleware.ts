@@ -4,6 +4,10 @@ import type { Logger } from "./logger.js";
 
 export const REQUEST_ID_HEADER = "x-request-id";
 
+export function isSensitiveRoute(path: string): boolean {
+	return /^\/(?:l|shares|invites)(?:\/|$)/.test(path);
+}
+
 export interface AppVariables {
 	requestId: string;
 	logger: Logger;
@@ -12,7 +16,10 @@ export interface AppVariables {
 export function requestIdMiddleware(): MiddlewareHandler<{ Variables: AppVariables }> {
 	return async (c, next) => {
 		const incoming = c.req.header(REQUEST_ID_HEADER);
-		const id = incoming && incoming.length > 0 ? incoming : `req_${randomUUID()}`;
+		const id =
+			incoming && incoming.length > 0 && !isSensitiveRoute(c.req.path)
+				? incoming
+				: `req_${randomUUID()}`;
 		c.set("requestId", id);
 		c.header(REQUEST_ID_HEADER, id);
 		await next();
@@ -24,7 +31,10 @@ export function loggerMiddleware(
 ): MiddlewareHandler<{ Variables: AppVariables }> {
 	return async (c, next) => {
 		const requestId = c.get("requestId");
-		const child = rootLogger.child({ request_id: requestId, route: c.req.path });
+		const route = isSensitiveRoute(c.req.path)
+			? `/${c.req.path.split("/")[1]}/[redacted]`
+			: c.req.path;
+		const child = rootLogger.child({ request_id: requestId, route });
 		c.set("logger", child);
 
 		const started = Date.now();

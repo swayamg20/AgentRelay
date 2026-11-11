@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { A2AClient } from "../a2a-client.js";
-import { markTeammateValue, wrap } from "../provenance.js";
+import { markExternalValue, markTeammateValue, wrap, wrapExternalReply } from "../provenance.js";
+import { type ShareClient, shareInboxReceipt } from "../share-client.js";
 import { checkInboxInput, handoffStatusSchema } from "./schemas.js";
 
 // Wire shape uses rich `thread_id` + `sender:{...}` (lld §4.2). The relay
@@ -32,9 +33,11 @@ const inboxResponseSchema = z.object({
 	next_cursor: z.string().nullable(),
 });
 
-export type InboxResponse = z.infer<typeof inboxResponseSchema>;
-
-export async function checkInbox(client: A2AClient, rawInput: unknown): Promise<InboxResponse> {
+export async function checkInbox(
+	client: A2AClient,
+	rawInput: unknown,
+	shareInbox?: Pick<ShareClient, "inbox">,
+) {
 	const input = checkInboxInput.parse(rawInput ?? {});
 	const params = {
 		filter: {
@@ -46,6 +49,15 @@ export async function checkInbox(client: A2AClient, rawInput: unknown): Promise<
 	};
 	const raw = await client.request<unknown>("tasks/list", params);
 	const parsed = inboxResponseSchema.parse(raw);
+	const external = shareInbox
+		? shareInboxReceipt.parse(
+				await shareInbox.inbox({
+					after_cursor: input.external_after_cursor ?? "0",
+					limit: Math.min(input.limit ?? 50, 10),
+					since: input.since,
+				}),
+			)
+		: { replies: [], next_cursor: input.external_after_cursor ?? "0", has_more: false };
 	return {
 		...parsed,
 		items: parsed.items.map((item) => ({
@@ -53,5 +65,15 @@ export async function checkInbox(client: A2AClient, rawInput: unknown): Promise<
 			sender: markTeammateValue(item.sender.handle, item.sender),
 			summary_preview: wrap({ senderHandle: item.sender.handle, content: item.summary_preview }),
 		})),
+		external_replies: external.replies.map((reply) =>
+			markExternalValue({
+				...reply,
+				content: reply.content === null ? null : wrapExternalReply(reply.content),
+			}),
+		),
+		external_next_cursor: external.next_cursor,
+		external_has_more: external.has_more,
 	};
 }
+
+export type InboxResponse = Awaited<ReturnType<typeof checkInbox>>;

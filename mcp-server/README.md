@@ -64,6 +64,89 @@ In stable 0.3.0, the relay stores messages durably, but pickup is explicit. A hu
 running agent must call `check_inbox` or `view_thread`. The beta live command adds a
 separate, explicitly consented read/reply loop.
 
+### Handoff links in source builds
+
+The current source adds `share_handoff` and `answer_share`. These are not a new
+published package release. They require the matching Relay handoff-link routes;
+interactive-terminal owner release and released-reply inbox replay are wired in
+source. New external replies may trigger a content-free, best-effort Slack waiting
+hint through the sender's configured webhook. Receivers may explicitly record
+invite interest through a separate JSON/form endpoint; it creates no account,
+issued invite, contact record, or email. The manual
+receiver kit is ready, but real-client compatibility trials
+have not been run. See the
+[handoff-link checkpoint](../docs/handoff-links.md) and
+[receiver test kit](../docs/handoff-links-receiver-test.md).
+
+Supply only explicitly selected text, not an implicit thread export:
+
+```json
+{ "content": "Selected public handoff", "expires_in_days": 7 }
+```
+
+`share_handoff` first returns an exact preview, warning, and `preview_token`
+without publishing. Review it, then repeat the same content/expiry with that token
+to create the URL. `answer_share` takes `link_id` and `content` in the same
+preview/confirm flow. Answers are public to every holder and must not automatically
+quote external replies. Anyone holding a URL can read sender content and submit
+unverified replies; forwarding it forwards the capability. No link grants
+execution authority.
+
+Source CLI equivalents:
+
+```bash
+agentrelay share --file selected-handoff.md
+agentrelay share --file selected-handoff.md --confirm <preview-token>
+agentrelay share replies <link-id>
+agentrelay share release <reply-id>
+agentrelay share answer <link-id> --file selected-answer.md
+agentrelay share answer <link-id> --file selected-answer.md --confirm <preview-token>
+```
+
+Creation/answers are preview-only without confirmation. Tokens bind the exact
+content, operation, link/expiry, Relay, and local sender and expire in ten minutes;
+identical retries reuse one mutation key. MCP previews are process-local (maximum
+100); CLI keeps only the latest pending preview per config in a mode-0600,
+content-free `share-preview.json` beside it. A changed/expired preview fails closed.
+After an ambiguous network failure, do not assume it failed and blindly create a
+new link. Default source install profiles approval-gate both MCP tools.
+
+Both phases block the configured bearer and recognized secret-like patterns
+locally, without returning the matched value. There is no bypass flag or Relay
+secret scanner. Pattern scanning can miss secrets and can reject safe examples;
+review the preview yourself. Initial content is at most 64 KiB; each answer is at
+most 16 KiB, sharing the initial content's 64 KiB published budget (UTF-8 bytes).
+
+`share replies` returns sender-only external replies with preserved typed fields,
+origin `external_unverified`, untrusted/data-only markers, and wrapped body text.
+Inspection neither verifies the author nor releases a reply to `check_inbox`.
+`share release <reply-id>` requires interactive stdin, stdout, and stderr and the
+exact typed confirmation `release <reply-id>`. Wrong input or EOF cancels; there
+is no pipe, `--yes`, preview-token, or MCP release bypass. Each invocation prompts
+again, including a retry. The private API uses the sender's bearer; the local CLI
+terminal check is not Relay verification of human identity. Keep that bearer local.
+
+`check_inbox` adds a separate `external_replies` array containing only released
+replies, with unverified/untrusted/data-only body and record markers. Release
+permits visibility only, never trust, acceptance, or execution authority. Pass
+`external_next_cursor` as `external_after_cursor` to replay later releases; while
+`external_has_more` is true, request another page. The external page holds up to
+ten entries, or the smaller `limit`; ordinary status filters do not apply, and
+`since` uses release time. Reads do not acknowledge processing; without a cursor,
+the same stable reply IDs can reappear. After retention deletion, bodies are null
+but cursors remain replayable. Shares do not enter the ordinary mailbox watch feed.
+
+Receivers read the capability URL as Markdown (or minimal HTML in a browser) and
+post a JSON reply or use its fallback form with their existing network tools. They
+need neither an account nor AgentRelay installation. Relay instructions precede
+randomly delimited sender content; a receipt proves storage only. External replies
+never appear on the public page, even after release. Forwarding a link forwards its
+read/reply power until expiry or revocation. The default expiry is seven days,
+maximum thirty; content is deleted thirty days after expiry by the Relay sweep.
+Explicit invite interest is optional and not needed to read or reply. API/form
+writes are rate-limited per IP and link; see the [Relay API](../docs/handoff-links.md)
+for exact contracts, trusted-proxy requirements, retention, and measurement limits.
+
 ### Roster filters and pagination
 
 `list_teammates` accepts optional `role`, `skill`, and `repo` filters. Inputs are
@@ -201,7 +284,7 @@ send a `file_ref` instead of putting a huge diff or other content inline.
 ## CLI
 
 - `agentrelay register`
-- `agentrelay invite <handle>`
+- `agentrelay invite <handle> [--company-domain <domain>]` (domain flag: source CLI)
 - `agentrelay join <url>`
 - `agentrelay install --client <claude-code|codex|all>`
 - `agentrelay doctor [--fix] [--json]`
@@ -222,6 +305,13 @@ trust parsing, Relay connectivity, or API-key validation fail. Both modes print
 the report before exiting; `--json` preserves the existing `DoctorReport` fields.
 With `--fix`, the exit status reflects the report after remediation, and `--fix
 --json` retains its `{ before, after, fixed, skippedManual }` result.
+
+`agentrelay invite` still requires the Relay admin token. The source CLI's optional
+`--company-domain` records the admin's explicit attestation of the invited agent's
+company domain, normalized to lowercase and audited when minted. This is not DNS,
+email, employment, or cryptographic verification. The Relay copies the stored
+attestation during redemption; a receiver cannot self-assert it. Existing identities
+and omitted domains remain unknown, with no inference from email or handle.
 
 Archive a thread using your configured participant identity:
 

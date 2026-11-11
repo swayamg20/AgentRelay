@@ -4,13 +4,14 @@ import type { Database } from "./db/client.js";
 import { type ErrorEnvelope, RelayError } from "./errors.js";
 import type { MailboxSignalHub } from "./events/mailbox-signal.js";
 import type { Logger } from "./logger.js";
-import { loggerMiddleware, requestIdMiddleware } from "./middleware.js";
-import type { NotificationJob } from "./notifications/types.js";
+import { isSensitiveRoute, loggerMiddleware, requestIdMiddleware } from "./middleware.js";
+import type { SlackPoster } from "./notifications/slack.js";
 import { createA2aRoutes } from "./routes/a2a.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createAgentsRoutes } from "./routes/agents.js";
 import { createInviteRoutes } from "./routes/invites.js";
 import { createNodeRoutes } from "./routes/node.js";
+import { createOwnerShareRoutes, createPublicShareRoutes } from "./routes/shares.js";
 import type { AppEnv } from "./types.js";
 
 export type { AppEnv };
@@ -22,10 +23,9 @@ export interface CreateServerOptions {
 	db?: Database;
 	/** Async readiness probe; default returns true. */
 	readinessProbe?: () => Promise<boolean>;
-	/** Notification sink. Failures here must not block requests (lld §9.4). */
-	notify?: (job: NotificationJob) => void;
 	/** Optional live wake hints. Durable replay remains available without it. */
 	mailboxSignalHub?: MailboxSignalHub;
+	shareSlackPoster?: SlackPoster;
 }
 
 export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
@@ -52,6 +52,18 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 
 	if (db) {
 		const keyEnvironment = config.RELAY_ENV === "production" ? "live" : "test";
+		const shareOptions = {
+			db,
+			pepper: config.RELAY_PEPPER,
+			publicUrl: config.RELAY_PUBLIC_URL,
+			notification: {
+				encryptionKey: config.RELAY_ENCRYPTION_KEY,
+				logger,
+				slackPoster: opts.shareSlackPoster,
+			},
+		};
+		app.route("/l", createPublicShareRoutes(shareOptions));
+		app.route("/shares", createOwnerShareRoutes(shareOptions));
 		app.route(
 			"/admin",
 			createAdminRoutes({
@@ -95,7 +107,7 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 				db,
 				pepper: config.RELAY_PEPPER,
 				publicUrl: config.RELAY_PUBLIC_URL,
-				notify: opts.notify,
+				encryptionKey: config.RELAY_ENCRYPTION_KEY,
 			}),
 		);
 	}
@@ -103,7 +115,9 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 	app.notFound((c) => {
 		const envelope: ErrorEnvelope = {
 			code: "method_not_found",
-			message: `No route for ${c.req.method} ${c.req.path}`,
+			message: isSensitiveRoute(c.req.path)
+				? "No route"
+				: `No route for ${c.req.method} ${c.req.path}`,
 			request_id: c.get("requestId"),
 		};
 		return c.json(envelope, 404);
@@ -114,11 +128,18 @@ export function createServer(opts: CreateServerOptions): Hono<AppEnv> {
 		const log = c.get("logger") ?? logger;
 
 		if (err instanceof RelayError) {
-			log.warn({ event: "request.error", code: err.code, details: err.details }, err.message);
+			if (isSensitiveRoute(c.req.path)) {
+				log.warn({ event: "request.error", code: err.code }, "request rejected");
+			} else {
+				log.warn({ event: "request.error", code: err.code, details: err.details }, err.message);
+			}
 			return c.json(err.toEnvelope(requestId), err.httpStatus as never);
 		}
 
-		log.error({ event: "request.error", err }, "unhandled error");
+		log.error(
+			isSensitiveRoute(c.req.path) ? { event: "request.error" } : { event: "request.error", err },
+			"unhandled error",
+		);
 		const envelope: ErrorEnvelope = {
 			code: "internal",
 			message: "Internal server error",

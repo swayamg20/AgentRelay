@@ -1,150 +1,127 @@
 # Nightshift state
 
-Working memory. Rewrite at the end of each session; history and active tests take
-precedence over notes.
-
 ## Goal as understood
 
-Ship owner-chosen `core-mailbox` issues, with small concern-specific commits and
-passing checks, then request the next selection. The goal is unchanged. The owner's
-October 28, 2026 reply on #171, “go ahead with all three,” approves all three scoped
-plans by reference, including #10 strict-root rejection and #39's independent
-passive stdout mode/replay contract. This supersedes the previous waiting state
-and the usual single-selection limit for these three issues only.
-
-All three selected issues are complete and verified on `nightshift`:
-
-- #10: `46bea8d` — `fix(trust): reject unknown root policy keys`.
-- #103: `e34465a` — `test(mailbox): prove retry and restart reliability`.
-- #39: `be91a0f` — `feat(cli): add passive stdout mailbox observation`.
-
-The session started clean at `8ab55ae`. #111, #40, and #11 are already on main;
-they are not new changes on this branch. The PR must use `Closes #10`,
-`Closes #103`, and `Closes #39`, not closure claims for prior main work.
+Build verified handoff links through all seven owner-supplied steps, preserving
+ordinary mailbox and sovereignty boundaries. The goal changed on November 7, 2026
+and is unchanged in run 42993546773, session 1. All seven steps are complete in
+source, and all six required local checks pass. The receiver kit is ready; actual
+Claude Code/Codex/Cursor trials remain unrun and explicitly nonblocking. Release,
+publication, deployment, and additional product work are not authorized.
 
 ## Plan
 
-- [x] Read state, recent journal/history, repository instructions, design sources,
-  issue snapshot, and the owner's scope approval.
-- [x] Run harness setup/locked installation and prepare the disposable database.
-- [x] Implement #10's root-only strict schema and focused loader/doctor/watcher
-  regressions; preserve nested acceptance, generated files, fallback, and consent.
-- [x] Verify and commit #10 separately.
-- [x] Run existing MCP and Relay evidence before adding #103 tests; map all nine
-  cases and fill only process, non-participant, terminal/ownership, and notification
-  loss gaps.
-- [x] Add the reliability evidence record and README link; verify and commit #103.
-- [x] Implement #39's separate metadata-only stdout observer with Zod edge checks,
-  bounded replay, exclusive cursors, in-memory duplicate suppression, reconnect,
-  safe diagnostics, and no attention checkpoint/runtime side effects.
-- [x] Verify #39's focused CLI/client/watcher contracts and disposable real Relay
-  restart/reconnect smoke; finish shared gates/full e2e and commit separately.
-- [x] Review the remaining eligible backlog; prepare the conditional three-issue
-  next-choice question without inventing runnable scope or implementing it.
-- [x] Record answered #171 for resolution and write external summary/STOP outputs.
-- [x] Update memory and the full-branch PR description; leave the working tree clean.
-- [ ] Receive the next owner selection with any required access/evidence/scope.
+- [x] Read memory, recent history, instructions, and supplied feedback; run setup.
+- [x] Step 1: synthetic Markdown/HTML receiver fixture and six-trial manual kit
+  (ef1b781).
+- [x] Step 2: RFC 003 narrowly amends exactly four RFC 002 decisions (9a1b703).
+- [x] Step 3: share tables/non-agent audit (c0048d5), admin-attested invite
+  domains with unknown historical provenance (3f8f1a4).
+- [x] Step 4: durable capability routes, held JSON/form replies, revocation,
+  expiry, and retention sweep (8154962).
+- [x] Step 5: private reply inspection/public answers (d742ace), previewed and
+  secret-scanned MCP/CLI publication (f461124), interactive release and durable
+  external inbox replay (1268207).
+- [x] Step 6: byte/IP/link admission, invite-redeem limiting, safe rendering/log
+  redaction, and content-free Slack waiting hints (06dd901).
+- [x] Step 7: measurement producers, explicit invite interest, and current
+  API/architecture/provenance/HLD/LLD/MCP documentation (b312e37).
+- [x] Confirm the reported historical Basic-auth fixture is already remediated
+  in current source (a830510); preserve blocking remote status.
+- [x] Confirm this run supplies only the historical scanner finding, with no
+  new unit, lint, or typecheck diagnostic and no owner reply.
+- [x] Rerun all six required checks with database variables unset for units.
+- [x] Update memory, external run summary, and full-branch PR description;
+  commit and prepare STOP plus IDLE to await owner review/classification.
 
 ## Next step
 
-Read the owner inbox and refreshed issue snapshot. The next-choice question is
-`questions/next-mailbox-prerequisites.md` in the external run output; the workflow
-assigns its issue number. Do not duplicate it or mistake a recommendation for
-approval. Do not implement anything beyond #10/#103/#39 without a new selection.
-Recheck origin/main/history before making closure claims.
-
-The eligible non-epic backlog currently contains only #34, #44, and #8. There is
-no honest three-candidate, unconditionally one-run-ready shortlist. The question
-lists all three with plans, files, verification, and prerequisites, recommends
-unblocking #34, and requests another small owner-scoped mailbox issue if none is
-ready. Epics, Labs, demand-gated work, non-mailbox-labelled interop issues, and
-completed main work stay excluded.
+The implementation goal is complete. Read changed goals, concrete PR findings,
+and fresh owner replies first when work resumes. Do not invent further source
+work or repeat memory-only sessions for unchanged historical scanner feedback.
+The owner can classify the synthetic GitGuardian incident if still triggered,
+review the full branch, and run `docs/handoff-links-receiver-test.md`. If any remote
+check fails, its concrete diagnostic is the first investigation input; do not
+infer a source fix or remote resolution from a check name or local results.
 
 ## Waiting on owner
 
-- #171 is answered; external `resolved.txt` records 171. It is no longer a blocker.
-- Select the next issue through the newly prepared question:
-  - #34 requires a disposable Docker-capable environment/approved daemon access.
-    Ordinary Docker access is denied; noninteractive sudo requires a password.
-    Native job Postgres is not the required Compose backup/restore proof.
-  - #44 needs bounded outbox scope approval and a decision on its #30 metrics
-    dependency, which is demand-gated and excluded. Do not silently omit criteria
-    or close the full issue for a partial outbox.
-  - #8 needs actual redacted #101 prerequisite evidence and two owners/machines;
-    local process tests cannot certify that proof.
+Supplied feedback still reports GitGuardian incident 39789810 in historical
+commit f461124 as triggered and blocking. Current source constructs the synthetic
+Basic-auth fixture at runtime from a830510 and retains redacted-error/secret-block
+coverage; it is not a deployed credential. The archived November 9 owner reply
+resolved #183, identified the historical false positive, said no source change or
+history rewrite was needed, and reported GitGuardian as nonrequired. Current
+supplied feedback nevertheless labels it blocking; this run cannot verify the
+external status or reconcile that discrepancy. This run supplies no new reply and
+reports no open questions. Do not duplicate questions, re-emit resolutions,
+rewrite history, weaken scanning, call external systems, or claim the remote
+check is green. Further source edits cannot clear that historical occurrence.
+
+This run supplies no unit, lint, or typecheck failure. Prior `unit (22)` feedback
+had no diagnostic and could not be reproduced with the canonical database-free
+command. Do not infer remote resolution from its omission or passing local checks.
+
+Prior #184 requested a lint/typecheck diagnostic. No diagnostic or failing
+lint/typecheck check is supplied now; local checks pass. Preserve that history
+without inferring remote resolution or investigating protected paths.
+
+Manual receiver results remain nonblocking and unverified. The unchanged merge
+guard excludes migrations and integration/e2e script paths included in this
+branch, so direct repository review is needed rather than reply-only merge.
+
+## Verification for run 42993546773, session 1
+
+- `bash "$NIGHTSHIFT_HARNESS/setup-install.sh"` and
+  `pnpm install --frozen-lockfile`: pass. Installation warns about prebuild e2e
+  CLI bins; subsequent recursive builds pass.
+- `pnpm lint`: pass with three existing unused-suppression warnings.
+- `pnpm -r typecheck` and `pnpm -r build`: pass.
+- `env -u RELAY_TEST_DATABASE_URL -u RELAY_DATABASE_URL pnpm --filter
+  @agentrelay/protocol --filter relay --filter agentrelay-mcp --filter
+  agentrelay-node test`: pass. Protocol 125, MCP 501, Relay 98, Node 438;
+  expected skips: Relay 337 database tests and Node three opt-in tests.
+- `RELAY_TEST_DATABASE_URL=postgres://agentrelay:agentrelay-dev@localhost:5433/agentrelay
+  RELAY_TEST_TRUNCATE_VIA_PSQL=1 pnpm --filter relay test:integration`: pass,
+  337 tests, zero failures, serialized against local Postgres on port 5433.
+- `git diff --check`, `git diff --cached --check`, and post-memory
+  `pnpm lint`: pass. No product/test changes or remote checks this session.
+
+## Decisions this run
+
+- Keep the current runtime-built fixture: it preserves scanner coverage without
+  embedding the encoded literal and needs no additional source remediation.
+- Verify the existing implementation with every required check; no new diagnostic
+  or reproducible failure justifies a source change. Preserve scanner coverage
+  and do not claim local results clear the historical remote occurrence.
+- Stop because all requested source steps are complete and the remaining supplied
+  finding needs private external-status review. Also write IDLE so unchanged
+  feedback does not justify repeated memory-only scheduled sessions.
+- Include all changes outside origin/main in the PR description, including
+  ce0b06e's ordinary-mailbox outbox and 945e9d5's e2e build ordering. Queue metrics
+  remain deferred to #30; do not claim broader #44 closure.
 
 ## Learned about the repository
 
-- Trust root keys are now exactly `version`, `teammates`, `unknown_teammates`,
-  `blocked`, and `defaults`. Unknown roots return existing `invalid` policy,
-  doctor reports broken trust, MCP retains safe fallback, and attention watch
-  refuses pickup without checkpointing. Nested schemas and trust precedence are
-  unchanged; pickup is still exact-sender consent, never inherited.
-- #103's real-process proof preserves Postgres and Relay secrets through
-  `TestRelay.restart()`. It retries creation after restart, starts receiver MCP
-  only after three messages commit offline, observes ordered provenance-marked
-  retrieval, and proves a same-thread reply as sequence 4.
-- The lost-append-response transport consumes the real committed HTTP response,
-  independently observes the message through MCP, withholds the response, and
-  verifies identical serialized automatic retries plus stable receipt/data/event
-  count after another restart. Its fault flag prevents retry logic from hiding
-  failed assertions inside the injected transport.
-- Notification evidence discards actual handoff/append enqueue jobs and replaces
-  the HTTP app before retrieval. This is local loss-boundary proof, not a killed
-  Slack worker, remote-provider outage, durable outbox, power-loss, or capacity
-  claim. Slack remains process-local best effort.
-- Non-participant read/append disclose no result/private content and leave no
-  mutation audit. Completed/cancelled tests cover both participants' append and
-  all transitions, preserving ownership and unchanged thread/audit/event state.
-  Existing block-fence/provenance tests remain the evidence for those rules.
-- `watch --stdout` uses only configured bearer metadata replay/SSE reads and emits
-  six-field `thread.created`/`message.appended` NDJSON. No body fetch, binding,
-  trust read/mutation, runtime enqueue, connector lock, or shared state access
-  occurs. Default attention-mode code remains intact apart from CLI option parsing.
-- Passive cursors are exclusive positive decimal strings within Postgres bigint
-  range. CAC numerically coerces option values, so the CLI preserves the original
-  cursor token before Zod validation; max-bigint, exponential/hex/leading-zero,
-  duplicate-flag, and `--` separator regressions cover that boundary.
-- Replay asks for 100 events per page, advances over filtered lifecycle events
-  only in memory, suppresses duplicate cursors, and rejects unordered new events
-  before printing. SSE ready/change/resync triggers replay; heartbeat does not
-  poll. Reconnect waits for ready before replay, permanent 4xx other than 408/429
-  fail, and output/schema failures stop rather than printing unsafe diagnostics.
-- Source docs explicitly do not claim the new flag is in published 0.3.0.
-  A printed ledger reference is not pickup, model processing, or a reply receipt.
-- Run database-mutating integration/e2e/smoke commands serially. Keep both Relay
-  database variables unset for unit tests; avoid simultaneous dist writers during
-  process tests. Do not use recursive `pnpm -r test`.
-- No dependencies, versions, release notes, migrations, workflows, infra, runtime
-  activation, or notification architecture changes were made.
-
-## Verification this session
-
-- Harness setup and explicit frozen-lockfile install passed. Initial setup had
-  expected unbuilt Node-bin warnings; the final install passed cleanly.
-- #10 focused loader/trust mutation/doctor/watcher tests passed: 85 tests.
-- Existing MCP client/provenance/tools evidence passed: 39 tests. Focused Relay
-  routes passed: 76 tests; focused handoff/reliability e2e passed: 3 tests.
-- Final stdout observer/CLI/event-client/existing attention-watcher tests passed:
-  59 tests. The external `.mts` real Relay smoke passed ordered replay, exclusive
-  cursor, restart/reconnect, duplicate suppression, metadata-only output, clean
-  SIGTERM, and unchanged local file hashes/listing.
-- All canonical gates passed before each product commit: lint, recursive
-  typecheck/build, database-unset protocol/Relay/MCP/Node unit tests, and sequential
-  Relay integration. Final units: 125 protocol, 393 MCP, 77 Relay, 438 Node passed;
-  233 Relay DB and three Node opt-in tests skipped normally. Integration: 233
-  passed. Full e2e: 13 passed, one opt-in test skipped.
-- Lint retains four pre-existing unused-suppression warnings. Focused formatting,
-  diff/cached diff, and public-document local Markdown-link checks passed.
-- Corrected initial doctor regex, route fixture list shape, cursor refinement,
-  formatting, and external smoke module-format failures before passing checks;
-  no failed implementation or test was committed.
-- Exact validation commands and outcomes are in the latest journal entry.
-
-## End-of-session outputs
-
-- External summary and PR description cover all three branch-only product changes.
-- External next-choice question covers the only three remaining eligible issues
-  conditionally and explains why a ready triple cannot currently be supplied.
-- External `resolved.txt` records #171; `STOP` ends this run pending selection.
-- Memory commit: `chore(nightshift): update run memory`. No push or GitHub calls.
+- Separate share tables preserve participant-only two-party mailbox handoffs.
+  Public capabilities expose only sender content; external replies are private.
+- Client creation/answers require exact-content previews and local secret scans
+  with no bypass. These are not a server scanner or confidentiality guarantee.
+- Links default to seven-day expiry, maximum thirty days and ten external replies.
+  Initial content plus public answers is capped at 64 KiB; replies/answers at 16 KiB.
+- Sender release is transactional and idempotent. The CLI requires all three
+  terminal streams and exact typed confirmation; there is no MCP release tool.
+  The Relay authenticates a sender bearer, not a human at a terminal.
+- Released inbox content stays `external_unverified`, with provenance, stable
+  release cursors, and explicit checkpointing. Release grants no authority.
+- Retention nulls content thirty days after expiry, leaving content-free history;
+  revocation does not move that deadline. Private inspection/release remains
+  available after expiry/revocation until retention deletion.
+- Share Slack hints are content-free, bounded, best-effort attempts after commit;
+  they do not use the durable ordinary-mailbox outbox or promise retries.
+- Explicit invite requests record content-free interest and external audit only;
+  they create no account, invite, credential, email, or notification.
+- Public rate buckets are per-process and restart-reset. Trusting normalized
+  first-position XFF requires ingress that strips spoofed forwarding headers.
+- Company domains are admin-attested at invite minting, not externally verified;
+  historical/omitted values stay unknown. External authors are never verified.

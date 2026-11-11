@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
 	bigserial,
+	boolean,
 	check,
 	customType,
 	foreignKey,
@@ -46,6 +47,7 @@ export const agents = pgTable(
 		email: citext("email").notNull().unique(),
 		displayName: text("display_name").notNull(),
 		role: text("role").notNull(),
+		companyDomain: text("company_domain"),
 		status: text("status").notNull().default("active"),
 		createdAt,
 		updatedAt,
@@ -236,13 +238,13 @@ export const auditLog = pgTable(
 		actorIdx: index("idx_audit_actor").on(t.actorId, t.createdAt.desc()),
 		actorKindCheck: check(
 			"audit_log_actor_kind_chk",
-			sql`${t.actorKind} IN ('agent','admin','system')`,
+			sql`${t.actorKind} IN ('agent','admin','external','system')`,
 		),
 		actorIdentityCheck: check(
 			"audit_log_actor_identity_chk",
 			sql`(
 				(${t.actorKind} = 'agent' AND ${t.actorId} IS NOT NULL)
-				OR (${t.actorKind} IN ('admin','system') AND ${t.actorId} IS NULL)
+				OR (${t.actorKind} IN ('admin','external','system') AND ${t.actorId} IS NULL)
 			)`,
 		),
 	}),
@@ -274,6 +276,7 @@ export const invites = pgTable(
 		tokenHash: text("token_hash").notNull(),
 		handle: text("handle").notNull(),
 		role: text("role").notNull(),
+		companyDomain: text("company_domain"),
 		inviterId: uuid("inviter_id")
 			.notNull()
 			.references(() => agents.id, { onDelete: "restrict" }),
@@ -287,6 +290,148 @@ export const invites = pgTable(
 	(t) => ({
 		uniqTokenHash: uniqueIndex("uniq_invites_token_hash").on(t.tokenHash),
 		idxExpiresAt: index("idx_invites_expires_at").on(t.expiresAt).where(sql`${t.usedAt} IS NULL`),
+	}),
+);
+
+export const shareLinks = pgTable(
+	"share_links",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		publicId: text("public_id").notNull(),
+		senderId: uuid("sender_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "restrict" }),
+		content: text("content"),
+		idempotencyKey: text("idempotency_key").notNull(),
+		expiresAt: timestamp("expires_at", { withTimezone: true })
+			.notNull()
+			.default(sql`now() + interval '7 days'`),
+		revokedAt: timestamp("revoked_at", { withTimezone: true }),
+		contentDeletedAt: timestamp("content_deleted_at", { withTimezone: true }),
+		createdAt,
+	},
+	(table) => ({
+		publicIdIdx: uniqueIndex("idx_share_links_public_id").on(table.publicId),
+		idempotencyIdx: uniqueIndex("idx_share_links_idempotency").on(
+			table.senderId,
+			table.idempotencyKey,
+		),
+		senderIdx: index("idx_share_links_sender").on(table.senderId, table.createdAt.desc()),
+		retentionIdx: index("idx_share_links_retention")
+			.on(table.expiresAt)
+			.where(sql`${table.contentDeletedAt} IS NULL`),
+		publicIdCheck: check(
+			"share_links_public_id_chk",
+			sql`${table.publicId} ~ '^[A-Za-z0-9_-]{43}$'`,
+		),
+		contentSizeCheck: check(
+			"share_links_content_size_chk",
+			sql`octet_length(${table.content}) <= 65536`,
+		),
+		contentStateCheck: check(
+			"share_links_content_state_chk",
+			sql`(${table.content} IS NOT NULL AND ${table.contentDeletedAt} IS NULL)
+				OR (${table.content} IS NULL AND ${table.contentDeletedAt} IS NOT NULL)`,
+		),
+		expiryCheck: check(
+			"share_links_expiry_chk",
+			sql`${table.expiresAt} > ${table.createdAt}
+				AND ${table.expiresAt} <= ${table.createdAt} + interval '30 days'`,
+		),
+	}),
+);
+
+export const shareReplies = pgTable(
+	"share_replies",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		linkId: uuid("link_id")
+			.notNull()
+			.references(() => shareLinks.id, { onDelete: "restrict" }),
+		seq: integer("seq").notNull(),
+		authorKind: text("author_kind").notNull(),
+		channel: text("channel").notNull(),
+		content: text("content"),
+		idempotencyKey: text("idempotency_key").notNull(),
+		releasedAt: timestamp("released_at", { withTimezone: true }),
+		releasedByAgentId: uuid("released_by_agent_id").references(() => agents.id, {
+			onDelete: "restrict",
+		}),
+		createdAt,
+	},
+	(table) => ({
+		seqIdx: uniqueIndex("idx_share_replies_link_seq").on(table.linkId, table.seq),
+		identityLinkIdx: uniqueIndex("idx_share_replies_identity_link").on(table.id, table.linkId),
+		idempotencyIdx: uniqueIndex("idx_share_replies_idempotency").on(
+			table.linkId,
+			table.authorKind,
+			table.idempotencyKey,
+		),
+		seqCheck: check("share_replies_seq_chk", sql`${table.seq} > 0`),
+		authorCheck: check(
+			"share_replies_author_kind_chk",
+			sql`${table.authorKind} IN ('sender','external')`,
+		),
+		channelCheck: check("share_replies_channel_chk", sql`${table.channel} IN ('api','form')`),
+		contentSizeCheck: check(
+			"share_replies_content_size_chk",
+			sql`octet_length(${table.content}) <= 16384`,
+		),
+		releaseCheck: check(
+			"share_replies_release_chk",
+			sql`(${table.releasedAt} IS NULL AND ${table.releasedByAgentId} IS NULL)
+				OR (${table.authorKind} = 'external' AND ${table.releasedAt} IS NOT NULL
+				AND ${table.releasedByAgentId} IS NOT NULL)`,
+		),
+	}),
+);
+
+export const shareEvents = pgTable(
+	"share_events",
+	{
+		id: bigserial("id", { mode: "bigint" }).primaryKey(),
+		linkId: uuid("link_id")
+			.notNull()
+			.references(() => shareLinks.id, { onDelete: "restrict" }),
+		replyId: uuid("reply_id"),
+		kind: text("kind").notNull(),
+		actorKind: text("actor_kind").notNull(),
+		actorAgentId: uuid("actor_agent_id").references(() => agents.id, { onDelete: "restrict" }),
+		metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+		createdAt,
+	},
+	(table) => ({
+		linkIdx: index("idx_share_events_link").on(table.linkId, table.createdAt),
+		replyKindIdx: uniqueIndex("idx_share_events_reply_kind")
+			.on(table.replyId, table.kind)
+			.where(sql`${table.replyId} IS NOT NULL`),
+		creationIdx: uniqueIndex("idx_share_events_link_created")
+			.on(table.linkId)
+			.where(sql`${table.kind} = 'link.created'`),
+		replyLinkFk: foreignKey({
+			name: "share_events_reply_link_fk",
+			columns: [table.replyId, table.linkId],
+			foreignColumns: [shareReplies.id, shareReplies.linkId],
+		}).onDelete("restrict"),
+		kindCheck: check(
+			"share_events_kind_chk",
+			sql`${table.kind} IN ('link.created','link.fetched','reply.posted',
+				'reply.released','answer.posted','invite.requested')`,
+		),
+		replyCheck: check(
+			"share_events_reply_chk",
+			sql`(${table.kind} IN ('reply.posted','reply.released','answer.posted') AND ${table.replyId} IS NOT NULL)
+				OR (${table.kind} IN ('link.created','link.fetched','invite.requested') AND ${table.replyId} IS NULL)`,
+		),
+		actorCheck: check(
+			"share_events_actor_chk",
+			sql`(${table.actorKind} = 'agent' AND ${table.actorAgentId} IS NOT NULL)
+				OR (${table.actorKind} IN ('admin','external','system') AND ${table.actorAgentId} IS NULL)`,
+		),
+		metadataCheck: check(
+			"share_events_metadata_chk",
+			sql`jsonb_typeof(${table.metadata}) = 'object'`,
+		),
 	}),
 );
 
@@ -811,6 +956,70 @@ export const deliveryOperationReceipts = pgTable(
 	}),
 );
 
+export const notificationOutbox = pgTable(
+	"notification_outbox",
+	{
+		id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+		recipientAgentId: uuid("recipient_agent_id")
+			.notNull()
+			.references(() => agents.id, { onDelete: "cascade" }),
+		threadId: uuid("thread_id")
+			.notNull()
+			.references(() => handoffs.id, { onDelete: "cascade" }),
+		kind: text("kind").notNull(),
+		sourceId: uuid("source_id").notNull(),
+		encryptedPayload: text("encrypted_payload"),
+		status: text("status").notNull().default("pending"),
+		attempts: integer("attempts").notNull().default(0),
+		rateLimitRetried: boolean("rate_limit_retried").notNull().default(false),
+		availableAt: timestamp("available_at", { withTimezone: true }).notNull().default(sql`now()`),
+		leaseToken: uuid("lease_token"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+		lastStatus: integer("last_status"),
+		reason: text("reason"),
+		terminalAt: timestamp("terminal_at", { withTimezone: true }),
+		createdAt,
+	},
+	(table) => ({
+		sourceIdx: uniqueIndex("idx_notification_outbox_source").on(
+			table.recipientAgentId,
+			table.kind,
+			table.sourceId,
+		),
+		dueIdx: index("idx_notification_outbox_due")
+			.on(table.availableAt, table.id)
+			.where(sql`${table.status} = 'pending'`),
+		leaseIdx: index("idx_notification_outbox_lease")
+			.on(table.leaseExpiresAt, table.id)
+			.where(sql`${table.status} = 'leased'`),
+		terminalIdx: index("idx_notification_outbox_terminal")
+			.on(table.terminalAt, table.id)
+			.where(sql`${table.terminalAt} IS NOT NULL`),
+		kindCheck: check(
+			"notification_outbox_kind_chk",
+			sql`${table.kind} IN ('notify.handoff.created','notify.message.appended',
+				'notify.handoff.completed','notify.handoff.cancelled')`,
+		),
+		attemptsCheck: check(
+			"notification_outbox_attempts_chk",
+			sql`${table.attempts} BETWEEN 0 AND 4`,
+		),
+		stateCheck: check(
+			"notification_outbox_state_chk",
+			sql`(${table.status} = 'pending' AND ${table.encryptedPayload} IS NOT NULL
+				AND ${table.leaseToken} IS NULL AND ${table.leaseExpiresAt} IS NULL
+				AND ${table.terminalAt} IS NULL)
+				OR (${table.status} = 'leased' AND ${table.encryptedPayload} IS NOT NULL
+				AND ${table.leaseToken} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL
+				AND ${table.attempts} > 0 AND ${table.terminalAt} IS NULL)
+				OR (${table.status} IN ('succeeded','failed','skipped')
+				AND ${table.encryptedPayload} IS NULL AND ${table.leaseToken} IS NULL
+				AND ${table.leaseExpiresAt} IS NULL AND ${table.terminalAt} IS NOT NULL)`,
+		),
+	}),
+);
+
+export type NotificationOutboxJob = typeof notificationOutbox.$inferSelect;
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type AgentCard = typeof agentCards.$inferSelect;
@@ -819,6 +1028,9 @@ export type Handoff = typeof handoffs.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type MailboxEvent = typeof mailboxEvents.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
+export type ShareLink = typeof shareLinks.$inferSelect;
+export type ShareReply = typeof shareReplies.$inferSelect;
+export type ShareEvent = typeof shareEvents.$inferSelect;
 export type Node = typeof nodes.$inferSelect;
 export type NodeCredential = typeof nodeCredentials.$inferSelect;
 export type WorkspaceBinding = typeof workspaceBindings.$inferSelect;

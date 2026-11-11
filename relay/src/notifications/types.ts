@@ -14,11 +14,3 @@ export interface NotificationJob {
 	publicUrl: string; // relay public URL for deep link
 	enqueuedAt: number;
 }
-
-export interface DispatchOutcome {
-	ok: boolean;
-	attempts: number;
-	durationMs: number;
-	reason?: string;
-	status?: number;
-}

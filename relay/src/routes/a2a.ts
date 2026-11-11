@@ -3,10 +3,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { bearerAuth } from "../auth/middleware.js";
 import type { Database } from "../db/client.js";
-import { agentCards, agents, handoffs } from "../db/schema.js";
+import { agentCards, agents } from "../db/schema.js";
 import { ERROR_MAP, type ErrorSymbol, RelayError } from "../errors.js";
 import { mailboxArtifactSchema } from "../mailbox-schemas.js";
-import type { NotificationJob, NotificationKind } from "../notifications/types.js";
 import {
 	type HandoffStatus,
 	type Intent,
@@ -163,7 +162,7 @@ export interface A2aRoutesOptions {
 	db: Database;
 	pepper: string;
 	publicUrl: string;
-	notify?: (job: NotificationJob) => void;
+	encryptionKey: string;
 }
 
 export function createA2aRoutes(opts: A2aRoutesOptions): Hono<AppEnv> {
@@ -198,7 +197,7 @@ export function createA2aRoutes(opts: A2aRoutesOptions): Hono<AppEnv> {
 				agent,
 				requestId,
 				publicUrl: opts.publicUrl,
-				notify: opts.notify,
+				encryptionKey: opts.encryptionKey,
 			});
 			return c.json(rpcSuccess(id, result));
 		} catch (err) {
@@ -219,54 +218,7 @@ interface DispatchCtx {
 	agent: { id: string; handle: string };
 	requestId: string;
 	publicUrl: string;
-	notify?: (job: NotificationJob) => void;
-}
-
-async function emitNotification(
-	ctx: DispatchCtx,
-	kind: NotificationKind,
-	threadId: string,
-	recipientAgentId: string,
-	summary: string,
-): Promise<void> {
-	if (!ctx.notify) return;
-	// resolve sender's display name on the fly; failure here must not affect the result
-	let senderName = ctx.agent.handle;
-	try {
-		const [row] = await ctx.db
-			.select({ name: agents.displayName })
-			.from(agents)
-			.where(eq(agents.id, ctx.agent.id));
-		if (row) senderName = row.name;
-	} catch {
-		// swallow
-	}
-	ctx.notify({
-		kind,
-		recipientAgentId,
-		threadId,
-		senderHandle: ctx.agent.handle,
-		senderName,
-		summary,
-		publicUrl: ctx.publicUrl,
-		enqueuedAt: Date.now(),
-	});
-}
-
-async function loadHandoffParticipants(
-	ctx: DispatchCtx,
-	threadId: string,
-): Promise<{ senderId: string; recipientId: string; summary: string; status: string } | null> {
-	const [row] = await ctx.db
-		.select({
-			senderId: handoffs.senderId,
-			recipientId: handoffs.recipientId,
-			summary: handoffs.summary,
-			status: handoffs.status,
-		})
-		.from(handoffs)
-		.where(eq(handoffs.id, threadId));
-	return row ?? null;
+	encryptionKey: string;
 }
 
 async function dispatch(method: string, params: unknown, ctx: DispatchCtx): Promise<unknown> {
@@ -314,23 +266,19 @@ async function handleMessageSend(params: unknown, ctx: DispatchCtx): Promise<unk
 			Object.fromEntries(
 				Object.entries(metadata).filter(([key]) => key !== "client_idempotency_key"),
 			);
-		const result = await appendMessage(ctx.db, {
-			senderId: ctx.agent.id,
-			taskId: p.task_id,
-			body: text,
-			payload: appendPayload,
-			artifacts,
-			idempotencyKey,
-			requestId: ctx.requestId,
-		});
-		if (!result.replayed) {
-			const parts = await loadHandoffParticipants(ctx, p.task_id);
-			if (parts) {
-				const otherParticipant =
-					parts.senderId === ctx.agent.id ? parts.recipientId : parts.senderId;
-				await emitNotification(ctx, "notify.message.appended", p.task_id, otherParticipant, text);
-			}
-		}
+		const result = await appendMessage(
+			ctx.db,
+			{
+				senderId: ctx.agent.id,
+				taskId: p.task_id,
+				body: text,
+				payload: appendPayload,
+				artifacts,
+				idempotencyKey,
+				requestId: ctx.requestId,
+			},
+			ctx,
+		);
 		return {
 			// legacy
 			task_id: p.task_id,
@@ -346,28 +294,22 @@ async function handleMessageSend(params: unknown, ctx: DispatchCtx): Promise<unk
 		throw new RelayError("invalid_params", "recipient required when creating a new handoff");
 	}
 
-	const { handoff, replayed } = await createHandoff(ctx.db, {
-		senderId: ctx.agent.id,
-		recipientHandle: p.recipient,
-		summary: text,
-		intent: (p.intent ?? "inform") as Intent,
-		artifacts,
-		initialPayload: p.payload ?? {},
-		proposedAction: p.proposed_action ?? null,
-		metadata,
-		idempotencyKey,
-		requestId: ctx.requestId,
-	});
-
-	if (!replayed) {
-		await emitNotification(
-			ctx,
-			"notify.handoff.created",
-			handoff.id,
-			handoff.recipientId,
-			handoff.summary,
-		);
-	}
+	const { handoff } = await createHandoff(
+		ctx.db,
+		{
+			senderId: ctx.agent.id,
+			recipientHandle: p.recipient,
+			summary: text,
+			intent: (p.intent ?? "inform") as Intent,
+			artifacts,
+			initialPayload: p.payload ?? {},
+			proposedAction: p.proposed_action ?? null,
+			metadata,
+			idempotencyKey,
+			requestId: ctx.requestId,
+		},
+		ctx,
+	);
 
 	return {
 		task_id: handoff.id,
@@ -502,16 +444,19 @@ async function handleTasksList(params: unknown, ctx: DispatchCtx): Promise<unkno
 
 async function handleTasksUpdate(params: unknown, ctx: DispatchCtx): Promise<unknown> {
 	const p = parseParams(tasksUpdateParams, params);
-	const handoff = await transitionHandoff(ctx.db, {
-		taskId: p.task_id,
-		callerId: ctx.agent.id,
-		transition: p.transition,
-		sessionId: p.session_id,
-		resultSummary: p.result_summary,
-		resultArtifacts: p.artifacts ?? [],
-		requestId: ctx.requestId,
-	});
-	await fireTransitionNotification(ctx, handoff, p.transition);
+	const handoff = await transitionHandoff(
+		ctx.db,
+		{
+			taskId: p.task_id,
+			callerId: ctx.agent.id,
+			transition: p.transition,
+			sessionId: p.session_id,
+			resultSummary: p.result_summary,
+			resultArtifacts: p.artifacts ?? [],
+			requestId: ctx.requestId,
+		},
+		ctx,
+	);
 	return {
 		// legacy
 		task_id: handoff.id,
@@ -529,13 +474,16 @@ async function handleTasksUpdate(params: unknown, ctx: DispatchCtx): Promise<unk
 
 async function handleTasksCancel(params: unknown, ctx: DispatchCtx): Promise<unknown> {
 	const p = parseParams(tasksCancelParams, params);
-	const handoff = await transitionHandoff(ctx.db, {
-		taskId: p.task_id,
-		callerId: ctx.agent.id,
-		transition: "cancel",
-		requestId: ctx.requestId,
-	});
-	await fireTransitionNotification(ctx, handoff, "cancel");
+	const handoff = await transitionHandoff(
+		ctx.db,
+		{
+			taskId: p.task_id,
+			callerId: ctx.agent.id,
+			transition: "cancel",
+			requestId: ctx.requestId,
+		},
+		ctx,
+	);
 	return {
 		task_id: handoff.id,
 		status: { state: handoff.status },
@@ -592,45 +540,4 @@ async function handleAgentsList(params: unknown, ctx: DispatchCtx): Promise<unkn
 				}
 			: {}),
 	};
-}
-
-async function fireTransitionNotification(
-	ctx: DispatchCtx,
-	handoff: {
-		id: string;
-		senderId: string;
-		recipientId: string;
-		summary: string;
-		status: string;
-		acceptedAt: Date | null;
-	},
-	transition: "accept" | "complete" | "cancel",
-): Promise<void> {
-	switch (transition) {
-		case "complete":
-			// notify sender (lld §9.1)
-			await emitNotification(
-				ctx,
-				"notify.handoff.completed",
-				handoff.id,
-				handoff.senderId,
-				handoff.summary,
-			);
-			return;
-		case "cancel":
-			// notify recipient only if they had accepted (lld §9.1)
-			if (handoff.acceptedAt) {
-				await emitNotification(
-					ctx,
-					"notify.handoff.cancelled",
-					handoff.id,
-					handoff.recipientId,
-					handoff.summary,
-				);
-			}
-			return;
-		case "accept":
-			// accept is silent — already on the recipient's screen
-			return;
-	}
 }

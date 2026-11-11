@@ -4,6 +4,7 @@
  */
 
 import { z } from "zod";
+import { shareCursor } from "../share-client.js";
 
 const handle = z
 	.string()
@@ -101,6 +102,7 @@ export const checkInboxInput = z
 		status: z.array(handoffStatusSchema).optional(),
 		since: z.string().datetime().optional(),
 		limit: z.number().int().min(1).max(200).optional(),
+		external_after_cursor: shareCursor.optional(),
 	})
 	.strict();
 

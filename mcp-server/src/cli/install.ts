@@ -18,6 +18,8 @@ export const AGENTRELAY_MUTATING_TOOL_RULES = [
 	"mcp__agentrelay__accept_handoff",
 	"mcp__agentrelay__send_message",
 	"mcp__agentrelay__complete_handoff",
+	"mcp__agentrelay__share_handoff",
+	"mcp__agentrelay__answer_share",
 ] as const;
 
 export const AGENTRELAY_PROMPTED_TOOL_RULES = [
